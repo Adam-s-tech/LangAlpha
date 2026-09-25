@@ -418,40 +418,6 @@ html {
   --sidebar-indicator: 28 63% 51%;
 }
 
-@layer base {
-  * {
-    box-sizing: border-box;
-    @apply border-border;
-  }
-
-  body {
-    @apply bg-background text-foreground;
-    font-family: var(--font-ui);
-    margin: 0;
-    padding: 0;
-    width: 100%;
-    height: 100vh;
-    min-width: 320px;
-    overflow: hidden;
-  }
-
-  #root {
-    width: 100%;
-    height: 100vh;
-    margin: 0;
-    padding: 0;
-  }
-
-  /* Tailwind's preflight carries `:-moz-focusring { outline: auto }`, and it
-     lands here unlayered, so in Firefox it would beat the whole focus layer
-     below: its own ring on a keyboard focus, and one on a clicked field the
-     layer means to keep quiet. Same specificity and later in source, so this
-     wins, and revert-layer hands the decision back to the layer. */
-  :-moz-focusring {
-    outline: revert-layer;
-  }
-}
-
 /* Focus rings.
 
    Everything in here is a default: the ring a control gets unless something
@@ -460,9 +426,8 @@ html {
    `focus-visible:` utility, a hand-written `.class:focus-visible`, a
    box-shadow ring on a sidebar row. Unlayered styles beat layered ones
    outright, so a component never has to out-specify this block. (Tailwind's
-   `@layer base` above is not a cascade layer: the plugin unwraps it into plain
-   unlayered CSS, where a rule here and a component's would be settled by
-   specificity and source order instead.) */
+   preflight, the base rules in base.css and the utilities are imported
+   outside any layer for the same reason; see index.css.) */
 @layer focus-defaults {
   /* Without a baseline the fallback is Chromium's -- `outline: auto` in a blue
      this product uses nowhere -- and that was the ring on four out of five
@@ -549,8 +514,8 @@ html {
      that marks the current row everywhere else, and what it repaints instead
      is an outline that was already drawn. A row with no outline at all is a
      row the OS has nothing to paint, which under a mouse is every row in the
-     menu. This is the `outline-none` the items used to carry as a utility
-     class, kept where the rest of the rule lives. */
+     menu. This is the transparent outline the items used to carry as a
+     utility class, kept where the rest of the rule lives. */
   [role="menuitem"],
   [role="menuitemcheckbox"],
   [role="menuitemradio"],
@@ -589,7 +554,7 @@ html {
      high-contrast user with a clicked field marked by nothing but the caret.
      A transparent outline is invisible everywhere else and becomes the
      system's own focus color there -- the same reason Tailwind's
-     `outline-none` compiles to this and not to `outline: none`. */
+     `outline-hidden` draws this under forced colors rather than nothing. */
   :root[data-pointer-focus] :focus-visible {
     outline-color: transparent;
   }
@@ -630,72 +595,70 @@ html {
   }
 }
 
-@layer utilities {
-  /* Reading face for long-form surfaces: conversation transcript, file
-     viewers. Chrome/UI stays on the body default (--font-ui). */
-  .font-content {
-    font-family: var(--font-content);
-  }
+/* Reading face for long-form surfaces: conversation transcript, file
+   viewers. Chrome/UI stays on the body default (--font-ui). */
+@utility font-content {
+  font-family: var(--font-content);
+}
 
-  /* Flat — the radial glow washes are retired with the quiet-workspace system. */
-  .bg-app {
-    background: hsl(var(--bg-main));
-  }
+/* Flat — the radial glow washes are retired with the quiet-workspace system. */
+@utility bg-app {
+  background: hsl(var(--bg-main));
+}
 
-  .panel {
-    background: hsl(var(--bg-panel));
-    border: 1px solid hsl(var(--border-light));
-    backdrop-filter: blur(10px);
-    border-radius: 8px;
-    box-shadow: var(--shadow-card);
-  }
+@utility panel {
+  background: hsl(var(--bg-panel));
+  border: 1px solid hsl(var(--border-light));
+  backdrop-filter: blur(10px);
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+}
 
-  .fin-card {
-    background: hsl(var(--bg-main) / 0.65);
-    border: 1px solid hsl(var(--border-light));
-    border-radius: 8px;
-    box-shadow: var(--shadow-card);
-  }
+@utility fin-card {
+  background: hsl(var(--bg-main) / 0.65);
+  border: 1px solid hsl(var(--border-light));
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+}
 
-  .fin-card-inner {
-    background: var(--color-bg-card);
-    border: 1px solid var(--color-border-default);
-    border-radius: 8px;
-  }
+@utility fin-card-inner {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border-default);
+  border-radius: 8px;
+}
 
-  .text-muted-fin {
-    color: hsl(var(--muted));
-    opacity: 0.65;
-  }
+@utility text-muted-fin {
+  color: hsl(var(--muted));
+  opacity: 0.65;
+}
 
-  .text-muted2 {
-    color: hsl(var(--muted));
-  }
+@utility text-muted2 {
+  color: hsl(var(--muted));
+}
 
-  .text-up {
-    color: hsl(var(--color-up));
-  }
+@utility text-up {
+  color: hsl(var(--color-up));
+}
 
-  .text-down {
-    color: hsl(var(--color-down));
-  }
+@utility text-down {
+  color: hsl(var(--color-down));
+}
 
-  .bg-up-soft {
-    background: hsl(var(--color-up-soft));
-  }
+@utility bg-up-soft {
+  background: hsl(var(--color-up-soft));
+}
 
-  .bg-down-soft {
-    background: hsl(var(--color-down-soft));
-  }
+@utility bg-down-soft {
+  background: hsl(var(--color-down-soft));
+}
 
-  .ring-accent {
-    box-shadow: 0 0 0 1px hsl(var(--accent-fin) / 0.30);
-  }
+@utility ring-accent {
+  box-shadow: 0 0 0 1px hsl(var(--accent-fin) / 0.30);
+}
 
-  .tabular-nums {
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: "tnum";
-  }
+@utility tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
 }
 
 ::-webkit-scrollbar {

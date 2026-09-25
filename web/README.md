@@ -32,7 +32,7 @@ React frontend for LangAlpha — a vibe investing agent with AI-powered research
 | Routing | React Router 8 |
 | State / Fetching | `@tanstack/react-query` 5 |
 | UI Components | shadcn/ui (Radix UI + Tailwind primitives) |
-| Styling | Tailwind CSS 3, `clsx`, `tailwind-merge`, `class-variance-authority` |
+| Styling | Tailwind CSS 4, `clsx`, `tailwind-merge`, `class-variance-authority` |
 | Animation | Framer Motion 13 |
 | Icons | Lucide React |
 | Charts | `lightweight-charts` (TradingView), Recharts, embedded TradingView widgets |

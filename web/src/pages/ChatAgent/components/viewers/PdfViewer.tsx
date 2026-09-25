@@ -10,6 +10,12 @@ import './PdfViewer.css';
 import pdfjsWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
+// Image decoders the build emits beside the worker (vite.config.js `pdfjsWasm`).
+// Module-level so react-pdf sees one options object and never reloads over it.
+const DOCUMENT_OPTIONS = {
+  wasmUrl: `${import.meta.env.BASE_URL}assets/pdfjs-wasm/${pdfjs.version}/`,
+};
+
 const ZOOM_STEPS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 const DEFAULT_ZOOM_INDEX = 2; // 1.0
 
@@ -89,6 +95,7 @@ export default function PdfViewer({ data, focusPage = null, focusSeq = null, onP
         <Document
           suspense={false}
           file={fileData}
+          options={DOCUMENT_OPTIONS}
           onLoadSuccess={onDocumentLoadSuccess}
           onLoadError={(err: Error) => setError(err)}
           loading={

@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import fs from 'fs'
 import path from 'path'
 
 // Shared by the entry and the lazy vendors — see manualChunks below.
@@ -46,6 +47,35 @@ function emitVersionManifest() {
   }
 }
 
+// Serves pdf.js's image decoders (JBIG2 and CCITT since pdf.js 6, JPEG 2000) at
+// assets/pdfjs-wasm/<version>/, the `wasmUrl` PdfViewer passes. pdf.js fetches
+// them by bare filename from one directory, so they cannot take hashed names;
+// the version in the path keeps a long-cached copy from pairing a new worker
+// with old decoders. Without them, those images are silently left blank.
+function pdfjsWasm() {
+  const pkg = path.resolve(__dirname, 'node_modules/pdfjs-dist')
+  const dir = path.join(pkg, 'wasm')
+  const { version } = JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'), 'utf8'))
+  const route = `assets/pdfjs-wasm/${version}/`
+  const types = { '.wasm': 'application/wasm', '.js': 'text/javascript' }
+  return {
+    name: 'la-pdfjs-wasm',
+    configureServer(server) {
+      server.middlewares.use(`/${route}`, (req, res, next) => {
+        const file = path.join(dir, path.basename(req.url.split('?')[0]))
+        if (!fs.existsSync(file)) return next()
+        res.setHeader('Content-Type', types[path.extname(file)] ?? 'application/octet-stream')
+        fs.createReadStream(file).pipe(res)
+      })
+    },
+    generateBundle() {
+      for (const name of fs.readdirSync(dir)) {
+        this.emitFile({ type: 'asset', fileName: route + name, source: fs.readFileSync(path.join(dir, name)) })
+      }
+    },
+  }
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   // Load VITE_-prefixed vars from .env files (.env, .env.local, …) so they can
@@ -67,7 +97,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: env.VITE_CDN_BASE || '/',
-    plugins: [react(), emitVersionManifest()],
+    plugins: [react(), emitVersionManifest(), pdfjsWasm()],
     resolve: {
       alias: [
         { find: '@', replacement: path.resolve(__dirname, './src') },

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { useCardState } from '../../../hooks/useCardState';
 import { findWorkflowChildOwner } from '../../../session/subagents/workflowRunState';
 import { useSubagentTabs } from '../useSubagentTabs';

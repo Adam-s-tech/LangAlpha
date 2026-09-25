@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import i18n from '@/i18n';
 import { renderWithProviders } from '@/test/utils';
 import type { Automation, AutomationExecution, AutomationRun } from '@/types/automation';

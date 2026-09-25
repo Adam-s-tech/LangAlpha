@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { useToast } from '@/components/ui/use-toast';
 import './MarketView.css';
 import StockHeader from './components/StockHeader';

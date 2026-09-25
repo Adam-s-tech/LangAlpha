@@ -1,5 +1,5 @@
 import React, { Suspense } from 'react';
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router';
 import { motion, AnimatePresence } from 'framer-motion';
 import PageLoading from '@/components/PageLoading/PageLoading';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -74,8 +74,9 @@ function Main() {
   // the outside remounts Suspense along with it. Desktop already remounts this
   // subtree through AnimatePresence, but mobile renders it directly, and a
   // freshly mounted Suspense boundary has no previous content to hold — so it
-  // must show its fallback, and with v7_startTransition every first navigation
-  // to a route flashed the pane spinner where it used to switch in place.
+  // must show its fallback, and with the router's transition-wrapped updates
+  // every first navigation to a route flashed the pane spinner where it used to
+  // switch in place.
   const routes = (
     <Suspense fallback={<PageLoading variant="pane" />}>
       <StaleBuildBoundary key={pageKey} variant="pane">

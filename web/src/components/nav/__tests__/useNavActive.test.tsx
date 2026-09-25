@@ -12,7 +12,7 @@
 import React from 'react';
 import { describe, it, expect } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { NAV_ITEMS, SETTINGS_ITEM } from '../navItems';
 import { useNavActive } from '../useNavActive';
 

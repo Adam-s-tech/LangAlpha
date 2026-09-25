@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { screen, fireEvent, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import React from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { renderWithProviders } from '@/test/utils';
 import type { CatalogServer, CatalogServerList } from '@/pages/ChatAgent/utils/api';
 // Aliased rather than wrapped: the field list is shared, the name this file

@@ -1,5 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // Stub the OHLC fetch hook so the resting card's preview chart has bars without

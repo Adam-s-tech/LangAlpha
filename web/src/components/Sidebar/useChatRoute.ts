@@ -1,4 +1,4 @@
-import { matchPath, useLocation } from 'react-router-dom';
+import { matchPath, useLocation } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { getThread } from '@/pages/ChatAgent/utils/api';

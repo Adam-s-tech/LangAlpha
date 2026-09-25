@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { Mail, Link2 } from 'lucide-react';
 import { Input } from '../../components/ui/input';
 import { useTranslation, Trans } from 'react-i18next';

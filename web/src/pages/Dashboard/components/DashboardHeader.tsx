@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { StockSearchHit } from '@/lib/marketUtils';
 import { useSymbolSearch } from '@/hooks/useSymbolSearch';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { buildMarketViewUrl } from '@/pages/MarketView/utils/marketRoute';
 import './DashboardHeader.css';

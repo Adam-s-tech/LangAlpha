@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { MessagesSquare, ArrowUpRight, MessageSquareText, Zap } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
 import { getRecentThreads, getWorkspaceThreads } from '@/pages/ChatAgent/utils/api';
 import { clearChatSession } from '@/pages/ChatAgent/hooks/utils/chatSessionRestore';

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, act } from '@testing-library/react';
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { queryKeys } from '@/lib/queryKeys';
 
 const prefsState: { current: { other_preference?: Record<string, unknown> | null } | null } = {
@@ -41,7 +41,7 @@ import DashboardRouter from '../DashboardRouter';
 function renderRouter(queryClient: QueryClient) {
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <DashboardRouter />
       </MemoryRouter>
     </QueryClientProvider>,

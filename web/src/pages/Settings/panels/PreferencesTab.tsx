@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Trash2, MessageSquareText, FileText, Code2 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { clearPreferences } from '@/pages/Dashboard/utils/api';
 import { useUser } from '@/hooks/useUser';
 import { usePreferences } from '@/hooks/usePreferences';

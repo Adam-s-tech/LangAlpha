@@ -17,7 +17,7 @@
 
 import React, { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { LineChart, Check, ArrowRight } from 'lucide-react';
 import { useMessageActions } from '../messageList/MessageActionsContext';

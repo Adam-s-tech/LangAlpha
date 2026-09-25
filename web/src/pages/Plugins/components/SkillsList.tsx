@@ -1,5 +1,5 @@
 import { useState, type ComponentType, type CSSProperties, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence } from 'framer-motion';
 import { Blocks, BookOpen, Folder, Upload } from 'lucide-react';

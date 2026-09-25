@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 import { act, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import React from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { renderWithProviders } from '@/test/utils';
 
 /**

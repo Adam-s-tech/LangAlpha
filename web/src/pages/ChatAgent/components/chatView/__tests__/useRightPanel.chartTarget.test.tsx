@@ -1,12 +1,12 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 
 import { useRightPanel } from '../useRightPanel';
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
-vi.mock('react-router-dom', async (importOriginal) => {
+vi.mock('react-router', async (importOriginal) => {
   const orig = await importOriginal<Record<string, unknown>>();
   return { ...orig, useNavigate: () => navigate };
 });

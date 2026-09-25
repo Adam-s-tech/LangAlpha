@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { relativeTime } from '@/lib/format';
 import { LayoutGrid, Zap, ArrowUpRight, Plus } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
 import { clearChatSession } from '@/pages/ChatAgent/hooks/utils/chatSessionRestore';
 import type { Workspace } from '@/types/api';

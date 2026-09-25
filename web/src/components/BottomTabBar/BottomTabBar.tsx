@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { SETTINGS_ITEM } from '../nav/navItems';
 import { useNavActive } from '../nav/useNavActive';

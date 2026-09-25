@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ExternalLink, Maximize2, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Loader } from '@/components/ui/loader';
 import {
   createChart,

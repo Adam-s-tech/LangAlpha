@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { ArrowLeft, FolderOpen } from 'lucide-react';
 import { motion, type PanInfo } from 'framer-motion';
 import { ScrollArea } from '@/components/ui/scroll-area';

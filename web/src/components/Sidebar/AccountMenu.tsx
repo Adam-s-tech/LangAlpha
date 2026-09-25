@@ -1,6 +1,6 @@
 import { User, Settings, LogOut, CreditCard, ChevronRight } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../contexts/AuthContext';
 import { useUser } from '@/hooks/useUser';

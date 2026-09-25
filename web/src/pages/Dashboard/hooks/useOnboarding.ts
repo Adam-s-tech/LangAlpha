@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, type Dispatch, type SetStateAction } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useToast } from '@/components/ui/use-toast';
 import { useUser } from '@/hooks/useUser';

@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 /** Opens a run's thread. A thread URL carries no workspace, so the thread's
  *  own workspace, when the caller has it, rides in the navigation state for

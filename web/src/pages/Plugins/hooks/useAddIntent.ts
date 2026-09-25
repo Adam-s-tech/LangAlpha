@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { ADD_PARAM, parseAddIntent, type AddIntent } from '../utils/addParam';
 
 /**

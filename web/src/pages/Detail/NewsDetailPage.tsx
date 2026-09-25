@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { useScrollMemory } from '@/lib/scrollMemory';

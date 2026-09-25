@@ -508,7 +508,7 @@ function ToolRowCheckbox({
 }) {
   const { t } = useTranslation();
   if (!isSelectable(tool)) {
-    return <span aria-hidden className="h-3.5 w-3.5 flex-shrink-0" />;
+    return <span aria-hidden className="h-3.5 w-3.5 shrink-0" />;
   }
   return (
     <SelectCheckbox

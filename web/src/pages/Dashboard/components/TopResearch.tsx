@@ -31,7 +31,7 @@ const TopResearch: React.FC = () => {
             key={idx} 
             className="flex items-center space-x-4 p-3 rounded-lg hover:bg-accent cursor-pointer transition-colors"
           >
-            <div className="w-16 h-16 bg-gradient-to-br from-primary/20 via-blue-500/20 to-pink-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
+            <div className="w-16 h-16 bg-linear-to-br from-primary/20 via-blue-500/20 to-pink-500/20 rounded-lg flex items-center justify-center shrink-0">
               <div className="w-12 h-12 border-2 border-primary/50 rounded flex items-center justify-center">
                 <div className="w-8 h-8 border border-primary/30 rounded"></div>
               </div>

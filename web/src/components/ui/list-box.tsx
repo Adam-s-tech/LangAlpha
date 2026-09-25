@@ -27,9 +27,9 @@ function ListBox<T extends object>({
       className={composeRenderProps(className, (className) =>
         cn(
           className,
-          "group overflow-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md outline-none",
+          "group overflow-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md outline-hidden",
           /* Empty */
-          "data-[empty]:p-6 data-[empty]:text-center data-[empty]:text-sm"
+          "data-empty:p-6 data-empty:text-center data-empty:text-sm"
         )
       )}
       {...props}
@@ -51,17 +51,17 @@ const ListBoxItem = <T extends object>({
         cn(
           "relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm",
           /* Disabled */
-          "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+          "data-disabled:pointer-events-none data-disabled:opacity-50",
           /* Focused and hovered: the tint a menu item takes (dropdown-menu's
              ITEM_HIGHLIGHT), so every floating list marks its row alike */
-          "data-[focused]:bg-accent/15 data-[hovered]:bg-accent/15",
+          "data-focused:bg-accent/15 data-hovered:bg-accent/15",
           /* Keyboard focus: the inward ring tokens.css draws on a focused
              option. Colored here as well because a list driven from a search
              field moves a virtual focus, which :focus-visible never sees, and
              the tint alone would read the same as the row under the mouse */
-          "data-[focus-visible]:outline-current",
+          "data-focus-visible:outline-current",
           /* Selection */
-          "data-[selection-mode]:pl-8",
+          "data-selection-mode:pl-8",
           className
         )
       )}

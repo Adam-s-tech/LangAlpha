@@ -260,8 +260,8 @@ function WorkspaceGallery({ onWorkspaceSelect, prefetchThreads }: WorkspaceGalle
         <div className="chrome-drag-strip" aria-hidden="true" />
         <div className="flex-1 min-h-0 flex items-center justify-center">
           <div className="flex flex-col items-center gap-4">
-            <span aria-hidden="true" className="flex-shrink-0">
-              <Loader size={32} className="text-[color:var(--color-accent-primary)]" />
+            <span aria-hidden="true" className="shrink-0">
+              <Loader size={32} className="text-(--color-accent-primary)" />
             </span>
             <p className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
               {t('workspace.loadingWorkspaces')}
@@ -373,7 +373,7 @@ function WorkspaceGallery({ onWorkspaceSelect, prefetchThreads }: WorkspaceGalle
       <div className="chrome-drag-strip" aria-hidden="true" />
       {/* Header (desktop only) */}
       <header
-        className="hidden md:flex w-full items-start mx-auto max-w-4xl flex-shrink-0 px-8 pb-2 enter-fade-up"
+        className="hidden md:flex w-full items-start mx-auto max-w-4xl shrink-0 px-8 pb-2 enter-fade-up"
         style={{ paddingTop: 'calc(var(--page-top) - 4px)' }}
       >
         <div className="flex w-full items-center justify-between gap-4" style={{ minHeight: 36 }}>
@@ -407,13 +407,13 @@ function WorkspaceGallery({ onWorkspaceSelect, prefetchThreads }: WorkspaceGalle
         </div>
 
         {alertComputer && !isReorderMode && (
-          <div className="flex-shrink-0 px-1 pb-4 enter-fade-up">
+          <div className="shrink-0 px-1 pb-4 enter-fade-up">
             <DiskWarning computer={alertComputer} />
           </div>
         )}
 
         {hasWorkspaces && !isReorderMode && (
-        <div className="flex-shrink-0 flex flex-col gap-4 pb-4 md:pb-6 px-1 enter-fade-up enter-fade-up-d1">
+        <div className="shrink-0 flex flex-col gap-4 pb-4 md:pb-6 px-1 enter-fade-up enter-fade-up-d1">
           {/* Search Bar */}
           <div className="w-full">
             {/* The pill rings for the field inside it: a ring drawn on the
@@ -426,7 +426,7 @@ function WorkspaceGallery({ onWorkspaceSelect, prefetchThreads }: WorkspaceGalle
                 borderColor: 'var(--color-border-muted)',
               }}
             >
-              <Search className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+              <Search className="h-5 w-5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
               <input
                 className="w-full bg-transparent text-base sm:text-sm"
                 style={{ color: 'var(--color-text-primary)' }}
@@ -489,7 +489,7 @@ function WorkspaceGallery({ onWorkspaceSelect, prefetchThreads }: WorkspaceGalle
             {/* Pagination dots -- always rendered to keep scroll container height stable;
                 hidden via visibility when not needed to prevent layout oscillation */}
             <div
-              className="flex-shrink-0 py-3"
+              className="shrink-0 py-3"
               style={{
                 visibility: (!isSearching && totalPages > 1) ? 'visible' : 'hidden',
                 pointerEvents: (!isSearching && totalPages > 1) ? 'auto' : 'none',

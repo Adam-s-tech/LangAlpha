@@ -52,7 +52,7 @@ export function SegmentedControl<T extends string>({
       aria-label={label}
       className={
         compact
-          ? 'inline-flex rounded-md overflow-hidden clips-focus-ring flex-shrink-0'
+          ? 'inline-flex rounded-md overflow-hidden clips-focus-ring shrink-0'
           : 'inline-flex rounded-lg overflow-hidden clips-focus-ring'
       }
       style={{ border: '1px solid var(--color-border-muted)' }}

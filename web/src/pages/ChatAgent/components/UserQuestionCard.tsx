@@ -19,7 +19,7 @@ function OptionCheckbox({ id, label, checked, onChange, disabled }: OptionCheckb
     <label
       htmlFor={id}
       className={`flex items-center gap-3.5 cursor-pointer group py-2.5 px-3 rounded-lg transition-colors duration-200 ${
-        disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-[var(--color-border-muted)]'
+        disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-(--color-border-muted)'
       }`}
     >
       <div className="relative flex items-center justify-center">
@@ -37,8 +37,8 @@ function OptionCheckbox({ id, label, checked, onChange, disabled }: OptionCheckb
             transition-colors duration-200
             ${
               checked
-                ? 'bg-[var(--color-btn-primary-bg)] border-[var(--color-btn-primary-bg)]'
-                : 'bg-transparent border-[var(--color-border-muted)] group-hover:border-[var(--color-border-muted)]'
+                ? 'bg-(--color-btn-primary-bg) border-(--color-btn-primary-bg)'
+                : 'bg-transparent border-(--color-border-muted) group-hover:border-(--color-border-muted)'
             }
           `}
           whileHover={!disabled ? { scale: 1.08 } : {}}
@@ -52,7 +52,7 @@ function OptionCheckbox({ id, label, checked, onChange, disabled }: OptionCheckb
                 exit={{ scale: 0, opacity: 0 }}
                 transition={{ type: 'spring', stiffness: 500, damping: 25 }}
               >
-                <Check className="w-3.5 h-3.5 stroke-[3]" style={{ color: 'var(--color-btn-primary-text)' }} />
+                <Check className="w-3.5 h-3.5 stroke-3" style={{ color: 'var(--color-btn-primary-text)' }} />
               </motion.div>
             )}
           </AnimatePresence>
@@ -83,7 +83,7 @@ function OptionRadio({ label, onClick, disabled }: OptionRadioProps): React.Reac
       onClick={onClick}
       disabled={disabled}
       className={`flex items-center gap-3.5 w-full text-left py-2.5 px-3 rounded-lg transition-colors duration-200 ${
-        disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-[var(--color-border-muted)]'
+        disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-(--color-border-muted)'
       }`}
       whileHover={!disabled ? { x: 2 } : {}}
       whileTap={!disabled ? { scale: 0.99 } : {}}
@@ -123,7 +123,7 @@ function ResolvedOption({ label, isSelected, isMulti }: ResolvedOptionProps): Re
           borderColor: isSelected ? 'var(--color-btn-primary-bg)' : 'var(--color-border-muted)',
         }}
       >
-        {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" style={{ color: 'var(--color-btn-primary-text)' }} />}
+        {isSelected && <Check className="w-3.5 h-3.5 stroke-3" style={{ color: 'var(--color-btn-primary-text)' }} />}
       </div>
       <span
         className="text-sm tracking-wide"
@@ -193,14 +193,14 @@ function UserQuestionCard({ questionData, onAnswer, onSkip }: UserQuestionCardPr
             transition={{ duration: 0.2 }}
           >
             <ChevronRight
-              className="h-3.5 w-3.5 flex-shrink-0"
+              className="h-3.5 w-3.5 shrink-0"
               style={{ color: 'var(--color-icon-muted)' }}
             />
           </motion.div>
           {isAnswered ? (
-            <Check className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-light)' }} />
+            <Check className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-light)' }} />
           ) : (
-            <SkipForward className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-icon-muted)' }} />
+            <SkipForward className="h-4 w-4 shrink-0" style={{ color: 'var(--color-icon-muted)' }} />
           )}
           <span
             className="text-sm"
@@ -223,7 +223,7 @@ function UserQuestionCard({ questionData, onAnswer, onSkip }: UserQuestionCardPr
               <div className="pt-2 pb-1 pl-6">
                 {/* Question */}
                 <div className="flex items-start gap-2 pb-2">
-                  <HelpCircle className="h-3.5 w-3.5 flex-shrink-0 mt-1" style={{ color: 'var(--color-icon-muted)' }} />
+                  <HelpCircle className="h-3.5 w-3.5 shrink-0 mt-1" style={{ color: 'var(--color-icon-muted)' }} />
                   <div className="text-sm min-w-0" style={{ color: 'var(--color-text-tertiary)' }}>
                     <Markdown variant="compact" content={question} />
                   </div>
@@ -294,7 +294,7 @@ function UserQuestionCard({ questionData, onAnswer, onSkip }: UserQuestionCardPr
     >
       {/* Question text */}
       <div className="flex items-start gap-2 pb-2">
-        <HelpCircle className="h-4 w-4 flex-shrink-0 mt-1" style={{ color: 'var(--color-accent-light)' }} />
+        <HelpCircle className="h-4 w-4 shrink-0 mt-1" style={{ color: 'var(--color-accent-light)' }} />
         <div className="text-[0.9375rem] font-medium min-w-0" style={{ color: 'var(--color-text-primary)' }}>
           <Markdown variant="compact" content={question} />
         </div>
@@ -361,7 +361,7 @@ function UserQuestionCard({ questionData, onAnswer, onSkip }: UserQuestionCardPr
           value={otherText}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => setOtherText(e.target.value)}
           onKeyDown={handleOtherKeyDown}
-          className="flex-1 text-sm px-3 py-2 rounded-md transition-colors duration-200 focus:border-[var(--color-accent-overlay)]"
+          className="flex-1 text-sm px-3 py-2 rounded-md transition-colors duration-200 focus:border-(--color-accent-overlay)"
           style={{
             backgroundColor: 'var(--color-border-muted)',
             border: '1px solid var(--color-border-muted)',

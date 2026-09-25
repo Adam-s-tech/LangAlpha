@@ -425,7 +425,7 @@ function NavigationPanel({
               style={{ paddingLeft: 10, justifyContent: 'center' }}
               onClick={onLoadMore}
             >
-              <ChevronsDown className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+              <ChevronsDown className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
               <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
                 {t('nav.loadAll')}
               </span>

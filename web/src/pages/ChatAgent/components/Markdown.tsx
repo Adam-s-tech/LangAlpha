@@ -206,7 +206,7 @@ const ol = ({ node: _node, ...props }: MarkdownComponentProps) => (
   <ol className="list-decimal ml-4 my-1" style={{ color: 'var(--color-text-primary)' }} {...props} />
 );
 const li = ({ node: _node, ...props }: MarkdownComponentProps) => (
-  <li className="break-words" style={{ color: 'var(--color-text-primary)' }} {...props} />
+  <li className="wrap-break-word" style={{ color: 'var(--color-text-primary)' }} {...props} />
 );
 
 // ===================== CHAT variant =====================
@@ -217,10 +217,10 @@ const chatOl = ({ node: _node, ...props }: MarkdownComponentProps) => (
   <ol className="list-decimal ml-6 my-2" style={{ color: 'var(--color-text-primary)' }} {...props} />
 );
 const chatLi = ({ node: _node, ...props }: MarkdownComponentProps) => (
-  <li className="ps-[2px] break-words" style={{ color: 'var(--color-text-primary)' }} {...props} />
+  <li className="ps-[2px] wrap-break-word" style={{ color: 'var(--color-text-primary)' }} {...props} />
 );
 const chatP = ({ node: _node, ...props }: MarkdownComponentProps) => (
-  <p className="my-[1px] py-[3px] whitespace-pre-wrap break-words first:mt-0 last:mb-0" style={{ color: 'var(--color-text-primary)' }} {...props} />
+  <p className="my-px py-[3px] whitespace-pre-wrap wrap-break-word first:mt-0 last:mb-0" style={{ color: 'var(--color-text-primary)' }} {...props} />
 );
 const chatH1 = ({ node: _node, ...props }: MarkdownComponentProps) => (
   <h1 className="mt-[1.5em] mb-[0.5em] first:mt-0" style={{ color: 'var(--color-text-primary)', fontSize: '1.75em', fontWeight: 700, lineHeight: '1.3' }} {...props} />
@@ -276,7 +276,7 @@ const chatTbody = ({ node: _node, ...props }: MarkdownComponentProps) => <tbody 
 const chatTr = ({ node: _node, ...props }: MarkdownComponentProps) => <tr {...props} />;
 const chatTh = ({ node: _node, style, ...props }: MarkdownComponentProps) => (
   <th
-    className="align-top [&:not(:first-child)]:border-l"
+    className="align-top not-first:border-l"
     style={{
       textAlign: 'left',
       borderBottom: '1px solid var(--color-border-muted)',
@@ -292,7 +292,7 @@ const chatTh = ({ node: _node, style, ...props }: MarkdownComponentProps) => (
 );
 const chatTd = ({ node: _node, style, ...props }: MarkdownComponentProps) => (
   <td
-    className="align-top [&:not(:first-child)]:border-l"
+    className="align-top not-first:border-l"
     style={{
       textAlign: 'left',
       borderTop: '1px solid var(--color-border-muted)',
@@ -308,7 +308,7 @@ const chatTd = ({ node: _node, style, ...props }: MarkdownComponentProps) => (
 
 // ===================== PANEL variant =====================
 const panelP = ({ node: _node, ...props }: MarkdownComponentProps) => (
-  <p className="my-1 whitespace-pre-wrap break-words" style={{ color: 'var(--color-text-primary)' }} {...props} />
+  <p className="my-1 whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--color-text-primary)' }} {...props} />
 );
 const panelH1 = ({ node: _node, ...props }: MarkdownComponentProps) => (
   <h1 className="mt-[1.2em] mb-[0.4em] first:mt-0" style={{ color: 'var(--color-text-primary)', fontSize: '1.5em', fontWeight: 700, lineHeight: '1.3' }} {...props} />
@@ -363,12 +363,12 @@ const panelTh = ({ node: _node, ...props }: MarkdownComponentProps) => (
   <th className="px-3 py-2 whitespace-nowrap" style={{ color: 'var(--color-text-primary)', fontWeight: 600, borderBottom: '1px solid var(--color-border-muted)' }} {...props} />
 );
 const panelTd = ({ node: _node, ...props }: MarkdownComponentProps) => (
-  <td className="px-3 py-2 break-words align-top" style={{ color: 'var(--color-text-primary)' }} {...props} />
+  <td className="px-3 py-2 wrap-break-word align-top" style={{ color: 'var(--color-text-primary)' }} {...props} />
 );
 
 // ===================== COMPACT variant =====================
 const compactP = ({ node: _node, ...props }: MarkdownComponentProps) => (
-  <p className="my-[1px] py-[3px] whitespace-pre-wrap break-words first:mt-0 last:mb-0" style={{ color: 'var(--color-text-primary)' }} {...props} />
+  <p className="my-px py-[3px] whitespace-pre-wrap wrap-break-word first:mt-0 last:mb-0" style={{ color: 'var(--color-text-primary)' }} {...props} />
 );
 const compactH1 = ({ node: _node, ...props }: MarkdownComponentProps) => (
   <h1 className="mt-[0.8em] mb-[0.2em] first:mt-0" style={{ color: 'var(--color-text-primary)', fontSize: '1.25em', fontWeight: 700, lineHeight: '1.3' }} {...props} />
@@ -429,7 +429,7 @@ const compactTh = ({ node: _node, ...props }: MarkdownComponentProps) => (
   <th className="px-2 py-1.5 whitespace-nowrap" style={{ color: 'var(--color-text-primary)', fontWeight: 600, borderBottom: '1px solid var(--color-border-muted)' }} {...props} />
 );
 const compactTd = ({ node: _node, ...props }: MarkdownComponentProps) => (
-  <td className="px-2 py-1.5 break-words align-top" style={{ color: 'var(--color-text-primary)' }} {...props} />
+  <td className="px-2 py-1.5 wrap-break-word align-top" style={{ color: 'var(--color-text-primary)' }} {...props} />
 );
 
 const COMPACT_COMPONENTS = {
@@ -449,7 +449,7 @@ interface VariantConfig {
 
 const VARIANTS: Record<string, VariantConfig> = {
   chat: {
-    className: 'leading-[1.5] break-words max-w-none overflow-hidden',
+    className: 'leading-normal wrap-break-word max-w-none overflow-hidden',
     style: { color: 'var(--color-text-primary)' },
     components: CHAT_COMPONENTS,
   },

@@ -50,7 +50,7 @@ export default function HtmlFullscreenModal(props: HtmlFullscreenModalProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         variant="centered"
-        className={`html-fullscreen-modal !w-[95vw] !h-[90vh] !max-h-[90vh] !p-0 !overflow-hidden ${props.variant === 'widget' ? '!max-w-[940px]' : '!max-w-[1400px]'}`}
+        className={`html-fullscreen-modal w-[95vw]! h-[90vh]! max-h-[90vh]! p-0! overflow-hidden! ${props.variant === 'widget' ? 'max-w-[940px]!' : 'max-w-[1400px]!'}`}
         aria-describedby={undefined}
       >
         <DialogTitle className="sr-only">{title}</DialogTitle>

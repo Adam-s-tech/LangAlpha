@@ -33,7 +33,7 @@ export function SelectCheckbox({
       aria-label={label}
       disabled={disabled}
       onClick={onToggle}
-      className="flex-shrink-0 inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm p-0 transition-colors disabled:opacity-40"
+      className="shrink-0 inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm p-0 transition-colors disabled:opacity-40"
       style={{
         border: on ? 'none' : '1px solid var(--color-border-muted)',
         backgroundColor: on ? 'var(--color-accent-primary)' : 'transparent',

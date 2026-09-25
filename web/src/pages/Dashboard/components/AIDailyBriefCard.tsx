@@ -401,7 +401,7 @@ function AIDailyBriefCard({ onReadFull, instanceId }: AIDailyBriefCardProps) {
                 }}
               >
                 {generating ? (
-                  <span aria-hidden="true" className="flex-shrink-0">
+                  <span aria-hidden="true" className="shrink-0">
                     <Loader size={14} className="text-current" />
                   </span>
                 ) : <Sparkles size={14} />}
@@ -448,7 +448,7 @@ function AIDailyBriefCard({ onReadFull, instanceId }: AIDailyBriefCardProps) {
                 onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
               >
                 {generating ? (
-                  <span aria-hidden="true" className="flex-shrink-0">
+                  <span aria-hidden="true" className="shrink-0">
                     <Loader size={16} className="text-current" />
                   </span>
                 ) : <Sparkles size={16} />}
@@ -559,7 +559,7 @@ function AIDailyBriefCard({ onReadFull, instanceId }: AIDailyBriefCardProps) {
                           </span>
 
                           <span
-                            className="text-sm truncate flex-1 group-hover/item:text-[var(--color-text-primary)] transition-colors"
+                            className="text-sm truncate flex-1 group-hover/item:text-(--color-text-primary) transition-colors"
                           >
                             {item.headline}
                           </span>

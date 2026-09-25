@@ -203,7 +203,7 @@ function Plugins() {
                 <HeaderButton
                   variant="primary"
                   icon={Plus}
-                  className="transition-opacity hover:opacity-90 flex-shrink-0"
+                  className="transition-opacity hover:opacity-90 shrink-0"
                 >
                   {t('plugins.addMenu.add')}
                   <ChevronDown className="h-3 w-3" />
@@ -231,7 +231,7 @@ function Plugins() {
                 key={tab}
                 type="button"
                 onClick={() => handleTabChange(tab)}
-                className="relative px-4 py-2 text-sm font-medium whitespace-nowrap flex-shrink-0 transition-colors"
+                className="relative px-4 py-2 text-sm font-medium whitespace-nowrap shrink-0 transition-colors"
                 style={{
                   color: activeTab === tab ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
                 }}

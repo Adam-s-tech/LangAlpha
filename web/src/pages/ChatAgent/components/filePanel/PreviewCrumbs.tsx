@@ -37,7 +37,7 @@ export function PreviewCrumbs({ entry, onRefresh, workspaceId = null }: PreviewC
 
   return (
     <div className="file-panel-crumbs">
-      <LayoutDashboard className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-icon-muted)' }} />
+      <LayoutDashboard className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-icon-muted)' }} />
       <span className="file-panel-crumb is-file">{name}</span>
       <span className="file-panel-port-chip">:{entry.port}</span>
       <span className="file-panel-crumb-spacer" />
@@ -52,7 +52,7 @@ export function PreviewCrumbs({ entry, onRefresh, workspaceId = null }: PreviewC
         <button
           type="button"
           onClick={() => void copyLink()}
-          className="file-panel-icon-btn flex-shrink-0"
+          className="file-panel-icon-btn shrink-0"
           title={t('filePanel.copyPrivateLink')}
           aria-label={t('filePanel.copyPrivateLink')}
           disabled={!link}
@@ -65,7 +65,7 @@ export function PreviewCrumbs({ entry, onRefresh, workspaceId = null }: PreviewC
       <button
         type="button"
         onClick={onRefresh}
-        className="file-panel-icon-btn flex-shrink-0"
+        className="file-panel-icon-btn shrink-0"
         title={t('filePanel.reloadApp')}
         aria-label={t('filePanel.reloadApp')}
         disabled={entry.loading}
@@ -75,7 +75,7 @@ export function PreviewCrumbs({ entry, onRefresh, workspaceId = null }: PreviewC
       <button
         type="button"
         onClick={() => window.open(entry.url, '_blank', 'noopener,noreferrer')}
-        className="file-panel-icon-btn flex-shrink-0"
+        className="file-panel-icon-btn shrink-0"
         title={t('filePanel.openInBrowser')}
         aria-label={t('filePanel.openInBrowser')}
         disabled={!entry.url}

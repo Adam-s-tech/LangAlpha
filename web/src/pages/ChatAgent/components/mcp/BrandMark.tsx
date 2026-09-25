@@ -55,7 +55,7 @@ export function BrandMark({
       alt=""
       aria-hidden
       className={cn(
-        'flex-shrink-0 object-contain',
+        'shrink-0 object-contain',
         TILE_SIZES[size],
         // A logo drawn as a transparent dark glyph disappears on a dark
         // surface; the ones that ship that way say so and get a light bed.

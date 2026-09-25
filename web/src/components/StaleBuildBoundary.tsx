@@ -35,11 +35,11 @@ function StaleBuildFallback({ variant }: { variant: 'app' | 'pane' }) {
       ref={ref}
       tabIndex={-1}
       className={cn(
-        'flex flex-col items-center justify-center gap-4 px-6 text-center outline-none',
+        'flex flex-col items-center justify-center gap-4 px-6 text-center outline-hidden',
         // Not h-screen: 100vh sits behind mobile Safari's toolbar, which is
         // where the Reload button would land — and it is the only way out of
         // this screen. App.css makes the same swap for .app-layout.
-        variant === 'app' ? 'h-[100dvh]' : 'h-full',
+        variant === 'app' ? 'h-dvh' : 'h-full',
       )}
       style={{ color: 'var(--color-text-secondary)' }}
     >

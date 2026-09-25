@@ -45,7 +45,7 @@ export const ProviderCard = memo(function ProviderCard({
       className={cn(
         "relative flex flex-col items-center justify-center gap-2 cursor-pointer",
         "rounded-lg p-4 min-w-[80px] min-h-[64px] transition-colors select-none",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
       )}
       style={{
         border: selected

@@ -114,7 +114,7 @@ const ActivityBlock = memo(function ActivityBlock({
           className="inline-flex items-center gap-2 text-left bg-transparent border-0 p-0 cursor-pointer transition-colors hover:text-foreground"
           style={{ paddingTop: '5px', paddingBottom: '5px', fontSize: '0.8125rem', color: 'var(--Labels-Tertiary)' }}>
           <SettlingLabel text={summary ?? ''} />
-          <motion.span animate={{ rotate: expanded ? 90 : 0 }} transition={SPRING_FOLD} className="flex-shrink-0" style={{ opacity: 0.6 }}>
+          <motion.span animate={{ rotate: expanded ? 90 : 0 }} transition={SPRING_FOLD} className="shrink-0" style={{ opacity: 0.6 }}>
             <ChevronDown className="h-3.5 w-3.5 -rotate-90" />
           </motion.span>
         </button>

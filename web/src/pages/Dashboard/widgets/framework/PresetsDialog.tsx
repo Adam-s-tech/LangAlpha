@@ -49,7 +49,7 @@ export function PresetsDialog({ open, onOpenChange, onApply }: PresetsDialogProp
             </DialogDescription>
           </div>
           <div
-            className="flex items-center gap-1.5 text-[0.6875rem] px-2 py-1 rounded-full border flex-shrink-0"
+            className="flex items-center gap-1.5 text-[0.6875rem] px-2 py-1 rounded-full border shrink-0"
             style={{
               backgroundColor: 'var(--color-accent-soft)',
               borderColor: 'var(--color-accent-primary)',
@@ -157,7 +157,7 @@ export function PresetsDialog({ open, onOpenChange, onApply }: PresetsDialogProp
                   </span>
                   <button
                     type="button"
-                    className="h-8 px-3 rounded-md text-[0.75rem] whitespace-nowrap flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="h-8 px-3 rounded-md text-[0.75rem] whitespace-nowrap shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                     style={{
                       backgroundColor: 'var(--color-text-primary)',
                       color: 'var(--color-bg-card)',

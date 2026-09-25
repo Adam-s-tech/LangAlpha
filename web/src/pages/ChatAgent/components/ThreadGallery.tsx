@@ -561,8 +561,8 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
         <div className="chrome-drag-strip" aria-hidden="true" />
         <div className="flex-1 min-h-0 flex items-center justify-center">
           <div className="flex flex-col items-center gap-4">
-            <span aria-hidden="true" className="flex-shrink-0">
-              <Loader size={32} className="text-[color:var(--color-accent-primary)]" />
+            <span aria-hidden="true" className="shrink-0">
+              <Loader size={32} className="text-(--color-accent-primary)" />
             </span>
             <p className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
               {t('thread.loadingThreads')}
@@ -613,7 +613,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
             in the desktop shell: it is the top bar the content column already
             has, so it costs no layout, and the back button wins its own clicks
             back through the `no-drag` list in chrome.css. */}
-        <div className="flex-shrink-0 px-6 py-4 enter-fade-up" data-chrome="drag" style={{ paddingTop: 'calc(var(--page-top) - 4px)' }}>
+        <div className="shrink-0 px-6 py-4 enter-fade-up" data-chrome="drag" style={{ paddingTop: 'calc(var(--page-top) - 4px)' }}>
           <button
             onClick={onBack}
             className="p-2 rounded-md transition-colors"
@@ -714,7 +714,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
                             setShowFilePanel(true);
                           }}
                         >
-                          <FileText className="h-3.5 w-3.5 flex-shrink-0" />
+                          <FileText className="h-3.5 w-3.5 shrink-0" />
                           <span className="truncate">{fileName}</span>
                         </div>
                       );
@@ -807,7 +807,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
                   {hasNextPage && (
                     <div ref={loadMoreSentinelRef} className="flex items-center justify-center py-4">
                       {isFetchingNextPage && (
-                        <Loader size={20} className="text-[color:var(--color-accent-primary)]" />
+                        <Loader size={20} className="text-(--color-accent-primary)" />
                       )}
                     </div>
                   )}
@@ -826,16 +826,16 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
             animate={isMobile ? { x: 0 } : { width: filePanelWidth + DIVIDER_WIDTH, opacity: 1 }}
             exit={isMobile ? { x: '100%' } : { width: 0, opacity: 0 }}
             transition={{ duration: isDragging ? 0 : 0.25, ease: [0.22, 1, 0.36, 1] }}
-            className={isMobile ? 'flex overflow-hidden' : 'flex flex-shrink-0 overflow-hidden'}
+            className={isMobile ? 'flex overflow-hidden' : 'flex shrink-0 overflow-hidden'}
             style={isMobile ? { position: 'absolute', inset: 0, zIndex: 30 } : undefined}
           >
             {!isMobile && (
               <div
-                className="w-[4px] bg-transparent hover:bg-foreground/20 cursor-col-resize flex-shrink-0 transition-colors"
+                className="w-[4px] bg-transparent hover:bg-foreground/20 cursor-col-resize shrink-0 transition-colors"
                 onMouseDown={handleDividerMouseDown}
               />
             )}
-            <div className="flex-shrink-0" style={{ width: isMobile ? '100%' : filePanelWidth }}>
+            <div className="shrink-0" style={{ width: isMobile ? '100%' : filePanelWidth }}>
               <FilePanel
                 workspaceId={workspaceId}
                 onClose={() => setShowFilePanel(false)}

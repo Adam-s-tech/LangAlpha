@@ -129,7 +129,7 @@ export default function PreviewViewer({ url, port, title, loading: externalLoadi
         <>
           {loading && !showDragOverlay && (
             <div className="preview-viewer-loading">
-              <Loader size={24} className="text-[color:var(--color-text-tertiary)]" />
+              <Loader size={24} className="text-(--color-text-tertiary)" />
             </div>
           )}
           {showDragOverlay && (

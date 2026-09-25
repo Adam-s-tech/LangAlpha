@@ -162,7 +162,7 @@ function ModelOption({ model, metadata, selected, onPick }: {
   return (
     <DropdownMenuItem variant="setting" onSelect={onPick} style={{ color: 'var(--color-text-primary)' }}>
       <span>{getModelDisplayName(model, metadata)}</span>
-      {selected && <Check className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />}
+      {selected && <Check className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />}
     </DropdownMenuItem>
   );
 }

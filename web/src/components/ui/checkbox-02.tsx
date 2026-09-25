@@ -66,7 +66,7 @@ export const PremiumCheckbox = ({
                     damping: 25
                   }}
                 >
-                  <Check className="w-5 h-5 text-black stroke-[3]" />
+                  <Check className="w-5 h-5 text-black stroke-3" />
                 </motion.div>
               )}
             </AnimatePresence>

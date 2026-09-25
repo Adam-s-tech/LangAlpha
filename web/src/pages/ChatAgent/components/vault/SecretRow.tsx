@@ -58,7 +58,7 @@ export function SecretRow({
           </p>
         )}
       </div>
-      <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+      <div className="flex items-center gap-1 shrink-0 ml-2">
         <button
           type="button"
           onClick={onToggleReveal}

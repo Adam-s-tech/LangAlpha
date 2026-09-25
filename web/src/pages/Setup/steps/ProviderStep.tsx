@@ -109,7 +109,7 @@ export default function ProviderStep() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader size={20} className="text-[color:var(--color-text-tertiary)]" />
+        <Loader size={20} className="text-(--color-text-tertiary)" />
       </div>
     );
   }

@@ -69,7 +69,7 @@ function fmtTime(iso?: string): string {
 function MetaRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex gap-3 py-1">
-      <span className="flex-shrink-0" style={{ width: 92, color: 'var(--color-text-tertiary)' }}>
+      <span className="shrink-0" style={{ width: 92, color: 'var(--color-text-tertiary)' }}>
         {label}
       </span>
       <span style={{ color: 'var(--color-text-primary)' }}>{value}</span>

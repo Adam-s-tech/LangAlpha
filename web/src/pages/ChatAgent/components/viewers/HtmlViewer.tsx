@@ -106,7 +106,7 @@ export default function HtmlViewer({
       return (
         <div className="flex flex-col items-center justify-center gap-3 py-12 text-sm" role="alert">
           <span className="flex items-center gap-2" style={{ color: 'var(--color-text-secondary)' }}>
-            <AlertCircle className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-icon-danger)' }} />
+            <AlertCircle className="h-4 w-4 shrink-0" style={{ color: 'var(--color-icon-danger)' }} />
             {t('filePanel.htmlPreviewFailed')}
           </span>
           <Button variant="outline" size="sm" onClick={served.retry}>
@@ -117,7 +117,7 @@ export default function HtmlViewer({
     }
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader size={20} className="text-[color:var(--color-text-tertiary)]" />
+        <Loader size={20} className="text-(--color-text-tertiary)" />
       </div>
     );
   };

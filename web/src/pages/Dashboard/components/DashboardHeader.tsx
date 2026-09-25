@@ -160,7 +160,7 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({ onScrollToTop, layout
               {/* "/" shortcut badge */}
               {!searchFocused && !searchValue && (
                 <span
-                  className="text-xs border rounded px-1.5 py-0.5 flex-shrink-0"
+                  className="text-xs border rounded px-1.5 py-0.5 shrink-0"
                   style={{
                     color: 'var(--color-text-quaternary, var(--color-text-secondary))',
                     borderColor: 'var(--color-border-default)',
@@ -312,7 +312,7 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({ onScrollToTop, layout
                     style={{ backgroundColor: 'var(--color-bg-input)', marginBottom: idx < arr.length - 1 ? '8px' : undefined }}
                     onClick={() => setShowHelpPopover(false)}
                   >
-                    <Mail className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+                    <Mail className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
                     <div className="min-w-0">
                       <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>{t('dashboard.classic.emailLabel')}</p>
                       <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{email.trim()}</p>

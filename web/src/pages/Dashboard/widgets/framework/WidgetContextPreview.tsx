@@ -76,7 +76,7 @@ function renderStructuredValue(v: unknown, depth: number, maxDepth = 4): React.R
         return <span title={v}>{d.toLocaleString()}</span>;
       }
     }
-    return <span className="break-words whitespace-pre-wrap">{v}</span>;
+    return <span className="wrap-break-word whitespace-pre-wrap">{v}</span>;
   }
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   if (Array.isArray(v)) {
@@ -108,7 +108,7 @@ function renderStructuredValue(v: unknown, depth: number, maxDepth = 4): React.R
             >
               {humanizeKey(k)}
             </dt>
-            <dd className="break-words text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+            <dd className="wrap-break-word text-sm" style={{ color: 'var(--color-text-secondary)' }}>
               {renderStructuredValue(val, depth + 1, maxDepth)}
             </dd>
           </div>

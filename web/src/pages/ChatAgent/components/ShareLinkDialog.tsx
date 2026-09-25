@@ -39,11 +39,11 @@ function FileRow({ entry, notShared, t }: {
         {dir && <span style={{ color: 'var(--color-text-tertiary)' }}>{dir}/</span>}
         <span style={{ color: 'var(--color-text-primary)' }}>{basename(entry.path)}</span>
       </span>
-      <span className="flex-shrink-0 tabular-nums" style={{ color: 'var(--color-text-tertiary)' }}>
+      <span className="shrink-0 tabular-nums" style={{ color: 'var(--color-text-tertiary)' }}>
         {formatBytes(entry.size)}
       </span>
       <span
-        className="flex-shrink-0 w-20 text-right"
+        className="shrink-0 w-20 text-right"
         style={{ color: notShared ? 'var(--color-warning)' : 'var(--color-text-quaternary)' }}
       >
         {notShared ? t('shareLink.notSharedYet') : t(`shareLink.reason.${entry.reason}`)}
@@ -166,8 +166,8 @@ function ShareLinkDialog({ open, workspaceId, filePath, onClose }: ShareLinkDial
           >
             <div className="flex items-center gap-2 min-w-0">
               {link?.shared
-                ? <Link2 className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
-                : <Lock className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />}
+                ? <Link2 className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+                : <Lock className="h-4 w-4 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />}
               <div className="flex flex-col min-w-0">
                 <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
                   {t('shareLink.anyoneWithLink')}
@@ -178,7 +178,7 @@ function ShareLinkDialog({ open, workspaceId, filePath, onClose }: ShareLinkDial
               </div>
             </div>
             {busy
-              ? <Loader size={16} className="text-[color:var(--color-text-tertiary)]" />
+              ? <Loader size={16} className="text-(--color-text-tertiary)" />
               : (
                 <ToggleSwitch
                   checked={!!link?.shared}
@@ -210,7 +210,7 @@ function ShareLinkDialog({ open, workspaceId, filePath, onClose }: ShareLinkDial
               <span>{addedPaths.size > 0 ? t('shareLink.drift') : t('shareLink.driftRemoved')}</span>
               <Button
                 size="sm"
-                className="h-7 flex-shrink-0 px-2.5 text-xs"
+                className="h-7 shrink-0 px-2.5 text-xs"
                 onClick={shareListed}
                 disabled={busy || !listReady}
               >
@@ -235,7 +235,7 @@ function ShareLinkDialog({ open, workspaceId, filePath, onClose }: ShareLinkDial
               >
                 {filesQuery.isLoading || !link ? (
                   <div className="flex justify-center">
-                    <Loader size={16} className="text-[color:var(--color-text-tertiary)]" />
+                    <Loader size={16} className="text-(--color-text-tertiary)" />
                   </div>
                 ) : filesQuery.isError ? (
                   <p className="px-3 py-2 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>

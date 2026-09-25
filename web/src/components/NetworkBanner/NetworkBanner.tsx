@@ -26,7 +26,7 @@ export default function NetworkBanner() {
     <div
       role="status"
       aria-live="polite"
-      className="relative z-[1020] shrink-0 flex items-center justify-center gap-2 px-4 py-2 text-xs font-medium border-b"
+      className="relative z-1020 shrink-0 flex items-center justify-center gap-2 px-4 py-2 text-xs font-medium border-b"
       style={{
         backgroundColor: 'var(--color-warning-soft)',
         color: 'var(--color-warning)',

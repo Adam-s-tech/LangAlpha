@@ -31,7 +31,7 @@ function Notice({ icon, title, body }: { icon: React.ReactNode; title: string; b
       {icon}
       <div className="min-w-0 space-y-1">
         <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{title}</p>
-        {body && <p className="text-xs break-words" style={{ color: 'var(--color-text-tertiary)' }}>{body}</p>}
+        {body && <p className="text-xs wrap-break-word" style={{ color: 'var(--color-text-tertiary)' }}>{body}</p>}
       </div>
     </div>
   );
@@ -44,7 +44,7 @@ export function DirectToolResultView({ result }: { result: DirectToolResult }): 
     case 'refused':
       return (
         <Notice
-          icon={<Ban className="h-4 w-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--color-text-tertiary)' }} />}
+          icon={<Ban className="h-4 w-4 shrink-0 mt-0.5" style={{ color: 'var(--color-text-tertiary)' }} />}
           title={t('toolArtifact.directTool.refused')}
           body={result.reason}
         />
@@ -52,7 +52,7 @@ export function DirectToolResultView({ result }: { result: DirectToolResult }): 
     case 'rejected':
       return (
         <Notice
-          icon={<XCircle className="h-4 w-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--color-text-tertiary)' }} />}
+          icon={<XCircle className="h-4 w-4 shrink-0 mt-0.5" style={{ color: 'var(--color-text-tertiary)' }} />}
           title={t('toolArtifact.directTool.rejected')}
           body={directToolRejectionReason(result.reason) || undefined}
         />

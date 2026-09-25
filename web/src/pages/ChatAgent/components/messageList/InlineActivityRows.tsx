@@ -48,7 +48,7 @@ export const ToolCallLiveRow = memo(function ToolCallLiveRow({ tc, liveState }: 
       transition={{ duration: 0.25, ease: 'easeOut' }}
       style={{ fontSize: '0.8125rem', color: 'var(--Labels-Secondary)' }}
     >
-      <div className="relative flex-shrink-0 flex items-center justify-center h-5 w-5">
+      <div className="relative shrink-0 flex items-center justify-center h-5 w-5">
         <motion.span
           animate={isInProgress ? { opacity: [0.85, 1, 0.85] } : { opacity: 1 }}
           transition={isInProgress ? { duration: 1.5, repeat: Infinity, ease: 'easeInOut' } : { duration: 0.2 }}
@@ -81,7 +81,7 @@ export const ToolCallLiveRow = memo(function ToolCallLiveRow({ tc, liveState }: 
         </TextShimmer>
       ) : (
         <>
-          <span className="font-medium flex-shrink-0 whitespace-nowrap">{completedTitle}</span>
+          <span className="font-medium shrink-0 whitespace-nowrap">{completedTitle}</span>
           {summary
             ? <span className="truncate min-w-0" style={{ opacity: 0.55 }}>&mdash; {summary}</span>
             : <span style={{ opacity: 0.55 }}>{t('toolArtifact.done')}</span>}
@@ -116,10 +116,10 @@ export function PreparingToolCallRow({ tc }: PreparingToolCallRowProps): React.R
       }}
     >
       <DotLoader
-        className="flex-shrink-0 gap-px"
+        className="shrink-0 gap-px"
         dotClassName="bg-foreground/15 [&.active]:bg-foreground size-[1.5px]"
       />
-      <span className="flex-shrink-0 flex items-center justify-center h-5 w-5">
+      <span className="shrink-0 flex items-center justify-center h-5 w-5">
         <IconComponent className="h-4 w-4" />
       </span>
       <span className="font-medium">{displayName}</span>

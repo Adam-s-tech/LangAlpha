@@ -50,7 +50,7 @@ function Settings() {
             <button
               type="button"
               onClick={() => handleTabChange('userInfo')}
-              className="px-4 py-2 text-sm font-medium whitespace-nowrap flex-shrink-0"
+              className="px-4 py-2 text-sm font-medium whitespace-nowrap shrink-0"
               style={{
                 color: activeTab === 'userInfo' ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
                 borderBottom: activeTab === 'userInfo' ? '2px solid var(--color-accent-primary)' : '2px solid transparent',
@@ -61,7 +61,7 @@ function Settings() {
             <button
               type="button"
               onClick={() => handleTabChange('preferences')}
-              className="px-4 py-2 text-sm font-medium whitespace-nowrap flex-shrink-0"
+              className="px-4 py-2 text-sm font-medium whitespace-nowrap shrink-0"
               style={{
                 color: activeTab === 'preferences' ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
                 borderBottom: activeTab === 'preferences' ? '2px solid var(--color-accent-primary)' : '2px solid transparent',
@@ -72,7 +72,7 @@ function Settings() {
             <button
               type="button"
               onClick={() => handleTabChange('model')}
-              className="px-4 py-2 text-sm font-medium whitespace-nowrap flex-shrink-0"
+              className="px-4 py-2 text-sm font-medium whitespace-nowrap shrink-0"
               style={{
                 color: activeTab === 'model' ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
                 borderBottom: activeTab === 'model' ? '2px solid var(--color-accent-primary)' : '2px solid transparent',
@@ -83,7 +83,7 @@ function Settings() {
             <button
               type="button"
               onClick={() => handleTabChange('experiments')}
-              className="px-4 py-2 text-sm font-medium whitespace-nowrap flex-shrink-0"
+              className="px-4 py-2 text-sm font-medium whitespace-nowrap shrink-0"
               style={{
                 color: activeTab === 'experiments' ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
                 borderBottom: activeTab === 'experiments' ? '2px solid var(--color-accent-primary)' : '2px solid transparent',

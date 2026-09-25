@@ -110,14 +110,14 @@ function TodoDrawer({ todoData }: { todoData: TodoData | null }) {
         <StepperTrack items={planItems} />
 
         <span
-          className="text-xs tabular-nums flex-shrink-0"
+          className="text-xs tabular-nums shrink-0"
           style={{ color: 'var(--color-text-quaternary)' }}
         >
           {doneCount}/{total}
         </span>
 
         <motion.div
-          className="flex-shrink-0"
+          className="shrink-0"
           style={{ color: 'var(--color-icon-muted)' }}
           animate={{ rotate: isExpanded ? 180 : 0 }}
           transition={{ duration: 0.2, ease: EASING }}
@@ -142,7 +142,7 @@ function TodoDrawer({ todoData }: { todoData: TodoData | null }) {
               <div key={`preview-${index}`} className="flex items-center gap-1.5">
                 {item.status === 'in_progress' && (
                   <motion.div
-                    className="flex-shrink-0 rounded-full"
+                    className="shrink-0 rounded-full"
                     style={{
                       width: 4,
                       height: 4,

@@ -61,7 +61,7 @@ function SelectAllBox({
       aria-checked={state === 'some' ? 'mixed' : state === 'all'}
       aria-label={label}
       onClick={onToggle}
-      className="flex-shrink-0 inline-flex h-4 w-4 items-center justify-center rounded"
+      className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded"
       style={{
         border: filled ? 'none' : '1px solid var(--color-border-muted)',
         backgroundColor: filled ? 'var(--color-accent-primary)' : 'transparent',
@@ -186,7 +186,7 @@ export function GroupDeck({
   const heading = (
     <>
       <Icon
-        className="h-3.5 w-3.5 flex-shrink-0"
+        className="h-3.5 w-3.5 shrink-0"
         style={{ color: 'var(--color-text-tertiary)' }}
       />
       <h3
@@ -229,7 +229,7 @@ export function GroupDeck({
               {heading}
               {!forceExpanded && (
                 <Chevron
-                  className="h-3 w-3 flex-shrink-0"
+                  className="h-3 w-3 shrink-0"
                   style={{ color: 'var(--color-text-tertiary)' }}
                 />
               )}
@@ -240,14 +240,14 @@ export function GroupDeck({
           {badge}
           {tally && (
             <span
-              className="text-[0.6875rem] flex-shrink-0"
+              className="text-[0.6875rem] shrink-0"
               style={{ color: 'var(--color-text-tertiary)' }}
             >
               {tally}
             </span>
           )}
         </div>
-        {action && <div className="flex items-center flex-shrink-0">{action}</div>}
+        {action && <div className="flex items-center shrink-0">{action}</div>}
       </div>
       {/* The body: every row stays mounted in one list (so a caller's
           AnimatePresence keeps working) inside a clip whose height animates
@@ -287,7 +287,7 @@ export function GroupDeck({
             // gap survives until unmount and snaps away in one frame.
             className={`flex flex-col [&>*+*]:mt-1.5${expanded ? '' : ' pointer-events-none'}${
               coverOpens
-                ? ' group-hover/cover:[&>*:first-child]:bg-[var(--color-bg-card-hover)]'
+                ? ' [&>*:first-child]:group-hover/cover:bg-(--color-bg-card-hover)'
                 : ''
             }`}
           >

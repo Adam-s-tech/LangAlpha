@@ -34,9 +34,9 @@ function DetailPanel({ toolCallProcess, planData, onOpenFile, onOpenSubagentTask
     return (
       <div className={isMobile ? '' : 'h-full flex flex-col'} style={{ backgroundColor: 'transparent' }}>
         {isMobile && (
-          <div className="flex items-center justify-between px-4 py-3 flex-shrink-0">
+          <div className="flex items-center justify-between px-4 py-3 shrink-0">
             <div className="flex items-center gap-2 min-w-0">
-              <Zap className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+              <Zap className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
               <span
                 className="font-semibold truncate"
                 style={{ color: 'var(--color-text-primary)', fontSize: '0.875rem' }}
@@ -81,15 +81,15 @@ function DetailPanel({ toolCallProcess, planData, onOpenFile, onOpenSubagentTask
       style={{ backgroundColor: 'transparent' }}
     >
       {isMobile && (
-        <div className="flex items-center justify-between px-4 py-3 flex-shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             {isTask ? (
-              <img src={isSubagentLive ? iconRoboSing : iconRobo} alt="Subagent" className="w-5 h-5 flex-shrink-0" />
+              <img src={isSubagentLive ? iconRoboSing : iconRobo} alt="Subagent" className="w-5 h-5 shrink-0" />
             ) : (
               <ToolIcon
                 toolName={toolName}
                 args={toolArgs}
-                className="h-4 w-4 flex-shrink-0"
+                className="h-4 w-4 shrink-0"
                 style={{ color: isFailed ? 'var(--color-loss)' : 'var(--color-accent-primary)' }}
               />
             )}
@@ -101,7 +101,7 @@ function DetailPanel({ toolCallProcess, planData, onOpenFile, onOpenSubagentTask
             </span>
             {isFailed && (
               <XCircle
-                className="h-4 w-4 flex-shrink-0"
+                className="h-4 w-4 shrink-0"
                 aria-label={t('toolArtifact.a11y.toolCallFailed')}
                 style={{ color: 'var(--color-loss)' }}
               />

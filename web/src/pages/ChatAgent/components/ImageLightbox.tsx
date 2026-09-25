@@ -36,7 +36,7 @@ function ImageLightbox({ src, alt, open, onClose }: ImageLightboxProps) {
   // the overlay token, which lightens to 45% black under the light palette.
   return createPortal(
     <div
-      className="fixed inset-0 z-[1020] flex items-center justify-center bg-black/90 scrim-in"
+      className="fixed inset-0 z-1020 flex items-center justify-center bg-black/90 scrim-in"
       {...backdrop}
     >
       <button

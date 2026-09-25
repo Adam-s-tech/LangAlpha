@@ -27,13 +27,13 @@ export function QueuedAutomationNotice({ threadId, active }: { threadId: string;
             className="flex items-center gap-2 px-3 py-1.5 text-xs"
             style={{ color: 'var(--color-text-tertiary)' }}
           >
-            <Clock aria-hidden="true" className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+            <Clock aria-hidden="true" className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
             <span className="min-w-0 truncate" title={line}>
               {line}
             </span>
             <button
               type="button"
-              className="ml-auto flex-shrink-0 text-xs underline-offset-2 hover:underline"
+              className="ml-auto shrink-0 text-xs underline-offset-2 hover:underline"
               style={{ color: 'var(--color-text-secondary)' }}
               disabled={busy}
               onClick={() => skip.mutate({ automationId: run.automation_id, executionId: run.automation_execution_id })}

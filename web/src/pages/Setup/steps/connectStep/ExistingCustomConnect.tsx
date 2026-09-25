@@ -178,8 +178,8 @@ export function ExistingCustomConnect({ state }: { state: LocationState }) {
             </label>
             {loadingModels && (
               <div className="flex items-center gap-2 py-4 justify-center">
-                <span aria-hidden="true" className="flex-shrink-0">
-                  <Loader size={16} className="text-[color:var(--color-text-tertiary)]" />
+                <span aria-hidden="true" className="shrink-0">
+                  <Loader size={16} className="text-(--color-text-tertiary)" />
                 </span>
                 <span className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
                   {t('setup.fetchingModels', { defaultValue: 'Fetching models...' })}
@@ -188,7 +188,7 @@ export function ExistingCustomConnect({ state }: { state: LocationState }) {
             )}
             {modelsError && (
               <div className="flex items-center gap-2 py-2">
-                <AlertTriangle className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-warning, #f59e0b)' }} />
+                <AlertTriangle className="h-4 w-4 shrink-0" style={{ color: 'var(--color-warning, #f59e0b)' }} />
                 <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
                   {modelsError}
                 </span>
@@ -217,7 +217,7 @@ export function ExistingCustomConnect({ state }: { state: LocationState }) {
                       }}
                     >
                       <div
-                        className="flex-shrink-0 h-4 w-4 rounded border flex items-center justify-center"
+                        className="shrink-0 h-4 w-4 rounded border flex items-center justify-center"
                         style={{
                           borderColor: selectedModelIds.has(m.id)
                             ? 'var(--color-accent-primary)'
@@ -354,7 +354,7 @@ export function ExistingCustomConnect({ state }: { state: LocationState }) {
           >
             {saving ? (
               <>
-                <span aria-hidden="true" className="mr-1.5 flex-shrink-0">
+                <span aria-hidden="true" className="mr-1.5 shrink-0">
                   <Loader size={16} className="text-current" />
                 </span>
                 {t('setup.saving')}

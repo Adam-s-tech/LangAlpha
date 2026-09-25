@@ -143,7 +143,7 @@ export function BrokerageConsentDialog({
                       </p>
                     )}
                   </div>
-                  <div className="flex-shrink-0 pt-0.5">
+                  <div className="shrink-0 pt-0.5">
                     <EnabledToggle
                       enabled={granted.includes(group.key)}
                       name={groupLabel}

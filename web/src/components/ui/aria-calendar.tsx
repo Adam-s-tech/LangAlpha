@@ -55,7 +55,7 @@ function Calendar<T extends AriaDateValue>({
 }
 
 const NAV_BUTTON =
-  "inline-flex size-7 items-center justify-center rounded-md text-[color:var(--color-text-secondary)] data-[hovered]:bg-[color:var(--color-bg-hover)] data-[hovered]:text-[color:var(--color-text-primary)] data-[disabled]:cursor-default data-[disabled]:opacity-35"
+  "inline-flex size-7 items-center justify-center rounded-md text-(--color-text-secondary) data-hovered:bg-(--color-bg-hover) data-hovered:text-(--color-text-primary) data-disabled:cursor-default data-disabled:opacity-35"
 
 /** The month and year, with the page turners set to its right. */
 function CalendarHeading({
@@ -75,7 +75,7 @@ function CalendarHeading({
         className
       )}
     >
-      <AriaHeading className="text-[0.8125rem] font-semibold text-[color:var(--color-text-primary)]" />
+      <AriaHeading className="text-[0.8125rem] font-semibold text-(--color-text-primary)" />
       <div className="flex gap-0.5">
         <AriaButton slot="previous" aria-label={previousLabel} className={NAV_BUTTON}>
           <ChevronLeft aria-hidden="true" className="size-[15px]" />
@@ -106,7 +106,7 @@ const CalendarHeaderCell = ({
 }: AriaCalendarHeaderCellProps) => (
   <AriaCalendarHeaderCell
     className={cn(
-      "py-1 text-center font-mono text-[0.6875rem] font-normal text-[color:var(--color-text-tertiary)]",
+      "py-1 text-center font-mono text-[0.6875rem] font-normal text-(--color-text-tertiary)",
       className
     )}
     {...props}
@@ -126,12 +126,12 @@ function CalendarCell({ className, date, ...props }: AriaCalendarCellProps) {
       data-zone-today={today && date.compare(today) === 0 ? "" : undefined}
       className={composeRenderProps(className, (className) =>
         cn(
-          "relative flex h-8 w-[34px] cursor-default items-center justify-center rounded-md text-[0.8125rem] tabular-nums text-[color:var(--color-text-primary)] transition-colors",
-          "[&[data-hovered]:not([data-selected])]:bg-[color:var(--color-bg-hover)]",
-          "data-[disabled]:text-[color:var(--color-text-quaternary)]",
-          "data-[outside-month]:invisible",
-          "data-[selected]:bg-[color:var(--color-btn-primary-bg)] data-[selected]:font-semibold data-[selected]:text-[color:var(--color-btn-primary-text)]",
-          "data-[zone-today]:after:absolute data-[zone-today]:after:bottom-1 data-[zone-today]:after:left-1/2 data-[zone-today]:after:size-[3px] data-[zone-today]:after:-translate-x-1/2 data-[zone-today]:after:rounded-full data-[zone-today]:after:bg-[color:var(--color-accent-primary)]",
+          "relative flex h-8 w-[34px] cursor-default items-center justify-center rounded-md text-[0.8125rem] tabular-nums text-(--color-text-primary) transition-colors",
+          "[&[data-hovered]:not([data-selected])]:bg-(--color-bg-hover)",
+          "data-disabled:text-(--color-text-quaternary)",
+          "data-outside-month:invisible",
+          "data-selected:bg-(--color-btn-primary-bg) data-selected:font-semibold data-selected:text-(--color-btn-primary-text)",
+          "data-zone-today:after:absolute data-zone-today:after:bottom-1 data-zone-today:after:left-1/2 data-zone-today:after:size-[3px] data-zone-today:after:-translate-x-1/2 data-zone-today:after:rounded-full data-zone-today:after:bg-(--color-accent-primary)",
           className
         )
       )}

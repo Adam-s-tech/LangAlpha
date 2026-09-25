@@ -72,7 +72,7 @@ export function SpecChangeProgress({
       style={{ color: 'var(--color-text-secondary)' }}
     >
       <span aria-hidden="true" className="inline-flex">
-        <Loader size={12} className="text-[color:var(--color-accent-primary)]" />
+        <Loader size={12} className="text-(--color-accent-primary)" />
       </span>
       {specChangeLabel(t, change)}
     </span>

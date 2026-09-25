@@ -198,7 +198,7 @@ export function FallbackModelsPicker({
                       <span>{modelLabel(m, metadata)}</span>
                       {isSelected && (
                         <Pin
-                          className="h-3 w-3 flex-shrink-0"
+                          className="h-3 w-3 shrink-0"
                           style={{ color: "var(--color-accent-primary)" }}
                         />
                       )}

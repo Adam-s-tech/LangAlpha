@@ -55,7 +55,7 @@ function WorkspaceTile({
         <div className="flex items-center gap-2 min-w-0">
           {isFlash ? (
             <Zap
-              className="h-3.5 w-3.5 flex-shrink-0"
+              className="h-3.5 w-3.5 shrink-0"
               style={{ color: 'var(--color-accent-primary)' }}
               fill="currentColor"
             />
@@ -78,7 +78,7 @@ function WorkspaceTile({
           </span>
         </div>
         <ArrowUpRight
-          className="h-3.5 w-3.5 flex-shrink-0 opacity-0 -translate-x-0.5 translate-y-0.5 transition-all duration-200 group-hover:opacity-100 group-hover:translate-x-0 group-hover:translate-y-0"
+          className="h-3.5 w-3.5 shrink-0 opacity-0 -translate-x-0.5 translate-y-0.5 transition-all duration-200 group-hover:opacity-100 group-hover:translate-x-0 group-hover:translate-y-0"
           style={{ color: 'var(--color-text-secondary)' }}
         />
       </div>
@@ -167,7 +167,7 @@ function WorkspacePickerWidget({ instance }: WidgetRenderProps<WorkspacePickerCo
     <div className="dashboard-glass-card p-5 flex flex-col h-full">
       <div className="flex items-baseline justify-between mb-4 pb-3 border-b" style={{ borderColor: 'var(--color-border-muted)' }}>
         <div className="flex items-baseline gap-2.5 min-w-0">
-          <LayoutGrid className="h-3.5 w-3.5 flex-shrink-0 self-center" style={{ color: 'var(--color-text-tertiary)' }} />
+          <LayoutGrid className="h-3.5 w-3.5 shrink-0 self-center" style={{ color: 'var(--color-text-tertiary)' }} />
           <span
             className="text-[0.625rem] font-semibold uppercase tracking-[0.14em]"
             style={{ color: 'var(--color-text-secondary)' }}

@@ -77,12 +77,12 @@ function ThreadCard({ thread, onClick, onDelete, onRename, onArchive, onUnarchiv
         <span
           role="img"
           aria-label="Waiting for your input"
-          className="w-2 h-2 rounded-full flex-shrink-0"
+          className="w-2 h-2 rounded-full shrink-0"
           style={{ border: '1.5px solid var(--color-accent-primary)' }}
         />
       ) : (
         <div
-          className={`w-2 h-2 rounded-full flex-shrink-0${isRunning ? ' animate-pulse' : ''}`}
+          className={`w-2 h-2 rounded-full shrink-0${isRunning ? ' animate-pulse' : ''}`}
           style={{ backgroundColor: dotColor }}
         />
       )}
@@ -96,7 +96,7 @@ function ThreadCard({ thread, onClick, onDelete, onRename, onArchive, onUnarchiv
               role="img"
               aria-label={t('share.anyoneWithLink')}
               title={t('share.anyoneWithLink')}
-              className="inline-flex flex-shrink-0"
+              className="inline-flex shrink-0"
               style={{ color: 'var(--color-accent-primary)' }}
             >
               <Link2 className="h-3.5 w-3.5" aria-hidden />
@@ -149,7 +149,7 @@ function ThreadCard({ thread, onClick, onDelete, onRename, onArchive, onUnarchiv
           {onDelete && (
             <button
               onClick={handleDeleteClick}
-              className="p-1.5 rounded-md transition-colors hover:bg-[var(--color-danger-hover-bg)]"
+              className="p-1.5 rounded-md transition-colors hover:bg-(--color-danger-hover-bg)"
               style={{ color: 'var(--color-loss)' }}
               title="Delete thread"
             >

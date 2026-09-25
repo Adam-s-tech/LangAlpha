@@ -28,7 +28,7 @@ function CardMenu({ workspace, onTogglePin, onRename, onDuplicate, onDelete }: C
       <DropdownMenuTrigger asChild>
         <button
           onPointerDown={(e) => e.stopPropagation()}
-          className="h-8 w-8 rounded-md transition-colors flex items-center justify-center hover:bg-[var(--color-border-muted)]"
+          className="h-8 w-8 rounded-md transition-colors flex items-center justify-center hover:bg-(--color-border-muted)"
           style={{ color: 'var(--color-text-tertiary)' }}
         >
           <MoreHorizontal className="h-5 w-5" />
@@ -95,7 +95,7 @@ export function WorkspaceCard({ workspace, computer, onSelect, onTogglePin, onRe
       >
         <div
           onClick={() => onSelect(workspace.workspace_id, workspace.name, workspace.status)}
-          className="relative flex cursor-pointer flex-col overflow-hidden rounded-xl py-4 pl-5 pr-4 transition-all ease-in-out hover:shadow-sm active:scale-[0.98] h-full w-full"
+          className="relative flex cursor-pointer flex-col overflow-hidden rounded-xl py-4 pl-5 pr-4 transition-all ease-in-out hover:shadow-xs active:scale-[0.98] h-full w-full"
           style={{
             // Flash is a system card: flat elevated surface + crisp hairline,
             // a different material from user cards; the amber Zap glyph is the
@@ -113,25 +113,25 @@ export function WorkspaceCard({ workspace, computer, onSelect, onTogglePin, onRe
           {/* Four rows at gap-3 come to 156px inside the 160px card; the
               machine row pushed the same rows past it at gap-4 and the footer
               was what overflow-hidden clipped. */}
-          <div className="flex flex-col flex-grow gap-3">
+          <div className="flex flex-col grow gap-3">
             <div className="flex items-center pr-10 overflow-hidden gap-2">
               {isFlash && (
-                <Zap className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+                <Zap className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
               )}
               {!isFlash && workspace.is_pinned && (
-                <Pin className="h-3.5 w-3.5 flex-shrink-0 rotate-45" style={{ color: 'var(--color-text-tertiary)' }} />
+                <Pin className="h-3.5 w-3.5 shrink-0 rotate-45" style={{ color: 'var(--color-text-tertiary)' }} />
               )}
               <div className="font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
                 {workspace.name}
               </div>
             </div>
-            <div className="text-sm line-clamp-1 flex-grow" style={{ color: 'var(--color-text-tertiary)' }}>
+            <div className="text-sm line-clamp-1 grow" style={{ color: 'var(--color-text-tertiary)' }}>
               {workspace.description || ''}
             </div>
             {showMachine && (
               <button
                 type="button"
-                className="self-start max-w-full text-xs flex items-center gap-1.5 min-w-0 rounded -mx-1 px-1 hover:bg-[var(--color-bg-hover)]"
+                className="self-start max-w-full text-xs flex items-center gap-1.5 min-w-0 rounded -mx-1 px-1 hover:bg-(--color-bg-hover)"
                 style={{ color: 'var(--color-text-tertiary)' }}
                 title={t('computer.manageComputer', 'Manage {{name}}', { name: machineName })}
                 onClick={(e) => {
@@ -140,12 +140,12 @@ export function WorkspaceCard({ workspace, computer, onSelect, onTogglePin, onRe
                   if (computer) onOpenComputer?.(computer.computer_id);
                 }}
               >
-                <Server className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
+                <Server className="h-3 w-3 shrink-0" aria-hidden="true" />
                 <span className="truncate">{machineName}</span>
-                <ComputerStatusIndicator status={machineStatus} glyphSize={10} className="flex-shrink-0" />
+                <ComputerStatusIndicator status={machineStatus} glyphSize={10} className="shrink-0" />
                 {showDiskDot && (
                   <span
-                    className="h-1.5 w-1.5 flex-shrink-0 rounded-full"
+                    className="h-1.5 w-1.5 shrink-0 rounded-full"
                     style={{ backgroundColor: diskLevelColor(diskLevel) }}
                     role="img"
                     aria-label={
@@ -164,7 +164,7 @@ export function WorkspaceCard({ workspace, computer, onSelect, onTogglePin, onRe
                 {t('workspace.updated', { time: workspace.updated_at ? new Date(workspace.updated_at).toLocaleDateString(i18n.language, { month: 'short', day: 'numeric' }) : t('workspace.recently') })}
               </span>
               {(showTierBadge || showAlwaysOn) && (
-                <div className="flex items-center gap-1.5 flex-shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0">
                   {showTierBadge && (
                     <span
                       className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.625rem] font-medium"

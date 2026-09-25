@@ -40,7 +40,7 @@ function CreditPauseCard({ pauseData, onResume }: CreditPauseCardProps) {
   if (pauseData.status === 'resumed') {
     return (
       <div className="flex items-center gap-2 py-1">
-        <Check className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-light)' }} />
+        <Check className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-light)' }} />
         <span className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
           {t('chat.creditPause.resumedLabel')}
         </span>
@@ -57,7 +57,7 @@ function CreditPauseCard({ pauseData, onResume }: CreditPauseCardProps) {
     >
       {/* Header */}
       <div className="flex items-center gap-2 pb-3">
-        <PauseCircle className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-light)' }} />
+        <PauseCircle className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-light)' }} />
         <span className="text-[0.9375rem] font-medium" style={{ color: 'var(--color-text-primary)' }}>
           {t('chat.creditPause.title')}
         </span>
@@ -70,7 +70,7 @@ function CreditPauseCard({ pauseData, onResume }: CreditPauseCardProps) {
       >
         {pauseData.message && (
           <div
-            className="text-sm break-words whitespace-pre-wrap"
+            className="text-sm wrap-break-word whitespace-pre-wrap"
             style={{ color: 'var(--color-text-secondary)' }}
           >
             {clampDenialCopy(pauseData.message)}
@@ -97,7 +97,7 @@ function CreditPauseCard({ pauseData, onResume }: CreditPauseCardProps) {
             whileTap={isResuming ? undefined : { scale: 0.98 }}
           >
             {isResuming
-              ? <Loader size={14} className="flex-shrink-0" style={{ color: 'inherit' }} />
+              ? <Loader size={14} className="shrink-0" style={{ color: 'inherit' }} />
               : <Play className="h-3.5 w-3.5 stroke-[2.5]" />}
             {isResuming ? t('chat.creditPause.resuming') : t('chat.creditPause.resume')}
           </motion.button>

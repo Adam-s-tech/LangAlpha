@@ -281,7 +281,7 @@ export function PluginDetail({
                     {component.name}
                   </span>
                   <span
-                    className="text-xs flex-shrink-0"
+                    className="text-xs shrink-0"
                     style={{ color: 'var(--color-text-tertiary)' }}
                   >
                     {component.kind === 'mcp'
@@ -289,7 +289,7 @@ export function PluginDetail({
                       : t('plugins.detail.kindSkill')}
                   </span>
                   <ChevronRight
-                    className="h-4 w-4 flex-shrink-0 transition-transform duration-150 motion-safe:group-hover:translate-x-0.5"
+                    className="h-4 w-4 shrink-0 transition-transform duration-150 motion-safe:group-hover:translate-x-0.5"
                     style={{ color: 'var(--color-text-quaternary)' }}
                   />
                 </button>

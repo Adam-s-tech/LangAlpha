@@ -44,7 +44,7 @@ function titleOf(data: ShareMetadata): string {
 function Loading() {
   return (
     <div className="flex items-center justify-center min-h-screen" style={{ backgroundColor: 'var(--color-bg-page)' }}>
-      <Loader size={24} className="text-[color:var(--color-text-tertiary)]" />
+      <Loader size={24} className="text-(--color-text-tertiary)" />
     </div>
   );
 }

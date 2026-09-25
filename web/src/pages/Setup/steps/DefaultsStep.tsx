@@ -103,7 +103,7 @@ export default function DefaultsStep() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader size={20} className="text-[color:var(--color-text-tertiary)]" />
+        <Loader size={20} className="text-(--color-text-tertiary)" />
       </div>
     );
   }
@@ -241,7 +241,7 @@ export default function DefaultsStep() {
         >
           {saving ? (
             <>
-              <span aria-hidden="true" className="mr-1.5 flex-shrink-0">
+              <span aria-hidden="true" className="mr-1.5 shrink-0">
                 <Loader size={16} className="text-current" />
               </span>
               {t('setup.saving')}

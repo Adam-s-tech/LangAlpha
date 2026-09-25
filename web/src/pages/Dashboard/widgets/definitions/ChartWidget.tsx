@@ -1317,7 +1317,7 @@ function ChartWidget({ instance, updateConfig }: WidgetRenderProps<ChartConfig>)
             className="absolute inset-0 rounded animate-pulse flex items-center justify-center"
             style={{ backgroundColor: 'var(--color-bg-subtle)' }}
           >
-            <Loader size={18} className="text-[color:var(--color-text-tertiary)]" />
+            <Loader size={18} className="text-(--color-text-tertiary)" />
           </div>
         )}
         {loading && hasData && (
@@ -1325,7 +1325,7 @@ function ChartWidget({ instance, updateConfig }: WidgetRenderProps<ChartConfig>)
           // chart body is already cleared at fetch-start so there's no stale
           // data to hide behind an overlay.
           <div className="absolute top-2 right-2 pointer-events-none">
-            <Loader size={14} className="text-[color:var(--color-text-tertiary)]" />
+            <Loader size={14} className="text-(--color-text-tertiary)" />
           </div>
         )}
       </div>

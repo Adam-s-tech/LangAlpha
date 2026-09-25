@@ -35,15 +35,15 @@ export default function SubagentStatusIndicator({ status, currentTool, toolCalls
   const getIcon = (): React.ReactElement => {
     if (!isTerminal && derivedCurrentTool) {
       return (
-        <span aria-hidden="true" className="flex-shrink-0">
-          <Loader size={14} className="text-[color:var(--color-text-tertiary)]" />
+        <span aria-hidden="true" className="shrink-0">
+          <Loader size={14} className="text-(--color-text-tertiary)" />
         </span>
       );
     }
     if (effectiveStatus === 'active') {
       return (
-        <span aria-hidden="true" className="flex-shrink-0">
-          <Loader size={14} className="text-[color:var(--color-text-tertiary)]" />
+        <span aria-hidden="true" className="shrink-0">
+          <Loader size={14} className="text-(--color-text-tertiary)" />
         </span>
       );
     }

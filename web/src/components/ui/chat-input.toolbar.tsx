@@ -198,7 +198,7 @@ export function useToolbarItems({
                       setShowWorkspaceMenu(false);
                     }}
                   >
-                    <FolderOpen className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+                    <FolderOpen className="h-4 w-4 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
                     <span>{ws.name}</span>
                   </div>
                 ))}
@@ -220,7 +220,7 @@ export function useToolbarItems({
                 onSelect={() => onWorkspaceChange?.(ws.workspace_id)}
               >
                 <span className="truncate">{ws.name}</span>
-                {ws.workspace_id === selectedWorkspaceId && <Check className="ml-auto h-4 w-4 flex-shrink-0" />}
+                {ws.workspace_id === selectedWorkspaceId && <Check className="ml-auto h-4 w-4 shrink-0" />}
               </DropdownMenuItem>
             ))}
           </DropdownMenuSubContent>

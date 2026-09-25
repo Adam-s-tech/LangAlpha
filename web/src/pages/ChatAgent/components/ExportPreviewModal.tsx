@@ -650,7 +650,7 @@ export default function ExportPreviewModal({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="export-preview-modal !w-[90vw] !max-w-7xl !p-0 !overflow-hidden"
+        className="export-preview-modal w-[90vw]! max-w-7xl! p-0! overflow-hidden!"
         variant="centered"
         aria-describedby={undefined}
       >

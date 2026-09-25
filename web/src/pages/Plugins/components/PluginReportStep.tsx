@@ -29,7 +29,7 @@ function ComponentLine({ result }: { result: PluginComponentResult }) {
           {label}
         </span>
         <span
-          className="text-[0.6875rem] font-mono px-1.5 py-0.5 rounded flex-shrink-0"
+          className="text-[0.6875rem] font-mono px-1.5 py-0.5 rounded shrink-0"
           style={{
             color: 'var(--color-text-tertiary)',
             backgroundColor: 'var(--color-bg-tag)',
@@ -38,7 +38,7 @@ function ComponentLine({ result }: { result: PluginComponentResult }) {
           {result.kind}
         </span>
         <span
-          className="text-[0.6875rem] flex-shrink-0"
+          className="text-[0.6875rem] shrink-0"
           style={{ color: 'var(--color-text-tertiary)' }}
         >
           {result.status}

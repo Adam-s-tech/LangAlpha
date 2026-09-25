@@ -159,7 +159,7 @@ function SubagentStatusBar({ agent, threadId, onInstructionSent }: SubagentStatu
         {/* Agent avatar */}
         <div
           className={cn(
-            "w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0",
+            "w-10 h-10 rounded-lg flex items-center justify-center shrink-0",
             isActive && !isCompleted && "nav-panel-agent-pulse"
           )}
           style={{
@@ -208,7 +208,7 @@ function SubagentStatusBar({ agent, threadId, onInstructionSent }: SubagentStatu
         </div>
 
         {/* Right side: status + instruction button stacked */}
-        <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
           <div className="flex items-center gap-1.5">
             <SubagentStatusIcon status={iconStatus} surface="statusBar" className="h-4 w-4" />
             <span className="text-xs whitespace-nowrap" style={{ color: isCompleted ? 'var(--color-accent-primary)' : 'var(--color-text-tertiary)' }}>
@@ -252,7 +252,7 @@ function SubagentStatusBar({ agent, threadId, onInstructionSent }: SubagentStatu
             border: `1px solid ${isError ? 'var(--color-border-loss)' : 'var(--color-border-muted)'}`,
           }}
         >
-          <SubagentStatusIcon status={effectiveStatus} className="h-4 w-4 flex-shrink-0 mt-0.5" />
+          <SubagentStatusIcon status={effectiveStatus} className="h-4 w-4 shrink-0 mt-0.5" />
           <div className="min-w-0">
             <div
               className="text-xs font-medium"
@@ -261,7 +261,7 @@ function SubagentStatusBar({ agent, threadId, onInstructionSent }: SubagentStatu
               {t(isError ? 'chat.subagentBar.errorHeading' : 'chat.subagentBar.stoppedHeading')}
             </div>
             {agent.error && (
-              <div className="text-xs mt-0.5 break-words" style={{ color: 'var(--color-text-tertiary)' }}>
+              <div className="text-xs mt-0.5 wrap-break-word" style={{ color: 'var(--color-text-tertiary)' }}>
                 {agent.error}
               </div>
             )}

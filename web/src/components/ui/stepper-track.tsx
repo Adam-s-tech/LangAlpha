@@ -151,7 +151,7 @@ export function StepperTrack({ items }: StepperTrackProps) {
       })}
       {overflow && (
         <span
-          className="flex-shrink-0 text-xs tabular-nums"
+          className="shrink-0 text-xs tabular-nums"
           style={{ color: "var(--color-text-quaternary)", marginLeft: 2 }}
         >
           +{items.length - MAX_VISIBLE_NODES}
@@ -218,7 +218,7 @@ export default function StepperList({ items }: { items: AgentPlanItem[] }) {
             variants={itemVariants}
           >
             <span
-              className="flex-shrink-0 text-right"
+              className="shrink-0 text-right"
               style={{
                 fontSize: "0.625rem",
                 fontWeight: 600,
@@ -232,7 +232,7 @@ export default function StepperList({ items }: { items: AgentPlanItem[] }) {
             </span>
 
             <div
-              className="flex-shrink-0"
+              className="shrink-0"
               style={{
                 width: 1,
                 height: 12,

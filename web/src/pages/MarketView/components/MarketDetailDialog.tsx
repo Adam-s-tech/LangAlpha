@@ -41,14 +41,14 @@ export default function MarketDetailDialog({ payload, onClose, getToolCallProces
       : getDisplayName(toolName, t, proc.toolCall?.args);
     title = (
       <span className="flex items-center gap-2">
-        <IconComponent className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+        <IconComponent className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
         <span>{displayName}</span>
       </span>
     );
   } else if (payload?.type === 'preview') {
     title = (
       <span className="flex items-center gap-2">
-        <Zap className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+        <Zap className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
         <span>{payload.preview.title || 'Preview'}</span>
       </span>
     );
@@ -85,7 +85,7 @@ export default function MarketDetailDialog({ payload, onClose, getToolCallProces
 
         {/* Custom header */}
         <div
-          className="flex items-center justify-between px-4 py-3 flex-shrink-0"
+          className="flex items-center justify-between px-4 py-3 shrink-0"
           style={{ borderBottom: '1px solid var(--color-border-muted)' }}
         >
           <div

@@ -915,7 +915,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
           {workspaceStarting && (
             <div style={bannerStyle('transparent')}>
               <span aria-hidden="true" style={{ flexShrink: 0 }}>
-                <Loader size={14} className="text-[color:var(--color-accent-primary)]" />
+                <Loader size={14} className="text-(--color-accent-primary)" />
               </span>
               <span>{t(workspaceStarting === 'archived' ? 'chat.workspaceRestoring' : 'chat.workspaceStarting')}</span>
             </div>
@@ -923,7 +923,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
           {isCompacting && (
             <div style={bannerStyle('transparent')}>
               <span aria-hidden="true" style={{ flexShrink: 0 }}>
-                <Loader size={14} className="text-[color:var(--color-accent-primary)]" />
+                <Loader size={14} className="text-(--color-accent-primary)" />
               </span>
               <span>{t(isCompacting === 'offload' ? 'chat.offloading' : 'chat.compacting')}</span>
             </div>

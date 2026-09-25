@@ -54,7 +54,7 @@ export function NotificationDivider({ message, content, detail, detailKind }: No
       </div>
       {hasDetail && expanded && (
         <div
-          className="mt-1 mb-2 mx-auto max-w-3xl rounded-md px-3 py-2 text-sm whitespace-pre-wrap break-words"
+          className="mt-1 mb-2 mx-auto max-w-3xl rounded-md px-3 py-2 text-sm whitespace-pre-wrap wrap-break-word"
           style={{
             color: 'var(--color-text-secondary)',
             background: 'var(--color-bg-subtle)',

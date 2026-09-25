@@ -103,7 +103,7 @@ function AutomationRow({
         onClick={onOpen}
         className="flex-1 min-w-0 flex items-center gap-3 text-left"
       >
-        <span className="flex w-3 flex-shrink-0 justify-center">
+        <span className="flex w-3 shrink-0 justify-center">
           <StatusGlyph ui={ui} label={t(ui.labelKey)} size={12} />
         </span>
         <span className="flex-1 min-w-0 flex flex-col gap-0.5 overflow-hidden">
@@ -124,7 +124,7 @@ function AutomationRow({
 
       {rightText ? (
         <span
-          className="text-[0.6563rem] dashboard-mono uppercase tracking-wider tabular-nums flex-shrink-0 group-hover:opacity-0 transition-opacity"
+          className="text-[0.6563rem] dashboard-mono uppercase tracking-wider tabular-nums shrink-0 group-hover:opacity-0 transition-opacity"
           style={{ color: 'var(--color-text-tertiary)' }}
         >
           {rightText}
@@ -322,7 +322,7 @@ function AutomationsWidget({ instance }: WidgetRenderProps<AutomationsConfig>) {
       >
         <div className="flex items-baseline gap-2.5 min-w-0">
           <Workflow
-            className="h-3.5 w-3.5 flex-shrink-0 self-center"
+            className="h-3.5 w-3.5 shrink-0 self-center"
             style={{ color: 'var(--color-text-tertiary)' }}
           />
           <span

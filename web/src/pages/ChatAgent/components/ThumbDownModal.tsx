@@ -128,7 +128,7 @@ function ThumbDownModal({ isOpen, onSubmit, onCancel, onReportWithAgent }: Thumb
         >
           <div className="flex items-center gap-2.5">
             <div
-              className="w-4 h-4 rounded flex-shrink-0 flex items-center justify-center"
+              className="w-4 h-4 rounded shrink-0 flex items-center justify-center"
               style={{
                 border: `1.5px solid ${consentHumanReview ? 'var(--color-accent-primary)' : 'var(--color-border-muted)'}`,
                 backgroundColor: consentHumanReview ? 'var(--color-accent-primary)' : 'transparent',
@@ -145,7 +145,7 @@ function ThumbDownModal({ isOpen, onSubmit, onCancel, onReportWithAgent }: Thumb
             </span>
           </div>
           <p className="text-xs mt-1.5 flex items-start gap-1" style={{ color: 'var(--color-text-tertiary)' }}>
-            <Info className="h-3 w-3 flex-shrink-0 mt-0.5" />
+            <Info className="h-3 w-3 shrink-0 mt-0.5" />
             Share this conversation with our engineering team. Credits will be refunded for confirmed issues.
           </p>
         </div>
@@ -171,7 +171,7 @@ function ThumbDownModal({ isOpen, onSubmit, onCancel, onReportWithAgent }: Thumb
             onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => e.currentTarget.style.borderColor = 'var(--color-border-muted)'}
           >
             <MessageSquareWarning
-              className="h-5 w-5 flex-shrink-0"
+              className="h-5 w-5 shrink-0"
               style={{ color: 'var(--color-accent-primary)' }}
             />
             <div>

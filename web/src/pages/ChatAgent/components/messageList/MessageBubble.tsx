@@ -265,7 +265,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
     {isUser && onEditMessage && !isSteeringUserMessage(message) && (
       <button
         onClick={handleStartEdit}
-        className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-[var(--color-bg-elevated)]"
+        className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-(--color-bg-elevated)"
         title={t('chat.actions.editMessage')}
       >
         <Pencil className="h-3.5 w-3.5" style={{ color: 'var(--color-text-tertiary)' }} />
@@ -276,7 +276,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
         Then assistant-only: ThumbUp -> ThumbDown -> Regenerate/Retry */}
     <button
       onClick={handleCopy}
-      className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-[var(--color-bg-elevated)]"
+      className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-(--color-bg-elevated)"
       title={copied ? t('chat.actions.copied') : t('chat.actions.copyMessage')}
     >
       {copied
@@ -287,7 +287,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
     {isAssistant && !(message.error as boolean) && onThumbUp && (
       <button
         onClick={handleThumbUpClick}
-        className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-[var(--color-bg-elevated)]"
+        className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-(--color-bg-elevated)"
         title={feedbackRating === 'thumbs_up' ? t('chat.actions.removeRating') : t('chat.actions.goodResponse')}
       >
         <ThumbsUp
@@ -300,7 +300,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
     {isAssistant && !(message.error as boolean) && onThumbDown && (
       <button
         onClick={() => setShowThumbDownModal(true)}
-        className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-[var(--color-bg-elevated)]"
+        className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-(--color-bg-elevated)"
         title={feedbackRating === 'thumbs_down' ? t('chat.actions.feedbackSubmitted') : t('chat.actions.reportIssue')}
       >
         <ThumbsDown
@@ -317,7 +317,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
     {isAssistant && !(message.error as boolean) && onRegenerate && isTurnTail && (
       <button
         onClick={() => onRegenerate(message.id as string)}
-        className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-[var(--color-bg-elevated)]"
+        className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-(--color-bg-elevated)"
         title={t('chat.actions.regenerate')}
       >
         <RefreshCw className="h-3.5 w-3.5" style={{ color: 'var(--color-text-tertiary)' }} />
@@ -326,7 +326,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
     {isAssistant && (message.error as boolean) && onRetry && (
       <button
         onClick={onRetry}
-        className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-[var(--color-bg-elevated)]"
+        className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-(--color-bg-elevated)"
         title={t('chat.actions.retry')}
       >
         <RotateCcw className="h-3.5 w-3.5" style={{ color: 'var(--color-text-tertiary)' }} />
@@ -383,12 +383,12 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
             {/* Info text + Cancel/Save row */}
             <div className={`flex gap-3 ${isMobile ? 'flex-col' : 'items-center'}`}>
               <div className="flex items-start gap-1.5 flex-1 min-w-0">
-                <Info className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" style={{ color: 'var(--color-text-tertiary)' }} />
+                <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" style={{ color: 'var(--color-text-tertiary)' }} />
                 <span className="text-xs leading-snug" style={{ color: 'var(--color-text-tertiary)' }}>
                   This will branch from the current thread. Messages after this point will be replaced and cannot be recovered.
                 </span>
               </div>
-              <div className={`flex gap-2 flex-shrink-0 ${isMobile ? 'justify-end' : ''}`}>
+              <div className={`flex gap-2 shrink-0 ${isMobile ? 'justify-end' : ''}`}>
                 <button
                   onClick={handleCancelEdit}
                   className="px-4 py-1.5 rounded-full text-sm font-medium transition-colors"
@@ -555,7 +555,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
             className="inline-flex items-center gap-1.5 self-start mt-1 text-xs"
             style={{ color: 'var(--color-text-tertiary)' }}
           >
-            <StopCircle className="h-3.5 w-3.5 flex-shrink-0" />
+            <StopCircle className="h-3.5 w-3.5 shrink-0" />
             <span>{t('chat.stoppedChip')}</span>
           </div>
         )}

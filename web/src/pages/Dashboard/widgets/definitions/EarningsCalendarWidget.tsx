@@ -108,7 +108,7 @@ function EarningsRow({
       }}
     >
       <div
-        className="w-8 h-8 rounded-md flex items-center justify-center overflow-hidden border flex-shrink-0"
+        className="w-8 h-8 rounded-md flex items-center justify-center overflow-hidden border shrink-0"
         style={{
           backgroundColor: 'var(--color-bg-subtle)',
           borderColor: 'var(--color-border-muted)',
@@ -136,7 +136,7 @@ function EarningsRow({
         </span>
       </div>
       <span
-        className="text-[0.6563rem] dashboard-mono uppercase tracking-wider tabular-nums flex-shrink-0"
+        className="text-[0.6563rem] dashboard-mono uppercase tracking-wider tabular-nums shrink-0"
         style={{ color: 'var(--color-text-tertiary)' }}
       >
         {label}
@@ -304,7 +304,7 @@ function EarningsCalendarWidget({ instance }: WidgetRenderProps<EarningsConfig>)
       >
         <div className="flex items-baseline gap-2.5 min-w-0">
           <CalendarDays
-            className="h-3.5 w-3.5 flex-shrink-0 self-center"
+            className="h-3.5 w-3.5 shrink-0 self-center"
             style={{ color: 'var(--color-text-tertiary)' }}
           />
           <span
@@ -321,7 +321,7 @@ function EarningsCalendarWidget({ instance }: WidgetRenderProps<EarningsConfig>)
           </span>
         </div>
         <span
-          className="text-[0.625rem] uppercase tracking-wider flex-shrink-0"
+          className="text-[0.625rem] uppercase tracking-wider shrink-0"
           style={{ color: 'var(--color-text-tertiary)' }}
         >
           {t('dashboard.widgets.earningsCalendar.windowLabel', { days: windowDays })}

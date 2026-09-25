@@ -149,7 +149,7 @@ export function OrderApprovalCard({
                 maxLength={200}
                 placeholder={t('toolArtifact.directTool.orderApproval.reasonPlaceholder')}
                 aria-label={t('toolArtifact.directTool.orderApproval.reasonPlaceholder')}
-                className="flex-1 min-w-[10rem] text-sm px-3 py-1.5 rounded-md bg-transparent"
+                className="flex-1 min-w-40 text-sm px-3 py-1.5 rounded-md bg-transparent"
                 style={{ border: '1px solid var(--color-border-muted)', color: 'var(--color-text-primary)' }}
               />
               <motion.button

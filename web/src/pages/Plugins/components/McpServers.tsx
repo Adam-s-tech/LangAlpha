@@ -443,7 +443,7 @@ export function McpServers() {
           <button
             type="button"
             onClick={() => void refetchBrokerages()}
-            className="underline underline-offset-2 hover:text-[var(--color-text-secondary)]"
+            className="underline underline-offset-2 hover:text-(--color-text-secondary)"
           >
             {t('common.retry')}
           </button>
@@ -461,7 +461,7 @@ export function McpServers() {
           <button
             type="button"
             onClick={() => void refetchBuiltins()}
-            className="underline underline-offset-2 hover:text-[var(--color-text-secondary)]"
+            className="underline underline-offset-2 hover:text-(--color-text-secondary)"
           >
             {t('common.retry')}
           </button>

@@ -40,7 +40,7 @@ interface TimezonePickerProps {
   'aria-label'?: string;
 }
 
-const HEADING = 'pb-1 font-mono text-[11px] font-normal text-[color:var(--color-text-tertiary)]';
+const HEADING = 'pb-1 font-mono text-[11px] font-normal text-(--color-text-tertiary)';
 
 /**
  * A time zone, named the way people say it ("Eastern Time") with its city
@@ -120,7 +120,7 @@ export default function TimezonePicker({
     >
       <SelectTrigger className={triggerClassName}>
         <span
-          className="min-w-0 flex-1 truncate data-[placeholder]:text-[color:var(--color-text-tertiary)]"
+          className="min-w-0 flex-1 truncate data-placeholder:text-(--color-text-tertiary)"
           data-placeholder={value ? undefined : ''}
         >
           {value ? formatTimezoneName(value) : placeholder}
@@ -130,14 +130,14 @@ export default function TimezonePicker({
         placement="bottom start"
         offset={6}
         // As wide as a full-width trigger, and never narrower than a row.
-        className="flex w-[max(400px,var(--trigger-width,0px))] max-w-[calc(100vw_-_32px)] flex-col overflow-hidden"
+        className="flex w-[max(400px,var(--trigger-width,0px))] max-w-[calc(100vw-32px)] flex-col overflow-hidden"
       >
         <Autocomplete inputValue={query} onInputChange={setQuery}>
           <SearchField aria-label={t('timezone.search')} placeholder={t('timezone.search')} autoFocus />
           <SelectListBox
             className="max-h-80 min-h-0"
             renderEmptyState={() => (
-              <p className="px-3 py-4 text-center text-[0.8125rem] text-[color:var(--color-text-tertiary)]">
+              <p className="px-3 py-4 text-center text-[0.8125rem] text-(--color-text-tertiary)">
                 {t('timezone.noMatch', { query: query.trim() })}
               </p>
             )}
@@ -154,7 +154,7 @@ export default function TimezonePicker({
                 )}
                 <SelectSection
                   id="common"
-                  className={cn(homeZone && 'mt-1 border-t border-[color:var(--color-border-muted)] pt-1')}
+                  className={cn(homeZone && 'mt-1 border-t border-(--color-border-muted) pt-1')}
                 >
                   <SelectHeader className={HEADING}>{t('timezone.common')}</SelectHeader>
                   {common.map(option)}

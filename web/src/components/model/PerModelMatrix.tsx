@@ -55,7 +55,7 @@ function CellSelect({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       aria-label={ariaLabel}
-      className="min-w-[7.5rem]"
+      className="min-w-30"
       // className lands on the wrapper, so the compact type has to come through
       // style — the select itself hardcodes text-sm.
       style={{ fontSize: '0.75rem', paddingTop: '0.25rem', paddingBottom: '0.25rem' }}

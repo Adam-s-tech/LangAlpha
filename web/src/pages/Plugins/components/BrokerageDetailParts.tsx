@@ -104,7 +104,7 @@ function GrantGlyph({ on, settled }: { on: boolean; settled: boolean }) {
       title={label}
       aria-label={label}
       role="img"
-      className="flex-shrink-0 mt-0.5"
+      className="shrink-0 mt-0.5"
       style={{
         color: on ? 'var(--color-text-secondary)' : 'var(--color-text-quaternary)',
       }}

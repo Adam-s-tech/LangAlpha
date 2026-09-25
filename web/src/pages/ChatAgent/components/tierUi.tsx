@@ -129,7 +129,7 @@ export function TierRadioGroup({
             }}
           >
             <span
-              className="mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border"
+              className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border"
               style={{ borderColor: selected ? 'var(--color-accent-primary)' : 'var(--color-border-default)' }}
             >
               {selected && (

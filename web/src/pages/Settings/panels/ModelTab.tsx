@@ -296,7 +296,7 @@ export function ModelTab() {
                             onMouseLeave={(e) => { if (!isStarred) e.currentTarget.style.backgroundColor = 'transparent'; }}
                           >
                             <span>{modelLabel(m, modelMetadata)}</span>
-                            {isStarred && <Pin className="h-3 w-3 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />}
+                            {isStarred && <Pin className="h-3 w-3 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />}
                           </button>
                         );
                       })}

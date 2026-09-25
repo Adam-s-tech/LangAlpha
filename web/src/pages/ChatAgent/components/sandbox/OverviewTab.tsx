@@ -91,7 +91,7 @@ export function OverviewTab({ stats, isRunning, actionLoading, refreshing, onSta
             className="flex items-center gap-3 p-3 rounded-lg"
             style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border-muted)' }}
           >
-            <Icon className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+            <Icon className="h-5 w-5 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
             <div>
               <div className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{label}</div>
               <div className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{value}</div>
@@ -111,13 +111,13 @@ export function OverviewTab({ stats, isRunning, actionLoading, refreshing, onSta
         <div className="flex flex-col gap-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
           {computerName && (
             <div className="flex items-center gap-1.5">
-              <Server className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+              <Server className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span className="font-medium">{t('computer.onComputer', { name: computerName })}</span>
             </div>
           )}
           {dirName && (
             <div className="flex items-center gap-1.5">
-              <Folder className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+              <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span className="font-mono">{dirName}</span>
             </div>
           )}
@@ -131,13 +131,13 @@ export function OverviewTab({ stats, isRunning, actionLoading, refreshing, onSta
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3" role="status" aria-live="polite">
           {isTransitioning ? (
-            <span aria-hidden="true" className="flex-shrink-0">
-              <Loader size={14} className="text-[color:var(--color-text-tertiary)]" />
+            <span aria-hidden="true" className="shrink-0">
+              <Loader size={14} className="text-(--color-text-tertiary)" />
             </span>
           ) : (
             <div
               aria-hidden="true"
-              className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+              className="w-2.5 h-2.5 rounded-full shrink-0"
               style={{ backgroundColor: isRunning ? 'var(--color-profit)' : 'var(--color-loss)' }}
             />
           )}
@@ -174,7 +174,7 @@ export function OverviewTab({ stats, isRunning, actionLoading, refreshing, onSta
           >
             {refreshing
               ? (
-                <span aria-hidden="true" className="flex-shrink-0">
+                <span aria-hidden="true" className="shrink-0">
                   <Loader size={12} className="text-current" />
                 </span>
               )

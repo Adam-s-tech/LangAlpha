@@ -60,7 +60,7 @@ export function SymbolSearch({ onPick }: SymbolSearchProps): React.ReactElement 
       {/* The box draws the ring and the focused edge for the field inside it
           (tokens.css); the field itself stays borderless and unringed. */}
       <div className="symbol-search-field rings-within owns-its-edge">
-        <Search className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-icon-muted)' }} />
+        <Search className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-icon-muted)' }} />
         <input
           ref={inputRef}
           value={query}

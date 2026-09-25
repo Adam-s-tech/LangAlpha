@@ -146,7 +146,7 @@ export function ApiKeyInput({
           >
             {testState === "loading" && (
               <>
-                <span aria-hidden="true" className="mr-1.5 flex-shrink-0">
+                <span aria-hidden="true" className="mr-1.5 shrink-0">
                   <Loader size={14} className="text-current" />
                 </span>
                 Testing...

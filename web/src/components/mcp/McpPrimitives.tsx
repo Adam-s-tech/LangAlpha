@@ -74,12 +74,12 @@ export function ServerRowShell({
         transition: EXIT_TWEEN,
       }}
       transition={FADE_IN}
-      className={`flex items-start justify-between gap-3 py-2.5 px-3 rounded-lg overflow-hidden bg-[var(--color-bg-card)] ${
+      className={`flex items-start justify-between gap-3 py-2.5 px-3 rounded-lg overflow-hidden bg-(--color-bg-card) ${
         selectable ? 'cursor-pointer' : ''
       }${
         // The fill lives in the class (not style) so the hover twin can win;
         // only rows that open a detail view invite the pointer.
-        openable ? ' transition-colors duration-150 hover:bg-[var(--color-bg-card-hover)]' : ''
+        openable ? ' transition-colors duration-150 hover:bg-(--color-bg-card-hover)' : ''
       }`}
       style={{
         // Always set (never conditionally spread): motion.div applies style
@@ -106,7 +106,7 @@ export function ServerRowShell({
       {selectable && (
         <span
           aria-hidden
-          className="flex-shrink-0 mt-2 inline-flex h-4 w-4 items-center justify-center rounded"
+          className="shrink-0 mt-2 inline-flex h-4 w-4 items-center justify-center rounded"
           style={{
             border: selected ? 'none' : '1px solid var(--color-border-muted)',
             backgroundColor: selected ? 'var(--color-accent-primary)' : 'transparent',
@@ -117,7 +117,7 @@ export function ServerRowShell({
           )}
         </span>
       )}
-      {tile && <div className="flex-shrink-0 mt-0.5">{tile}</div>}
+      {tile && <div className="shrink-0 mt-0.5">{tile}</div>}
       <div
         className={`min-w-0 flex flex-col gap-1 flex-1 ${
           selectable ? 'pointer-events-none select-none' : ''
@@ -127,7 +127,7 @@ export function ServerRowShell({
         {main}
       </div>
       <div
-        className={`flex items-center gap-2 flex-shrink-0 ${
+        className={`flex items-center gap-2 shrink-0 ${
           selectable ? 'pointer-events-none opacity-40' : ''
         }`}
       >
@@ -265,7 +265,7 @@ export function StatusPill({
       title={title}
       data-testid={testid}
     >
-      <Icon className="h-3 w-3 mt-0.5 flex-shrink-0" />
+      <Icon className="h-3 w-3 mt-0.5 shrink-0" />
       {label}
     </span>
   );
@@ -373,10 +373,10 @@ export function ListHeader({
 
 const HEADER_BUTTON = {
   primary:
-    'text-[color:var(--color-btn-primary-text)] bg-[color:var(--color-btn-primary-bg)] disabled:opacity-50',
+    'text-(color:--color-btn-primary-text) bg-(color:--color-btn-primary-bg) disabled:opacity-50',
   secondary:
-    'text-[color:var(--color-text-secondary)] border-[color:var(--color-border-muted)] disabled:opacity-50',
-  ghost: 'text-[color:var(--color-text-tertiary)] hover:bg-foreground/10 disabled:opacity-50 disabled:hover:bg-transparent',
+    'text-(color:--color-text-secondary) border-(color:--color-border-muted) disabled:opacity-50',
+  ghost: 'text-(color:--color-text-tertiary) hover:bg-foreground/10 disabled:opacity-50 disabled:hover:bg-transparent',
 };
 
 /** Header action button: `primary` (Add), `secondary` (Import), `ghost` (links).
@@ -503,7 +503,7 @@ export function ConfirmStrip({
       }}
     >
       <span className="min-w-0">{message}</span>
-      <div className="flex items-center gap-1.5 flex-shrink-0">
+      <div className="flex items-center gap-1.5 shrink-0">
         <button
           ref={cancelRef}
           type="button"

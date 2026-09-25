@@ -461,7 +461,7 @@ export default function MethodStep() {
                 >
                   {redeemingInvitation ? (
                     <>
-                      <span aria-hidden="true" className="mr-1.5 flex-shrink-0">
+                      <span aria-hidden="true" className="mr-1.5 shrink-0">
                         <Loader size={16} className="text-current" />
                       </span>
                       {t('setup.redeeming')}

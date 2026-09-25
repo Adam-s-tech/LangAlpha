@@ -103,7 +103,7 @@ export default function InlineWidget({ html, title, onSendPrompt, data }: Inline
             size={14}
            
             label="Rendering widget"
-            className="text-[color:var(--color-text-tertiary)]"
+            className="text-(--color-text-tertiary)"
           />
         </span>
       )}

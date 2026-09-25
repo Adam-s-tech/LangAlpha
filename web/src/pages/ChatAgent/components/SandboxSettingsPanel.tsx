@@ -237,7 +237,7 @@ export default function SandboxSettingsPanel({ onClose, workspaceId }: SandboxSe
   const backdrop = useBackdropDismiss<HTMLDivElement>(onClose);
   return (
     <div
-      className="fixed inset-0 z-[1010] flex items-center justify-center"
+      className="fixed inset-0 z-1010 flex items-center justify-center"
       style={{ backgroundColor: 'var(--color-bg-overlay-strong)' }}
       {...backdrop}
     >

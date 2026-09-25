@@ -74,7 +74,7 @@ function SortableReorderRow({ workspace, disabled }: SortableReorderRowProps) {
       <button
         {...listeners}
         {...attributes}
-        className="flex-shrink-0 cursor-grab active:cursor-grabbing p-1 rounded"
+        className="shrink-0 cursor-grab active:cursor-grabbing p-1 rounded"
         style={{ color: isFlash ? 'var(--color-accent-primary)' : 'var(--color-text-tertiary)' }}
       >
         {isFlash ? <Zap className="h-5 w-5" /> : <GripVertical className="h-5 w-5" />}
@@ -82,7 +82,7 @@ function SortableReorderRow({ workspace, disabled }: SortableReorderRowProps) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           {!isFlash && workspace.is_pinned && (
-            <Pin className="h-3.5 w-3.5 flex-shrink-0 rotate-45" style={{ color: 'var(--color-text-tertiary)' }} />
+            <Pin className="h-3.5 w-3.5 shrink-0 rotate-45" style={{ color: 'var(--color-text-tertiary)' }} />
           )}
           <span className="font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
             {workspace.name}
@@ -209,7 +209,7 @@ export function ReorderList({ flashWorkspace, onDone }: ReorderListProps) {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex items-center justify-between px-1 pb-3 flex-shrink-0">
+      <div className="flex items-center justify-between px-1 pb-3 shrink-0">
         <span className="text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
           {t('workspace.dragToReorder')}
         </span>
@@ -229,7 +229,7 @@ export function ReorderList({ flashWorkspace, onDone }: ReorderListProps) {
       <div className="flex-1 min-h-0 overflow-y-auto px-1 pb-4">
         {isLoading ? (
           <div className="flex h-full items-center justify-center">
-            <Loader size={20} className="text-[color:var(--color-text-tertiary)]" />
+            <Loader size={20} className="text-(--color-text-tertiary)" />
           </div>
         ) : isError ? (
           <p className="px-4 py-8 text-center text-sm" style={{ color: 'var(--color-text-secondary)' }}>

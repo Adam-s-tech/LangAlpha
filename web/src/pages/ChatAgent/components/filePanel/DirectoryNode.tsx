@@ -101,13 +101,13 @@ export function DirectoryNode({
           <IndentGuides depth={depth} />
           {selectMode ? (
             allSelected
-              ? <CheckSquare className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
-              : <Square className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+              ? <CheckSquare className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+              : <Square className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
           ) : isCollapsed
-            ? <ChevronRight className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
-            : <ChevronDown className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+            ? <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+            : <ChevronDown className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
           }
-          <Folder className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+          <Folder className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
           <span className="text-xs font-medium truncate" style={{ color: 'var(--color-text-tertiary)' }}>
             {isRoot ? '/' : `${node.name}/`}
           </span>
@@ -181,10 +181,10 @@ export function DirectoryNode({
                 <IndentGuides depth={fileDepth} />
                 {selectMode ? (
                   isSelected
-                    ? <CheckSquare className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
-                    : <Square className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+                    ? <CheckSquare className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+                    : <Square className="h-4 w-4 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
                 ) : (
-                  <Icon className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+                  <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
                 )}
                 <span className="text-xs truncate" style={{ color: 'var(--color-text-primary)' }}>{name}</span>
                 {!selectMode && (memoedMap.has(filePath) || (!readOnly && (backedUpSet.has(filePath) || modifiedSet.has(filePath)))) && (

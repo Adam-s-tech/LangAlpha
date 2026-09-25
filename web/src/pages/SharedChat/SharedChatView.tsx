@@ -612,11 +612,11 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
       {/* Left Side: Topbar + Chat Window — identical structure to ChatView */}
       <div className="flex flex-col flex-1 min-w-0">
         {/* Top bar — matches ChatView's top bar exactly */}
-        <div className="flex items-center justify-between px-4 py-2 border-b min-w-0 flex-shrink-0" style={{ borderColor: 'var(--color-border-muted)' }}>
-          <div className="flex items-center gap-4 min-w-0 flex-shrink">
+        <div className="flex items-center justify-between px-4 py-2 border-b min-w-0 shrink-0" style={{ borderColor: 'var(--color-border-muted)' }}>
+          <div className="flex items-center gap-4 min-w-0 shrink">
             <Link
               to="/"
-              className="p-2 rounded-md transition-colors flex-shrink-0"
+              className="p-2 rounded-md transition-colors shrink-0"
               style={{ color: 'var(--color-text-primary)' }}
               title="Back to LangAlpha"
               onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-border-muted)'; }}
@@ -664,8 +664,8 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
                   <div className="w-full max-w-3xl">
                     {loading && messages.length === 0 ? (
                       <div className="flex items-center justify-center py-20">
-                        <span aria-hidden="true" className="flex-shrink-0">
-                          <Loader size={20} className="text-[color:var(--color-text-tertiary)]" />
+                        <span aria-hidden="true" className="shrink-0">
+                          <Loader size={20} className="text-(--color-text-tertiary)" />
                         </span>
                         <span className="ml-2 text-sm" style={{ color: 'var(--color-text-tertiary)' }}>Loading conversation...</span>
                       </div>
@@ -686,7 +686,7 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
             </div>
 
             {/* Input Area — matches ChatView's input area styling */}
-            <div className="flex-shrink-0 p-4 flex justify-center">
+            <div className="shrink-0 p-4 flex justify-center">
               <div className="w-full max-w-3xl space-y-3">
                 <div
                   className="flex flex-col items-stretch rounded-2xl border"
@@ -750,14 +750,14 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
           className="flex overflow-hidden mobile-panel-overlay"
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 30, backgroundColor: 'var(--color-bg-page)' }}
         >
-          <div className="flex-shrink-0 h-full" style={{ width: '100%' }}>
+          <div className="shrink-0 h-full" style={{ width: '100%' }}>
             {filePanel}
           </div>
         </motion.div>
       ) : (
         <>
           <div className="chat-split-divider" onMouseDown={handleDividerMouseDown} />
-          <div className="flex-shrink-0" style={{ width: rightPanelWidth }}>
+          <div className="shrink-0" style={{ width: rightPanelWidth }}>
             {filePanel}
           </div>
         </>

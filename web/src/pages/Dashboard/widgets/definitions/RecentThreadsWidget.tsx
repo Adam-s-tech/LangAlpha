@@ -102,7 +102,7 @@ function ThreadRow({
     >
       {isFlash ? (
         <Zap
-          className="h-3 w-3 flex-shrink-0"
+          className="h-3 w-3 shrink-0"
           style={{ color: 'var(--color-accent-primary)' }}
           fill="currentColor"
         />
@@ -110,7 +110,7 @@ function ThreadRow({
         <span
           data-dot
           aria-hidden
-          className="flex-shrink-0 rounded-full transition-all duration-200"
+          className="shrink-0 rounded-full transition-all duration-200"
           style={{
             width: 3,
             height: 3,
@@ -136,7 +136,7 @@ function ThreadRow({
       </span>
       {timeStr ? (
         <span
-          className="text-[0.6563rem] dashboard-mono uppercase tracking-wider tabular-nums flex-shrink-0 transition-colors self-start pt-[2px]"
+          className="text-[0.6563rem] dashboard-mono uppercase tracking-wider tabular-nums shrink-0 transition-colors self-start pt-[2px]"
           style={{ color: 'var(--color-text-tertiary)' }}
         >
           {timeStr}
@@ -361,7 +361,7 @@ function RecentThreadsWidget({ instance }: WidgetRenderProps<RecentThreadsConfig
       >
         <div className="flex items-baseline gap-2.5 min-w-0">
           <MessagesSquare
-            className="h-3.5 w-3.5 flex-shrink-0 self-center"
+            className="h-3.5 w-3.5 shrink-0 self-center"
             style={{ color: 'var(--color-text-tertiary)' }}
           />
           <span

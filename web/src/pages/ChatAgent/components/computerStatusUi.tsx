@@ -149,7 +149,7 @@ export function ComputerStatusIndicator({
   } else {
     glyph = (
       <span
-        className="rounded-full flex-shrink-0"
+        className="rounded-full shrink-0"
         style={{
           width: glyphSize * 0.6,
           height: glyphSize * 0.6,
@@ -167,7 +167,7 @@ export function ComputerStatusIndicator({
       aria-live={announces ? 'polite' : undefined}
       title={glyphOnly ? label : undefined}
     >
-      <span aria-hidden="true" className="inline-flex items-center flex-shrink-0">
+      <span aria-hidden="true" className="inline-flex items-center shrink-0">
         {glyph}
       </span>
       {glyphOnly ? <span className="sr-only">{label}</span> : <span>{label}</span>}

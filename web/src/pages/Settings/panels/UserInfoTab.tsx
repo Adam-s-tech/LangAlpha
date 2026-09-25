@@ -209,7 +209,7 @@ export function UserInfoTab() {
     <div className="space-y-4">
       <div className="flex items-center gap-4 mb-5 pb-5" style={{ borderBottom: '1px solid var(--color-border-muted)' }}>
         <div
-          className="h-12 w-12 rounded-full flex items-center justify-center cursor-pointer overflow-hidden flex-shrink-0"
+          className="h-12 w-12 rounded-full flex items-center justify-center cursor-pointer overflow-hidden shrink-0"
           style={{ backgroundColor: 'var(--color-accent-soft)' }}
           onClick={() => fileInputRef.current?.click()}
         >
@@ -283,7 +283,7 @@ export function UserInfoTab() {
           placeholder={t('settings.selectTimezone')}
           className="w-full"
           // The card fill the name and language fields beside it take.
-          triggerClassName="bg-[color:var(--color-bg-card)]"
+          triggerClassName="bg-(--color-bg-card)"
         />
       </div>
 

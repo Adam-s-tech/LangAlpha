@@ -96,7 +96,7 @@ function ErrorDisplay({ parsed }: ErrorDisplayProps): React.ReactElement {
       }}
     >
       <AlertTriangle
-        className="h-5 w-5 flex-shrink-0 mt-0.5"
+        className="h-5 w-5 shrink-0 mt-0.5"
         style={{ color: 'var(--color-loss)' }}
       />
       <div className="min-w-0 space-y-1">
@@ -167,14 +167,14 @@ function StructuredErrorDisplay({ err, fallbackText }: StructuredErrorDisplayPro
       }}
     >
       <AlertTriangle
-        className="h-5 w-5 flex-shrink-0 mt-0.5"
+        className="h-5 w-5 shrink-0 mt-0.5"
         style={{ color: 'var(--color-loss)' }}
       />
       <div className="min-w-0 space-y-1">
         <div className="font-medium" style={{ color: 'var(--color-loss)' }}>
           {headline}
         </div>
-        <div className="break-words" style={{ color: 'var(--color-text-tertiary)' }}>
+        <div className="wrap-break-word" style={{ color: 'var(--color-text-tertiary)' }}>
           {body}
         </div>
         {err.hints && err.hints.length > 0 && (

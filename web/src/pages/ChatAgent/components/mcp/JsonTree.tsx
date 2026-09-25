@@ -8,7 +8,7 @@ import { ChevronRight } from 'lucide-react';
  */
 export function JsonTree({ value, openDepth = 2 }: { value: unknown; openDepth?: number }): React.ReactElement {
   return (
-    <div className="font-mono text-xs leading-5 break-words" style={{ color: 'var(--color-text-secondary)' }}>
+    <div className="font-mono text-xs leading-5 wrap-break-word" style={{ color: 'var(--color-text-secondary)' }}>
       <JsonNode value={value} depth={0} openDepth={openDepth} />
     </div>
   );
@@ -65,7 +65,7 @@ function JsonNode({ value, depth, openDepth, label }: { value: unknown; depth: n
         aria-expanded={open}
       >
         <ChevronRight
-          className="h-3 w-3 flex-shrink-0 transition-transform duration-150"
+          className="h-3 w-3 shrink-0 transition-transform duration-150"
           style={{ color: 'var(--color-text-tertiary)', transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
         />
         <span>

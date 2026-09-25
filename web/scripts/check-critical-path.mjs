@@ -18,7 +18,10 @@ import { readFileSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 
-const EXPECTED = ['index', 'vendor-dnd', 'vendor-motion', 'vendor-react']
+// `rolldown-runtime` is the bundler's shared module runtime (under 1 kB gz).
+// Rolldown emits it whenever the build has more than one chunk, and no config
+// removes it, so it is eager by construction rather than by an import.
+const EXPECTED = ['index', 'rolldown-runtime', 'vendor-dnd', 'vendor-motion', 'vendor-react']
 
 // Measured against platform mode, which is what ships (oss builds land ~60 kB
 // lower). Headroom is deliberately thin — routine growth should be visible here,
@@ -185,14 +188,14 @@ if (added.length || removed.length || overBudget) {
   if (added.length) {
     console.error(`\n  NEW on the critical path: ${added.join(', ')}`)
     console.error('  Every visitor now downloads these before first paint.')
-    console.error('  Usually an eager import reaching a lazy module, or a manualChunks')
-    console.error('  entry for a vendor that is not actually eager. Trace it with:')
+    console.error('  Usually an eager import reaching a lazy module, or a chunk group')
+    console.error('  claiming a vendor that is not actually eager. Trace it with:')
     console.error(`    grep -o 'from"\\./vendor-[^"]*"' ${outDir}/assets/index-*.js`)
   }
   if (removed.length) {
     console.error(`\n  no longer eager: ${removed.join(', ')}`)
     console.error('  Check the payload above before calling this a win — deleting a')
-    console.error('  manualChunks entry inlines that vendor into index instead, losing')
+    console.error('  chunk group inlines that vendor into index instead, losing')
     console.error('  the chunk name and its cross-deploy cache key at no byte saving.')
   }
   if (overBudget) {

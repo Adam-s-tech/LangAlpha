@@ -1,5 +1,5 @@
 /// <reference types="vitest/globals" />
-import '@testing-library/jest-dom';
+import '@testing-library/jest-dom/vitest';
 // Side-effect import: initializes i18next with the same en-US/zh-CN
 // resources the app uses, so `t()` in components returns real strings
 // instead of bare key paths under test.

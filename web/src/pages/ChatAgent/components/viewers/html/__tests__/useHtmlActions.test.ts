@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { renderHook } from '@testing-library/react';
 
 import { useHtmlActions, exportServedPdf } from '../useHtmlActions';
@@ -168,7 +168,7 @@ describe('useHtmlActions — file mode', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let createObjectURL: ReturnType<typeof vi.fn>;
   let revokeObjectURL: ReturnType<typeof vi.fn>;
-  let anchorClick: ReturnType<typeof vi.fn>;
+  let anchorClick: Mock<() => void>;
   let lastAnchor: HTMLAnchorElement | undefined;
   let createSpy: { mockRestore: () => void };
 
@@ -456,10 +456,15 @@ describe('useHtmlActions — inside the desktop shell', () => {
     toastDismiss.mockClear();
     open = vi.fn().mockReturnValue(null);
     vi.stubGlobal('open', open);
-    vi.stubGlobal('URL', {
-      createObjectURL: vi.fn(() => 'blob:widget-url'),
-      revokeObjectURL: vi.fn(),
-    });
+    // A subclass, not a plain object: `install` imports while this stub is in
+    // place, and the module runner builds each module's file URL with `new URL`.
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static createObjectURL = vi.fn(() => 'blob:widget-url');
+        static revokeObjectURL = vi.fn();
+      },
+    );
   });
 
   afterEach(() => {

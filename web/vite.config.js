@@ -3,13 +3,30 @@ import react from '@vitejs/plugin-react'
 import fs from 'fs'
 import path from 'path'
 
-// Shared by the entry and the lazy vendors — see manualChunks below.
+// Shared by the entry and the lazy vendors — see codeSplitting below.
 const EAGER_SHARED = new Set(['clsx', 'use-sync-external-store'])
+const REACT = new Set(['react', 'react-dom', 'react-router', ...EAGER_SHARED])
 const MARKDOWN = new Set([
   'react-markdown', 'remark-gfm', 'remark-math', 'remark-cjk-friendly',
   'rehype-katex', 'rehype-raw', 'katex',
 ])
 const CHARTS = new Set(['recharts', 'lightweight-charts'])
+
+// The npm package a module id belongs to, or null for app source.
+function packageOf(id) {
+  if (!id.includes('node_modules')) return null
+  const tail = id.split(/[\\/]node_modules[\\/]/).pop().split(/[\\/]/)
+  return tail[0].startsWith('@') ? `${tail[0]}/${tail[1]}` : tail[0]
+}
+
+const vendorGroup = (name, priority, matches) => ({
+  name,
+  priority,
+  test: (id) => {
+    const pkg = packageOf(id)
+    return pkg !== null && matches(pkg)
+  },
+})
 
 // Emits dist/version.json holding this build's entry chunk filename — the identity
 // the running app polls to notice it is a build the server no longer serves.
@@ -19,8 +36,8 @@ const CHARTS = new Set(['recharts', 'lightweight-charts'])
 // prompt. A timestamp or git sha would fire on every rebuild.
 //
 // generateBundle, not writeBundle: the hashed fileName is final by this hook, and
-// emitFile puts the result through Rollup's own output pipeline. Selecting by
-// `isEntry` and not by name is the load-bearing part — manualChunks below also emits
+// emitFile puts the result through the bundler's own output pipeline. Selecting by
+// `isEntry` and not by name is the load-bearing part — codeSplitting below also emits
 // vendor-* chunks, and `index` is a name a chunking change could quietly move.
 function emitVersionManifest() {
   return {
@@ -53,7 +70,7 @@ function emitVersionManifest() {
 // the version in the path keeps a long-cached copy from pairing a new worker
 // with old decoders. Without them, those images are silently left blank.
 function pdfjsWasm() {
-  const pkg = path.resolve(__dirname, 'node_modules/pdfjs-dist')
+  const pkg = path.resolve(import.meta.dirname, 'node_modules/pdfjs-dist')
   const dir = path.join(pkg, 'wasm')
   const { version } = JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'), 'utf8'))
   const route = `assets/pdfjs-wasm/${version}/`
@@ -100,10 +117,10 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), emitVersionManifest(), pdfjsWasm()],
     resolve: {
       alias: [
-        { find: '@', replacement: path.resolve(__dirname, './src') },
+        { find: '@', replacement: path.resolve(import.meta.dirname, './src') },
         // Fixtures a unit test shares with the Playwright specs. Kept in step
         // with vitest.config.ts; nothing in the app graph imports it.
-        { find: '@e2e', replacement: path.resolve(__dirname, './e2e') },
+        { find: '@e2e', replacement: path.resolve(import.meta.dirname, './e2e') },
         // pdf.js 6's default build calls Map#getOrInsertComputed and Math.sumPrecise
         // unguarded (Chrome 145, Safari 26.2, Firefox 144). Its legacy build carries
         // the polyfills. The regex matches only react-pdf's bare import; the viewer
@@ -112,31 +129,36 @@ export default defineConfig(({ mode }) => {
       ],
     },
     build: {
-      rollupOptions: {
+      rolldownOptions: {
         // Explicit single entry: dev-only harness pages (e.g. intro-preview.html)
         // must never ship in the production build, even if a future Vite version
         // or multi-page config change starts picking up root .html files.
-        input: path.resolve(__dirname, 'index.html'),
+        input: path.resolve(import.meta.dirname, 'index.html'),
         output: {
           // Vendors get a pinned chunk so app deploys don't re-invalidate them.
           //
-          // The order below is load-bearing. `clsx` and `use-sync-external-store`
-          // are imported by both the entry and the lazy vendors; left to Rollup
-          // they land in a lazy vendor chunk, and the entry then has to preload
-          // that whole chunk to reach 3 kB — which is how 170 kB of charts sat on
-          // the critical path for five months. Claiming them for an already-eager
-          // chunk first keeps the lazy vendors genuinely lazy.
+          // The priorities are load-bearing. A group also captures every
+          // dependency of what it matches, so recharts would pull React,
+          // `clsx` and `use-sync-external-store` into vendor-charts, and the
+          // entry would then have to preload that whole chunk to reach them.
+          // That is how 170 kB of charts sat on the critical path for five
+          // months. The eager groups claim first so the lazy vendors stay lazy.
           // Enforced by scripts/check-critical-path.mjs.
-          manualChunks(id) {
-            if (!id.includes('node_modules')) return
-            const tail = id.split(/[\\/]node_modules[\\/]/).pop().split(/[\\/]/)
-            const pkg = tail[0].startsWith('@') ? `${tail[0]}/${tail[1]}` : tail[0]
-            if (EAGER_SHARED.has(pkg)) return 'vendor-react'
-            if (['react', 'react-dom', 'react-router'].includes(pkg)) return 'vendor-react'
-            if (pkg === 'framer-motion') return 'vendor-motion'
-            if (pkg.startsWith('@dnd-kit')) return 'vendor-dnd'
-            if (MARKDOWN.has(pkg)) return 'vendor-markdown'
-            if (CHARTS.has(pkg)) return 'vendor-charts'
+          //
+          // The `$initial` group is everything the entry reaches statically.
+          // Without it Rolldown splits the eager code shared with lazy routes
+          // into ~100 small common chunks, each one more request on first load.
+          // It ranks above the lazy vendors so sharing a dependency with them
+          // can never make them eager.
+          codeSplitting: {
+            groups: [
+              vendorGroup('vendor-react', 50, (pkg) => REACT.has(pkg)),
+              vendorGroup('vendor-motion', 40, (pkg) => pkg === 'framer-motion'),
+              vendorGroup('vendor-dnd', 30, (pkg) => pkg.startsWith('@dnd-kit/')),
+              { name: 'index', priority: 25, tags: ['$initial'] },
+              vendorGroup('vendor-markdown', 20, (pkg) => MARKDOWN.has(pkg)),
+              vendorGroup('vendor-charts', 10, (pkg) => CHARTS.has(pkg)),
+            ],
           },
         },
       },

@@ -43,8 +43,8 @@ export default function PdfViewer({ data, focusPage = null, focusSeq = null, onP
   const zoomIn = () => setZoomIndex((i) => Math.min(ZOOM_STEPS.length - 1, i + 1));
   const zoomOut = () => setZoomIndex((i) => Math.max(0, i - 1));
 
-  // Memoize once — pdf.js transfers the buffer to its web worker which detaches it,
-  // so re-creating Uint8Array on subsequent renders would fail.
+  // A new `file` object is a new document to react-pdf, so a render that rebuilt
+  // it would reload the PDF and reset the page.
   const fileData = useMemo(() => {
     if (!data) return null;
     const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
@@ -82,7 +82,11 @@ export default function PdfViewer({ data, focusPage = null, focusSeq = null, onP
 
       {/* Document */}
       <div className="pdf-document-wrapper">
+        {/* react-pdf defaults to Suspense, which would discard `fileData` with this
+            never-committed component on every retry and reload forever. Effect
+            mode keeps the loading props and the error throw above; Page inherits it. */}
         <Document
+          suspense={false}
           file={fileData}
           onLoadSuccess={onDocumentLoadSuccess}
           onLoadError={(err: Error) => setError(err)}

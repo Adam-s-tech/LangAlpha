@@ -28,12 +28,12 @@ React frontend for LangAlpha — a vibe investing agent with AI-powered research
 
 | Category | Libraries |
 |----------|-----------|
-| Framework | React 19, Vite 7 |
-| Routing | React Router 6 |
+| Framework | React 19, Vite 8 |
+| Routing | React Router 8 |
 | State / Fetching | `@tanstack/react-query` 5 |
 | UI Components | shadcn/ui (Radix UI + Tailwind primitives) |
 | Styling | Tailwind CSS 3, `clsx`, `tailwind-merge`, `class-variance-authority` |
-| Animation | Framer Motion 12 |
+| Animation | Framer Motion 13 |
 | Icons | Lucide React |
 | Charts | `lightweight-charts` (TradingView), Recharts, embedded TradingView widgets |
 | Schema validation | `zod` (per-widget config schemas at the prefs boundary) |
@@ -46,7 +46,7 @@ React frontend for LangAlpha — a vibe investing agent with AI-powered research
 | i18n | `i18next`, `react-i18next` |
 | File Handling | `react-pdf`, `exceljs`, `html2canvas`, `react-to-print` |
 | Testing | Vitest, `@testing-library/react`, `@testing-library/jest-dom`, `@testing-library/user-event` |
-| Dev Tools | ESLint 9, TypeScript 5.9 |
+| Dev Tools | ESLint 10, TypeScript 7 (TS 6 API for typescript-eslint) |
 
 ## Project Structure
 

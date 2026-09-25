@@ -11,7 +11,7 @@ pnpm dev          # dev server on 127.0.0.1:5173 (proxies /api/v1 + /ws/v1 → V
 pnpm build        # tsc --noEmit && vite build && check-critical-path — typecheck and first-load budget both gate the build
 pnpm typecheck    # tsc --noEmit (gated in CI)
 pnpm test         # vitest run;  test:e2e = Playwright
-pnpm lint         # ESLint 9 flat config (advisory — NOT gated in CI)
+pnpm lint         # ESLint 10 flat config (advisory — NOT gated in CI)
 ```
 
 Streaming perf benchmarks live in `e2e/perf/`, are gated behind `PERF=1`, and their flags and canonical invocations are in [`e2e/perf/README.md`](e2e/perf/README.md).

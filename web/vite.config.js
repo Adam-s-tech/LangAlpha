@@ -69,12 +69,17 @@ export default defineConfig(({ mode }) => {
     base: env.VITE_CDN_BASE || '/',
     plugins: [react(), emitVersionManifest()],
     resolve: {
-      alias: {
-        '@': path.resolve(__dirname, './src'),
+      alias: [
+        { find: '@', replacement: path.resolve(__dirname, './src') },
         // Fixtures a unit test shares with the Playwright specs. Kept in step
         // with vitest.config.ts; nothing in the app graph imports it.
-        '@e2e': path.resolve(__dirname, './e2e'),
-      },
+        { find: '@e2e', replacement: path.resolve(__dirname, './e2e') },
+        // pdf.js 6's default build calls Map#getOrInsertComputed and Math.sumPrecise
+        // unguarded (Chrome 145, Safari 26.2, Firefox 144). Its legacy build carries
+        // the polyfills. The regex matches only react-pdf's bare import; the viewer
+        // takes the matching legacy worker by path.
+        { find: /^pdfjs-dist$/, replacement: 'pdfjs-dist/legacy/build/pdf.mjs' },
+      ],
     },
     build: {
       rollupOptions: {

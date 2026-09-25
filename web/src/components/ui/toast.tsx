@@ -28,8 +28,14 @@ const ToastViewport = React.forwardRef<
 ))
 ToastViewport.displayName = ToastPrimitives.Viewport.displayName
 
+// The gap sits before every child after the first, not after every child but
+// the last (space-x-4): the close button is the last child and is absolutely
+// placed, so space-x would leave its gap on the action beside it. Positioning
+// goes through `transform` because the enter and exit keyframes animate
+// `transform`, which would stack on the separate `translate` property that
+// translate-x-* sets instead of replacing it.
 const toastVariants = cva(
-  "group pointer-events-auto relative flex w-full items-center justify-between space-x-4 overflow-hidden rounded-md border p-6 pr-8 shadow-lg transition-all data-[swipe=cancel]:translate-x-0 data-[swipe=end]:translate-x-(--radix-toast-swipe-end-x) data-[swipe=move]:translate-x-(--radix-toast-swipe-move-x) data-[swipe=move]:transition-none toast-slide",
+  "group pointer-events-auto relative flex w-full items-center justify-between [&>:not([hidden])~:not([hidden])]:ml-4 overflow-hidden rounded-md border p-6 pr-8 shadow-lg transition-all data-[swipe=cancel]:[transform:translateX(0)] data-[swipe=end]:[transform:translateX(var(--radix-toast-swipe-end-x))] data-[swipe=move]:[transform:translateX(var(--radix-toast-swipe-move-x))] data-[swipe=move]:transition-none toast-slide",
   {
     variants: {
       variant: {

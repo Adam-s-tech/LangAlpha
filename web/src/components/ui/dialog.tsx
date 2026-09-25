@@ -33,9 +33,12 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 const DIALOG_MOBILE_SHEET_CLASSES =
   "fixed left-0 bottom-0 z-1030 flex flex-col w-full max-w-lg border bg-background shadow-lg rounded-t-3xl max-h-[90dvh] sheet-in";
 
-// Desktop / centered: single-element grid with native overflow scroll
+// Desktop / centered: single-element grid with native overflow scroll.
+// Centred through `transform`, not translate-*: the pop-in keyframes carry the
+// centring translate in `transform`, and a separate `translate` would stack on
+// top of it for the length of the animation.
 const DIALOG_CENTERED_CLASSES =
-  "fixed left-[50%] top-[50%] z-1030 grid w-full max-w-lg gap-4 border bg-background p-6 shadow-lg translate-x-[-50%] translate-y-[-50%] rounded-lg max-h-[85vh] overflow-y-auto pop-in-center";
+  "fixed left-[50%] top-[50%] z-1030 grid w-full max-w-lg gap-4 border bg-background p-6 shadow-lg [transform:translate(-50%,-50%)] rounded-lg max-h-[85vh] overflow-y-auto pop-in-center";
 
 const DialogContent = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Content>,

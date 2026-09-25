@@ -322,7 +322,7 @@ export const MessageContentSegments = memo(function MessageContentSegments({ seg
           if (!widgetData) return null;
           return (
             // Keep the widget's own margins inside a stable transcript block.
-            // Otherwise space-y overrides them until the preceding fold hides,
+            // Otherwise the list's gap overrides them until the preceding fold hides,
             // then restores them in one frame at the end of the animation.
             <div key={block.key} className="flow-root">
               <InlineWidget
@@ -488,8 +488,10 @@ export const MessageContentSegments = memo(function MessageContentSegments({ seg
         return null;
   };
 
+  // sibling-space-y, not space-y: FoldPanel reads the gap off the top of the
+  // block after it, and a folded (hidden) panel must leave none behind.
   return (
-    <div className="space-y-3">
+    <div className="sibling-space-y-3">
       {renderBlocks.map((block, blockIdx) => {
         if (heldForProse[blockIdx]) return null;
         const content = renderBlock(block, blockIdx);

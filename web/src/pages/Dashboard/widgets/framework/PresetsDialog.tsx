@@ -27,7 +27,9 @@ export function PresetsDialog({ open, onOpenChange, onApply }: PresetsDialogProp
           borderColor: 'var(--color-border-elevated)',
         }}
       >
-        <DialogHeader className="flex flex-row items-start justify-between gap-4">
+        {/* space-y-0 drops the header's column spacing, which in this row
+            only ever pushed the badge down; mt-1.5 keeps it there. */}
+        <DialogHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
           <div>
             <div
               className="text-[0.6875rem] font-semibold uppercase tracking-[0.08em] mb-1.5"
@@ -49,7 +51,7 @@ export function PresetsDialog({ open, onOpenChange, onApply }: PresetsDialogProp
             </DialogDescription>
           </div>
           <div
-            className="flex items-center gap-1.5 text-[0.6875rem] px-2 py-1 rounded-full border shrink-0"
+            className="mt-1.5 flex items-center gap-1.5 text-[0.6875rem] px-2 py-1 rounded-full border shrink-0"
             style={{
               backgroundColor: 'var(--color-accent-soft)',
               borderColor: 'var(--color-accent-primary)',

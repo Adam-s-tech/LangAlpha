@@ -1632,7 +1632,10 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
 
             {/* Input Area */}
             <div className={`shrink-0 ${isMobile ? 'p-3' : 'p-4'} flex justify-center`}>
-              <div className="w-full max-w-3xl space-y-3 relative">
+              {/* sibling-space-y, not space-y: the reconnect notice below floats,
+                  and as the last row it would otherwise hand the composer a
+                  bottom margin; SelectionChips' own margin would win too. */}
+              <div className="w-full max-w-3xl sibling-space-y-3 relative">
                 {activeAgentId === 'main' ? (
                   <>
                     <TodoDrawer todoData={cards['todo-list-card']?.todoData ?? null} />
@@ -1771,7 +1774,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                         otherwise remove this row on catch-up and drop the whole
                         input by one line, the one visible hop left on a
                         mid-stream reload. Last in the stack on purpose: the
-                        parent's space-y gives every sibling after the first a
+                        parent's sibling gap gives every row after the first a
                         top margin, so a row mounted ahead of the composer
                         would shift it by that margin and hand the hop back. */}
                     {isReconnecting && (

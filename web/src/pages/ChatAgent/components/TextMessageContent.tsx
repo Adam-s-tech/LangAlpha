@@ -110,7 +110,7 @@ function ErrorDisplay({ parsed }: ErrorDisplayProps): React.ReactElement {
         )}
         {parsed.model && (
           <div
-            className="inline-block px-2 py-0.5 rounded text-xs mt-1"
+            className="inline-block px-2 py-0.5 rounded text-xs"
             style={{
               backgroundColor: 'var(--color-border-muted)',
               color: 'var(--color-text-tertiary)',

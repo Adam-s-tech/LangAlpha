@@ -59,7 +59,9 @@ export function DirectToolResultView({ result }: { result: DirectToolResult }): 
       );
     case 'blocks':
       return (
-        <div className="space-y-3">
+        // sibling-space-y, not space-y: CodeBlock's inline margin would
+        // otherwise win over the gap on one side of it.
+        <div className="sibling-space-y-3">
           {result.blocks.map((b, i) =>
             b.json !== undefined ? (
               <JsonTree key={i} value={b.json} />

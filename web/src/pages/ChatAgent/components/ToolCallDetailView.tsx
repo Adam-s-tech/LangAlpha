@@ -172,7 +172,9 @@ function TaskToolContent({ description, type, subagentId, subagentStatus, onOpen
   const isRunning = taskCardStatusKind(subagentStatus) === 'running';
 
   return (
-    <div className="space-y-4">
+    // sibling-space-y, not space-y: the chip is inline, so space-y's margin
+    // would sit inside its line box instead of below it.
+    <div className="sibling-space-y-4">
       <TaskStatusChip
         kind={taskCardStatusKind(subagentStatus)}
         rawStatus={subagentStatus ?? undefined}

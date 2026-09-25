@@ -51,9 +51,9 @@ export function ExperimentsTab() {
                   style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border-muted)' }}
                 >
                   <div className="flex items-start justify-between gap-4">
-                    <div className="space-y-1 min-w-0">
+                    <div className="min-w-0">
                       <label className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{feature.label}</label>
-                      <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>{feature.description}</p>
+                      <p className="mt-1 text-sm leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>{feature.description}</p>
                     </div>
                     <ToggleSwitch
                       checked={feature.enabled}

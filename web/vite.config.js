@@ -97,7 +97,7 @@ export default defineConfig(({ mode }) => {
             const tail = id.split(/[\\/]node_modules[\\/]/).pop().split(/[\\/]/)
             const pkg = tail[0].startsWith('@') ? `${tail[0]}/${tail[1]}` : tail[0]
             if (EAGER_SHARED.has(pkg)) return 'vendor-react'
-            if (['react', 'react-dom', 'react-router-dom'].includes(pkg)) return 'vendor-react'
+            if (['react', 'react-dom', 'react-router'].includes(pkg)) return 'vendor-react'
             if (pkg === 'framer-motion') return 'vendor-motion'
             if (pkg.startsWith('@dnd-kit')) return 'vendor-dnd'
             if (MARKDOWN.has(pkg)) return 'vendor-markdown'

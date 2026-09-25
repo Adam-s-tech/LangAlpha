@@ -1622,9 +1622,16 @@ class PTCSandbox:
         return _paths._validate_path_allow_denied(self, path)
 
     async def aglob_files(
-        self, pattern: str, path: str = ".", *, allow_denied: bool = False
+        self,
+        pattern: str,
+        path: str = ".",
+        *,
+        allow_denied: bool = False,
+        hide_history: bool = False,
     ) -> list[str]:
-        return await _files.aglob_files(self, pattern, path, allow_denied=allow_denied)
+        return await _files.aglob_files(
+            self, pattern, path, allow_denied=allow_denied, hide_history=hide_history
+        )
 
     async def agrep_content(
         self,

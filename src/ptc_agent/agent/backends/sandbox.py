@@ -401,7 +401,9 @@ class SandboxBackend(SandboxBackendProtocol):
         """Return files matching `pattern` under `path`."""
         normalized_path = self._normalize_path(path)
         try:
-            file_paths = await self.sandbox.aglob_files(pattern, normalized_path)
+            file_paths = await self.sandbox.aglob_files(
+                pattern, normalized_path, hide_history=True
+            )
         except Exception as exc:
             logger.debug("aglob failed", pattern=pattern, error=str(exc))
             return GlobResult(error=str(exc))
@@ -585,7 +587,7 @@ class SandboxBackend(SandboxBackendProtocol):
 
     async def aglob_paths(self, pattern: str, path: str = ".") -> list[str]:
         """Return glob matches as a flat list of paths (no dataclass wrapper)."""
-        return await self.sandbox.aglob_files(pattern, path)
+        return await self.sandbox.aglob_files(pattern, path, hide_history=True)
 
     # --- Execution (bash + Python code) ---
 

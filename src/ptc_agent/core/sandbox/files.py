@@ -7,6 +7,7 @@ semantics are unchanged.
 
 import base64
 import hashlib
+import posixpath
 import shlex
 import textwrap
 from collections.abc import AsyncIterator, Iterable
@@ -21,7 +22,7 @@ from src.observability import (
     workspace_fs_bytes,
 )
 
-from ptc_agent.core.paths import ALWAYS_HIDDEN_DIR_NAMES
+from ptc_agent.core.paths import AGENT_HISTORY_DIRS, ALWAYS_HIDDEN_DIR_NAMES
 from ptc_agent.core.sandbox import path_locks as _path_locks
 from ptc_agent.core.sandbox.retry import RetryPolicy
 from ptc_agent.core.sandbox.runtime import (
@@ -773,13 +774,22 @@ async def aedit_file_text(
 
 
 async def aglob_files(
-    sandbox: "PTCSandbox", pattern: str, path: str = ".", *, allow_denied: bool = False
+    sandbox: "PTCSandbox",
+    pattern: str,
+    path: str = ".",
+    *,
+    allow_denied: bool = False,
+    hide_history: bool = False,
 ) -> list[str]:
     """Async glob; safe to retry automatically.
 
     An empty list means no matches. A broken sandbox raises — returning ``[]``
     made "the sandbox is unreachable" indistinguishable from "this workspace
     has no files", which call sites then reported as success.
+
+    ``hide_history`` is for the agent's own globs: an ``AGENT_HISTORY_DIRS``
+    subtree is skipped when a wildcard reaches it, and listed when the path or
+    the pattern's literal prefix names it. File listings for people leave it off.
     """
     await sandbox._wait_ready()
 
@@ -806,6 +816,13 @@ async def aglob_files(
         # paths.py tracks it as a segment rather than a bare dir name.
         excluded_dirs = sorted(ALWAYS_HIDDEN_DIR_NAMES | {"__pycache__"})
 
+        # Parent name -> the history dirs hidden beneath it ({".agents": [...]}).
+        history_children: dict[str, list[str]] = {}
+        if hide_history:
+            for history_dir in AGENT_HISTORY_DIRS:
+                parent, name = posixpath.split(history_dir)
+                history_children.setdefault(posixpath.basename(parent), []).append(name)
+
         glob_code = textwrap.dedent(f"""\
                 import fnmatch
                 import glob
@@ -814,6 +831,12 @@ async def aglob_files(
                 pattern = {pattern!r}
                 search_path = {search_path!r}
                 excluded_dirs = set({excluded_dirs!r})
+                history_children = {{
+                    parent: set(names) for parent, names in {history_children!r}.items()
+                }}
+
+                def history_hidden(parent, name):
+                    return name in history_children.get(parent, ())
 
                 # Fast path: '**/<tail>' with a basename-only tail — the recursive
                 # patterns ('**/*', '**/*.py', …) that would otherwise walk the whole
@@ -825,7 +848,11 @@ async def aglob_files(
                 if tail is not None and "/" not in tail and "**" not in tail:
                     files = []
                     for dirpath, dirnames, filenames in os.walk(search_path):
-                        dirnames[:] = [d for d in dirnames if d not in excluded_dirs]
+                        parent = os.path.basename(dirpath)
+                        dirnames[:] = [
+                            d for d in dirnames
+                            if d not in excluded_dirs and not history_hidden(parent, d)
+                        ]
                         for fn in filenames:
                             if fnmatch.fnmatchcase(fn, tail):
                                 full = os.path.join(dirpath, fn)
@@ -839,14 +866,31 @@ async def aglob_files(
                     # a noise-dir name is not dropped). The root is escaped because a
                     # workspace folder is its name, which may hold '[', '*' or '?'.
                     full_pattern = os.path.join(glob.escape(search_path), pattern)
+                    # A history dir the pattern spells out literally was asked
+                    # for, so history is judged below the pattern's literal
+                    # prefix rather than below the search root. The root is
+                    # literal whatever its name holds.
+                    literal = [] if os.path.isabs(pattern) else [search_path.rstrip("/")]
+                    for seg in pattern.split("/")[:-1]:
+                        if any(c in seg for c in "*?["):
+                            break
+                        literal.append(seg)
+                    history_root = "/".join(literal) or "/"
                     matches = glob.glob(full_pattern, recursive=True, include_hidden=True)
                     files = []
                     for f in matches:
                         if not os.path.isfile(f):
                             continue
                         inner_dirs = os.path.relpath(f, search_path).split(os.sep)[:-1]
-                        if not (set(inner_dirs) & excluded_dirs):
-                            files.append(f)
+                        if set(inner_dirs) & excluded_dirs:
+                            continue
+                        if history_children:
+                            rel_dir = os.path.relpath(os.path.dirname(f), history_root)
+                            below = [] if rel_dir == "." else rel_dir.split(os.sep)
+                            parents = [os.path.basename(history_root), *below[:-1]]
+                            if any(history_hidden(p, d) for p, d in zip(parents, below)):
+                                continue
+                        files.append(f)
 
                 try:
                     files_with_mtime = [(f, os.path.getmtime(f)) for f in files]

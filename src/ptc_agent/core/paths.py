@@ -469,6 +469,16 @@ ALWAYS_HIDDEN_BASENAMES: tuple[str, ...] = (
 )
 ALWAYS_HIDDEN_SUFFIXES: tuple[str, ...] = (".pyc",)
 
+# What the harness wrote about past turns: per-thread scratch (evicted messages,
+# truncated args, offloaded results, scripts) and the thread-less fallback for
+# large results. The agent reaches each through a pointer that names its path,
+# so its own broad globs skip them rather than drown project files in copies of
+# them. Matched as a child of .agents, so a project's own threads/ stays visible.
+AGENT_HISTORY_DIRS: tuple[str, ...] = (
+    WorkspaceLayout.THREADS_DIR,
+    WorkspaceLayout.LARGE_TOOL_RESULTS_DIR,
+)
+
 
 
 # Root-level names that belong to the computer and never move into a workspace

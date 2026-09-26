@@ -62,3 +62,28 @@ async def test_no_method_sends_nothing():
             "exec-1", None, None,
         ) is None
     fire.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_post_that_raises_is_a_failed_method_not_an_error():
+    # ``fire`` is the only guard between a delivery and the settle that sent it.
+    with patch(
+        "src.server.services.webhook_client.httpx.AsyncClient",
+        side_effect=OSError("connection refused"),
+    ):
+        assert await WebhookClient().fire(
+            "http://hook.example.com", {"event": "automation.failed"}, "secret"
+        ) is False
+
+
+@pytest.mark.asyncio
+async def test_an_event_that_cannot_be_built_sends_nothing_and_does_not_raise():
+    # A settle calls this after committing its row; a raise would skip the rest.
+    client = WebhookClient()
+    unowned = {k: v for k, v in _AUTOMATION.items() if k != "user_id"}
+    with patch("src.config.settings.AUTOMATION_WEBHOOK_URL", "http://hook.example.com"), \
+         patch.object(client, "fire", AsyncMock()) as fire:
+        assert await client.fire_event(
+            "automation.failed", unowned, "exec-1", None, None,
+        ) is None
+    fire.assert_not_awaited()

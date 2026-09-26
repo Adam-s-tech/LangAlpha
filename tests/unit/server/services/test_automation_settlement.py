@@ -29,6 +29,7 @@ from src.server.services.automation_settlement import (
     settle,
     settle_abandoned,
 )
+from src.server.services.webhook_client import WebhookClient
 
 _MOD = "src.server.services.automation_settlement"
 _AID = "auto-1"
@@ -88,8 +89,8 @@ def _settlement(row):
     )
     with (
         patch(f"{_MOD}.auto_db", new=fx.db),
-        patch(f"{_MOD}.fire_webhook", new=fx.fire),
-        patch(f"{_MOD}.announce_wait", new=fx.announce),
+        patch(f"{_MOD}.WebhookClient", return_value=MagicMock(fire_event=fx.fire)),
+        patch(f"{_MOD}.publish_automation_wait", new=fx.announce),
         patch(f"{_MOD}.safe_add", new=fx.metric),
     ):
         yield fx
@@ -154,7 +155,10 @@ async def test_outcome_effects(outcome, trigger):
 async def test_leaving_the_line_clears_the_wait_notice(outcome):
     with _settlement(_row(settled_from="waiting")) as fx:
         assert await settle(_automation(), _EID, outcome)
-    fx.announce.assert_awaited_once_with("user-1", _THREAD, _EID, waiting=False)
+    fx.announce.assert_awaited_once_with(
+        user_id="user-1", thread_id=_THREAD, automation_execution_id=_EID,
+        waiting=False,
+    )
 
 
 @pytest.mark.asyncio
@@ -228,6 +232,24 @@ async def test_what_follows_a_settle_never_raises():
     with _settlement(_row()) as fx:
         fx.db.record_delivery.side_effect = RuntimeError("db down")
         assert await settle(_automation(), _EID, Outcome.FAILED)
+
+
+@pytest.mark.asyncio
+async def test_an_event_that_cannot_be_built_leaves_the_rest_of_the_settle():
+    # The real event builder, handed a delivery_config that is not an object:
+    # the row is already committed, so the wait notice and metric still go.
+    automation = {**_automation(), "delivery_config": ["slack"]}
+    with (
+        _settlement(_row(settled_from="waiting")) as fx,
+        patch(f"{_MOD}.WebhookClient", new=WebhookClient),
+        patch.object(WebhookClient, "fire", AsyncMock()) as post,
+    ):
+        assert await settle(automation, _EID, Outcome.FAILED)
+
+    post.assert_not_awaited()
+    fx.db.record_delivery.assert_not_awaited()
+    fx.announce.assert_awaited_once()
+    fx.metric.assert_called_once()
 
 
 @pytest.mark.asyncio

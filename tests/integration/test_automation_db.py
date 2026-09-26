@@ -414,10 +414,11 @@ class TestExecutionHistory:
 
         assert exec_id is not None
 
-        executions, total = await list_executions(
+        executions, has_more = await list_executions(
             seed_user["user_id"], automation_id=str(auto["automation_id"])
         )
-        assert total == 1
+        assert len(executions) == 1
+        assert has_more is False
         assert str(executions[0]["automation_execution_id"]) == exec_id
         assert executions[0]["status"] == "pending"
         assert executions[0]["server_id"] == "server-1"

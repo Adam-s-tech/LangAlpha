@@ -29,13 +29,13 @@
     "@radix-ui/react-toast": "^1.2.23",
     "@radix-ui/react-tooltip": "^1.2.16",
     "@supabase/ssr": "^0.12.7",
-    "@supabase/supabase-js": "^2.117.1",
+    "@supabase/supabase-js": "^2.117.2",
     "@tanstack/react-query": "^5.103.2",
     "axios": "^1.20.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "exceljs": "^4.4.0",
-    "framer-motion": "^13.4.3",
+    "framer-motion": "^13.4.4",
     "html2canvas": "^1.4.1",
     "i18next": "^26.4.2",
     "katex": "^0.18.9",
@@ -94,6 +94,6 @@
     "tailwindcss": "^4.3.3",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
     "vite": "^8.3.1",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.2"
   }
 }

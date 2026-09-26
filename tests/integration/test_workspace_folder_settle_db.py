@@ -772,7 +772,7 @@ async def test_an_asset_sync_keeps_its_folder_until_the_overlay_is_written(seed_
     sandbox = SimpleNamespace(sync_sandbox_assets=sync, vault_secrets={})
     with (
         patch(_SKILL_PARAMS, AsyncMock(return_value={})),
-        patch.object(manager, "_vault_payloads", AsyncMock(return_value=(user_id, {a: {}}))),
+        patch.object(manager, "_vault_snapshot", AsyncMock(return_value=(None, {}, ""))),
     ):
         async with workspace_folder_in_use(a):
             assert await asyncio.wait_for(
@@ -869,10 +869,7 @@ async def test_concurrent_cold_attach_fits_the_pool(
         patch.object(manager, "_apply_session_mcp", AsyncMock()),
         patch.object(manager, "_workspace_tool_view", MagicMock(return_value=object())),
         patch.object(manager, "_mint_sandbox_tokens", AsyncMock(return_value={})),
-        patch.object(
-            manager, "_vault_payloads",
-            AsyncMock(side_effect=lambda workspace_id, uid: (uid, {workspace_id: {}})),
-        ),
+        patch.object(manager, "_vault_snapshot", AsyncMock(return_value=(None, {}, ""))),
     ):
         async with _pool_of(test_db_uri, patched_get_db_connection, max_size=1, timeout=3):
             got = await asyncio.wait_for(
@@ -944,10 +941,7 @@ async def test_concurrent_cold_restores_fit_the_pool(
         patch.object(manager, "_apply_session_mcp", AsyncMock()),
         patch.object(manager, "_workspace_tool_view", MagicMock(return_value=object())),
         patch.object(manager, "_mint_sandbox_tokens", AsyncMock(return_value={})),
-        patch.object(
-            manager, "_vault_payloads",
-            AsyncMock(side_effect=lambda workspace_id, uid: (uid, {workspace_id: {}})),
-        ),
+        patch.object(manager, "_vault_snapshot", AsyncMock(return_value=(None, {}, ""))),
     ):
         async with _pool_of(
             test_db_uri, patched_get_db_connection, max_size=len(ids) + 1, timeout=3

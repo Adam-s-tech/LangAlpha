@@ -313,12 +313,10 @@ class TestSettleExecution:
         other = await _automation(seed_user["user_id"], name="Other")
         eid = await _firing(db, aid)
 
-        executions, total = await list_executions("different-user-id")
-        assert (executions, total) == ([], 0)
-        executions, total = await list_executions(
+        assert await list_executions("different-user-id") == ([], False)
+        assert await list_executions(
             "different-user-id", automation_id=aid
-        )
-        assert (executions, total) == ([], 0)
+        ) == ([], False)
         assert await transition_execution(
             eid, from_statuses=("running",), to="waiting", automation_id=other,
         ) is None

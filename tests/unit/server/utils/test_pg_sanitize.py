@@ -71,6 +71,17 @@ class TestSafeDumps:
         out = _safe_dumps({"k\x00": 1})
         assert json.loads(out) == {"k": 1}
 
+    @pytest.mark.parametrize("backslashes", range(5))
+    @pytest.mark.parametrize("nul", ["", "\x00"])
+    @pytest.mark.parametrize("after", ["中", "n", '"', "x"])
+    def test_literal_escape_text_survives(self, backslashes, nul, after):
+        # Text that spells out `\u0000` (a JSON file, code, a repr of binary
+        # data) dumps as `\\u0000`. A plain replace cut that escaped backslash
+        # in half and left `\中`, which Postgres rejects, losing the whole turn.
+        text = "a" + "\\" * backslashes + nul + "u0000" + after
+        out = _safe_dumps({"k": text})
+        assert json.loads(out) == {"k": text.replace("\x00", "")}
+
 
 class TestFiniteJsonDumps:
     def test_nan_and_inf_become_null(self):

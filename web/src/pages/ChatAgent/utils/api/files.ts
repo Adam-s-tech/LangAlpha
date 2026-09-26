@@ -185,7 +185,6 @@ export async function uploadWorkspaceFile(
     formData,
     {
       params,
-      headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress: onProgress
         ? (e) => onProgress(Math.round((e.loaded * 100) / (e.total || 1)))
         : undefined,

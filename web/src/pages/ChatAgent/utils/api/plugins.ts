@@ -158,7 +158,6 @@ export function fatalDiagnostics(err: unknown): PluginDiagnostic[] {
 
 function uploadConfig(onProgress: ((percent: number) => void) | null) {
   return {
-    headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: onProgress
       ? (e: { loaded: number; total?: number }) => {
           if (e.total) onProgress(Math.round((e.loaded / e.total) * 100));
@@ -271,7 +270,7 @@ export async function deletePlugin(name: string) {
 
 /**
  * Export as a spec-compliant zip. Fetched as a blob because the bearer token
- * rides the axios interceptor; the caller revokes the URL after the click.
+ * rides the API client; the caller revokes the URL after the click.
  */
 export async function exportPluginBlobUrl(name: string): Promise<string> {
   try {

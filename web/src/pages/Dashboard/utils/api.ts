@@ -289,9 +289,7 @@ export async function uploadAvatar(file: File): Promise<{ avatar_url: string }> 
   const formData = new FormData();
   formData.append('file', file);
 
-  const { data } = await api.post('/api/v1/users/me/avatar', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
+  const { data } = await api.post('/api/v1/users/me/avatar', formData);
   return data; // { avatar_url: "https://..." }
 }
 

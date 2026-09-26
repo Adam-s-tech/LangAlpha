@@ -5,63 +5,243 @@
  * never from a session read per request, which is what once turned a page load
  * into a refresh storm. In OSS mode there is no Supabase client and both calls
  * resolve null, so no header is set.
+ *
+ * A thin `fetch` wrapper that keeps the shape axios gave its callers: a
+ * `{ data, status, headers }` response, and on a refusal an error carrying
+ * `response`. The error readers across the app were written against that
+ * shape, so it is the contract here rather than an accident of the old client.
  */
-import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios';
 import { authGeneration, bearerTokenOf, getAccessToken, refreshAccessToken } from '../lib/authToken';
 
-const baseURL = import.meta.env.VITE_API_BASE_URL ?? '';
+const baseURL: string = import.meta.env.VITE_API_BASE_URL ?? '';
 
 /**
- * Axios request config carrying a single-shot 401-retry guard, plus which user
- * the request went out as, so the retry below can tell that it is still them.
+ * Scalars only. A list goes as a `URLSearchParams` with the key repeated,
+ * which is what the backend's list parameters read.
  */
-type RetriableRequestConfig = InternalAxiosRequestConfig & {
-  _retry?: boolean;
-  _authGeneration?: number;
-};
+export type QueryParams = Record<string, string | number | boolean | null | undefined> | URLSearchParams;
 
-export const api = axios.create({
-  baseURL,
-  headers: { 'Content-Type': 'application/json' },
-});
+export interface TransferProgress {
+  loaded: number;
+  /** Absent when the length is unknown. */
+  total?: number;
+}
 
-api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
-  try {
-    const token = await getAccessToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-      (config as RetriableRequestConfig)._authGeneration = authGeneration();
-    }
-  } catch {
-    /* proceed without auth */
-  }
-  return config;
-});
+export interface RequestConfig {
+  params?: QueryParams;
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
+  /** Milliseconds. Unset means no bound. */
+  timeout?: number;
+  responseType?: 'json' | 'text' | 'blob' | 'arraybuffer';
+  /** A DELETE body, which has no positional argument. */
+  data?: unknown;
+  /** Either progress callback sends the request over XHR: fetch cannot report upload progress. */
+  onUploadProgress?: (event: TransferProgress) => void;
+  onDownloadProgress?: (event: TransferProgress) => void;
+}
 
-// Enrich 429 errors with structured rate limit info; single-shot 401 refresh-and-retry.
-api.interceptors.response.use(
-  (response) => response,
-  async (error: AxiosError & { status?: number; rateLimitInfo?: Record<string, unknown>; retryAfter?: number | null }) => {
-    if (error.response?.status === 429) {
-      const detail = (error.response.data as Record<string, unknown>)?.detail || {};
-      error.status = 429;
-      error.rateLimitInfo = typeof detail === 'object' ? detail as Record<string, unknown> : {};
-      error.retryAfter = parseInt(error.response.headers?.['retry-after'] as string, 10) || null;
-    }
+// An untyped call reads fields straight off `data`, as every caller did under axios.
+type Untyped = any;
 
+export interface ApiResponse<T = Untyped> {
+  data: T;
+  status: number;
+  statusText: string;
+  /** Lower-cased names, so `headers['retry-after']` finds the header. */
+  headers: Record<string, string>;
+}
+
+type ErrorCode = 'ERR_BAD_REQUEST' | 'ERR_BAD_RESPONSE' | 'ERR_NETWORK' | 'ECONNABORTED' | 'ERR_CANCELED';
+
+/**
+ * A failed call. Messages and codes match what axios produced, because call
+ * sites show `err.message` and tell an abort apart by `name` ('CanceledError').
+ */
+export class ApiError extends Error {
+  code: ErrorCode;
+  declare status?: number;
+  declare response?: ApiResponse<unknown>;
+  declare rateLimitInfo?: Record<string, unknown>;
+  declare retryAfter?: number | null;
+
+  constructor(message: string, code: ErrorCode, response?: ApiResponse<unknown>) {
+    const detail = (response?.data as { detail?: unknown } | null | undefined)?.detail;
+    const body: { message?: unknown } = detail && typeof detail === 'object' ? detail : {};
     // Any gate that writes a structured `detail` wrote a sentence meant for the
     // user. Without this, every call site that falls back to `err.message` shows
-    // axios's "Request failed with status code 503" and the explanation the
-    // server took care to send is dropped on the floor.
-    const structured = (error.response?.data as Record<string, unknown> | undefined)?.detail;
-    if (structured && typeof structured === 'object' && typeof (structured as Record<string, unknown>).message === 'string') {
-      error.message = (structured as Record<string, unknown>).message as string;
+    // "Request failed with status code 503" and the explanation the server took
+    // care to send is dropped on the floor.
+    super(typeof body.message === 'string' ? body.message : message);
+    this.name = code === 'ERR_CANCELED' ? 'CanceledError' : 'ApiError';
+    this.code = code;
+    if (response) {
+      this.response = response;
+      this.status = response.status;
+      if (response.status === 429) {
+        this.rateLimitInfo = body;
+        this.retryAfter = parseInt(response.headers['retry-after'], 10) || null;
+      }
+    }
+  }
+}
+
+/** axios's query encoding, kept so the backend reads the same bytes it always has. */
+const encode = (value: string) =>
+  encodeURIComponent(value).replace(/%3A/gi, ':').replace(/%24/g, '$').replace(/%2C/gi, ',').replace(/%20/g, '+');
+
+function buildUrl(url: string, params?: QueryParams): string {
+  const full = baseURL && !/^([a-z][a-z\d+\-.]*:)?\/\//i.test(url)
+    ? `${baseURL.replace(/\/+$/, '')}/${url.replace(/^\/+/, '')}`
+    : url;
+  const query = params instanceof URLSearchParams
+    ? params.toString()
+    : Object.entries(params ?? {})
+      .flatMap(([key, value]) => (value == null ? [] : [`${encode(key)}=${encode(String(value))}`]))
+      .join('&');
+  return query ? `${full}${full.includes('?') ? '&' : '?'}${query}` : full;
+}
+
+/** The JSON a text body holds, or the text itself when it holds none. */
+function parse(text: string): unknown {
+  try {
+    return text ? JSON.parse(text) : text;
+  } catch {
+    return text;
+  }
+}
+
+/** What a transport hands back; `send` turns the header pairs into lower-cased names. */
+interface Sent {
+  data: unknown;
+  status: number;
+  statusText: string;
+  rawHeaders: Iterable<[string, string]>;
+}
+
+async function viaFetch(
+  method: string, url: string, headers: Record<string, string>, body: XMLHttpRequestBodyInit | undefined,
+  config: RequestConfig, signal: AbortSignal | undefined,
+): Promise<Sent> {
+  const res = await fetch(url, { method, headers, body, signal });
+  const type = config.responseType;
+  const data = type === 'blob' ? await res.blob()
+    : type === 'arraybuffer' ? await res.arrayBuffer()
+    : type === 'text' ? await res.text()
+    : parse(await res.text());
+  return { data, status: res.status, statusText: res.statusText, rawHeaders: res.headers };
+}
+
+function viaXhr(
+  method: string, url: string, headers: Record<string, string>, body: XMLHttpRequestBodyInit | undefined,
+  config: RequestConfig, signal: AbortSignal | undefined,
+): Promise<Sent> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const type = config.responseType;
+    const report = (listener: (event: TransferProgress) => void) => (e: ProgressEvent) =>
+      listener({ loaded: e.loaded, total: e.lengthComputable ? e.total : undefined });
+    const abort = () => xhr.abort();
+    xhr.open(method, url);
+    for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+    if (type && type !== 'json') xhr.responseType = type;
+    if (config.onUploadProgress) xhr.upload.onprogress = report(config.onUploadProgress);
+    if (config.onDownloadProgress) xhr.onprogress = report(config.onDownloadProgress);
+    xhr.onloadend = () => {
+      signal?.removeEventListener('abort', abort);
+      // Status 0 is an abort, a timeout or a network failure; `send` tells them apart.
+      if (!xhr.status) return reject(new Error('XHR failed'));
+      const pairs: [string, string][] = [];
+      for (const line of xhr.getAllResponseHeaders().trim().split(/[\r\n]+/)) {
+        const colon = line.indexOf(':');
+        if (colon > 0) pairs.push([line.slice(0, colon).trim().toLowerCase(), line.slice(colon + 1).trim()]);
+      }
+      resolve({
+        data: type && type !== 'json' ? xhr.response : parse(xhr.responseText),
+        status: xhr.status, statusText: xhr.statusText, rawHeaders: pairs,
+      });
+    };
+    if (signal?.aborted) return reject(new Error('aborted'));
+    signal?.addEventListener('abort', abort);
+    xhr.send(body ?? null);
+  });
+}
+
+async function send(
+  method: string, url: string, headers: Record<string, string>, body: XMLHttpRequestBodyInit | undefined,
+  config: RequestConfig,
+): Promise<ApiResponse> {
+  const { signal, timeout } = config;
+  // One controller carries both the caller's abort and the deadline, so the
+  // transport takes a single signal and nothing outlives the request.
+  const ctrl = new AbortController();
+  const onAbort = () => ctrl.abort();
+  if (signal?.aborted) ctrl.abort();
+  else signal?.addEventListener('abort', onAbort, { once: true });
+  let timedOut = false;
+  const timer = timeout ? setTimeout(() => { timedOut = true; ctrl.abort(); }, timeout) : undefined;
+  const transport = config.onUploadProgress || config.onDownloadProgress ? viaXhr : viaFetch;
+  let sent: Sent;
+  try {
+    sent = await transport(method, url, headers, body, config, ctrl.signal);
+  } catch {
+    if (signal?.aborted) throw new ApiError('canceled', 'ERR_CANCELED');
+    if (timedOut) throw new ApiError(`timeout of ${timeout}ms exceeded`, 'ECONNABORTED');
+    throw new ApiError('Network Error', 'ERR_NETWORK');
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
+  }
+  // A caller that aborted while the body was arriving asked for no answer.
+  if (signal?.aborted) throw new ApiError('canceled', 'ERR_CANCELED');
+  const { rawHeaders, ...rest } = sent;
+  const response: ApiResponse = { ...rest, headers: Object.fromEntries(rawHeaders) };
+  const { status } = response;
+  if (status >= 200 && status < 300) return response;
+  throw new ApiError(
+    `Request failed with status code ${status}`,
+    status >= 400 && status < 500 ? 'ERR_BAD_REQUEST' : 'ERR_BAD_RESPONSE',
+    response,
+  );
+}
+
+async function request<T>(method: string, url: string, data: unknown, config: RequestConfig = {}): Promise<ApiResponse<T>> {
+  const headers: Record<string, string> = {
+    Accept: 'application/json, text/plain, */*',
+    'Content-Type': 'application/json',
+    ...config.headers,
+  };
+  let body: XMLHttpRequestBodyInit | undefined;
+  if (data === undefined || data instanceof FormData) {
+    // No body, or a multipart one whose boundary only the browser can write.
+    delete headers['Content-Type'];
+    body = data;
+  } else {
+    body = data instanceof Blob ? data : JSON.stringify(data);
+  }
+  const target = buildUrl(url, config.params);
+  let retried = false;
+
+  const attempt = async (): Promise<ApiResponse<T>> => {
+    // Which user the request goes out as, so the 401 replay below can tell
+    // that it is still them.
+    let sentAs: number | undefined;
+    try {
+      const token = await getAccessToken();
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+        sentAs = authGeneration();
+      }
+    } catch {
+      /* proceed without auth */
     }
 
-    // iOS Safari returns from a frozen tab with a stale token before Supabase's auto-refresh
-    // runs, so a refetch hits a 401. Force-refresh once and replay the request.
-    const config = error.config as RetriableRequestConfig | undefined;
-    if (error.response?.status === 401 && config && !config._retry) {
+    try {
+      return await send(method, target, headers, body, config);
+    } catch (e) {
+      // iOS Safari returns from a frozen tab with a stale token before Supabase's
+      // auto-refresh runs, so a refetch hits a 401. Force-refresh once and replay.
+      if (!(e instanceof ApiError) || e.status !== 401 || retried) throw e;
       // A 401 can outlive the account it was issued for: the reply arrives
       // after a sign-out or an account switch, and by then the cache holds
       // somebody else's token. `refreshAccessToken` would hand that one over,
@@ -70,27 +250,36 @@ api.interceptors.response.use(
       // previous user as the current one. Their own 401 is the right answer.
       //
       // Asked twice, because the rotation between the two is a network round
-      // trip and the switch can land inside it. `config` still carries the
+      // trip and the switch can land inside it. The request still carries the
       // previous user's URL and body, so a replay stamped with the new user's
       // token is their mutation written to the new account.
-      const sameAccount = () =>
-        config._authGeneration === undefined || config._authGeneration === authGeneration();
-      if (!sameAccount()) return Promise.reject(error);
-      config._retry = true;
+      const sameAccount = () => sentAs === undefined || sentAs === authGeneration();
+      if (!sameAccount()) throw e;
+      retried = true;
+      let token: string | null = null;
       try {
         // The token THIS request carried, not whichever one the cache holds by
         // now: a burst of 401s arrives one at a time, and the later ones are
         // being answered after an earlier one already rotated.
-        const token = await refreshAccessToken(bearerTokenOf(config.headers?.Authorization));
-        if (token && sameAccount()) {
-          config.headers.Authorization = `Bearer ${token}`;
-          return api(config);
-        }
+        token = await refreshAccessToken(bearerTokenOf(headers.Authorization));
       } catch {
-        /* refresh failed — fall through and reject with the original error */
+        /* refresh failed: reject with the original error */
       }
+      if (!token || !sameAccount()) throw e;
+      headers.Authorization = `Bearer ${token}`;
+      return attempt();
     }
+  };
+  return attempt();
+}
 
-    return Promise.reject(error);
-  },
-);
+export const api = {
+  defaults: { baseURL },
+  get: <T = Untyped>(url: string, config?: RequestConfig) => request<T>('GET', url, config?.data, config),
+  delete: <T = Untyped>(url: string, config?: RequestConfig) => request<T>('DELETE', url, config?.data, config),
+  post: <T = Untyped>(url: string, data?: unknown, config?: RequestConfig) => request<T>('POST', url, data, config),
+  put: <T = Untyped>(url: string, data?: unknown, config?: RequestConfig) => request<T>('PUT', url, data, config),
+  patch: <T = Untyped>(url: string, data?: unknown, config?: RequestConfig) => request<T>('PATCH', url, data, config),
+  /** The URL a GET would request, for handing to the browser directly. */
+  getUri: ({ url, params }: { url: string; params?: QueryParams }) => buildUrl(url, params),
+};

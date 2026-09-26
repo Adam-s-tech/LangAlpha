@@ -42,8 +42,10 @@ textarea {
 
 /* v4 zeroes every element's padding; v3 left table cells and options at the
    browser's. A cell's 1px is a presentational hint rather than a user-agent
-   rule, so `revert` cannot restore it; `:where` keeps it as weak as a hint. */
-:where(td, th) {
+   rule, so `revert` cannot restore it. Any author rule outranks a hint, this
+   one included, so it skips tables that set `cellpadding` (react-aria's
+   calendar sets 0, which preflight already gives). */
+:where(table:not([cellpadding])) :where(td, th) {
   padding: 1px;
 }
 

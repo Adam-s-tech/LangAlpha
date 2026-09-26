@@ -145,7 +145,10 @@ _writer_pool: Optional[AsyncConnectionPool] = None
 
 
 async def _configure_writer_conn(conn: AsyncConnection) -> None:
-    conn.prepare_threshold = 0  # pooler (Supabase) compatibility
+    # Prepared, for the run's checkpoint writes: they repeat every agent step
+    # and name their columns. The run's own START and finalize SQL reads `*`
+    # and opts out in runs/lifecycle.py's _lifecycle_connection.
+    conn.prepare_threshold = 0
 
 
 async def _reset_writer_conn(conn: AsyncConnection) -> None:

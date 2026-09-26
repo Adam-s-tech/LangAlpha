@@ -140,7 +140,7 @@ export async function updateThreadTitle(threadId: string, title: string | null) 
   return updateThread(threadId, { title });
 }
 
-// --- Streaming (fetch + ReadableStream; axios not used) ---
+// --- Streaming (fetch + ReadableStream; the API client does not stream) ---
 
 /**
  * Get current share status for a thread

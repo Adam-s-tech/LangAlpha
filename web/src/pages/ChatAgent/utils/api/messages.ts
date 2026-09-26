@@ -119,7 +119,7 @@ export async function cancelWorkflow(
   runId: string | null = null,
 ): Promise<CancelOutcome> {
   if (!threadId) throw new Error('Thread ID is required');
-  // Bound the request: the shared axios instance sets no global timeout, so a
+  // Bound the request: the shared API client sets no global timeout, so a
   // network-level hang (not a 4xx) would block each stopWorkflow retry until the
   // browser's ~60s default — delaying the "couldn't stop" toast by minutes. 5s
   // is ample for a cancel POST.
@@ -178,7 +178,7 @@ export type WorkflowStatusResponse = Partial<ThreadReportBackStatus> & {
 /**
  * Get the current status of a workflow for a thread
  * @param {string} threadId - The thread ID to check
- * @param {number} [options.timeout] - Bound the read; the shared axios instance sets none
+ * @param {number} [options.timeout] - Bound the read; the shared API client sets none
  * @returns {Promise<WorkflowStatusResponse>} Workflow status with can_reconnect, status, etc.
  */
 export async function getWorkflowStatus(

@@ -40,7 +40,7 @@ export function usePlatformModels(): { platform: PlatformModelsResponse | null; 
     throwOnError: false,
   });
   // Validate shape — in OSS mode the endpoint may not exist and Vite can
-  // return HTML (status 200) which Axios happily hands back as a string.
+  // return HTML (status 200), which the API client hands back as a string.
   const platform = data && Array.isArray(data.byok_providers) ? data : null;
   return { platform, isLoading };
 }

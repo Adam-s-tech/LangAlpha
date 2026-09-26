@@ -60,7 +60,7 @@ vi.mock('@/pages/ChatAgent/utils/api', () => ({
   regenerateUserMemo: vi.fn(),
   triggerUserMemoDownload: vi.fn(),
   downloadUserMemoBlobUrl: vi.fn(),
-  // workspace listing happens inside MemoPanel via useWorkspaces → axios.
+  // workspace listing happens inside MemoPanel via useWorkspaces → the API client.
   // We stub the workspaces hook below; this remains for the api path used
   // by useUserMemoList / useReadUserMemo / etc.
   getWorkspaces: vi.fn().mockResolvedValue({ workspaces: [] }),

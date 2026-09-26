@@ -1,9 +1,9 @@
 /**
- * Axios/fetch error normalization helpers.
+ * API client and fetch error normalization helpers.
  */
 
 /**
- * The raw `detail` an axios/fetch failure carries, whatever its shape (string,
+ * The raw `detail` an API client or fetch failure carries, whatever its shape (string,
  * FastAPI validation array, or a structured object). Every reader of a wire
  * error starts here, so the cast ladder down to it is written once: it had
  * already been re-derived in the plugins API layer and again inside a
@@ -29,7 +29,7 @@ export function apiErrorDetailMessage(err: unknown): string | null {
 }
 
 /**
- * Normalize an axios/fetch error into a readable message.
+ * Normalize an API client or fetch error into a readable message.
  *
  * Reads `err.response.data.detail`. FastAPI emits a string for most errors,
  * but validation failures come back as a list of `{ loc, msg }` entries — those
@@ -58,7 +58,7 @@ export function formatApiErrorDetail(err: unknown): string {
   return typeof message === 'string' && message ? message : 'Request failed';
 }
 
-/** Extract the HTTP status code from an axios error, or null if absent. */
+/** Extract the HTTP status code from an API client error, or null if absent. */
 export function apiErrorStatus(err: unknown): number | null {
   const status = (err as { response?: { status?: unknown }; status?: unknown })?.response?.status
     ?? (err as { status?: unknown })?.status;

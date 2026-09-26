@@ -3,7 +3,7 @@
  * share PATCH sends, and the server's 409 is the one answer that never reads
  * as success. Network calls are mocked at the share-links api leaf; the error
  * shape helpers (`shareConflictIn`, `shareCapIn`, `shareLinkHref`) stay
- * real so the tests exercise the same reading of an axios error the dialog
+ * real so the tests exercise the same reading of an API client error the dialog
  * ships with.
  */
 import React from 'react';
@@ -65,7 +65,7 @@ function files(rows: ShareFileEntry[], drift: ShareLinkFiles['drift'] = null): S
   return { files: rows, total_size: rows.reduce((s, r) => s + r.size, 0), drift };
 }
 
-function axiosError(status: number, detail: unknown) {
+function apiError(status: number, detail: unknown) {
   return Object.assign(new Error(`Request failed with status code ${status}`), {
     response: { status, data: { detail } },
   });
@@ -239,7 +239,7 @@ describe('ShareLinkDialog', () => {
         .mockResolvedValueOnce(files([ENTRY_ROW, STYLE_ROW]))
         .mockResolvedValue(files(serverList));
       mockPatch
-        .mockRejectedValueOnce(axiosError(409, { code: 'files_changed', files: serverList }))
+        .mockRejectedValueOnce(apiError(409, { code: 'files_changed', files: serverList }))
         .mockResolvedValueOnce(link({ shared: true, shared_files: serverList.map((f) => f.path) }));
       const user = userEvent.setup();
       renderDialog();
@@ -271,7 +271,7 @@ describe('ShareLinkDialog', () => {
 
     it('a 422 too_many_files names the cap and disables the switch', async () => {
       mockCreate.mockResolvedValue(link());
-      mockFiles.mockRejectedValue(axiosError(422, { code: 'too_many_files', limit: 200 }));
+      mockFiles.mockRejectedValue(apiError(422, { code: 'too_many_files', limit: 200 }));
       renderDialog();
 
       expect(await screen.findByText(
@@ -284,7 +284,7 @@ describe('ShareLinkDialog', () => {
 
     it('a 422 too_many_bytes names the size cap, not a listing failure', async () => {
       mockCreate.mockResolvedValue(link());
-      mockFiles.mockRejectedValue(axiosError(422, { code: 'too_many_bytes', limit: 256 * 1024 * 1024 }));
+      mockFiles.mockRejectedValue(apiError(422, { code: 'too_many_bytes', limit: 256 * 1024 * 1024 }));
       renderDialog();
 
       expect(await screen.findByText(
@@ -299,8 +299,8 @@ describe('ShareLinkDialog', () => {
       mockCreate.mockResolvedValue(link());
       mockFiles
         .mockResolvedValueOnce(files([ENTRY_ROW, STYLE_ROW]))
-        .mockRejectedValue(axiosError(422, { code: 'too_many_files', limit: 200 }));
-      mockPatch.mockRejectedValueOnce(axiosError(409, { code: 'files_changed', files: [] }));
+        .mockRejectedValue(apiError(422, { code: 'too_many_files', limit: 200 }));
+      mockPatch.mockRejectedValueOnce(apiError(409, { code: 'files_changed', files: [] }));
       const user = userEvent.setup();
       renderDialog();
 
@@ -320,7 +320,7 @@ describe('ShareLinkDialog', () => {
         .mockResolvedValueOnce(link())
         .mockResolvedValue(link({ shared: true, shared_files: [ENTRY] }));
       mockFiles.mockResolvedValue(files([ENTRY_ROW]));
-      mockPatch.mockRejectedValueOnce(axiosError(409, { code: 'link_changed' }));
+      mockPatch.mockRejectedValueOnce(apiError(409, { code: 'link_changed' }));
       const user = userEvent.setup();
       renderDialog();
 
@@ -337,7 +337,7 @@ describe('ShareLinkDialog', () => {
 
     it('a link that fails to load offers a retry instead of a spinner', async () => {
       mockCreate
-        .mockRejectedValueOnce(axiosError(400, 'Flash workspaces do not have shareable files'))
+        .mockRejectedValueOnce(apiError(400, 'Flash workspaces do not have shareable files'))
         .mockResolvedValue(link());
       mockFiles.mockResolvedValue(files([ENTRY_ROW]));
       const user = userEvent.setup();
@@ -355,7 +355,7 @@ describe('ShareLinkDialog', () => {
     it('any other share failure toasts and leaves the link private', async () => {
       mockCreate.mockResolvedValue(link());
       mockFiles.mockResolvedValue(files([ENTRY_ROW]));
-      mockPatch.mockRejectedValue(axiosError(500, 'boom'));
+      mockPatch.mockRejectedValue(apiError(500, 'boom'));
       const user = userEvent.setup();
       vi.spyOn(console, 'error').mockImplementation(() => {});
       renderDialog();

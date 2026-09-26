@@ -93,8 +93,8 @@ export type SSEEvent = Record<string, unknown>;
  * A failure the file panel can classify.
  *
  * `categorizeFileError` reads the status off `response.status`, which is what
- * axios attaches: the owner path reaches the panel through the shared axios
- * instance and this one does not, so a bare Error classified every shared
+ * the API client attaches: the owner path reaches the panel through the shared
+ * client and this one does not, so a bare Error classified every shared
  * failure as `unknown`. That gave a permanent 403 a Retry button, and made the
  * panel read a real 404 as a successful landing, so the reference never fell
  * through to the resolve the owner path takes.

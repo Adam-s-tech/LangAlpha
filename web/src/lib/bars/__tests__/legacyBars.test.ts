@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock the axios client + supabase (imported at api.ts module scope).
+// Mock the API client + supabase (imported at api.ts module scope).
 const apiMock = vi.hoisted(() => ({ get: vi.fn(), defaults: { baseURL: '' } }));
 vi.mock('@/api/client', () => ({ api: apiMock }));
 vi.mock('@/lib/supabase', () => ({ supabase: null }));

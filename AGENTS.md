@@ -43,7 +43,7 @@ cd web && pnpm test                   # Vitest;  pnpm test:e2e = Playwright;  pn
 
 ### Frontend (`web/src/`)
 
-React 19 + Vite + TypeScript + Tailwind + shadcn/ui; state via React Query. Path alias `@` → `web/src/`. Non-obvious landmines — dual-mode auth (`VITE_HOST_MODE`), SSE via raw `fetch` (not axios), Zod at the prefs boundary — are documented in **`web/AGENTS.md`**.
+React 19 + Vite + TypeScript + Tailwind + shadcn/ui; state via React Query. Path alias `@` → `web/src/`. Non-obvious landmines — dual-mode auth (`VITE_HOST_MODE`), SSE via raw `fetch` (not the REST client), Zod at the prefs boundary — are documented in **`web/AGENTS.md`**.
 
 ### Desktop shell (`desktop/`)
 

@@ -194,7 +194,7 @@ export function normalizeAgentPath(raw: string): string {
  * Percent-decoding happens here and nowhere downstream, so `a%2520b.md` keeps
  * its literal `%20`. It has to happen somewhere: an LLM-emitted link like
  * `[name](results/%E9%95%BF….md)` must reach the API as raw Unicode and be
- * encoded exactly once by the HTTP layer, or Axios re-encodes the leading `%`
+ * encoded exactly once by the HTTP layer, or the API client re-encodes the leading `%`
  * to `%25` and the backend's single `unquote` looks for a literal `%XX` name.
  */
 export function parseAgentHref(raw: string): AgentPathParts {

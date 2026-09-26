@@ -89,15 +89,15 @@ describe('who is allowed to read the Supabase session', () => {
     // header belongs next to the token, in `lib/authToken`.
     //
     // Both spellings the codebase uses, object literal and assignment: an
-    // earlier version of this check only saw the literal, so the axios
-    // interceptor's own two builds were invisible to the thing auditing them.
+    // earlier version of this check only saw the literal, so the API
+    // client's own two builds were invisible to the thing auditing them.
     const BEARER_BUILD = /Authorization["']?\s*[:=]\s*(?:`Bearer \$\{|['"]Bearer['"]\s*\+)/;
     const builders = sourceFiles(SRC)
       .filter((file) => BEARER_BUILD.test(readFileSync(file, 'utf8')))
       .map((file) => path.relative(SRC, file));
 
     expect(builders.sort()).toEqual([
-      // The axios interceptor stamps the header it was handed. It reads the
+      // The API client stamps the header it was handed. It reads the
       // cache for the token and never a session, which is the part that matters.
       'api/client.ts',
       // `syncUser` posts with the session the auth event handed it, which is

@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build && node scripts/check-critical-path.mjs",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
+    "lint": "eslint . --cache --cache-location node_modules/.cache/eslint/ --concurrency=auto",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

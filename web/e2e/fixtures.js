@@ -4,7 +4,7 @@
  */
 import { defaultResponses } from './helpers/mockResponses.js';
 
-const MOCK_SERVER = 'http://127.0.0.1:4100';
+const MOCK_SERVER = `http://127.0.0.1:${Number(process.env.E2E_MOCK_PORT) || 4100}`;
 
 /** Configure a scenario on the mock SSE server */
 export async function configureSSE(scenario) {

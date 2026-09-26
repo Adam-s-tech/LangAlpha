@@ -155,4 +155,5 @@ function tryParseJSON(str) {
   }
 }
 
-server.listen(4100, () => console.log('Mock SSE server on :4100'));
+const PORT = Number(process.env.E2E_MOCK_PORT) || 4100;
+server.listen(PORT, () => console.log(`Mock SSE server on :${PORT}`));

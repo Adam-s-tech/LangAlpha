@@ -55,7 +55,7 @@ describe('MiniChartGridWidget', () => {
   beforeEach(() => {
     mockFetch.mockClear();
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.resetAllMocks(); vi.restoreAllMocks(); });
 
   it('caps symbols at 18 even when prefs hold more (regression)', async () => {
     // 25 symbols stored. Render path must clamp to 18 to protect the OHLC

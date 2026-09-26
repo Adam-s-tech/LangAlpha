@@ -52,6 +52,7 @@ describe('GettingStartedCard', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

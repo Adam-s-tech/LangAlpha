@@ -99,7 +99,7 @@ async function dirtyThenOpenToolTab() {
 }
 
 beforeEach(() => { localStorage.clear(); });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.resetAllMocks(); vi.restoreAllMocks(); });
 
 describe('FilePanel tool-tab links under an unsaved edit', () => {
   it('stays on the route when the edit is not discarded', async () => {

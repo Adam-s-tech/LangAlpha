@@ -64,7 +64,7 @@ describe('DashboardRouter', () => {
     lastDashboardProps.current = null;
     prefsState.current = { other_preference: { theme: 'dark', dashboard: { mode: 'classic', widgets: [], layouts: {} } } };
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.resetAllMocks(); vi.restoreAllMocks(); });
 
   it('renders Classic dashboard when prefs.mode === classic', () => {
     const { getByTestId } = renderRouter(makeClient());

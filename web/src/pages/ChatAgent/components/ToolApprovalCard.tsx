@@ -144,7 +144,7 @@ function ToolApprovalCard({ data, onApprove, onReject, resultPending, resultLost
             maxLength={200}
             placeholder={t('toolArtifact.directTool.reasonPlaceholder')}
             aria-label={t('toolArtifact.directTool.reasonPlaceholder')}
-            className="flex-1 min-w-40 text-sm px-3 py-2 rounded-md bg-transparent outline-hidden focus:ring-1"
+            className="flex-1 min-w-40 text-sm px-3 py-2 rounded-md bg-transparent outline-hidden"
             style={{ border: '1px solid var(--color-border-muted)', color: 'var(--color-text-primary)' }}
           />
         </div>

@@ -1,17 +1,34 @@
 import js from '@eslint/js'
 import globals from 'globals'
-import reactPlugin from 'eslint-plugin-react'
+import eslintReact from '@eslint-react/eslint-plugin'
 import reactHooks from 'eslint-plugin-react-hooks'
 import { reactRefresh } from 'eslint-plugin-react-refresh'
 import tseslint from '@typescript-eslint/eslint-plugin'
 import tsParser from '@typescript-eslint/parser'
-import { version as reactVersion } from 'react'
 
-// eslint-plugin-react 7.37 resolves version 'detect' through
-// context.getFilename(), which ESLint 10 removed, so detection throws on the
-// first file (jsx-eslint/eslint-plugin-react#3977). Reading the installed
-// version here gives the plugin the same answer without that call.
-const reactSettings = { react: { version: reactVersion } }
+// The checks eslint-plugin-react's recommended preset ran, under their
+// @eslint-react names. That preset also caught JSX undefined names, duplicate
+// props, string refs, isMounted and a missing render return, which tsc already
+// rejects, and unescaped entities, which has no counterpart. @eslint-react's
+// own presets add ~290 findings of new policy (index keys, ref naming) plus
+// copies of the react-hooks rules, so they stay off until chosen on purpose.
+const reactRules = Object.fromEntries([
+  'no-missing-key',
+  'no-missing-component-display-name',
+  'no-direct-mutation-state',
+  'no-component-will-mount',
+  'no-component-will-receive-props',
+  'no-component-will-update',
+  'jsx-no-children-prop',
+  'jsx-no-comment-textnodes',
+  'dom-no-dangerously-set-innerhtml-with-children',
+  'dom-no-find-dom-node',
+  'dom-no-hydrate',
+  'dom-no-render',
+  'dom-no-render-return-value',
+  'dom-no-unknown-property',
+  'dom-no-unsafe-target-blank',
+].map((rule) => [`@eslint-react/${rule}`, 'error']))
 
 // react-hooks 6+ puts the React Compiler's checks in its recommended preset
 // at error. Existing code predates them, so they report as warnings until the
@@ -39,8 +56,11 @@ export default [
     },
   },
 
-  reactPlugin.configs.flat.recommended,
-  reactPlugin.configs.flat['jsx-runtime'],
+  {
+    files: ['**/*.{js,jsx,ts,tsx}'],
+    plugins: { '@eslint-react': eslintReact },
+    rules: reactRules,
+  },
 
   reactHooks.configs.flat.recommended,
   { rules: hooksCompilerRulesAsWarnings },
@@ -55,10 +75,8 @@ export default [
         process: 'readonly',
       },
     },
-    settings: reactSettings,
     plugins: { 'react-refresh': reactRefresh.plugin },
     rules: {
-      'react/prop-types': 'off',
       'no-unused-vars': ['warn', {
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_|^React$',
@@ -83,13 +101,11 @@ export default [
         process: 'readonly',
       },
     },
-    settings: reactSettings,
     plugins: {
       '@typescript-eslint': tseslint,
       'react-refresh': reactRefresh.plugin,
     },
     rules: {
-      'react/prop-types': 'off',
       'no-undef': 'off',
       'no-redeclare': 'off',
       'no-unused-vars': 'off',

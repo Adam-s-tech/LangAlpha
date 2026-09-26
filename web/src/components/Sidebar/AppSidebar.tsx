@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, ArrowRight, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plus, SquarePen } from 'lucide-react';
@@ -18,6 +18,7 @@ import AccountMenu from './AccountMenu';
 import { useChatRoute } from './useChatRoute';
 import { useSidebarAgents } from '@/pages/ChatAgent/components/sidebarAgentsBridge';
 import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth } from './sidebarWidth';
+import { lazyWithMotion } from '@/lib/lazyWithMotion';
 import './Sidebar.css';
 
 interface NavigationLike {
@@ -60,7 +61,7 @@ function HistoryButtons() {
 }
 
 // Off the entry chunk: the modal is only needed once the button is pressed.
-const CreateWorkspaceModal = lazy(() => import('@/pages/ChatAgent/components/CreateWorkspaceModal'));
+const CreateWorkspaceModal = lazyWithMotion(() => import('@/pages/ChatAgent/components/CreateWorkspaceModal'));
 
 interface AppSidebarProps {
   collapsed: boolean;

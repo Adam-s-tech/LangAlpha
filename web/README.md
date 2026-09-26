@@ -55,7 +55,7 @@ src/
 ├── api/                    # API client: fetch with the Bearer token and a 401 retry
 ├── assets/                 # Static assets (SVG, PNG)
 ├── components/
-│   ├── Main/               # Lazy-loaded route definitions with AnimatePresence transitions
+│   ├── Main/               # Lazy-loaded route definitions with a CSS fade between routes
 │   ├── Sidebar/            # Navigation sidebar
 │   └── ui/                 # Reusable UI primitives (button, card, dialog, toast, etc.)
 ├── contexts/               # AuthContext (Supabase session), ThemeContext (light/dark)

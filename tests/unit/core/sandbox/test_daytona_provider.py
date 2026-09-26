@@ -144,6 +144,13 @@ class TestDaytonaRuntime:
         assert state == RuntimeState.STOPPED
 
     @pytest.mark.asyncio
+    async def test_get_state_maps_restoring_to_starting(self, runtime, mock_sdk_sandbox):
+        """A reconnect racing an archive restore must wait, not call start again."""
+        mock_sdk_sandbox.state = "restoring"
+        state = await runtime.get_state()
+        assert state == RuntimeState.STARTING
+
+    @pytest.mark.asyncio
     async def test_archive_delegates(self, runtime, mock_sdk_sandbox):
         await runtime.archive()
         mock_sdk_sandbox.archive.assert_called_once()

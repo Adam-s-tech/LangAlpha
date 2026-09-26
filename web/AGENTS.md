@@ -11,7 +11,7 @@ pnpm dev          # dev server on 127.0.0.1:5173 (proxies /api/v1 + /ws/v1 → V
 pnpm build        # tsc --noEmit && vite build && check-critical-path — typecheck and first-load budget both gate the build
 pnpm typecheck    # tsc --noEmit (gated in CI)
 pnpm test         # vitest run;  test:e2e = Playwright
-pnpm lint         # ESLint 10 flat config (advisory — NOT gated in CI)
+pnpm lint         # ESLint 10 flat config, cached in node_modules/.cache; errors gate CI, warnings are advisory
 ```
 
 Streaming perf benchmarks live in `e2e/perf/`, are gated behind `PERF=1`, and their flags and canonical invocations are in [`e2e/perf/README.md`](e2e/perf/README.md).
@@ -52,7 +52,7 @@ Streaming perf benchmarks live in `e2e/perf/`, are gated behind `PERF=1`, and th
 - **Keep API calls in the api layer, not in components.** Endpoint/fetch calls belong in a page's `utils/api.ts` or a shared `lib/*` client module (e.g. market data in `lib/bars`, `lib/quotes`) — never inline in a component. Server-state access goes through `hooks/` + React Query; React-lifecycle singletons through `contexts/`. Components compose `components/ui/` primitives (they don't hand-roll Radix).
 - **One source of truth — don't duplicate the cross-cutting modules.** Agent-path logic → `agentPaths.ts`; query keys → `queryKeys.ts` (never inline key arrays — it breaks prefix invalidation); locale/formatters → `lib/locale.ts` + `lib/format.ts` (never ad-hoc `Intl.*`); class merging → `cn()` (never concatenate class strings).
 - **Server state is React Query; validate untrusted input at the boundary.** Don't mirror server data into local state; invalidate by key prefix. Zod (`safeParse` + `.catch`, never throwing) guards only *persisted/user* input — never runtime-validate trusted API responses, never `.parse()` at a boundary. Module-level singletons that outlive React must be reset on logout.
-- **Types are the hard gate, lint is soft.** Keep `tsc --noEmit` green (it gates build + CI); avoid `any` — narrow `unknown` instead — even though ESLint won't stop you.
+- **Types are the hard gate; lint gates only its errors.** Keep `tsc --noEmit` green (it gates build + CI) and lint at zero errors (CI); avoid `any` — narrow `unknown` instead — even though ESLint won't stop you.
 
 ## Env
 

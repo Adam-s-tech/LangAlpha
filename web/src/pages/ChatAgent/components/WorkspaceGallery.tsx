@@ -10,13 +10,14 @@ import CreateWorkspaceModal from './CreateWorkspaceModal';
 import { DiskWarning, useDiskAlertComputer } from './DiskWarning';
 import RenameWorkspaceDialog from './RenameWorkspaceDialog';
 import MorphingPageDots from '../../../components/ui/morphing-page-dots';
-import { useWorkspaces } from '../../../hooks/useWorkspaces';
+import { getAllWorkspaces, useWorkspaces } from '../../../hooks/useWorkspaces';
 import { queryKeys } from '../../../lib/queryKeys';
-import { getFlashWorkspace, renameWorkspace } from '../utils/api';
+import { renameWorkspace } from '../utils/api';
 import { useWorkspaceActions } from './workspaceActions';
 import { isEffectivelyPinned } from '../hooks/useNavigationData';
 import { pinWorkspaceRow } from '../hooks/workspaceRowActions';
 import { useCreateWorkspace } from '../hooks/useCreateWorkspace';
+import { flashWorkspaceQuery } from '@/hooks/useFlashWorkspace';
 import { clearChatSession } from '../hooks/utils/chatSessionRestore';
 import { useWorkspaceMutation } from '../hooks/useWorkspaceMutation';
 import { useComputers } from '../hooks/useComputers';
@@ -25,7 +26,6 @@ import { GalleryActions } from './workspaceGallery/GalleryActions';
 import { GalleryEmptyState } from './workspaceGallery/GalleryEmptyState';
 import { ReorderList } from './workspaceGallery/ReorderList';
 import { WorkspaceCard } from './workspaceGallery/WorkspaceCard';
-import { getAllWorkspaces } from './workspaceGallery/loadReorderWorkspaces';
 import { useGalleryPaging } from './workspaceGallery/useGalleryPaging';
 import type { WorkspaceRecord } from './workspaceGallery/types';
 
@@ -84,8 +84,7 @@ function WorkspaceGallery({ onWorkspaceSelect, prefetchThreads }: WorkspaceGalle
 
   // Flash workspace query (idempotent POST -- creates if not exists)
   const { data: flashWs, isLoading: isFlashLoading } = useQuery({
-    queryKey: queryKeys.workspaces.flash(),
-    queryFn: getFlashWorkspace,
+    ...flashWorkspaceQuery(queryClient),
     staleTime: 5 * 60_000,
   });
 

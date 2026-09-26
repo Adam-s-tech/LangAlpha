@@ -143,7 +143,9 @@ async def check_automations(
     A waiting run starts once the turn on its thread ends. A disabled automation's
     disable_reason is provider_auth (the provider rejected the user's own key: it
     runs again once the key is fixed and the automation resumed) or max_failures.
-    A run's failure_reason usage_limit is a usage limit, which never disables it.
+    A run's failure_reason usage_limit is a usage limit, which never disables it;
+    server_error and interrupted mean the service failed or cut the run off, so
+    nothing in the automation needs changing.
     """
     try:
         user_id = _get_user_id(config)

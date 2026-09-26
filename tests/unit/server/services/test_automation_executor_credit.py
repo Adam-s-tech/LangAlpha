@@ -310,7 +310,7 @@ class TestCredentialGate:
         settled = mock_adb.settle_execution.await_args.kwargs
         # But the automation itself is not held responsible.
         assert settled["strike"] is None
-        assert settled["failure_reason"] is None
+        assert settled["failure_reason"] == "server_error"
         assert settled["error_message"].startswith("HTTPException: ")
 
 
@@ -360,6 +360,9 @@ class TestAdmitted:
             ) as mock_astream,
         ):
             _setup_auto_db(mock_adb)
+            mock_get_run.side_effect = lambda run_id: {
+                **_run_row(run_id), "status": "in_progress"
+            }
             await AutomationExecutor().execute(_make_automation(), _EXEC_ID)
 
         run_id = mock_astream.call_args.kwargs["run_id"]

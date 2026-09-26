@@ -1,3 +1,5 @@
+import { resolve } from 'node:path'
+import { includeIgnoreFile } from 'eslint/config'
 import js from '@eslint/js'
 import globals from 'globals'
 import eslintReact from '@eslint-react/eslint-plugin'
@@ -45,7 +47,13 @@ const hooksCompilerRulesAsWarnings = Object.fromEntries(
 const refreshExportOptions = { allowConstantExport: true, allowCompoundComponents: true }
 
 export default [
-  { ignores: ['dist/**', 'dist-perf/**', 'public/mockServiceWorker.js'] },
+  // Skip what git ignores. Flat config never reads .gitignore itself, so build
+  // output or local tooling in a checkout would fail lint where a fresh clone
+  // passes.
+  ...includeIgnoreFile(
+    [resolve(import.meta.dirname, '../.gitignore'), resolve(import.meta.dirname, '.gitignore')],
+    { gitignoreResolution: true },
+  ),
 
   js.configs.recommended,
   {

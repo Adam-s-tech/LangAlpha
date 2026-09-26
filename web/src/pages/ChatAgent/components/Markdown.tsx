@@ -589,6 +589,19 @@ function normalizeLatexDelimiters(content: string): string {
 }
 
 /**
+ * Drop the row break LLMs leave after the last row of a numbered environment.
+ *
+ * LaTeX, and KaTeX since 0.18, read that `\\` as opening one more row and
+ * number it, so the block grows an empty line tagged with the next equation
+ * number. The unnumbered forms (`aligned`, `align*`, matrices) draw nothing
+ * for it, so only the three numbered ones are touched.
+ */
+function dropTrailingRowBreaks(content: string): string {
+  if (!content || typeof content !== 'string') return content;
+  return content.replace(/\\\\\s*(?=\\end\{(?:align|gather|alignat)\})/g, '');
+}
+
+/**
  * Convert inline citation patterns ([label](url)) into <cite-bubble> HTML tags.
  * rehype-raw will parse these into the AST and the CitationBubble component renders them.
  */
@@ -671,7 +684,7 @@ function Markdown({ content, variant = 'panel', className = '', style, onOpenFil
     const tables = mapOutsideMultilineCode(base, fixMarkdownTables);
     // These inject characters and tags, which is corruption inside any code.
     return mapOutsideCode(tables, (prose) =>
-      normalizeLatexDelimiters(escapeCurrencyDollars(transformCitationBubbles(prose)))
+      dropTrailingRowBreaks(normalizeLatexDelimiters(escapeCurrencyDollars(transformCitationBubbles(prose))))
     );
   }, [content]);
 

@@ -96,6 +96,16 @@ def _disable_reason(automation: dict[str, Any]) -> dict[str, Any]:
     return {"disable_reason": reason} if reason else {}
 
 
+def _not_found(automation_id: str) -> str | None:
+    """The not-found error for an id that cannot name an automation, which
+    would otherwise reach the uuid cast and hand the model a driver error."""
+    try:
+        UUID(automation_id)
+    except ValueError:
+        return f"Automation '{automation_id}' not found."
+    return None
+
+
 def _error_text(e: ValueError) -> str:
     return error_sentences(e) if isinstance(e, ValidationError) else str(e)
 
@@ -191,6 +201,8 @@ async def check_automations(
             return json.dumps(result), artifact
 
         # Get details + last 5 executions
+        if error := _not_found(automation_id):
+            return json.dumps({"error": error}), {}
         automation = await auto_db.get_automation(automation_id, user_id)
         if not automation:
             return json.dumps({"error": f"Automation '{automation_id}' not found."}), {}
@@ -410,6 +422,8 @@ async def manage_automation(
     """Manage an existing automation: update settings, pause, resume, trigger immediately, or delete."""
     try:
         user_id = _get_user_id(config)
+        if error := _not_found(automation_id):
+            return {"error": error}
 
         if action == "pause":
             result = await auto_handler.pause_automation(automation_id, user_id)

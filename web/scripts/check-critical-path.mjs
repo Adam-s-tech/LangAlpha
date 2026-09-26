@@ -76,7 +76,15 @@ const EXPECTED = ['index', 'rolldown-runtime', 'vendor-dnd', 'vendor-motion', 'v
 // in useWorkspaces.ts, which the entry imports, moved to useAllWorkspaces.ts
 // for 0.1 kB back; the strings alone still clear 485. Nothing moved chunks;
 // the eager set is unchanged.
-const MAX_EAGER_KB = 490
+//
+// Raised 490 -> 500 for the dependency majors. No feature moved onto the
+// critical path; the libraries already on it grew. react-dom 19.3 adds 7.2 kB
+// gz, and react-router 8, one package where react-router-dom 6 was three, adds
+// 5.3 kB. Tailwind CSS 4 adds 2 kB to the entry stylesheet and motion-dom 1.8
+// kB. In the entry, axios 1.20's 5.4 kB is mostly paid back by zod/mini on the
+// two eager schemas. A local build read +11.9 kB against main, 496.0 kB. The eager set
+// gains only rolldown-runtime; nothing else moved chunks.
+const MAX_EAGER_KB = 500
 
 const outDir = process.argv[2] || 'dist'
 const indexPath = join(outDir, 'index.html')

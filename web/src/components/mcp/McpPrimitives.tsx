@@ -61,77 +61,79 @@ export function ServerRowShell({
 }) {
   const selectable = selecting && !!onSelectToggle;
   const openable = !!onOpen && !selectable;
+  // The presence box collapses; the row inside never changes shape. `animate`
+  // restores every key the exit moves: on framer-motion 12.39+ a row that
+  // re-enters after its own exit finished (a sibling's still running) keeps
+  // any exit-only value, so a filter typed and cleared fast left rows at zero
+  // height. The list's gap moves inside the box so the collapse swallows it,
+  // and the box clips, so the row rings inward.
   return (
     <motion.div
       initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{
-        opacity: 0,
-        height: 0,
-        marginTop: 0,
-        paddingTop: 0,
-        paddingBottom: 0,
-        transition: EXIT_TWEEN,
-      }}
+      animate={{ opacity: 1, height: 'auto' }}
+      exit={{ opacity: 0, height: 0, transition: EXIT_TWEEN }}
       transition={FADE_IN}
-      className={`flex items-start justify-between gap-3 py-2.5 px-3 rounded-lg overflow-hidden bg-(--color-bg-card) ${
-        selectable ? 'cursor-pointer' : ''
-      }${
-        // The fill lives in the class (not style) so the hover twin can win;
-        // only rows that open a detail view invite the pointer.
-        openable ? ' transition-colors duration-150 hover:bg-(--color-bg-card-hover)' : ''
-      }`}
-      style={{
-        // Always set (never conditionally spread): motion.div applies style
-        // imperatively and leaves a vanished key painted on the element.
-        boxShadow:
-          selectable && selected ? 'inset 0 0 0 1px var(--color-accent-primary)' : 'none',
-      }}
-      data-testid={testid}
-      {...(selectable
-        ? {
-            role: 'checkbox' as const,
-            'aria-checked': selected,
-            tabIndex: 0,
-            onClick: onSelectToggle,
-            onKeyDown: (e: React.KeyboardEvent) => {
-              if (e.key === ' ' || e.key === 'Enter') {
-                e.preventDefault();
-                onSelectToggle?.();
-              }
-            },
-          }
-        : {})}
+      className="overflow-hidden clips-focus-ring [&:not(:first-child)>*]:mt-1.5"
+      style={{ marginTop: 0 }}
     >
-      {selectable && (
-        <span
-          aria-hidden
-          className="shrink-0 mt-2 inline-flex h-4 w-4 items-center justify-center rounded"
-          style={{
-            border: selected ? 'none' : '1px solid var(--color-border-muted)',
-            backgroundColor: selected ? 'var(--color-accent-primary)' : 'transparent',
-          }}
-        >
-          {selected && (
-            <Check className="h-3 w-3" style={{ color: 'var(--color-btn-primary-text)' }} />
-          )}
-        </span>
-      )}
-      {tile && <div className="shrink-0 mt-0.5">{tile}</div>}
       <div
-        className={`min-w-0 flex flex-col gap-1 flex-1 ${
-          selectable ? 'pointer-events-none select-none' : ''
-        }${openable ? ' cursor-pointer' : ''}`}
-        {...(openable ? { onClick: onOpen } : {})}
-      >
-        {main}
-      </div>
-      <div
-        className={`flex items-center gap-2 shrink-0 ${
-          selectable ? 'pointer-events-none opacity-40' : ''
+        className={`flex items-start justify-between gap-3 py-2.5 px-3 rounded-lg overflow-hidden bg-(--color-bg-card) ${
+          selectable ? 'cursor-pointer' : ''
+        }${
+          // The fill lives in the class (not style) so the hover twin can win;
+          // only rows that open a detail view invite the pointer.
+          openable ? ' transition-colors duration-150 hover:bg-(--color-bg-card-hover)' : ''
         }`}
+        style={{
+          boxShadow:
+            selectable && selected ? 'inset 0 0 0 1px var(--color-accent-primary)' : 'none',
+        }}
+        data-testid={testid}
+        {...(selectable
+          ? {
+              role: 'checkbox' as const,
+              'aria-checked': selected,
+              tabIndex: 0,
+              onClick: onSelectToggle,
+              onKeyDown: (e: React.KeyboardEvent) => {
+                if (e.key === ' ' || e.key === 'Enter') {
+                  e.preventDefault();
+                  onSelectToggle?.();
+                }
+              },
+            }
+          : {})}
       >
-        {actions}
+        {selectable && (
+          <span
+            aria-hidden
+            className="shrink-0 mt-2 inline-flex h-4 w-4 items-center justify-center rounded"
+            style={{
+              border: selected ? 'none' : '1px solid var(--color-border-muted)',
+              backgroundColor: selected ? 'var(--color-accent-primary)' : 'transparent',
+            }}
+          >
+            {selected && (
+              <Check className="h-3 w-3" style={{ color: 'var(--color-btn-primary-text)' }} />
+            )}
+          </span>
+        )}
+        {tile && <div className="shrink-0 mt-0.5">{tile}</div>}
+        <div
+          className={`min-w-0 flex flex-col gap-1 flex-1 ${
+            selectable ? 'pointer-events-none select-none' : ''
+          }${openable ? ' cursor-pointer' : ''}`}
+          {...(openable ? { onClick: onOpen } : {})}
+        >
+          {main}
+        </div>
+        <div
+          className={`flex items-center gap-2 shrink-0 ${
+            selectable ? 'pointer-events-none opacity-40' : ''
+          }`}
+        >
+          {actions}
+        </div>
       </div>
     </motion.div>
   );

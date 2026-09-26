@@ -779,6 +779,9 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
                         layout="position"
                         layoutDependency={threadOrderSignature}
                         className="pb-2"
+                        // Restores what the exit moves: a card re-entering
+                        // after its own exit finished keeps exit-only values.
+                        animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
                         transition={{
                           layout: { duration: 0.22, ease: [0.22, 1, 0.36, 1] },

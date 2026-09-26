@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -61,3 +63,32 @@ async def test_an_id_that_cannot_name_an_automation_is_not_found(monkeypatch):
 
     assert content == '{"error": "Automation \'abc\' not found."}'
     assert managed == {"error": "Automation 'abc' not found."}
+
+
+@pytest.mark.asyncio
+async def test_the_list_says_which_automations_had_their_failure_set_aside(monkeypatch):
+    """The list has no runs, so it carries the newest run's dismissal itself."""
+    from src.tools.automation import tools
+
+    def automation(aid, last_execution):
+        return {
+            "automation_id": aid, "name": aid, "status": "disabled", "agent_mode": "flash",
+            "trigger_type": "cron", "cron_expression": "0 9 * * 1-5",
+            "disable_reason": "provider_auth", "last_execution": last_execution,
+        }
+
+    async def listed(_user_id):
+        return [
+            automation("seen", {"status": "failed", "dismissed_at": "2026-09-26T12:00:00+00:00"}),
+            automation("unseen", {"status": "failed", "dismissed_at": None}),
+            automation("never-ran", None),
+        ], 3
+
+    monkeypatch.setattr(tools.auto_db, "list_automations", listed)
+
+    content, _ = await tools.check_automations.coroutine(config={"configurable": {"user_id": "u1"}})
+
+    rows = {a["automation_id"]: a for a in json.loads(content)["automations"]}
+    assert rows["seen"]["last_run_dismissed_at"] == "2026-09-26T12:00:00+00:00"
+    assert "last_run_dismissed_at" not in rows["unseen"]
+    assert "last_run_dismissed_at" not in rows["never-ran"]

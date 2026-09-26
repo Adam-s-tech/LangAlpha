@@ -97,6 +97,13 @@ def _disable_reason(automation: dict[str, Any]) -> dict[str, Any]:
     return {"disable_reason": reason} if reason else {}
 
 
+def _last_run_dismissed(automation: dict[str, Any]) -> dict[str, Any]:
+    """When the user set the newest run's failure aside. The list carries no
+    runs, so without this a dismissed failure reads as one still unseen."""
+    dismissed = (automation.get("last_execution") or {}).get("dismissed_at")
+    return {"last_run_dismissed_at": dismissed} if dismissed else {}
+
+
 def _not_found(automation_id: str) -> str | None:
     """The not-found error for an id that cannot name an automation, which
     would otherwise reach the uuid cast and hand the model a driver error."""
@@ -145,7 +152,9 @@ async def check_automations(
     runs again once the key is fixed and the automation resumed) or max_failures.
     A run's failure_reason usage_limit is a usage limit, which never disables it;
     server_error and interrupted mean the service failed or cut the run off, so
-    nothing in the automation needs changing.
+    nothing in the automation needs changing. A failed run with dismissed_at
+    (last_run_dismissed_at in the list) is one the user has already seen and
+    set aside.
     """
     try:
         user_id = _get_user_id(config)
@@ -168,6 +177,7 @@ async def check_automations(
                         "next_run_at": a.get("next_run_at"),
                         **({"trigger_config": a.get("trigger_config")} if a.get("trigger_type") == "price" else {}),
                         **_disable_reason(a),
+                        **_last_run_dismissed(a),
                     }
                     for a in automations
                 ]
@@ -231,6 +241,7 @@ async def check_automations(
                         "error_message": e.get("error_message"),
                         **({"skip_reason": e["skip_reason"]} if e.get("skip_reason") else {}),
                         **({"failure_reason": e["failure_reason"]} if e.get("failure_reason") else {}),
+                        **({"dismissed_at": e["dismissed_at"]} if e.get("dismissed_at") else {}),
                     }
                     for e in executions
                 ],

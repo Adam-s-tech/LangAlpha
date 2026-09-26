@@ -29,7 +29,7 @@ import { saveChatSession } from '../hooks/utils/chatSessionRestore';
 import iconComputerLight from '../../../assets/img/icon-computer.svg';
 import iconComputerDark from '../../../assets/img/icon-computer-dark.svg';
 import { useTheme } from '../../../contexts/ThemeContext';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 
 interface ThreadRecord {
   thread_id: string;

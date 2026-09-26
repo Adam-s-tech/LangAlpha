@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion } from '@/lib/framer';
 import { useTranslation } from 'react-i18next';
 import { Eye } from 'lucide-react';
 import { useDashboardContext } from '../framework/DashboardDataContext';

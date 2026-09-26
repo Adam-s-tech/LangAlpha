@@ -68,7 +68,7 @@ import TodoDrawer from './TodoDrawer';
 import MarketWatchChip from './MarketWatchChip';
 import { Loader } from '@/components/ui/loader';
 import { ErrorBanner } from '@/components/ui/error-banner';
-import { motion, AnimatePresence, type PanInfo } from 'framer-motion';
+import { motion, AnimatePresence, type PanInfo } from '@/lib/framer';
 import { MobileBottomSheet } from '@/components/ui/mobile-bottom-sheet';
 
 

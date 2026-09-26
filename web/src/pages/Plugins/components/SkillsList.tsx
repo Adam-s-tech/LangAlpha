@@ -1,7 +1,7 @@
 import { useState, type ComponentType, type CSSProperties, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from '@/lib/framer';
 import { Blocks, BookOpen, Folder, Upload } from 'lucide-react';
 import { useSkills, useUploadSkill } from '@/hooks/useSkills';
 import { invalidateSkillFanout } from '@/hooks/usePlugins';

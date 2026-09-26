@@ -1,4 +1,4 @@
-import { motion } from "framer-motion";
+import { motion } from "@/lib/framer";
 import { useTheme } from "@/contexts/ThemeContext";
 
 export interface AgentPlanItem {

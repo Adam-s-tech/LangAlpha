@@ -1,6 +1,6 @@
 import React, { Suspense } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 import PageLoading from '@/components/PageLoading/PageLoading';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useSyncUserLocale } from '@/hooks/useSyncUserLocale';

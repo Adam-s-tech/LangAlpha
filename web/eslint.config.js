@@ -127,6 +127,22 @@ export default [
     },
   },
 
+  // lib/framer is the only module that may import framer-motion: it arms the
+  // hidden-tab rule, and ES module order only guarantees that runs first for
+  // code that imports framer through it.
+  {
+    files: ['src/**/*.{js,jsx,ts,tsx}'],
+    ignores: ['src/lib/framer.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        paths: [{
+          name: 'framer-motion',
+          message: 'Import from @/lib/framer, which sets up framer before any animation exists.',
+        }],
+      }],
+    },
+  },
+
   {
     files: ['vite.config.js', 'scripts/**/*.mjs'],
     languageOptions: {

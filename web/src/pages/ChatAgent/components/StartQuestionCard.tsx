@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 import { MessageSquareText, Check, X, ChevronRight } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 

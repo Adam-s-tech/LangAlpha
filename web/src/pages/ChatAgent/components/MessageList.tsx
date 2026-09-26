@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/framer';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { DispatchStatusProvider } from '../hooks/usePTCDispatchStatus';
 import { NotificationDivider } from './messageList/NotificationDivider';

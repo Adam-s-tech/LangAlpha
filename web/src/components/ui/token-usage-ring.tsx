@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/framer';
 import { Popover, PopoverTrigger, PopoverContent } from './popover';
 
 const SIZE = 16;

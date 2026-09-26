@@ -15,7 +15,7 @@ import { useWorkspaces } from '@/hooks/useWorkspaces';
 import type { Workspace } from '@/types/api';
 import type { StockSearchHit } from '@/lib/marketUtils';
 import { attachmentsToContexts } from '../ChatAgent/utils/fileUpload';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 import CompanyOverviewPanel from './components/CompanyOverviewPanel';
 import { MobileBottomSheet } from '../../components/ui/mobile-bottom-sheet';
 import { MobileFabChat } from '../../components/ui/mobile-fab-chat';

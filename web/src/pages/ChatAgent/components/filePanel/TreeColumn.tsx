@@ -3,7 +3,7 @@ import {
   ArrowUpDown, BookMarked, CheckSquare, HardDrive, LayoutDashboard, RefreshCw, ScrollText, Search, Settings, Trash2, Upload, X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/framer';
 import { DURATION, EASE_OUT } from '@/lib/motion';
 import { Loader } from '@/components/ui/loader';
 import type { MemoEntry } from '../../utils/api';

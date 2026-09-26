@@ -1,5 +1,5 @@
 import React, { memo, useEffect, useMemo, useState, useRef, useId } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 import { Brain, ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { TextShimmer } from '@/components/ui/text-shimmer';

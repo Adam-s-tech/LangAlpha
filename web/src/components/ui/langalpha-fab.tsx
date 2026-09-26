@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useState, useEffect } from 'react';
-import { motion, useMotionValue, useAnimationControls, type PanInfo } from 'framer-motion';
+import { motion, useMotionValue, useAnimationControls, type PanInfo } from '@/lib/framer';
 
 interface LangAlphaFabProps {
   onClick: () => void;

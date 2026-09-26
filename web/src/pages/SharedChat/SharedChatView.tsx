@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Link } from 'react-router';
 import { ArrowLeft, FolderOpen } from 'lucide-react';
-import { motion, type PanInfo } from 'framer-motion';
+import { motion, type PanInfo } from '@/lib/framer';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Loader } from '@/components/ui/loader';
 import MessageList from '../ChatAgent/components/MessageList';

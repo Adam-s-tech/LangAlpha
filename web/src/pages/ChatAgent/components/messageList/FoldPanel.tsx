@@ -1,6 +1,6 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import { SPRING_FOLD } from './liveZoneTiming';
-import { animate, useReducedMotion, type AnimationPlaybackControls } from 'framer-motion';
+import { animate, useReducedMotion, type AnimationPlaybackControls } from '@/lib/framer';
 
 interface FoldPanelProps {
   open: boolean;

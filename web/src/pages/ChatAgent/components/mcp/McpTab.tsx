@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from '@/lib/framer';
 import { Server, Blocks } from 'lucide-react';
 import {
   useMcpCatalog,

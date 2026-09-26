@@ -1,6 +1,6 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/framer';
 import { McpOauthPill, McpStatusPill } from './McpStatusPill';
 import { deriveLifecycle, type McpLifecycleInput, type McpLifecycleStep } from './mcpState';
 

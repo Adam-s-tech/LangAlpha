@@ -1,5 +1,5 @@
 import React, { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { MotionConfig } from 'framer-motion';
+import { MotionConfig } from '@/lib/framer';
 import { I18nProvider } from 'react-aria-components';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router';
 import AppSidebar from './components/Sidebar/AppSidebar';

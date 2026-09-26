@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/framer';
 import { X as XIcon } from 'lucide-react';
 import { TextShimmer } from '@/components/ui/text-shimmer';
 

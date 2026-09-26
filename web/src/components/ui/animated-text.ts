@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { animate, type AnimationPlaybackControls } from 'framer-motion';
+import { animate, type AnimationPlaybackControls } from '@/lib/framer';
 
 interface UseAnimatedTextOptions {
   enabled?: boolean;

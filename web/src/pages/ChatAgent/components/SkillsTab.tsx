@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from '@/lib/framer';
 import { Upload } from 'lucide-react';
 import { toast } from '@/components/ui/use-toast';
 import {

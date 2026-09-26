@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { useMotionValue, animate, type MotionValue } from 'framer-motion';
+import { useMotionValue, animate, type MotionValue } from '@/lib/framer';
 
 interface UseSwipeToDismissOptions {
   onDismiss: () => void;

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/framer';
 import { Check, Download, MoreVertical, Plus } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { EASE_OUT } from '@/lib/motion';

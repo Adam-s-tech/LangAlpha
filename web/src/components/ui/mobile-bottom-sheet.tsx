@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 import { useSwipeToDismiss } from '@/hooks/useSwipeToDismiss';
 
 interface MobileBottomSheetProps {

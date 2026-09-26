@@ -596,7 +596,7 @@ export function useChatScroll({
     // gap that leaves in one instant jump, only for a reader who was following:
     // a user who scrolled up keeps their place. The jump is made twice: at the
     // event, and again inside the first frame, after those animations have
-    // applied (see lib/hiddenTabMotion) but before that frame paints.
+    // applied (see lib/framer) but before that frame paints.
     const handleVisibility = () => {
       if (document.visibilityState !== 'visible' || !isMain) return;
       const jump = () => {

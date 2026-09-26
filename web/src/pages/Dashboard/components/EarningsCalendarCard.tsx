@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { createPortal } from 'react-dom';
 import { ChevronRight, X, Calendar } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 import { useBackdropDismiss } from '@/hooks/useDialogA11y';
 import { getEarningsCalendar } from '../utils/api';
 

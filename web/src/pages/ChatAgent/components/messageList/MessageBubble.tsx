@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Check, Copy, FileSearch, Info, Pencil, RefreshCw, RotateCcw, StopCircle, ThumbsDown, ThumbsUp } from 'lucide-react';
 import ThumbDownModal from '../ThumbDownModal';
 import LissajousLoading from '@/components/ui/lissajous-loading';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion } from '@/lib/framer';
 import { EXIT_TWEEN } from './liveZoneTiming';
 import { visibleParagraphPrefix } from '@/lib/paragraphGate';
 import { useTranscriptDisplay } from '@/lib/transcriptDisplay';

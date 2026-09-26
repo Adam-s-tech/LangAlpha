@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/framer';
 import { ChevronRight } from 'lucide-react';
 import { useHomeTimezone } from '@/hooks/useHomeTimezone';
 import { relativeTime } from '@/lib/format';

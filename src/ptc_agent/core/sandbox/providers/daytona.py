@@ -63,6 +63,9 @@ _STATE_MAP: dict[str, RuntimeState] = {
     "running": RuntimeState.RUNNING,
     "stopped": RuntimeState.STOPPED,
     "starting": RuntimeState.STARTING,
+    # An archive being brought back. A second start during it answers 409
+    # "state change in progress", so it has to wait like any other boot.
+    "restoring": RuntimeState.STARTING,
     "stopping": RuntimeState.STOPPING,
     "archived": RuntimeState.ARCHIVED,
     "error": RuntimeState.ERROR,

@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from '@/lib/framer';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { queryKeys } from '../../lib/queryKeys';
-import { getThread } from './utils/api';
+import { threadDetailQuery } from './utils/threadQueries';
 import { threadGalleryQuery } from './utils/threadGalleryQuery';
 import { getChatSession } from './hooks/utils/chatSessionRestore';
 import { useChatViewCache } from './hooks/useChatViewCache';
@@ -137,10 +137,8 @@ function ChatAgent(): React.ReactElement | null {
   const needsThreadLookup = !!threadId && threadId !== '__default__' && !urlWorkspaceId && !stateWorkspaceId;
 
   const { data: resolvedThread, error: threadError } = useQuery({
-    queryKey: queryKeys.threads.detail(threadId!),
-    queryFn: () => getThread(threadId!),
+    ...threadDetailQuery(threadId!),
     enabled: needsThreadLookup,
-    retry: false,
   });
 
   const accessDenied = (threadError as ThreadErrorResponse | null)?.response?.status === 403;

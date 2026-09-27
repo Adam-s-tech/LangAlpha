@@ -87,6 +87,9 @@ export const queryKeys = {
     // self-invalidations keep reaching it; the suffix keeps it distinct from
     // the sidebar's finite page entries, which cannot hold InfiniteData.
     gallery:     (wsId: string, archived: boolean) => [...queryKeys.threads.byWorkspace(wsId), { view: 'gallery', archived }],
+    // The first `limit` rows, a finite list. The size is in the key because the
+    // entry holds exactly that many rows, so a new size must miss the cache.
+    page:        (wsId: string, limit: number) => [...queryKeys.threads.byWorkspace(wsId), limit, 0],
     detail:      (threadId: string) => [...queryKeys.threads.all, 'detail', threadId],
     // Base for every recent-list variant — invalidation targets this prefix.
     recentAll:   () => [...queryKeys.threads.all, 'recent'],

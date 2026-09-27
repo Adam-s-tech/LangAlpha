@@ -36,7 +36,9 @@ from src.server.utils.api import CurrentUserId, require_workspace_owner
 from src.server.database.workspace import (
     get_preview_command,
     get_workspace as db_get_workspace,
+    get_workspace_dir_name as db_get_workspace_dir_name,
 )
+from src.server.database.workspace_folders import is_top_level, workspace_folder_in_use
 from src.server.app.workspace_files._shared import work_dir_for
 from src.server.services.workspace_layout import WorkspaceLayoutUnavailable
 from src.server.services.workspace_manager import WorkspaceManager
@@ -620,13 +622,19 @@ async def _get_full_sandbox_stats(
 
     async def _get_skills():
         try:
-            # Read SKILL.md frontmatter from each skill directory
-            cmd = (
-                f"for d in {shlex.quote(WorkspaceLayout(work_dir, workspace.get("dir_name")).skills)}/*/; do "
-                '  [ -f "$d/SKILL.md" ] && echo "=== $(basename "$d") ===" && head -5 "$d/SKILL.md"; '
-                "done 2>/dev/null || true"
-            )
-            result = await sandbox.execute_bash_command(cmd, timeout=10)
+            # A settle on any worker moves only a folder it can hold, so the
+            # folder read under the hold is the one listed; mid-move, none is.
+            async with workspace_folder_in_use(workspace_id):
+                dir_name = await db_get_workspace_dir_name(workspace_id)
+                if dir_name and not is_top_level(dir_name):
+                    return []
+                # Read SKILL.md frontmatter from each skill directory
+                cmd = (
+                    f"for d in {shlex.quote(WorkspaceLayout(work_dir, dir_name).skills)}/*/; do "
+                    '  [ -f "$d/SKILL.md" ] && echo "=== $(basename "$d") ===" && head -5 "$d/SKILL.md"; '
+                    "done 2>/dev/null || true"
+                )
+                result = await sandbox.execute_bash_command(cmd, timeout=10)
             if result.get("success"):
                 return _parse_skills_frontmatter(result.get("stdout", ""))
         except Exception as e:

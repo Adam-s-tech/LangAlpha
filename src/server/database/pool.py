@@ -9,6 +9,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import anyio
+from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
 
 from src.config.env import DB_SSLMODE
@@ -19,6 +20,14 @@ logger = logging.getLogger(__name__)
 # Module-level connection pool cache for conversation database operations
 # This ensures we reuse connections across operations, reducing connection overhead
 _conversation_db_pool_cache = {}
+
+_CONNECTION_KWARGS = {
+    "connect_timeout": 10,
+    "keepalives": 1,
+    "keepalives_idle": 60,
+    "keepalives_interval": 10,
+    "keepalives_count": 5,
+}
 
 # Warn once per process, not once per connection — plaintext is the norm for a
 # local Postgres and a per-connection warning would drown the log.
@@ -114,16 +123,18 @@ def get_or_create_pool() -> AsyncConnectionPool:
             check=AsyncConnectionPool.check_connection,
             open=False,
             reconnect_failed=_on_reconnect_failed,
-            kwargs={
-                "connect_timeout": 10,
-                "keepalives": 1,
-                "keepalives_idle": 60,
-                "keepalives_interval": 10,
-                "keepalives_count": 5,
-            },
+            kwargs=dict(_CONNECTION_KWARGS),
         )
 
     return _conversation_db_pool_cache[db_uri]
+
+
+async def open_session_connection() -> AsyncConnection:
+    """A connection outside the pool, set up as the pool's are, for a session
+    kept open far longer than any checkout."""
+    conn = await AsyncConnection.connect(get_db_connection_string(), **_CONNECTION_KWARGS)
+    await _configure_postgres_connection(conn)
+    return conn
 
 
 @asynccontextmanager

@@ -137,6 +137,24 @@ async def test_only_changed_projects_are_synced_fenced_by_the_machine():
 
 
 @pytest.mark.asyncio
+async def test_a_folder_a_settle_moved_during_the_sweep_is_still_mirrored():
+    """The run is over, so a settle on another worker may move a folder after
+    its path was read: it sweeps as missing, and left out of the mirror, the
+    turn's edits wait for the next backup. A folder missing with its row
+    unchanged is not on the disk to mirror."""
+    before = [_row("w1"), _row("w2"), _row("w3"), _row("w4")]
+    after = [_row("w1"), _row("w2", dir_name="_internal/moving/w2"),
+             _row("w3", dir_name="Moved"), _row("w4")]
+    mgr, _ = await _run(
+        before,
+        sweep=_verdict(changed=["w1"], missing=["w2", "w3", "w4"]),
+        marks=AsyncMock(side_effect=[before, after]),
+    )
+    # A staged folder too: the mirror waits for its hold and reads it again.
+    assert _synced(mgr) == ["w1", "w2", "w3"]
+
+
+@pytest.mark.asyncio
 async def test_only_a_mark_this_sandbox_wrote_reaches_the_sweep():
     rows = [_row("w1"), _row("w2", mark={**MARK, "sandbox_id": "sb-before-recreate"})]
     _, sweeper = await _run(rows, turn="w1")
@@ -234,7 +252,7 @@ async def test_the_sweep_trusts_the_mark_the_sync_recorded_under_the_same_deploy
     setter = AsyncMock()
 
     @asynccontextmanager
-    async def _lock(_workspace_id):
+    async def _lock(_workspace_id, conn=None):
         yield object()
 
     clock = datetime(2026, 9, 25, tzinfo=timezone.utc)

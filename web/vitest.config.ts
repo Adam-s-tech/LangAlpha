@@ -1,6 +1,5 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
-import path from 'path';
 
 const TEST_FILES = ['src/**/*.test.{ts,tsx}'];
 const EXCLUDE = ['e2e/**', 'node_modules/**'];
@@ -209,10 +208,6 @@ export default defineConfig({
     ],
   },
   resolve: {
-    alias: {
-      '@': path.resolve(import.meta.dirname, './src'),
-      // Fixtures a unit test shares with the Playwright specs.
-      '@e2e': path.resolve(import.meta.dirname, './e2e'),
-    },
+    tsconfigPaths: true,
   },
 });

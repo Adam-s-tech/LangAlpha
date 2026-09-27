@@ -130,11 +130,10 @@ export default defineConfig(({ mode }) => {
     base: env.VITE_CDN_BASE || '/',
     plugins: [react(), emitVersionManifest(), pdfjsWasm(), localePreload(path.resolve(import.meta.dirname, 'src/locales'))],
     resolve: {
+      // `@/` and the tests' `@e2e/` come from the tsconfig projects' `paths`,
+      // each file resolving through the project that owns it.
+      tsconfigPaths: true,
       alias: [
-        { find: '@', replacement: path.resolve(import.meta.dirname, './src') },
-        // Fixtures a unit test shares with the Playwright specs. Kept in step
-        // with vitest.config.ts; nothing in the app graph imports it.
-        { find: '@e2e', replacement: path.resolve(import.meta.dirname, './e2e') },
         // pdf.js 6's default build calls Map#getOrInsertComputed and Math.sumPrecise
         // unguarded (Chrome 145, Safari 26.2, Firefox 144). Its legacy build carries
         // the polyfills. The regex matches only react-pdf's bare import; the viewer

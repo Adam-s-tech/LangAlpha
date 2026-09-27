@@ -1,6 +1,6 @@
 # langalpha web
 
-Frontend for langalpha — React 19 + Vite + TypeScript SPA. Talks to the FastAPI backend over REST (`api/client.ts`, a thin `fetch` client) + SSE (raw fetch). Path alias `@` → `src/` (wired in both `vite.config.js` and `vitest.config.ts`).
+Frontend for langalpha — React 19 + Vite + TypeScript SPA. Talks to the FastAPI backend over REST (`api/client.ts`, a thin `fetch` client) + SSE (raw fetch). Path alias `@` → `src/` is declared once, as `paths` in the tsconfig projects, and Vite and Vitest read it through `resolve.tsconfigPaths`; `@e2e/` exists only in `tsconfig.vitest.json`, so app code cannot import the e2e fixtures.
 
 > Single source of truth for AI coding agents in `web/`. `CLAUDE.md` imports this via `@AGENTS.md`; Codex/Cursor read it directly. Edit here, not there.
 

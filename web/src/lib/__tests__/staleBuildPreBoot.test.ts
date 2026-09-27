@@ -264,6 +264,24 @@ describe('before boot it reloads, but a bounded number of times', () => {
     expect(root.querySelector('button')).toBeTruthy();
   });
 
+  it('still offers the control when the failure arrives before #root is parsed', () => {
+    // WebKit fails a <head> preload for a missing file before the parser has
+    // reached <body>. The one decision this document gets is spent by then, so
+    // the dead end has to wait for #root rather than find nothing and give up.
+    const { win, reloadsScheduled } = boot({ stamp: { n: 2 } });
+    const root = win.document.getElementById('root')!;
+    root.remove();
+    Object.defineProperty(win.document, 'readyState', { configurable: true, value: 'loading' });
+    fireResourceError(win, preloadLink(win, `${ORIGIN}/assets/zh-CN-1111.js`, 'runtime'));
+
+    win.document.body.appendChild(root);
+    win.document.dispatchEvent(new win.Event('DOMContentLoaded'));
+
+    expect(reloadsScheduled()).toBe(0);
+    expect(root.querySelector('[role=alert]')).toBeTruthy();
+    expect(root.querySelector('button')).toBeTruthy();
+  });
+
   it('treats a corrupt attempt count as no attempt yet', () => {
     // Storage this code does not own. Reading a bogus value as "already at the
     // cap" would switch recovery off for the session and say nothing.

@@ -112,6 +112,13 @@
         // bundle that carries it is what failed to load.
         function showDeadEnd() {
           var root = document.getElementById('root');
+          // A preload in <head> can fail before the parser reaches <body>:
+          // WebKit reports a missing file that early. This is the document's one
+          // decision, so giving up here would leave it blank; wait for #root.
+          if (!root && document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', showDeadEnd);
+            return;
+          }
           if (!root || root.firstChild) return;
           var zh = (navigator.language || '').indexOf('zh') === 0;
           root.innerHTML =

@@ -28,6 +28,8 @@ export default defineConfig({
   // runs in parallel. The benchmarks stay alone: a second browser on the same
   // CPUs would move the frame timings they measure.
   workers: process.env.PERF ? 1 : undefined,
+  // CI keeps its console output and also writes the report the workflow uploads.
+  reporter: process.env.CI ? [['dot'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL: `http://127.0.0.1:${E2E_PORT}`,
     trace: 'on-first-retry',

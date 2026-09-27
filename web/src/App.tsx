@@ -22,15 +22,18 @@ import './App.css';
 
 // Login carries the market-tape canvas subsystem (~2k lines that only a
 // logged-out visitor ever renders) — split it out of the main bundle.
-const LoginPage = lazyWithMotion(() => import('./pages/Login/LoginPage'));
+// Login, reset and the legal pages animate nothing, so they stay on plain
+// React.lazy: lazyWithMotion would fetch framer before the logged-out first
+// screen could render. One that gains motion moves to lazyWithMotion.
+const LoginPage = React.lazy(() => import('./pages/Login/LoginPage'));
 // The public share route reuses the chat transcript renderer, so a static import
 // pulled the whole ChatAgent tree — plus the markdown and chart vendors it reaches
 // — into the entry chunk that every visitor loads before login.
 const SharePage = lazyWithMotion(() => import('./pages/SharedChat/SharePage'));
 const SetupWizard = lazyWithMotion(() => import('./pages/Setup/SetupWizard'));
-const PrivacyPolicy = lazyWithMotion(() => import('./pages/Legal/PrivacyPolicy'));
-const Legal = lazyWithMotion(() => import('./pages/Legal/Legal'));
-const ResetPassword = lazyWithMotion(() => import('./pages/Login/ResetPassword'));
+const PrivacyPolicy = React.lazy(() => import('./pages/Legal/PrivacyPolicy'));
+const Legal = React.lazy(() => import('./pages/Legal/Legal'));
+const ResetPassword = React.lazy(() => import('./pages/Login/ResetPassword'));
 
 /** How long a callback may sit holding neither a session nor a stated reason
  *  before it is called a failure. What it waits on is the `?code=` exchange the

@@ -10,7 +10,9 @@ import { lazy, type ComponentProps, type ComponentType, type LazyExoticComponent
  * the subtree opens. framer loads beside the chunk, never after it.
  *
  * An eager `React.lazy` that skips this helper leaves its motion ignoring the
- * reader's setting, silently.
+ * reader's setting, silently. The reverse costs a download: a root with no
+ * motion anywhere below it stays on plain `React.lazy`, or its first render
+ * waits on framer for nothing.
  */
 export function lazyWithMotion<
   // React.lazy's own constraint: `any` is what admits every props type.

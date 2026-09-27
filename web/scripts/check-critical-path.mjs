@@ -24,8 +24,8 @@ import { join } from 'node:path'
 //
 // vendor-motion and vendor-dnd load after first paint: the sidebar tree swaps
 // them in at idle (navTreeKit), a dialog sheet loads its swipe on first open,
-// and each lazy root brings framer with it (lib/lazyWithMotion). An eager
-// framer-motion or dnd-kit import puts them back here.
+// and each lazy root that animates brings framer with it (lib/lazyWithMotion).
+// An eager framer-motion or dnd-kit import puts them back here.
 const EXPECTED = ['index', 'rolldown-runtime', 'vendor-react']
 
 // Measured against platform mode, which is what ships (oss builds land ~60 kB

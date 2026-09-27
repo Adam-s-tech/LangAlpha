@@ -27,7 +27,8 @@ const routeChunks = {
 const Dashboard = lazyWithMotion(routeChunks.dashboard);
 const ChatAgent = lazyWithMotion(routeChunks.chat);
 const MarketView = lazyWithMotion(routeChunks.market);
-const NewsDetailPage = lazyWithMotion(routeChunks.news);
+// Animates nothing, so it skips the framer download (see lib/lazyWithMotion).
+const NewsDetailPage = React.lazy(routeChunks.news);
 const Automations = lazyWithMotion(routeChunks.automations);
 const Orders = lazyWithMotion(routeChunks.orders);
 const Plugins = lazyWithMotion(routeChunks.plugins);

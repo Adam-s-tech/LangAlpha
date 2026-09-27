@@ -9,8 +9,10 @@ import zhCN from '@/locales/zh-CN.json';
 // app loads catalogs on demand, which would make every switch in a test async.
 void initI18n({ 'en-US': { translation: enUS }, 'zh-CN': { translation: zhCN } });
 
-// Mock window.matchMedia for framer-motion
+// Mock window.matchMedia for framer-motion. Configurable so a test can still
+// vi.stubGlobal it: under the vm pool `window` is the global itself.
 Object.defineProperty(window, 'matchMedia', {
+  configurable: true,
   writable: true,
   value: (query: string) => ({
     matches: false,

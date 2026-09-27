@@ -21,7 +21,12 @@ import { join } from 'node:path'
 // `rolldown-runtime` is the bundler's shared module runtime (under 1 kB gz).
 // Rolldown emits it whenever the build has more than one chunk, and no config
 // removes it, so it is eager by construction rather than by an import.
-const EXPECTED = ['index', 'rolldown-runtime', 'vendor-dnd', 'vendor-motion', 'vendor-react']
+//
+// vendor-motion and vendor-dnd load after first paint: the sidebar tree swaps
+// them in at idle (navTreeKit), a dialog sheet loads its swipe on first open,
+// and each lazy root brings framer with it (lib/lazyWithMotion). An eager
+// framer-motion or dnd-kit import puts them back here.
+const EXPECTED = ['index', 'rolldown-runtime', 'vendor-react']
 
 // Measured against platform mode, which is what ships (oss builds land ~60 kB
 // lower). Headroom is deliberately thin — routine growth should be visible here,

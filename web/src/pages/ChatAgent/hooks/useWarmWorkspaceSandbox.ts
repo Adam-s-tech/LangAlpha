@@ -97,11 +97,13 @@ export function useWarmWorkspaceSandbox(
         // refetches *active* queries, and even on refetch it never updates this
         // hook's local `warming` — so a stream that ends mid-'starting' (600s
         // server timeout or a dropped connection) would pin the spinner on
-        // 'starting' indefinitely.
+        // 'starting' indefinitely. staleTime 0: the stream's own patches just
+        // stamped the entry fresh, and the point is a read past them.
         try {
           const fresh = await queryClient.fetchQuery({
             queryKey: queryKeys.workspaces.detail(workspaceId),
             queryFn: () => getWorkspace(workspaceId),
+            staleTime: 0,
           });
           const status = (fresh as { status?: string })?.status;
           if (status) patchWorkspaceStatusInCaches(queryClient, workspaceId, status);

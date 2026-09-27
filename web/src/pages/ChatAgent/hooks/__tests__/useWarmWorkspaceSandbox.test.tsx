@@ -289,6 +289,41 @@ describe('useWarmWorkspaceSandbox', () => {
     await waitFor(() => expect(result.current).toBe(false));
   });
 
+  it('asks the server for the status when the stream drops mid-start', async () => {
+    // The app's client keeps data fresh for two minutes, and the stream's own
+    // 'starting' patch just stamped the entry, so a read that honours that
+    // freshness would hand back the stale 'starting' and pin the spinner.
+    const qc = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: Infinity, staleTime: 2 * 60_000, refetchOnMount: false },
+      },
+    });
+    mockGet
+      .mockResolvedValueOnce({ data: { workspace_id: 'ws-1', status: 'stopped' } })
+      .mockResolvedValue({ data: { workspace_id: 'ws-1', status: 'running' } });
+    const { fetchMock, next } = makeMockSSEStream();
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useWarmWorkspaceSandbox('ws-1'), {
+      wrapper: wrapper(qc),
+    });
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    const handle = await next();
+    await act(async () => {
+      await handle.push(
+        'event: status\ndata: {"workspace_id":"ws-1","status":"starting"}\n\n',
+      );
+    });
+    await waitFor(() => expect(result.current).toBe('starting'));
+
+    await act(async () => {
+      await handle.close();
+    });
+
+    await waitFor(() => expect(result.current).toBe(false));
+    expect(mockGet.mock.calls.filter(([url]) => url === '/api/v1/workspaces/ws-1')).toHaveLength(2);
+  });
+
   it('aborts the stream on unmount', async () => {
     const qc = makeClient();
     let capturedSignal: AbortSignal | null = null;

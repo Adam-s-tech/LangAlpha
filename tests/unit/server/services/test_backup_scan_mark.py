@@ -258,7 +258,7 @@ async def test_sweep_without_a_verdict_raises():
 @pytest.fixture(autouse=True)
 def _db():
     @asynccontextmanager
-    async def _lock(_workspace_id, conn=None):
+    async def _lock(_workspace_id):
         yield LOCK_CONN
 
     clock = datetime(2026, 9, 24, 12, 0, 0, tzinfo=timezone.utc)

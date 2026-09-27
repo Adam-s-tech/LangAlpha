@@ -118,7 +118,6 @@ async def restore_to_sandbox(
     *,
     expected_sandbox_id: Any = ANY_SANDBOX,
     layout: WorkspaceLayout,
-    conn=None,
 ) -> dict[str, Any]:
     """
     Restore workspace files from the manifest into the sandbox.
@@ -154,7 +153,7 @@ async def restore_to_sandbox(
     # clears until the next start, with pruning withheld all the while.
     try:
         landed = await set_files_restore_incomplete(
-            workspace_id, True, conn=conn, sandbox_id=expected_sandbox_id
+            workspace_id, True, sandbox_id=expected_sandbox_id
         )
     except Exception as e:
         # Without the guard an empty sandbox is indistinguishable from an
@@ -165,8 +164,8 @@ async def restore_to_sandbox(
     if not landed:
         raise RestoreIdentityLost(workspace_id)
     try:
-        async with workspace_sync_lock(workspace_id, conn=conn) as locked:
-            return await _restore_locked(workspace_id, sandbox, locked, layout)
+        async with workspace_sync_lock(workspace_id) as conn:
+            return await _restore_locked(workspace_id, sandbox, conn, layout)
     except WorkspaceSyncBusy:
         logger.warning(f"File restore for workspace {workspace_id} timed out waiting for the sync lock")
         raise
@@ -600,19 +599,18 @@ async def _relayed_pack_items(
     return items
 
 
-async def _reconcile_flag_beside_marker(
-    workspace_id: str, sandbox: Any, *, conn=None
-) -> None:
+async def _reconcile_flag_beside_marker(workspace_id: str, sandbox: Any) -> None:
     """Clear a flag left standing beside a marker, retrying a failed write.
 
     This is the last chance on the provisioning path: a warm session is
     never reconciled again, so a failure here withholds pruning until the
     sandbox is next recreated, and that recreation restores files the user
-    had deleted."""
+    had deleted. Each attempt checks out its own connection, so a failed
+    statement does not poison the next one."""
     for attempt in range(1, _FLAG_CLEAR_ATTEMPTS + 1):
         try:
-            if await files_restore_incomplete(workspace_id, conn=conn):
-                await _clear_restore_flag(workspace_id, sandbox, conn=conn)
+            if await files_restore_incomplete(workspace_id):
+                await _clear_restore_flag(workspace_id, sandbox)
             return
         except Exception as e:
             if attempt == _FLAG_CLEAR_ATTEMPTS:
@@ -630,14 +628,12 @@ async def _reconcile_flag_beside_marker(
 
 
 async def maybe_restore(
-    workspace_id: str, sandbox: Any, *, layout: WorkspaceLayout, conn=None
+    workspace_id: str, sandbox: Any, *, layout: WorkspaceLayout
 ) -> None:
     """
     Restore files from DB if sandbox was recreated (files lost).
 
     Checks for sync marker file. If absent, files were lost and need restore.
-    A caller holding a session passes it, and every statement and the sync
-    lock run on it rather than on a second pool slot.
     """
     try:
         sync_marker = _sync_marker_path(layout)
@@ -647,7 +643,7 @@ async def maybe_restore(
             # and then clears the flag; a flag still standing beside it is
             # a restore that died between those two writes, and left alone
             # it would withhold pruning on every backup from here on.
-            await _reconcile_flag_beside_marker(workspace_id, sandbox, conn=conn)
+            await _reconcile_flag_beside_marker(workspace_id, sandbox)
             return
 
         # Every kind, not just ``kind='file'``: a workspace of directories
@@ -656,7 +652,7 @@ async def maybe_restore(
         # the structural rows it never saw restored.
         try:
             files = await get_files_for_workspace(
-                workspace_id, include_content=False, all_kinds=True, conn=conn
+                workspace_id, include_content=False, all_kinds=True
             )
         except Exception as e:
             # Not knowing the manifest is the same hazard as not raising the
@@ -672,7 +668,7 @@ async def maybe_restore(
             # an empty manifest has nothing left to protect either way,
             # whereas a sandbox failure on the marker write belongs to the
             # caller and is left to propagate.
-            await _clear_restore_flag(workspace_id, sandbox, conn=conn)
+            await _clear_restore_flag(workspace_id, sandbox)
             await sandbox.aupload_file_bytes(
                 sync_marker,
                 datetime.now(timezone.utc).isoformat().encode("utf-8"),
@@ -688,7 +684,6 @@ async def maybe_restore(
             sandbox,
             expected_sandbox_id=_identity_of(sandbox),
             layout=layout,
-            conn=conn,
         )
 
     except RestoreGuardUnavailable:

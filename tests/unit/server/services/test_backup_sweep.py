@@ -252,7 +252,7 @@ async def test_the_sweep_trusts_the_mark_the_sync_recorded_under_the_same_deploy
     setter = AsyncMock()
 
     @asynccontextmanager
-    async def _lock(_workspace_id, conn=None):
+    async def _lock(_workspace_id):
         yield object()
 
     clock = datetime(2026, 9, 25, tzinfo=timezone.utc)

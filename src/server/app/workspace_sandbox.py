@@ -39,7 +39,7 @@ from src.server.database.workspace import (
     get_workspace_dir_name as db_get_workspace_dir_name,
 )
 from src.server.database.workspace_folders import is_top_level, workspace_folder_in_use
-from src.server.app.workspace_files._shared import work_dir_for
+from src.server.app.workspace_files._shared import held_workspace_row, work_dir_for
 from src.server.services.workspace_layout import WorkspaceLayoutUnavailable
 from src.server.services.workspace_manager import WorkspaceManager
 from ptc_agent.core.paths import DEFAULT_SANDBOX_ROOT, WorkspaceLayout
@@ -724,6 +724,15 @@ class PreviewUrlResponse(BaseModel):
 _UNSET = object()
 
 
+def _preview_work_dir(workspace: dict[str, Any]) -> str:
+    try:
+        return work_dir_for(workspace)
+    except WorkspaceLayoutUnavailable as e:
+        raise HTTPException(
+            status_code=503, detail="Workspace files are not available"
+        ) from e
+
+
 async def _resolve_preview(
     sandbox: Any,
     workspace_id: str,
@@ -881,20 +890,15 @@ async def owner_preview_url(
     and every failure status live here rather than in each route.
     """
     _session, sandbox = await _get_sandbox(workspace_id, user_id)
-    workspace = await db_get_workspace(workspace_id)
     try:
-        work_dir = work_dir_for(workspace)
-    except WorkspaceLayoutUnavailable as e:
-        raise HTTPException(
-            status_code=503, detail="Workspace files are not available"
-        ) from e
-
-    try:
-        return await _resolve_preview(
-            sandbox, workspace_id, port,
-            command=command, force=force, expires_in=expires_in,
-            work_dir=work_dir,
-        )
+        # The server starts in the folder, which a settle on any worker would
+        # otherwise move between the read and the launch.
+        async with held_workspace_row(workspace_id) as workspace:
+            return await _resolve_preview(
+                sandbox, workspace_id, port,
+                command=command, force=force, expires_in=expires_in,
+                work_dir=_preview_work_dir(workspace),
+            )
     except HTTPException:
         raise
     except NotImplementedError:
@@ -1017,40 +1021,36 @@ async def restart_preview_server(
 ) -> PreviewRestartResponse:
     """Restart a preview server process in the workspace sandbox."""
     _session, sandbox = await _get_sandbox(workspace_id, x_user_id)
-    workspace = await db_get_workspace(workspace_id)
-    try:
-        work_dir = work_dir_for(workspace)
-    except WorkspaceLayoutUnavailable as e:
-        raise HTTPException(
-            status_code=503, detail="Workspace files are not available"
-        ) from e
-
-    try:
-        async with _preview_launch_lease(sandbox.sandbox_id, body.port):
-            owner = await _get_preview_owner(sandbox.sandbox_id, body.port)
-            if owner not in (None, workspace_id):
-                if await sandbox._is_preview_reachable(body.port):
-                    raise RuntimeError(
-                        f"Port {body.port} is already in use on this computer. "
-                        "Choose another port."
+    # The server starts in the folder, which a settle on any worker would
+    # otherwise move between the read and the launch.
+    async with held_workspace_row(workspace_id) as workspace:
+        work_dir = _preview_work_dir(workspace)
+        try:
+            async with _preview_launch_lease(sandbox.sandbox_id, body.port):
+                owner = await _get_preview_owner(sandbox.sandbox_id, body.port)
+                if owner not in (None, workspace_id):
+                    if await sandbox._is_preview_reachable(body.port):
+                        raise RuntimeError(
+                            f"Port {body.port} is already in use on this computer. "
+                            "Choose another port."
+                        )
+                    await _delete_preview_owner(sandbox.sandbox_id, body.port)
+                await _set_preview_owner(sandbox.sandbox_id, body.port, workspace_id)
+                try:
+                    await sandbox.start_preview_server(
+                        f"cd {shlex.quote(work_dir)} && {body.command}",
+                        body.port,
+                        owner=workspace_id,
                     )
-                await _delete_preview_owner(sandbox.sandbox_id, body.port)
-            await _set_preview_owner(sandbox.sandbox_id, body.port, workspace_id)
-            try:
-                await sandbox.start_preview_server(
-                    f"cd {shlex.quote(work_dir)} && {body.command}",
-                    body.port,
-                    owner=workspace_id,
-                )
-            except BaseException:
-                await _delete_preview_owner(sandbox.sandbox_id, body.port)
-                raise
-        return PreviewRestartResponse(success=True)
-    except Exception:
-        logger.exception(
-            "Failed to restart preview server for workspace %s", workspace_id,
-        )
-        raise HTTPException(status_code=500, detail="Failed to restart preview server") from None
+                except BaseException:
+                    await _delete_preview_owner(sandbox.sandbox_id, body.port)
+                    raise
+            return PreviewRestartResponse(success=True)
+        except Exception:
+            logger.exception(
+                "Failed to restart preview server for workspace %s", workspace_id,
+            )
+            raise HTTPException(status_code=500, detail="Failed to restart preview server") from None
 
 
 # ---------------------------------------------------------------------------

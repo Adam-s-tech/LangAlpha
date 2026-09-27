@@ -119,7 +119,8 @@ const baseChatState = () => ({
   handleThumbUp: vi.fn(),
   handleThumbDown: vi.fn(),
   feedbackByTurn: {} as Record<number, unknown>,
-  reconnectIfStaleRun: vi.fn().mockResolvedValue(undefined),
+  reconnectIfStaleRun: vi.fn<() => Promise<boolean>>().mockResolvedValue(true),
+  isOwnRun: () => false,
   getSubagentHistory: vi.fn().mockReturnValue(null),
   resolveSubagentIdToAgentId: vi.fn((id: string) => id),
 });

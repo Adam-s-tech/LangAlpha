@@ -178,11 +178,15 @@ export type WorkflowStatusResponse = Partial<ThreadReportBackStatus> & {
 /**
  * Get the current status of a workflow for a thread
  * @param {string} threadId - The thread ID to check
+ * @param {number} [options.timeout] - Bound the read; the shared axios instance sets none
  * @returns {Promise<WorkflowStatusResponse>} Workflow status with can_reconnect, status, etc.
  */
-export async function getWorkflowStatus(threadId: string): Promise<WorkflowStatusResponse> {
+export async function getWorkflowStatus(
+  threadId: string,
+  options: { timeout?: number } = {},
+): Promise<WorkflowStatusResponse> {
   if (!threadId) throw new Error('Thread ID is required');
-  const { data } = await api.get(`/api/v1/threads/${threadId}/status`);
+  const { data } = await api.get(`/api/v1/threads/${threadId}/status`, { timeout: options.timeout });
   return data;
 }
 

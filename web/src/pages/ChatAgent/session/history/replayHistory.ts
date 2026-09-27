@@ -68,6 +68,7 @@ export async function loadConversationHistory(
     rt.historyLoadingRef.current = true;
     rt.historyHasUnresolvedInterruptRef.current = false;
     rt.setIsLoadingHistory(true);
+    rt.setHistoryLoadFailed(false);
     rt.setMessageError(null);
 
     // Reset history-tracking state so a re-replay (e.g. after a failed
@@ -1034,6 +1035,9 @@ export async function loadConversationHistory(
         isOnline() ? errMsg : i18n.t('chat.offlineHistoryLoad'),
       );
     }
+    // Set with the flag below, so the render that ends the load says whether
+    // the transcript it left is the thread or what a failure stripped.
+    rt.setHistoryLoadFailed(!isNotFound);
     rt.setIsLoadingHistory(false);
     rt.historyLoadingRef.current = false;
     return isNotFound;

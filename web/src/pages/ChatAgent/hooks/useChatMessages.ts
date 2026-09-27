@@ -107,9 +107,14 @@ export function useChatMessages(
     return workspaceId ? getStoredThreadId(workspaceId) : '__default__';
   });
   const [isLoading, setIsLoading] = useState(false);
+  // For checks that outlive a render: isLoading is state, and a check that
+  // runs between renders reads it here.
+  const isLoadingRef = useRef(isLoading);
+  isLoadingRef.current = isLoading;
   const [isLoadingHistory, setIsLoadingHistory] = useState(
     () => !!(initialThreadId && initialThreadId !== '__default__')
   );
+  const [historyLoadFailed, setHistoryLoadFailed] = useState(false);
 
   const [hasActiveSubagents, setHasActiveSubagents] = useState(false);  // Subagent streams open after main agent finished
   // false | 'starting' (generic cold start) | 'archived' (slow ~90s restore from cold storage).
@@ -235,6 +240,11 @@ export function useChatMessages(
 
   // Refs for history loading state
   const historyLoadingRef = useRef(false);
+  // The whole thread load, from its /status read through the arm and reconnect
+  // after the replay; historyLoadingRef spans only the replay. Holds the load's
+  // own token, so a superseded load can't clear its successor's.
+  const threadLoadingRef = useRef<object | null>(null);
+  const [isLoadingThread, setIsLoadingThread] = useState(false);
   const newMessagesStartIndexRef = useRef(0); // Index where new messages start
   // Guards against the load-history effect doing a redundant replay when
   // (workspaceId, threadId, reloadTrigger) re-resolve to a tuple this hook
@@ -271,10 +281,14 @@ export function useChatMessages(
   const isStreamingRef = useRef(false);
 
   const acquireStreamOwnership = (tid: string | null) => acquireOwnership(runtime, tid);
-  // A mux resync that arrived mid-stream waits here: bumping the reload
-  // trigger while streaming would run the load effect's cleanup (detaching
-  // the mux) and then bail on the streaming guard — losing the reload.
+  // A reload asked for mid-stream waits here (a mux resync, a catch-up reload a
+  // report-back attach overtook, or a load a send overtook): bumping the reload
+  // trigger while streaming runs the load effect's cleanup (detaching the mux)
+  // and then bails on the streaming guard — losing the reload.
   const pendingMuxResyncRef = useRef(false);
+  // The reloadTrigger the load effect last ran for, so a bail can tell a
+  // reload request from a thread change.
+  const reloadSeenRef = useRef(0);
 
   const releaseStreamOwnership = () => releaseOwnership(runtime);
 
@@ -389,7 +403,8 @@ export function useChatMessages(
     currentRunIdRef,
     lastRenderedTurnIndexRef,
     historyLoadedKeyRef,
-    historyLoadingRef,
+    threadLoadingRef,
+    isLoadingRef,
     reconnectToStream: (opts) => reconnectToStreamRef.current(opts),
     requestHistoryReload: () => setReloadTrigger((n) => n + 1),
     // Producer-undecided grace: while subagent run channels are open on the
@@ -526,6 +541,7 @@ export function useChatMessages(
     setMessages,
     setIsLoading,
     setIsLoadingHistory,
+    setHistoryLoadFailed,
     setIsCompacting,
     setMessageError,
     setFallbackSuggestion,
@@ -765,6 +781,8 @@ export function useChatMessages(
 
   // Load history when workspace or threadId changes, then check for reconnection
   useEffect(() => {
+    const reloadAsked = reloadTrigger !== reloadSeenRef.current;
+    reloadSeenRef.current = reloadTrigger;
     // A reconnect stream is live on a DIFFERENT thread than the one we're now
     // loading — e.g. a flash report-back is streaming on the flash thread and the
     // user clicked the dispatch card to jump into the running PTC thread. Without
@@ -796,8 +814,14 @@ export function useChatMessages(
     }
 
     // Guard: Only load if we have a workspaceId and a valid threadId (not '__default__')
-    // Also skip if streaming is in progress (prevents race condition when thread ID changes during streaming)
-    if (!workspaceId || !threadId || threadId === '__default__' || historyLoadingRef.current || isStreamingRef.current) {
+    if (!workspaceId || !threadId || threadId === '__default__' || historyLoadingRef.current) {
+      return;
+    }
+    // Skip while streaming (prevents race condition when thread ID changes
+    // during streaming). A reload asked for meanwhile runs when the stream
+    // releases, since the stream shows only its own run.
+    if (isStreamingRef.current) {
+      if (reloadAsked) pendingMuxResyncRef.current = true;
       return;
     }
 
@@ -823,12 +847,24 @@ export function useChatMessages(
       // mux attach may lag it by the whole history load.
       const snapshotAtMs = Date.now();
       const onlineEpochAtStart = onlineRetryEpochRef.current;
+      // The composer is open while this load reads the status and after its
+      // replay, and a turn sent then owns the transcript: this load's snapshot
+      // predates it, so replaying or reconnecting would run over that turn, or
+      // reconnect to a run it named that has since ended. The load runs again
+      // after the turn, when its stream releases or at once if it already has.
+      const sessionEpochAtStart = sessionEpochRef.current;
+      const turnTookOver = () => {
+        if (sessionEpochRef.current === sessionEpochAtStart) return false;
+        if (isStreamingRef.current) pendingMuxResyncRef.current = true;
+        else setReloadTrigger((n) => n + 1);
+        return true;
+      };
       const status: WorkflowStatusResponse = await getWorkflowStatus(threadId).catch((statusErr: unknown) => {
         console.log('[Reconnect] Could not check workflow status:', (statusErr as Error).message);
         return { can_reconnect: false, status: 'error' } as WorkflowStatusResponse;
       });
 
-      if (cancelled) return;
+      if (cancelled || turnTookOver()) return;
 
       // Capture share status from workflow status response
       if (status.is_shared !== undefined) {
@@ -837,7 +873,7 @@ export function useChatMessages(
 
       const loadOk = await loadConversationHistory();
 
-      if (cancelled) return;
+      if (cancelled || turnTookOver()) return;
 
       // Only mark the (workspace, thread, reloadTrigger) tuple as loaded
       // when the load actually succeeded. On transient errors the key
@@ -897,6 +933,17 @@ export function useChatMessages(
         reportBackWatch.arm(threadId, status.report_back_run_id, status.can_reconnect ? null : 'load');
       }
 
+      // The report-back watch attaches its runs on a wake, which can land
+      // while this load reads; a second reader would stream the run twice.
+      const watchStreamsRun =
+        status.can_reconnect && isStreamingRef.current && currentRunIdRef.current === status.run_id;
+      if (watchStreamsRun && historyHasUnresolvedInterruptRef.current) {
+        // That stream delivers the resolution. Left set, these would make a
+        // later reconnect strip the replayed interrupt cards.
+        historyHasUnresolvedInterruptRef.current = false;
+        unresolvedHistoryInterruptRef.current = [];
+      }
+
       if (historyHasUnresolvedInterruptRef.current && status.can_reconnect) {
         // Workflow is active → interrupt was answered, reconnect will deliver resolution
         console.log('[Reconnect] Unresolved interrupt from history, reconnecting to get resolution events');
@@ -953,11 +1000,12 @@ export function useChatMessages(
         }
         unresolvedHistoryInterruptRef.current = [];
         historyHasUnresolvedInterruptRef.current = false;
-      } else if (status.can_reconnect) {
+      } else if (status.can_reconnect && !watchStreamsRun) {
         console.log('[Reconnect] Workflow status:', status.status, 'can_reconnect:', status.can_reconnect, 'active_tasks:', status.active_tasks);
         await reconnectToStream({ activeTasks: status.active_tasks || [], runId: status.run_id ?? null, resetCursor: true, snapshotAtMs });
       } else if ((status.active_tasks || []).some((t) => !isSettledTask(t))) {
-        // Main workflow completed but subagent tasks still running.
+        // Main workflow completed, or the report-back watch streams it, but
+        // subagent tasks still running; this load's cleanup detached the mux.
         // Attach the thread mux so cards stay live after refresh. Tasks the
         // stale /status snapshot calls active but that are already settled
         // (terminal in history, or seen closing live) are never re-activated —
@@ -989,7 +1037,7 @@ export function useChatMessages(
         }
         attachSubagentMux(threadId, processEvent, snapshotAtMs);
         setHasActiveSubagents(true);
-      } else {
+      } else if (!status.can_reconnect) {
         // Workflow is not active. Inline subagent cards are already born with
         // their real status from the replayed task-artifact stamp
         // (handleHistoryTaskArtifactStatus), so no blanket completion here —
@@ -1003,7 +1051,15 @@ export function useChatMessages(
       }
     };
 
-    loadAndMaybeReconnect();
+    const load = {};
+    const endLoad = () => {
+      if (threadLoadingRef.current !== load) return;
+      threadLoadingRef.current = null;
+      setIsLoadingThread(false);
+    };
+    threadLoadingRef.current = load;
+    setIsLoadingThread(true);
+    void loadAndMaybeReconnect().finally(endLoad);
 
     // Cleanup: Cancel loading if workspace or thread changes or component unmounts.
     // The report-back watch is deliberately NOT torn down here — it is keyed to its
@@ -1012,6 +1068,7 @@ export function useChatMessages(
     return () => {
       cancelled = true;
       historyLoadingRef.current = false;
+      endLoad();
       // Thread switch/unmount: tear the mux down without marking anything
       // completed, and drop the processor so no stale closure can fire.
       if (threadId) peekThreadMux(threadId)?.detach();
@@ -2351,6 +2408,21 @@ export function useChatMessages(
   }, []);
 
   /**
+   * An edit or regenerate cuts the transcript before it reads the checkpoint it
+   * forks from, so it takes the stream slot at the cut: a load or a report-back
+   * attach landing in that read waits for the fork instead of writing over the
+   * cut. A replay in flight is rebuilding the very transcript the fork would
+   * cut, so the fork is refused until it lands. A failed read hands the slot
+   * back, which runs any load that waited.
+   */
+  const claimForkPreflight = (): boolean => {
+    if (isStreamingRef.current || historyLoadingRef.current) return false;
+    sessionEpochRef.current += 1;
+    acquireStreamOwnership(threadId);
+    return true;
+  };
+
+  /**
    * Helper: stream a forked or retried turn (shared by edit, regenerate, retry).
    * Edit/regenerate fork from an explicit `checkpointId`; retry goes through the
    * POST /retry attempt chain with `checkpointId=null` (the server resolves the
@@ -2358,7 +2430,8 @@ export function useChatMessages(
    * stream lifecycle.
    */
   const streamFromCheckpoint = useCallback(async (message: string | null, checkpointId: string | null, truncateIndex: number, forkFromTurn: number | null = null, modelOptions: ModelOptions = {}, viaRetryEndpoint: boolean = false) => {
-    if (isStreamingRef.current) return;
+    // Callers check the slot is free: an edit or regenerate already holds it
+    // for its checkpoint read, and takes it again below with the same result.
 
     // Edit/regenerate/retry are chat activity — bump like a fresh send.
     bumpThreadNavOrder(workspaceId, threadIdRef.current);
@@ -2567,6 +2640,8 @@ export function useChatMessages(
     // Excludes steering assistant messages (mid-turn continuations) which don't map to backend turns.
     const turnIndex = messages.slice(0, msgIndex).filter((m) => m.role === 'assistant' && !isSteeringContinuation(m)).length;
 
+    if (!claimForkPreflight()) return;
+
     // Immediate visual feedback: truncate, show edited message + loading placeholder.
     // Save snapshot so we can restore on failure.
     const snapshotMessages = messages;
@@ -2585,6 +2660,7 @@ export function useChatMessages(
       setIsLoading(false);
       setMessages(snapshotMessages);
       setMessageError('Unable to edit: checkpoint data unavailable');
+      releaseStreamOwnership();
       return;
     }
 
@@ -2593,10 +2669,14 @@ export function useChatMessages(
       setIsLoading(false);
       setMessages(snapshotMessages);
       setMessageError('Unable to edit: this is the first message');
+      releaseStreamOwnership();
       return;
     }
 
     await streamFromCheckpoint(newContent, checkpointId, msgIndex, turnIndex, modelOptions);
+  // The slot helpers reach only refs and the threadId streamFromCheckpoint
+  // already tracks.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, getTurnCheckpoints, streamFromCheckpoint]);
 
   /**
@@ -2628,6 +2708,8 @@ export function useChatMessages(
       }
     }
 
+    if (!claimForkPreflight()) return;
+
     // Immediate visual feedback: truncate at the assistant message, show loading placeholder.
     // Save snapshot so we can restore on failure.
     const snapshotMessages = messages;
@@ -2644,12 +2726,15 @@ export function useChatMessages(
       setIsLoading(false);
       setMessages(snapshotMessages);
       setMessageError('Unable to regenerate: checkpoint data unavailable');
+      releaseStreamOwnership();
       return;
     }
 
     const checkpointId = turnsData.turns[turnIndex].regenerate_checkpoint_id;
     // Truncate at the turn's first assistant bubble (keep everything before it, including user msg)
     await streamFromCheckpoint(null, checkpointId, truncateIndex, turnIndex, modelOptions);
+  // Same as handleEditMessage: the slot helpers reach only refs and threadId.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, getTurnCheckpoints, streamFromCheckpoint]);
 
   /**
@@ -2660,6 +2745,7 @@ export function useChatMessages(
    * positional assistant-bubble count stays aligned with backend turn_index.
    */
   const handleRetry = useCallback(async (modelOptions: ModelOptions = {}) => {
+    if (isStreamingRef.current) return;
     const lastErrorIndex = messages.findLastIndex((m) => m.role === 'assistant' && (m as AssistantMessage).error);
     const truncateIndex = lastErrorIndex !== -1 ? lastErrorIndex : messages.length;
     await streamFromCheckpoint(null, null, truncateIndex, null, modelOptions, true);
@@ -2709,6 +2795,8 @@ export function useChatMessages(
     setIsCompacting,
     queuedSend,
     isLoadingHistory,
+    historyLoadFailed,
+    isLoadingThread,
     isReconnecting,
     modelStatus,
     fallbackSuggestion,

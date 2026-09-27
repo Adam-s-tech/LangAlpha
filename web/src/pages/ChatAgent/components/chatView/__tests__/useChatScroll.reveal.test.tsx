@@ -40,6 +40,7 @@ function Harness() {
     isActive: true,
     isActiveRef: { current: true },
     isLoadingHistory: false,
+    historyLoadFailed: false,
     isStreaming: true,
     currentThreadId: 't1',
     threadId: 't1',

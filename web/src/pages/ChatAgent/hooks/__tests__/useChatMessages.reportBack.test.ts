@@ -1038,6 +1038,193 @@ describe('useChatMessages — report-back watch (PTC → flash report-back)', ()
     await waitFor(() => expect(result.current.awaitingReportBack).toBe(true));
   });
 
+  it('activation: a LIVE report-back run is left to the armed watch, not reloaded over', async () => {
+    // A check held through the last report-back's stream lands at its end,
+    // just as the next one starts. The reload's reconnect and the watch's
+    // attach would each stream it.
+    mockStatus.mockResolvedValue(threadStatus({ pending_report_back: true }));
+    mockReconnect.mockImplementation(streamedReconnect());
+    captureWatch();
+
+    const { result } = renderHookWithProviders(() => useChatMessages('ws-rb', 'th-rb'));
+    await waitFor(() => expect(mockWatch).toHaveBeenCalledTimes(1));
+    await settleMountEffect();
+
+    mockStatus.mockResolvedValue(threadStatus({
+      can_reconnect: true,
+      status: 'running',
+      run_id: 'rb-live',
+      pending_report_back: true,
+      report_back_run_id: 'rb-live',
+    }));
+    await act(async () => {
+      await result.current.reconnectIfStaleRun();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await settleMountEffect();
+
+    expect(mockReplay).toHaveBeenCalledTimes(1);
+    expect(mockReconnect.mock.calls.filter((c) => c[1] === 'rb-live')).toHaveLength(1);
+  });
+
+  it('activation: a live report-back the watch already counts as on screen still reloads', async () => {
+    // Attaches that streamed nothing before the run registered leave it
+    // recorded, so the watch passes it over and only the reload shows it.
+    mockStatus.mockResolvedValue(threadStatus({ pending_report_back: true }));
+    mockReconnect.mockResolvedValue({ disconnected: false, aborted: false });
+    const watchCalls = captureWatch();
+
+    const { result } = renderHookWithProviders(() => useChatMessages('ws-rb', 'th-rb'));
+    await waitFor(() => expect(mockWatch).toHaveBeenCalledTimes(1));
+    await settleMountEffect();
+    mockStatus.mockResolvedValue(threadStatus({ pending_report_back: true, report_back_run_id: 'rb-live' }));
+    await act(async () => {
+      await watchCalls[0].cb({ run_id: 'rb-live' });
+    });
+    await settleMountEffect();
+    await settleMountEffect();
+
+    mockStatus.mockResolvedValue(threadStatus({
+      can_reconnect: true,
+      status: 'running',
+      run_id: 'rb-live',
+      pending_report_back: true,
+      report_back_run_id: 'rb-live',
+    }));
+    await act(async () => {
+      await result.current.reconnectIfStaleRun();
+    });
+    await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(2));
+  });
+
+  it.each([
+    ['another turn was missed too', 1],
+    ['the turn counter could not be read', null],
+  ])('activation: a live report-back left to the watch asks again when %s', async (_case, watermark) => {
+    // Another tab's turn finished while the view was hidden, then a report-back
+    // started. The watch streams only the report-back; the other turn takes a
+    // reload once that stream ends. A /status whose turn counter failed to read
+    // cannot rule that turn out.
+    mockStatus.mockResolvedValue(threadStatus({ pending_report_back: true, latest_turn_index: -1 }));
+    mockReconnect.mockImplementation(streamedReconnect());
+    captureWatch();
+
+    const { result } = renderHookWithProviders(() => useChatMessages('ws-rb', 'th-rb'));
+    await waitFor(() => expect(mockWatch).toHaveBeenCalledTimes(1));
+    await settleMountEffect();
+
+    mockStatus.mockResolvedValue(threadStatus({
+      can_reconnect: true,
+      status: 'running',
+      run_id: 'rb-live',
+      pending_report_back: true,
+      report_back_run_id: 'rb-live',
+      latest_turn_index: watermark,
+    }));
+    let read: boolean | undefined;
+    await act(async () => {
+      read = await result.current.reconnectIfStaleRun();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await settleMountEffect();
+    expect(read).toBe(false);
+    expect(mockReplay).toHaveBeenCalledTimes(1);
+    expect(mockReconnect.mock.calls.filter((c) => c[1] === 'rb-live')).toHaveLength(1);
+
+    mockStatus.mockResolvedValue(threadStatus({ pending_report_back: true, latest_turn_index: 1 }));
+    await act(async () => {
+      await result.current.reconnectIfStaleRun();
+    });
+    await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(2));
+  });
+
+  it('a reload asked for in the frame a report-back attaches runs once that stream ends', async () => {
+    // A check finds a missed turn and asks for a reload, and the watch attaches
+    // a report-back before the load runs. The load bails on the stream; the
+    // missed turn still needs that reload.
+    mockStatus.mockResolvedValue(threadStatus({ pending_report_back: true, latest_turn_index: -1 }));
+    const closers = new Map<string, () => void>();
+    mockReconnect.mockImplementation(heldReconnect(closers));
+    const watchCalls = captureWatch();
+
+    const { result } = renderHookWithProviders(() => useChatMessages('ws-rb', 'th-rb'));
+    await waitFor(() => expect(mockWatch).toHaveBeenCalledTimes(1));
+    await settleMountEffect();
+
+    mockStatus.mockResolvedValue(threadStatus({ pending_report_back: true, latest_turn_index: 1 }));
+    await act(async () => {
+      expect(await result.current.reconnectIfStaleRun()).toBe(false);
+      void watchCalls[0].cb({ run_id: 'rb-1' });
+    });
+    await settleMountEffect();
+    expect(closers.has('rb-1')).toBe(true);
+    expect(mockReplay).toHaveBeenCalledTimes(1);
+
+    await act(async () => { closers.get('rb-1')!(); });
+    await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(2));
+  });
+
+  it.each([
+    { history: 'plain history', pendingInterrupt: false },
+    { history: 'a pending interrupt in history', pendingInterrupt: true },
+  ])('a reload opens no second reader on a report-back the watch attached while it read ($history), and keeps live subagents streaming', async ({ pendingInterrupt }) => {
+    const muxConns = captureMuxConnections(openThreadMuxStream as Mock);
+    mockStatus.mockResolvedValue(threadStatus({ pending_report_back: true, latest_turn_index: -1 }));
+    const readers: CapturedReconnect[] = [];
+    mockReconnect.mockImplementation(hangingReconnect(readers));
+    const watchCalls = captureWatch();
+
+    const { result } = renderHookWithProviders(() => useChatMessages('ws-rb', 'th-rb'));
+    await waitFor(() => expect(mockWatch).toHaveBeenCalledTimes(1));
+    await settleMountEffect();
+    if (pendingInterrupt) {
+      // One dispatch proposal was approved and its report-back runs; the other waits.
+      mockReplay.mockImplementationOnce((_tid: string, onEvent: (e: Record<string, unknown>) => void) => {
+        onEvent({ event: 'user_message', turn_index: 0, content: 'compare nvidia and amd', role: 'user' });
+        onEvent({
+          event: 'interrupt',
+          turn_index: 0,
+          interrupt_id: 'amd',
+          action_requests: [{ type: 'ptc_agent', workspace_id: 'ws-x', workspace_name: 'Analysis', question: 'analyze amd', report_back: true, tool_call_id: 'tc-amd' }],
+        });
+        return Promise.resolve();
+      });
+    }
+
+    // A check finds a turn it missed and reloads; the reload's own read is slow.
+    mockStatus.mockResolvedValueOnce(threadStatus({ pending_report_back: true, latest_turn_index: 0 }));
+    const live = threadStatus({
+      can_reconnect: true,
+      status: 'running',
+      run_id: 'rb-1',
+      pending_report_back: true,
+      report_back_run_id: 'rb-1',
+      latest_turn_index: 1,
+      active_tasks: ['t9'],
+    });
+    let releaseStatus!: () => void;
+    mockStatus.mockImplementationOnce(() => new Promise((resolve) => { releaseStatus = () => resolve(live); }));
+    mockStatus.mockResolvedValue(live);
+    await act(async () => {
+      await result.current.reconnectIfStaleRun();
+    });
+    await waitFor(() => expect(result.current.isLoadingThread).toBe(true));
+
+    // The run's wake lands mid-load and the watch attaches it.
+    await act(async () => {
+      void watchCalls[0].cb({ run_id: 'rb-1' });
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await act(async () => { releaseStatus(); });
+    await settleMountEffect();
+    await settleMountEffect();
+
+    expect(mockReplay).toHaveBeenCalledTimes(2);
+    expect(readers.filter((r) => r.rid === 'rb-1' && !r.signal.aborted)).toHaveLength(1);
+    // The reload's cleanup detached the subagent mux; skipping the reader must not skip it too.
+    expect(muxConns.filter((c) => !c.signal.aborted)).toHaveLength(1);
+  });
+
   it('arms the watch AT PTC approve (subscribe-at-dispatch), before any stream end', async () => {
     // BUG B's other half: a subscription opened only at the dispatch turn's
     // stream END has zero subscribers when a fast PTC wakes mid-turn (pub/sub,

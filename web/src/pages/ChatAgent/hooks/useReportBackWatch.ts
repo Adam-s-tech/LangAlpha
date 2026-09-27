@@ -15,8 +15,8 @@
  * host (useChatMessages) injects the shared stream primitives and calls `arm`
  * at load AND on PTC approve (subscribe-at-dispatch: a wake fired mid-turn is
  * latched, pub/sub has no replay), `markRunsRendered` after each history load,
- * `onStreamEnd` at dispatch-turn end, and `reconnectIfStaleRun` on the
- * cached-view become-active transition.
+ * `onStreamEnd` at dispatch-turn end, and `reconnectIfStaleRun` when a cached
+ * view is shown again or the feed announces a run it did not start.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -31,6 +31,7 @@ import {
 // From the dependency-free signal module (not `../utils/api`) so decoding still
 // works where the hook tests mock `../utils/api`.
 import { decodeReportBackSignal, shouldArmForStatus } from '../utils/reportBackSignal';
+import { isLastingRefusal } from '../utils/api/errors';
 
 /**
  * Re-subscribe pacing for the push watch. The watch NEVER stops retrying while
@@ -43,6 +44,9 @@ import { decodeReportBackSignal, shouldArmForStatus } from '../utils/reportBackS
 const REPORT_BACK_RESUBSCRIBE_MIN_DELAY_MS = 1_000;
 const REPORT_BACK_RESUBSCRIBE_MAX_DELAY_MS = 30_000;
 const REPORT_BACK_STABLE_CONNECTION_MS = 30_000;
+
+/** The catch-up status read; a hung one would hold every later check. */
+const STATUS_READ_TIMEOUT_MS = 10_000;
 
 /**
  * One idle status read never disarms the watch by itself: every read source
@@ -118,8 +122,10 @@ export interface UseReportBackWatchParams {
   lastRenderedTurnIndexRef: MutableRefObject<number | null>;
   /** Set once this instance's initial history load settled. */
   historyLoadedKeyRef: MutableRefObject<string | null>;
-  /** True while a history load is in flight. */
-  historyLoadingRef: MutableRefObject<boolean>;
+  /** Set while a thread load is in flight, from its /status read to its reconnect. */
+  threadLoadingRef: MutableRefObject<object | null>;
+  /** Mirrors the host's isLoading, set by a send, edit or regenerate before it takes the stream. */
+  isLoadingRef: MutableRefObject<boolean>;
   /** The host's shared reconnect reader. */
   reconnectToStream: (opts?: ReconnectToStreamOptions) => Promise<void>;
   /**
@@ -164,8 +170,17 @@ export interface ReportBackWatch {
    * dispatched PTC thread never re-points the watch at the PTC thread.
    */
   onStreamEnd: () => void;
-  /** Reconnect a re-shown cached view to a run/report-back started while hidden. */
-  reconnectIfStaleRun: () => Promise<void>;
+  /**
+   * Bring a cached view in line with a run/report-back it did not start, when
+   * it is shown again or the feed announces one. Resolves false when the
+   * caller should ask again: the view was streaming or loading, no history
+   * load has settled on it yet, the /status read failed for a reason that can
+   * pass (network, timeout, 5xx, an expired session, a rate limit), it asked
+   * for a reload that a later check has yet to find settled, the turn count of
+   * a thread that has run came back unread, or a report-back left to the watch
+   * may hide another missed turn.
+   */
+  reconnectIfStaleRun: () => Promise<boolean>;
 }
 
 /**
@@ -184,7 +199,8 @@ export function useReportBackWatch(params: UseReportBackWatchParams): ReportBack
     currentRunIdRef,
     lastRenderedTurnIndexRef,
     historyLoadedKeyRef,
-    historyLoadingRef,
+    threadLoadingRef,
+    isLoadingRef,
     reconnectToStream,
     requestHistoryReload,
     hasOpenProducers,
@@ -612,20 +628,56 @@ export function useReportBackWatch(params: UseReportBackWatchParams): ReportBack
   // Reconnect a cached, re-shown view to a run that started while it was hidden.
   // ChatView instances stay mounted in an LRU cache (useChatViewCache), so
   // revisiting a thread does NOT remount or re-fire the thread-load effect;
-  // ChatView's become-active effect calls this on the inactive→active
-  // transition. /status only carries a reconnectable run_id while a run is
+  // useForeignRunCatchUp calls this on the inactive→active transition, when the
+  // feed announces a run the view did not start, and again while /status
+  // cannot be read. /status only carries a reconnectable run_id while a run is
   // live, so the first branch is purely the live-run path; a run that already
   // FINISHED while hidden is caught by the turn-watermark branch below it.
-  const reconnectIfStaleRun = async () => {
-    if (!workspaceId || !threadId || threadId === '__default__') return;
-    // Only after this instance's initial load settled; never mid-stream or -load.
-    if (historyLoadedKeyRef.current === null || isStreamingRef.current || historyLoadingRef.current) return;
-    const status = (await getWorkflowStatus(threadId).catch(() => null)) as WorkflowStatusResponse | null;
-    if (!status) return;
+  const reconnectIfStaleRun = async (): Promise<boolean> => {
+    if (!workspaceId || !threadId || threadId === '__default__') return true;
+    // Never mid-stream or -load: a load reads the thread itself, and a reload
+    // requested before it settles would restart it. The caller's busy flag is
+    // React state and trails these refs, so a run it releases can still land
+    // here, and it asks again.
+    if (isStreamingRef.current || threadLoadingRef.current || isLoadingRef.current) return false;
+    // No load has settled on this view: a new chat's first turn streams before
+    // its id resolves, so its load never runs, and a failed load leaves nothing
+    // either. A load reads the whole thread, which is the check itself, so
+    // the check stays owed until one settles.
+    if (historyLoadedKeyRef.current === null) {
+      requestHistoryReload();
+      return false;
+    }
+    let status: WorkflowStatusResponse;
+    try {
+      status = await getWorkflowStatus(threadId, { timeout: STATUS_READ_TIMEOUT_MS });
+    } catch (err) {
+      // A thread that is gone or not the caller's answers the same next time.
+      return isLastingRefusal(err);
+    }
     // Re-check after the await, mirroring the pre-await guard — including
-    // historyLoadingRef, so a load that starts DURING the /status fetch can't
+    // threadLoadingRef, so a load that starts DURING the /status fetch can't
     // race this reconnect for the message state.
-    if (isStreamingRef.current || historyLoadingRef.current || threadIdRef.current !== threadId) return;
+    if (disposedRef.current || threadIdRef.current !== threadId) return true;
+    if (isStreamingRef.current || threadLoadingRef.current || isLoadingRef.current) return false;
+    // A live report-back run is the armed watch's to attach, often at the very
+    // stream end that released this check; a reload would race it and stream
+    // the run twice. Seed and poke the watch instead, unless the watch already
+    // counts the run as on screen and would pass it over. A turn missed besides
+    // this run needs a reload, so ask again once the watch's stream ends.
+    if (
+      awaitingReportBackRef.current &&
+      status.can_reconnect &&
+      status.run_id &&
+      status.run_id === status.report_back_run_id &&
+      status.run_id !== currentRunIdRef.current &&
+      !attachedRunIdsRef.current.has(status.run_id)
+    ) {
+      arm(threadId, status.run_id, 'activate');
+      // A turn counter /status could not read hides that turn just the same.
+      const rendered = lastRenderedTurnIndexRef.current;
+      return rendered === null || status.latest_turn_index === rendered + 1;
+    }
     if (status.can_reconnect && status.run_id && status.run_id !== currentRunIdRef.current) {
       // Full reload, NOT a bare stream attach: a live stream carries no
       // user_message event, so only a history replay can render the missed
@@ -633,7 +685,7 @@ export function useReportBackWatch(params: UseReportBackWatchParams): ReportBack
       // flow ends by reconnecting to status.run_id, which latches
       // currentRunIdRef and closes this gate against re-entry.
       requestHistoryReload();
-      return;
+      return false;
     }
     // Terminal staleness: the missed run already FINISHED, so the branch above
     // never opens (can_reconnect=false, no reconnectable run_id). The persisted
@@ -642,22 +694,31 @@ export function useReportBackWatch(params: UseReportBackWatchParams): ReportBack
     // stale: higher means turns were missed while hidden; lower means a fork/
     // edit elsewhere truncated rows this view still renders. The reload's
     // replay re-records the watermark, closing this gate against re-entry (no
-    // reload loop). A null watermark means no load settled yet — not-stale by
-    // definition (and the pre-await guard already requires a settled load).
-    if (
-      typeof status.latest_turn_index === 'number' &&
-      lastRenderedTurnIndexRef.current !== null &&
-      status.latest_turn_index !== lastRenderedTurnIndexRef.current
-    ) {
+    // reload loop). A null watermark has nothing to compare, so it never reads
+    // as stale.
+    //
+    // Either reload stays owed until a later check finds it took: a failed one
+    // leaves the run unlatched and the watermark where it was, so that check
+    // asks for it again, while one that settled closes both gates.
+    const rendered = lastRenderedTurnIndexRef.current;
+    const latest = status.latest_turn_index;
+    if (typeof latest === 'number' && rendered !== null && latest !== rendered) {
       requestHistoryReload();
-      return;
+      return false;
     }
+    // The backend sends no count for a thread without turns and for a read that
+    // failed. Every first turn writes its count, so only a thread that has never
+    // run can be the first; anywhere else the missing count may hide a missed
+    // turn, and the check asks again once the rest of it has run. A backend that
+    // predates the count sends no field at all, which asking again can't change,
+    // so that settles as it did before the count existed.
+    const settled = latest === undefined || typeof latest === 'number' || status.status === 'idle';
     // No live run, but this re-activated flash thread still has work pending.
     // Without this, a report-back finished while hidden would never stream —
     // the hidden view holds no watch to hear it.
     if (shouldArmForStatus(status)) {
       arm(threadId, status.report_back_run_id ?? null, 'activate');
-      return;
+      return settled;
     }
     // Everything drained while hidden (explicit idle) but the recents list names
     // runs this instance never attached nor rendered — the watch died early and
@@ -671,12 +732,17 @@ export function useReportBackWatch(params: UseReportBackWatchParams): ReportBack
     ) {
       arm(threadId, status.report_back_run_id, 'activate');
     }
+    return settled;
   };
 
   // The watch survives thread navigation, so the host's thread-load effect can't
   // own its teardown. Stop it only when the chat hook itself unmounts.
+  // A catch-up read in flight at unmount must not arm a watch nothing would stop.
+  const disposedRef = useRef(false);
   useEffect(() => {
+    disposedRef.current = false;
     return () => {
+      disposedRef.current = true;
       stopReportBackWatch();
       awaitingReportBackRef.current = false;
     };

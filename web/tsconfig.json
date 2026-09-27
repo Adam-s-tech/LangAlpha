@@ -1,20 +1,17 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": ["ES2023", "DOM"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
     "isolatedModules": true,
-    "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "types": ["node", "dom-speech-recognition", "react-syntax-highlighter"],
     "paths": { "@/*": ["./src/*"], "@e2e/*": ["./e2e/*"] }
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist", "e2e"]
+  "include": ["src"]
 }

@@ -44,6 +44,70 @@ const setSaveDialog = (value) => { saveDialog = value }
 const FALLBACK_NAME = 'langalpha-desktop'
 let appName = FALLBACK_NAME
 
+// What the shell registered with `app.on`, so a test can deliver what the OS
+// would: `open-url` on macOS, `second-instance` on Windows and Linux. Emptied by
+// every `loadShell`, since each one re-requires main and registers afresh.
+const appHandlers = new Map()
+function emitApp(event, ...args) {
+  for (const handler of appHandlers.get(event) || []) handler(...args)
+}
+
+// Every window the shell constructed since the last `loadShell`, in order. A
+// window is only as much of Electron's as the shell's window code touches, and
+// it moves by `loadURL` exactly as the real one does, so `loaded` is the
+// history of where it was sent and the last entry is where it is.
+const windows = []
+const focusOrder = []
+
+class FakeWebContents extends EventEmitter {
+  constructor(window) {
+    super()
+    this.window = window
+    this.navigationHistory = { canGoBack: () => false, canGoForward: () => false }
+  }
+
+  getURL() { return this.window.loaded.at(-1) || '' }
+  setWindowOpenHandler() {}
+  send() {}
+  async executeJavaScript() { return null }
+}
+
+class FakeBrowserWindow extends EventEmitter {
+  constructor(options = {}) {
+    super()
+    this.options = options
+    this.loaded = []
+    this.destroyed = false
+    this.webContents = new FakeWebContents(this)
+    windows.push(this)
+  }
+
+  static getAllWindows() { return windows.filter((w) => !w.destroyed) }
+  static getFocusedWindow() { return null }
+  // `fromWebContents` is how the PDF path finds the window it was asked from.
+  // The stub reads a back-reference the caller hangs on its own fake contents,
+  // rather than keeping a registry: the mapping is Electron's, not ours, and a
+  // registry here would be a second implementation of it.
+  static fromWebContents(wc) { return (wc && wc.window) || null }
+
+  isDestroyed() { return this.destroyed }
+  loadURL(url) { this.loaded.push(url); return Promise.resolve() }
+  loadFile(file) { this.loaded.push(`file://${file}`); return Promise.resolve() }
+  show() {}
+  focus() { focusOrder.push(this) }
+  isMinimized() { return false }
+  restore() {}
+  setBackgroundColor() {}
+  close() {
+    if (this.destroyed) return
+    this.destroyed = true
+    this.emit('closed')
+  }
+}
+
+// What the remote-page preload handed to the page, keyed as the page sees it.
+const exposed = {}
+
 const electronStub = {
   net: {
     isOnline: () => online,
@@ -68,7 +132,10 @@ const electronStub = {
     getVersion: () => '0.0.0-test',
     isPackaged: false,
     setAsDefaultProtocolClient: () => true,
-    on: () => {},
+    on: (event, handler) => {
+      if (!appHandlers.has(event)) appHandlers.set(event, [])
+      appHandlers.get(event).push(handler)
+    },
     requestSingleInstanceLock: () => true,
     exit: (code) => { exits.push(code) },
     // Never resolves, so requiring main.js registers its policy and stops there
@@ -83,13 +150,12 @@ const electronStub = {
     showMessageBox: async () => ({ response: 0 }),
     showSaveDialog: async () => saveDialog,
   },
-  // `fromWebContents` is how the PDF path finds the window it was asked from.
-  // The stub reads a back-reference the caller hangs on its own fake contents,
-  // rather than keeping a registry: the mapping is Electron's, not ours, and a
-  // registry here would be a second implementation of it.
-  BrowserWindow: { getAllWindows: () => [], fromWebContents: (wc) => (wc && wc.window) || null },
+  BrowserWindow: FakeBrowserWindow,
   Menu: { buildFromTemplate: (t) => t, setApplicationMenu: () => {} },
   ipcMain: { on: () => {}, handle: () => {} },
+  // The renderer half, for running the real preload rather than reading it.
+  contextBridge: { exposeInMainWorld: (key, api) => { exposed[key] = api } },
+  ipcRenderer: { invoke: async () => undefined, sendSync: () => undefined },
 }
 
 const load = Module._load
@@ -121,6 +187,9 @@ function loadShell({ edition = 'oss', appOrigin, platformOrigin, serverUrl = nul
     if (key.startsWith(SRC)) delete require.cache[key]
   }
   appName = FALLBACK_NAME
+  appHandlers.clear()
+  windows.length = 0
+  focusOrder.length = 0
   fs.rmSync(path.join(userData, 'settings.json'), { force: true })
   // Written before the store is required, so a test can hand it the contents of
   // a settings.json rather than a shape the store itself produced. That is the
@@ -169,6 +238,27 @@ function loadEntryWith(buildConfig) {
   return { errorBoxes, exits }
 }
 
+/**
+ * Run the real remote-page preload and answer with what it exposed. It reads
+ * `location` to decide whether it is on the outage page, so a remote page is
+ * stood in for while it runs.
+ */
+function loadPreload() {
+  const file = path.join(SRC, 'preload.js')
+  delete require.cache[file]
+  for (const key of Object.keys(exposed)) delete exposed[key]
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'location')
+  const saved = globalThis.location
+  globalThis.location = { protocol: 'https:' }
+  try {
+    require(file)
+  } finally {
+    if (had) globalThis.location = saved
+    else delete globalThis.location
+  }
+  return { ...exposed }
+}
+
 /** Directories a test made and wants the shared teardown to take away again. */
 const TEMP_DIRS = []
 
@@ -187,4 +277,7 @@ function cleanup() {
   for (const dir of TEMP_DIRS) fs.rmSync(dir, { recursive: true, force: true })
 }
 
-module.exports = { loadShell, loadEntryWith, cleanup, opened, electronStub, setOnline, setSaveDialog, tempDir }
+module.exports = {
+  loadShell, loadEntryWith, loadPreload, cleanup, opened, electronStub, setOnline, setSaveDialog, tempDir,
+  emitApp, windows, focusOrder,
+}

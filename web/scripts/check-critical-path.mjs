@@ -140,7 +140,7 @@ const moduleScripts = [...html.matchAll(/<script\b([^>]*)>/g)]
   .map(([, attrs]) => attrs)
   .filter((attrs) => /\btype\s*=\s*"module"/.test(attrs))
   .map((attrs) => /\bsrc\s*=\s*"([^"]+)"/.exec(attrs))
-  .filter(Boolean)
+  .filter((m) => m !== null)
 
 // currentBuild() takes querySelector's first match. More than one module script
 // and it may read something that is not the entry, and then `build !== mine` is
@@ -174,7 +174,7 @@ if (version.build !== entryFile) {
   process.exit(1)
 }
 
-const stripHash = (f) => f.replace(/\.(js|css)$/, '').replace(/-[A-Za-z0-9_-]{8}$/, '')
+const stripHash = (/** @type {string} */ f) => f.replace(/\.(js|css)$/, '').replace(/-[A-Za-z0-9_-]{8}$/, '')
 
 const eager = [...new Set(assets.filter((f) => f.endsWith('.js')).map(stripHash))].sort()
 const expected = [...EXPECTED].sort()
@@ -183,7 +183,7 @@ const expected = [...EXPECTED].sort()
 // all: stale-build recovery depends on the document being refetched every load,
 // so every byte in it is paid on every visit, forever. Leaving it outside the
 // ceiling is how an inline script grows without anything noticing.
-const gz = (f) => gzipSync(readFileSync(join(outDir, 'assets', f))).length
+const gz = (/** @type {string} */ f) => gzipSync(readFileSync(join(outDir, 'assets', f))).length
 
 // --- locale catalog ----------------------------------------------------------
 //

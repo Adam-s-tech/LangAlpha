@@ -185,6 +185,14 @@ const expected = [...EXPECTED].sort()
 // ceiling is how an inline script grows without anything noticing.
 const gz = (/** @type {string} */ f) => gzipSync(readFileSync(join(outDir, 'assets', f))).length
 
+// The byte count depends on the zlib this Node links, not only on the files.
+// Official Node builds, which CI runs, bundle Chromium's zlib and agree across
+// CPUs; a Node linked against the system zlib (Homebrew's on macOS) reads about
+// 1.2 kB lower on the same build. Node's default level, memLevel and strategy
+// are fixed constants, so pinning them would not close that gap; naming the
+// zlib next to the number is what makes two readings comparable.
+const zlib = `zlib ${process.versions.zlib}`
+
 // --- locale catalog ----------------------------------------------------------
 //
 // Each locale's catalog is a chunk of its own, so none of them is a src/href
@@ -216,7 +224,7 @@ if (added.length || removed.length || overBudget) {
   console.error('\n✗ critical path changed\n')
   console.error(`  chunks:   ${eager.join(', ')} + ${catalog.locale} catalog`)
   console.error(`  expected: ${expected.join(', ')}`)
-  console.error(`  payload:  ${kb.toFixed(1)} kB gz (ceiling ${MAX_EAGER_KB} kB)`)
+  console.error(`  payload:  ${kb.toFixed(1)} kB gz, ${zlib} (ceiling ${MAX_EAGER_KB} kB)`)
   if (added.length) {
     console.error(`\n  NEW on the critical path: ${added.join(', ')}`)
     console.error('  Every visitor now downloads these before first paint.')
@@ -239,4 +247,4 @@ if (added.length || removed.length || overBudget) {
   process.exit(1)
 }
 
-console.log(`✓ critical path: ${eager.join(', ')} + ${catalog.locale} catalog — ${kb.toFixed(1)} kB gz (ceiling ${MAX_EAGER_KB} kB)`)
+console.log(`✓ critical path: ${eager.join(', ')} + ${catalog.locale} catalog — ${kb.toFixed(1)} kB gz, ${zlib} (ceiling ${MAX_EAGER_KB} kB)`)

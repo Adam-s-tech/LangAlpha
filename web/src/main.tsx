@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { AuthProvider } from './contexts/AuthContext'
 import App from './App'
-import './i18n'
+import { initI18n } from './i18n'
 import './index.css'
 // Side-effect import: the modality listeners have to be running before the
 // first click, not from whichever overlay happens to load first.
@@ -27,7 +27,13 @@ const queryClient = new QueryClient({
   },
 })
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+// Nothing renders until the active locale's catalog is in, or the first paint
+// shows raw keys. A catalog that fails leaves #root to index.html's pre-boot
+// recovery (reload, then its dead-end notice), handed over explicitly since
+// its listeners miss some failures, such as a catalog on another origin.
+// Rendering anyway would run markBooted(), which resets that recovery's
+// attempt count and turns its bounded reload into a loop.
+void initI18n().then(() => ReactDOM.createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={queryClient}>
     <BrowserRouter>
       <ThemeProvider>
@@ -43,4 +49,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       </ThemeProvider>
     </BrowserRouter>
   </QueryClientProvider>,
-)
+), (error: unknown) => {
+  console.error(error)
+  window.__LA_RECOVER__?.('resource')
+})

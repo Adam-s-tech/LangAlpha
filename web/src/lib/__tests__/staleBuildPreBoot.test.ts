@@ -38,7 +38,11 @@ const iife = [...source.matchAll(/<script>([\s\S]*?)<\/script>/g)]
   .find((s) => s.includes('__LA_BOOTED__'));
 
 interface Harness {
-  win: Window & typeof globalThis & { __LA_STALE_BUILD__?: string; __LA_BOOTED__?: boolean };
+  win: Window & typeof globalThis & {
+    __LA_STALE_BUILD__?: string;
+    __LA_BOOTED__?: boolean;
+    __LA_RECOVER__?: (reason: string) => void;
+  };
   reloadsScheduled: () => number;
 }
 
@@ -279,6 +283,17 @@ describe('before boot it reloads, but a bounded number of times', () => {
     // up in steps below one, reaching the cap a document later than it should.
     const { win, reloadsScheduled } = boot({ rawStamp });
     firePreloadError(win, deadChunk);
+
+    expect(reloadsScheduled()).toBe(1);
+    expect(JSON.parse(win.sessionStorage.getItem(KEY)!).n).toBe(1);
+  });
+
+  it('takes a boot failure the app hands it, on the same bound', () => {
+    // A catalog on another origin fails with no event this file can classify,
+    // so main.tsx passes the rejection in itself.
+    const { win, reloadsScheduled } = boot();
+    win.__LA_RECOVER__!('resource');
+    win.__LA_RECOVER__!('resource');
 
     expect(reloadsScheduled()).toBe(1);
     expect(JSON.parse(win.sessionStorage.getItem(KEY)!).n).toBe(1);

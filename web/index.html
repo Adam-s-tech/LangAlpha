@@ -235,6 +235,11 @@
             }
           }
         });
+
+        // A boot failure no listener above can see, such as a catalog served
+        // from another origin or i18next itself throwing, would otherwise
+        // leave #root blank. main.tsx hands it here to end the same way.
+        window.__LA_RECOVER__ = recover;
       })();
     </script>
     <script>

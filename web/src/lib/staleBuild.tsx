@@ -26,6 +26,8 @@ declare global {
     __LA_BOOTED__?: boolean;
     /** Set by index.html when it detects a dead build asset post-boot. */
     __LA_STALE_BUILD__?: StaleReason;
+    /** index.html's bounded reload, for a boot failure its listeners miss. */
+    __LA_RECOVER__?: (reason: StaleReason) => void;
   }
   interface WindowEventMap {
     'la:stale-build': CustomEvent<StaleReason>;

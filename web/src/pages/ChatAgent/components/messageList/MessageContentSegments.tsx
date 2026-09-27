@@ -27,21 +27,21 @@ import { FoldPanel } from './FoldPanel';
 import { projectContent, blockIsProcess, blockVisible, type ContentProjection } from './contentProjection';
 import { EMPTY_OBJ } from './types';
 import type { ContentSegmentRecord, FoldState, ToolCallProcessRecord } from './types';
-import {
-  type CompactArtifactRenderBlock,
-  type CreateWorkspaceRenderBlock,
-  type CreditPauseRenderBlock,
-  type HtmlWidgetRenderBlock,
-  type NotificationRenderBlock,
-  type PlanApprovalRenderBlock,
-  type PTCAgentRenderBlock,
-  type RenderBlock,
-  type SecretaryActionRenderBlock,
-  type StartQuestionRenderBlock,
-  type SubagentTaskRenderBlock,
-  type TextRenderBlock,
-  type ToolApprovalRenderBlock,
-  type UserQuestionRenderBlock,
+import type {
+  CompactArtifactRenderBlock,
+  CreateWorkspaceRenderBlock,
+  CreditPauseRenderBlock,
+  HtmlWidgetRenderBlock,
+  NotificationRenderBlock,
+  PlanApprovalRenderBlock,
+  PTCAgentRenderBlock,
+  RenderBlock,
+  SecretaryActionRenderBlock,
+  StartQuestionRenderBlock,
+  SubagentTaskRenderBlock,
+  TextRenderBlock,
+  ToolApprovalRenderBlock,
+  UserQuestionRenderBlock,
 } from './buildRenderBlocks';
 
 // --- MessageContentSegments ---

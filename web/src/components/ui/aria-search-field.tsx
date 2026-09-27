@@ -5,7 +5,7 @@ import {
   Autocomplete,
   Input as AriaInput,
   SearchField as AriaSearchField,
-  SearchFieldProps as AriaSearchFieldProps,
+  type SearchFieldProps as AriaSearchFieldProps,
   composeRenderProps,
 } from "react-aria-components"
 

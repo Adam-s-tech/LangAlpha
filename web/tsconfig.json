@@ -8,7 +8,7 @@
     "strict": true,
     "noImplicitOverride": true,
     "noEmit": true,
-    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "types": ["node", "dom-speech-recognition", "react-syntax-highlighter"],

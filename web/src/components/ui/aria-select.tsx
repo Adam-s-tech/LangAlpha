@@ -3,15 +3,15 @@
 import { ChevronDown } from "lucide-react"
 import {
   Button as AriaButton,
-  ButtonProps as AriaButtonProps,
+  type ButtonProps as AriaButtonProps,
   ListBox as AriaListBox,
-  ListBoxProps as AriaListBoxProps,
-  PopoverProps as AriaPopoverProps,
+  type ListBoxProps as AriaListBoxProps,
+  type PopoverProps as AriaPopoverProps,
   Select as AriaSelect,
-  SelectProps as AriaSelectProps,
+  type SelectProps as AriaSelectProps,
   SelectValue as AriaSelectValue,
-  SelectValueProps as AriaSelectValueProps,
-  ValidationResult as AriaValidationResult,
+  type SelectValueProps as AriaSelectValueProps,
+  type ValidationResult as AriaValidationResult,
   composeRenderProps,
   Text,
 } from "react-aria-components"

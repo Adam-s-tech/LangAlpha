@@ -15,7 +15,7 @@ import { SegmentedControl } from '@/components/ui/segmented-control';
 import { cn } from '@/lib/utils';
 import { useWorkspaceOptions, workspaceNameOf } from '../hooks/useWorkspaceOptions';
 import { deliveryMethodName } from '../utils/delivery';
-import { type FormPatch, type FormState } from '../utils/form';
+import type { FormPatch, FormState } from '../utils/form';
 import { MIN_COOLDOWN_MINUTES, RETRIGGER_MODES } from '../utils/price';
 import CountInput from './CountInput';
 import FormRow from './FormRow';

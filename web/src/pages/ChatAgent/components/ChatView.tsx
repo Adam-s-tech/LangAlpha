@@ -77,10 +77,10 @@ const FilePanel = React.lazy(() => import('./FilePanel'));
 const DetailPanel = React.lazy(() => import('./DetailPanel'));
 const PreviewViewer = React.lazy(() => import('./viewers/PreviewViewer'));
 
-import {
-  type MessageRecord, type LocationState,
-  type SubagentMessage, type SlashCommand, type ModelOptions, type ActionCommand,
-  type MsgSelectionTooltipData, type ChatViewProps,
+import type {
+  MessageRecord, LocationState,
+  SubagentMessage, SlashCommand, ModelOptions, ActionCommand,
+  MsgSelectionTooltipData, ChatViewProps,
 } from './chatView/types';
 import SubagentStatusIndicator from './chatView/SubagentStatusIndicator';
 import { ModelStatusPill } from './chatView/ModelStatusPill';

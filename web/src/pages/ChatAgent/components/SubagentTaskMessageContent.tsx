@@ -5,7 +5,7 @@ import { compactNumber } from '@/lib/format';
 import { ErrorLink } from '@/components/ui/error-banner';
 import { CREDIT_STOP_ERROR_TYPE } from '@/types/sse';
 import { buildRateLimitError } from '@/utils/rateLimitError';
-import { type SubagentTokenUsage } from '../utils/tokenUsage';
+import type { SubagentTokenUsage } from '../utils/tokenUsage';
 import type { ToolCallProcessRecord } from './ToolCallDetailView';
 import { useCreditPausePending } from './CreditPausePendingContext';
 import { useSubagentTelemetry } from './SubagentTelemetryContext';

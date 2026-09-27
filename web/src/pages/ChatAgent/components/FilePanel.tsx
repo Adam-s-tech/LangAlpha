@@ -738,6 +738,7 @@ function FilePanel({
                   originalContent: edit.originalContent,
                   showDiff: edit.showDiff,
                   editorRef: edit.editorRef,
+                  editorModelPath: edit.modelPath,
                   onEditorChange: edit.handleEditorChange,
                   onUndoRedoChange: edit.handleUndoRedoChange,
                   onEditorTextSelect: handleEditorTextSelect,

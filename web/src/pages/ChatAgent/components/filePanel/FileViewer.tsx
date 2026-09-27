@@ -52,6 +52,8 @@ export interface FileViewerProps {
   originalContent?: string | null;
   showDiff?: boolean;
   editorRef?: React.RefObject<unknown>;
+  /** The edit session's Monaco model, kept per file across tab switches. */
+  editorModelPath?: string | null;
   onEditorChange?: (value: string) => void;
   onUndoRedoChange?: (state: { canUndo: boolean; canRedo: boolean }) => void;
   onEditorTextSelect?: (data: EditorTextSelectData | null) => void;
@@ -93,6 +95,7 @@ export function FileViewer(props: FileViewerProps): React.ReactElement {
           diffMode={props.showDiff}
           originalValue={props.originalContent ?? undefined}
           editorRef={props.editorRef as React.RefObject<never>}
+          modelPath={props.editorModelPath ?? undefined}
           onUndoRedoChange={props.onUndoRedoChange}
           onTextSelect={props.onAddContext ? props.onEditorTextSelect : undefined}
         />

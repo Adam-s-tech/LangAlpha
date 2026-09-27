@@ -154,9 +154,10 @@ const FORKS_FILES = [
   'src/pages/Plugins/__tests__/brokerageSurface.test.tsx',
   // Replaces `window` itself to install the desktop bridge.
   'src/lib/__tests__/desktop.test.ts',
-  // Need ReadableStream: one loads jsdom itself (its undici reads it at import),
-  // the other builds an SSE body from one.
+  // Need ReadableStream: two load jsdom themselves (its undici reads it at
+  // import), the other builds an SSE body from one.
   'src/lib/__tests__/staleBuildPreBoot.test.ts',
+  'src/lib/__tests__/localePreload.test.ts',
   'src/pages/ChatAgent/hooks/__tests__/useWarmWorkspaceSandbox.test.tsx',
 ];
 

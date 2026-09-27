@@ -1,5 +1,7 @@
 /// <reference types="vitest/globals" />
-import i18n from '@/i18n';
+import i18n, { initI18n } from '@/i18n';
+import enUS from '@/locales/en-US.json';
+import zhCN from '@/locales/zh-CN.json';
 
 // Setup for the `node` project in vitest.config.ts: test files that need no DOM.
 //
@@ -14,6 +16,8 @@ import i18n from '@/i18n';
 // jsdom answers `navigator.language` with en-US; Node derives it from the
 // machine's locale. Pin it so a node-project file renders the same strings on
 // every machine. Done before the traps so i18n's own document probe still runs.
+// Both catalogs up front, as setup.ts does, so the on-demand loader never runs.
+await initI18n({ 'en-US': { translation: enUS }, 'zh-CN': { translation: zhCN } });
 await i18n.changeLanguage('en-US');
 
 const BROWSER_GLOBALS = [

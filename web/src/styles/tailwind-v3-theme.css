@@ -17,9 +17,6 @@
   --breakpoint-xl: 1280px;
   --breakpoint-2xl: 1536px;
 
-  /* v4 leads the sans stack with -apple-system and named system fonts. */
-  --font-sans: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
-
   /* v4's text-* line heights are unitless ratios, so a child that sets only
      its font size (text-[11px], an inline style) inherits the ratio instead
      of the parent's line height, so its lines change height. v3's were lengths. */

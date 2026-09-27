@@ -10,13 +10,6 @@
    The v4 preflight changed these defaults. Each rule puts back the v3 value so
    the upgrade moves no pixels; drop one only as a deliberate visual change. */
 
-/* v4 resets a pseudo-element's border to currentcolor. (Elements take the
-   theme border from the `*` rule below.) */
-::before,
-::after {
-  border-color: #e5e7eb;
-}
-
 /* v4 makes form controls transparent, square and fully opaque; v3 left all
    three to the browser, so a field with no background class showed the
    platform's field color. Buttons were already transparent in v3. */
@@ -51,36 +44,6 @@ textarea {
 
 option {
   padding: revert;
-}
-
-/* v4 tightens the date and time fields (the Automations schedule pickers). */
-::-webkit-date-and-time-value {
-  min-height: revert;
-  text-align: revert;
-}
-
-::-webkit-datetime-edit {
-  display: revert;
-}
-
-::-webkit-datetime-edit-fields-wrapper {
-  padding: revert;
-}
-
-::-webkit-datetime-edit,
-::-webkit-datetime-edit-year-field,
-::-webkit-datetime-edit-month-field,
-::-webkit-datetime-edit-day-field,
-::-webkit-datetime-edit-hour-field,
-::-webkit-datetime-edit-minute-field,
-::-webkit-datetime-edit-second-field,
-::-webkit-datetime-edit-millisecond-field,
-::-webkit-datetime-edit-meridiem-field {
-  padding-block: revert;
-}
-
-::-webkit-calendar-picker-indicator {
-  line-height: revert;
 }
 
 /* v4's placeholder is half the text color; v3's was gray-400. */

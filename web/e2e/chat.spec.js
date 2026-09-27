@@ -155,10 +155,11 @@ test.describe('Workspace Gallery', () => {
     await page.goto('/chat');
 
     // Wait for gallery to load
-    await expect(page.getByText('Research', { exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(workspaceCard(page, 'Research')).toBeVisible({ timeout: 10000 });
 
-    // Click "New workspace" header button (use getByRole to avoid matching the hidden mobile duplicate)
-    await page.getByRole('button', { name: 'New workspace' }).click();
+    // The gallery header's button: the sidebar's workspace section has its own
+    // "New workspace" action, rendered once the workspace list loads.
+    await page.locator('header').getByRole('button', { name: 'New workspace' }).click();
 
     // Modal should appear
     await expect(page.locator('h2.cwm-title')).toBeVisible();

@@ -23,6 +23,7 @@ export function buildRuntime() {
       messages = updater(messages);
     }) as HistoryRuntime['setMessages'],
     setIsLoadingHistory: vi.fn(),
+    setHistoryLoadFailed: vi.fn(),
     setIsCompacting: vi.fn(),
     setMessageError: vi.fn(),
     setFallbackSuggestion: vi.fn(),

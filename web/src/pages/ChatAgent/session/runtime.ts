@@ -87,6 +87,7 @@ export interface HistoryRuntime {
   // stable (setters)
   setMessages: SetMessages;
   setIsLoadingHistory: React.Dispatch<React.SetStateAction<boolean>>;
+  setHistoryLoadFailed: React.Dispatch<React.SetStateAction<boolean>>;
   setIsCompacting: React.Dispatch<React.SetStateAction<string | false>>;
   setMessageError: React.Dispatch<React.SetStateAction<string | StructuredError | null>>;
   setFallbackSuggestion: React.Dispatch<React.SetStateAction<FallbackSuggestion | null>>;

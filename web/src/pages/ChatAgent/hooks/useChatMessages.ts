@@ -114,6 +114,7 @@ export function useChatMessages(
   const [isLoadingHistory, setIsLoadingHistory] = useState(
     () => !!(initialThreadId && initialThreadId !== '__default__')
   );
+  const [historyLoadFailed, setHistoryLoadFailed] = useState(false);
 
   const [hasActiveSubagents, setHasActiveSubagents] = useState(false);  // Subagent streams open after main agent finished
   // false | 'starting' (generic cold start) | 'archived' (slow ~90s restore from cold storage).
@@ -540,6 +541,7 @@ export function useChatMessages(
     setMessages,
     setIsLoading,
     setIsLoadingHistory,
+    setHistoryLoadFailed,
     setIsCompacting,
     setMessageError,
     setFallbackSuggestion,
@@ -2793,6 +2795,7 @@ export function useChatMessages(
     setIsCompacting,
     queuedSend,
     isLoadingHistory,
+    historyLoadFailed,
     isLoadingThread,
     isReconnecting,
     modelStatus,

@@ -23,16 +23,41 @@ const TOGGLE_HOLD_MS = 1000;
 // Breathing room left under a deliverables deck brought into view.
 const REVEAL_GAP_PX = 12;
 
-/** scrollTop that puts bubble `id` just under the viewport top, or null once it is no longer in the transcript. */
-function anchorTop(c: HTMLElement, id: string, part?: AnchorPart): number | null {
+/** scrollTop that puts bubble `id` just under the viewport top, or `delta` px
+ *  into it, or null once it is no longer in the transcript. */
+function anchorTop(c: HTMLElement, id: string, part?: AnchorPart, delta?: number): number | null {
   const msg = findMessageElement(c, id);
   if (!msg) return null;
   // The reply part is the bubble's last prose block, so a turn that opened with
   // commentary and tool rows lands on the answer; a bubble without prose is
   // its own start.
   const el = (part === 'reply' && msg.querySelector<HTMLElement>('[data-reply-start]')) || msg;
-  return Math.max(0, c.scrollTop + el.getBoundingClientRect().top - c.getBoundingClientRect().top - ANCHOR_OFFSET_PX);
+  const gap = delta == null ? ANCHOR_OFFSET_PX : -delta;
+  return Math.max(0, c.scrollTop + el.getBoundingClientRect().top - c.getBoundingClientRect().top - gap);
 }
+
+/** The bubble at the viewport top and how far into it the view starts. */
+function readPlace(c: HTMLElement): { id: string; delta: number } | null {
+  const bubbles = c.querySelectorAll<HTMLElement>('[data-message-id]');
+  const top = c.getBoundingClientRect().top;
+  let hit: HTMLElement | null = null;
+  for (let lo = 0, hi = bubbles.length - 1; lo <= hi; ) {
+    const mid = (lo + hi) >> 1;
+    if (bubbles[mid].getBoundingClientRect().top <= top) {
+      hit = bubbles[mid];
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (!hit?.dataset.messageId) return null;
+  return { id: hit.dataset.messageId, delta: top - hit.getBoundingClientRect().top };
+}
+
+// A replayed turn's bubbles, its steering replies included, are named by its
+// turn index, so one a replay no longer renders is a turn a fork removed. Live
+// bubbles are renamed by the replay, so their absence says nothing.
+const REPLAYED_TURN_ID = /^history-(?:(?:user|assistant)-\d+|steering-user-\d+-\d+-\d+|assistant-steering-\d+-\d+)$/;
 
 /** scrollTop that brings the deliverables deck on bubble `id` into view, capped
  *  so the deck's own top never leaves it: a deck taller than the viewport is
@@ -59,14 +84,15 @@ function revealTop(c: HTMLElement, id: string): number | null {
  * converges on a remembered mid-thread scrollTop that async content (charts,
  * markdown, images) hasn't made reachable yet — same settle machinery,
  * different target. 'anchor' holds a chosen bubble under the viewport top
- * (minimap navigation), re-measured on every re-apply so media above it
- * finishing layout can't shift the landing.
+ * (minimap navigation, or the reader's place across a reload, `delta` px into
+ * the bubble), re-measured on every re-apply so media above it finishing layout
+ * can't shift the landing.
  */
 export type AnchorPart = 'reply';
 export type PinTarget =
   | { mode: 'bottom' }
   | { mode: 'offset'; top: number }
-  | { mode: 'anchor'; id: string; part?: AnchorPart }
+  | { mode: 'anchor'; id: string; part?: AnchorPart; delta?: number }
   | { mode: 'reveal'; id: string };
 
 export function useChatScroll({
@@ -75,6 +101,7 @@ export function useChatScroll({
   isActive,
   isActiveRef,
   isLoadingHistory,
+  historyLoadFailed,
   isStreaming,
   currentThreadId,
   threadId,
@@ -84,6 +111,9 @@ export function useChatScroll({
   isActive: boolean;
   isActiveRef: { current: boolean };
   isLoadingHistory: boolean;
+  /** The last replay of the thread failed, so its bubbles are missing for a
+   *  reason that says nothing about the turns. */
+  historyLoadFailed: boolean;
   /** A turn is open: the transcript grows on its own, so a reader at the end is carried along. */
   isStreaming: boolean;
   currentThreadId: string;
@@ -92,6 +122,8 @@ export function useChatScroll({
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const isStreamingRef = useRef(isStreaming);
   isStreamingRef.current = isStreaming;
+  const isLoadingHistoryRef = useRef(isLoadingHistory);
+  isLoadingHistoryRef.current = isLoadingHistory;
   const subagentScrollAreaRef = useRef<HTMLDivElement>(null);
 
   // Resolved thread id for the cross-unmount scroll store (scrollMemory) — a
@@ -167,6 +199,12 @@ export function useChatScroll({
   const settleQuietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settleHardCapRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoredForThreadRef = useRef<string | null>(null);
+  // Where a mid-thread reader was, by bubble, for a reload of the thread on
+  // screen: the replay drops the bubbles in the render that starts it, so the
+  // place is read while scrolling. reloadingRef marks the next restore as that
+  // reload's.
+  const readerPlaceRef = useRef<{ tid: string; id: string; delta: number } | null>(null);
+  const reloadingRef = useRef(false);
   // The entry-restore frame, tracked so a thread switch / unmount cancels a
   // pending scroll instead of yanking a now-stale view.
   const entryRestoreRafRef = useRef<number | null>(null);
@@ -333,7 +371,7 @@ export function useChatScroll({
       target.mode === 'bottom' ? c.scrollHeight
         : target.mode === 'offset' ? target.top
           : target.mode === 'reveal' ? revealTop(c, target.id)
-            : anchorTop(c, target.id, target.part);
+            : anchorTop(c, target.id, target.part, target.delta);
     if (top == null) {
       // The anchored bubble left the transcript (edit / regenerate truncation).
       pinTargetRef.current = null;
@@ -441,11 +479,13 @@ export function useChatScroll({
       // content and would overwrite the very offset being restored.
       // The band, not the upward rule: a nudge that pauses the follow is not a
       // place worth coming back to, and a numeric save re-opens with the pill.
-      if (memoryTidRef.current && pinTargetRef.current?.mode !== 'offset') {
-        scrollMemory.set(
-          `thread:${memoryTidRef.current}`,
-          isNearBottom({ scrollTop: c.scrollTop, scrollHeight: c.scrollHeight, clientHeight: c.clientHeight }, NEAR_BOTTOM_PX) ? 'bottom' : c.scrollTop,
-        );
+      // A history load is the same exception: a reload drops the bubbles it is
+      // about to replay, and the clamp that follows is not where the reader was.
+      if (memoryTidRef.current && pinTargetRef.current?.mode !== 'offset' && !isLoadingHistoryRef.current) {
+        const atBottom = isNearBottom({ scrollTop: c.scrollTop, scrollHeight: c.scrollHeight, clientHeight: c.clientHeight }, NEAR_BOTTOM_PX);
+        scrollMemory.set(`thread:${memoryTidRef.current}`, atBottom ? 'bottom' : c.scrollTop);
+        const place = atBottom ? null : readPlace(c);
+        readerPlaceRef.current = place && { tid: memoryTidRef.current, ...place };
       }
       if (programmaticScrollRef.current) return; // ignore our own scrolls
       if (followTopRef.current != null && Math.abs(c.scrollTop - followTopRef.current) < 1) {
@@ -609,12 +649,25 @@ export function useChatScroll({
   // first frame the user sees of the thread is already in position. The
   // deferred frame remains only for a viewport that is not mounted yet.
   useLayoutEffect(() => {
-    if (!isActive) return;
     const tid = currentThreadId || threadId;
     if (!tid || tid === '__default__') return;
-    if (isLoadingHistory) return;
+    if (isLoadingHistory) {
+      // A reload of this thread replays it from scratch, so the restore runs
+      // again when the replay lands, or when a hidden view is next shown.
+      if (restoredForThreadRef.current === tid) {
+        restoredForThreadRef.current = null;
+        reloadingRef.current = true;
+      }
+      return;
+    }
+    if (!isActive) return;
     if (restoredForThreadRef.current === tid) return;
     restoredForThreadRef.current = tid;
+    // A reload looks for the bubble the reader was on, since the replay may
+    // have changed what sits at their offset. Entering a thread has only the
+    // offset: the bubbles it was saved against are gone.
+    const place = reloadingRef.current && readerPlaceRef.current?.tid === tid ? readerPlaceRef.current : null;
+    reloadingRef.current = false;
     const saved = scrollMemory.get(`thread:${tid}`);
     if (typeof saved === 'number') {
       // Async content (charts, markdown, images) keeps growing the transcript
@@ -646,13 +699,21 @@ export function useChatScroll({
         if (pinTargetRef.current?.mode === 'offset') pinTargetRef.current = null;
         return;
       }
-      if (typeof saved === 'number') {
+      if (typeof saved !== 'number') {
+        pinToBottom('auto');
+      } else if (place && findMessageElement(c, place.id)) {
+        pinTargetRef.current = { mode: 'anchor', id: place.id, delta: place.delta };
+        reapplyPin();
+      } else if (place && !historyLoadFailed && REPLAYED_TURN_ID.test(place.id)) {
+        // A fork cut the turn they were reading, and the offset would hold
+        // them over whatever streams in to replace it. A replay that failed
+        // cut nothing: the offset holds, and so does the place, for the retry.
+        pinToBottom('auto');
+      } else {
         withProgrammaticScroll(() => {
           c.scrollTop = saved;
         });
         armSettleTimers();
-      } else {
-        pinToBottom('auto');
       }
     };
     if (getScrollContainer(scrollAreaRef)) {
@@ -671,7 +732,7 @@ export function useChatScroll({
         if (pinTargetRef.current?.mode === 'offset') pinTargetRef.current = null;
       }
     };
-  }, [isActive, isLoadingHistory, currentThreadId, threadId, pinToBottom, isActiveRef, getScrollContainer, withProgrammaticScroll, armSettleTimers, setPillState]);
+  }, [isActive, isLoadingHistory, historyLoadFailed, currentThreadId, threadId, pinToBottom, reapplyPin, isActiveRef, getScrollContainer, withProgrammaticScroll, armSettleTimers, setPillState]);
 
   // Cleanup pending scroll timers/rAF on unmount.
   useEffect(() => {

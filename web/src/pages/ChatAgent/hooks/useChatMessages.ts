@@ -107,6 +107,10 @@ export function useChatMessages(
     return workspaceId ? getStoredThreadId(workspaceId) : '__default__';
   });
   const [isLoading, setIsLoading] = useState(false);
+  // For checks that outlive a render: an edit or regenerate sets isLoading
+  // before its checkpoint read, well before it takes the stream.
+  const isLoadingRef = useRef(isLoading);
+  isLoadingRef.current = isLoading;
   const [isLoadingHistory, setIsLoadingHistory] = useState(
     () => !!(initialThreadId && initialThreadId !== '__default__')
   );
@@ -235,6 +239,11 @@ export function useChatMessages(
 
   // Refs for history loading state
   const historyLoadingRef = useRef(false);
+  // The whole thread load, from its /status read through the arm and reconnect
+  // after the replay; historyLoadingRef spans only the replay. Holds the load's
+  // own token, so a superseded load can't clear its successor's.
+  const threadLoadingRef = useRef<object | null>(null);
+  const [isLoadingThread, setIsLoadingThread] = useState(false);
   const newMessagesStartIndexRef = useRef(0); // Index where new messages start
   // Guards against the load-history effect doing a redundant replay when
   // (workspaceId, threadId, reloadTrigger) re-resolve to a tuple this hook
@@ -271,10 +280,14 @@ export function useChatMessages(
   const isStreamingRef = useRef(false);
 
   const acquireStreamOwnership = (tid: string | null) => acquireOwnership(runtime, tid);
-  // A mux resync that arrived mid-stream waits here: bumping the reload
-  // trigger while streaming would run the load effect's cleanup (detaching
-  // the mux) and then bail on the streaming guard — losing the reload.
+  // A reload asked for mid-stream waits here (a mux resync, or a catch-up
+  // reload a report-back attach overtook): bumping the reload trigger while
+  // streaming runs the load effect's cleanup (detaching the mux) and then bails
+  // on the streaming guard — losing the reload.
   const pendingMuxResyncRef = useRef(false);
+  // The reloadTrigger the load effect last ran for, so a bail can tell a
+  // reload request from a thread change.
+  const reloadSeenRef = useRef(0);
 
   const releaseStreamOwnership = () => releaseOwnership(runtime);
 
@@ -389,7 +402,8 @@ export function useChatMessages(
     currentRunIdRef,
     lastRenderedTurnIndexRef,
     historyLoadedKeyRef,
-    historyLoadingRef,
+    threadLoadingRef,
+    isLoadingRef,
     reconnectToStream: (opts) => reconnectToStreamRef.current(opts),
     requestHistoryReload: () => setReloadTrigger((n) => n + 1),
     // Producer-undecided grace: while subagent run channels are open on the
@@ -765,6 +779,8 @@ export function useChatMessages(
 
   // Load history when workspace or threadId changes, then check for reconnection
   useEffect(() => {
+    const reloadAsked = reloadTrigger !== reloadSeenRef.current;
+    reloadSeenRef.current = reloadTrigger;
     // A reconnect stream is live on a DIFFERENT thread than the one we're now
     // loading — e.g. a flash report-back is streaming on the flash thread and the
     // user clicked the dispatch card to jump into the running PTC thread. Without
@@ -796,8 +812,14 @@ export function useChatMessages(
     }
 
     // Guard: Only load if we have a workspaceId and a valid threadId (not '__default__')
-    // Also skip if streaming is in progress (prevents race condition when thread ID changes during streaming)
-    if (!workspaceId || !threadId || threadId === '__default__' || historyLoadingRef.current || isStreamingRef.current) {
+    if (!workspaceId || !threadId || threadId === '__default__' || historyLoadingRef.current) {
+      return;
+    }
+    // Skip while streaming (prevents race condition when thread ID changes
+    // during streaming). A reload asked for meanwhile runs when the stream
+    // releases, since the stream shows only its own run.
+    if (isStreamingRef.current) {
+      if (reloadAsked) pendingMuxResyncRef.current = true;
       return;
     }
 
@@ -897,6 +919,17 @@ export function useChatMessages(
         reportBackWatch.arm(threadId, status.report_back_run_id, status.can_reconnect ? null : 'load');
       }
 
+      // The report-back watch attaches its runs on a wake, which can land
+      // while this load reads; a second reader would stream the run twice.
+      const watchStreamsRun =
+        status.can_reconnect && isStreamingRef.current && currentRunIdRef.current === status.run_id;
+      if (watchStreamsRun && historyHasUnresolvedInterruptRef.current) {
+        // That stream delivers the resolution. Left set, these would make a
+        // later reconnect strip the replayed interrupt cards.
+        historyHasUnresolvedInterruptRef.current = false;
+        unresolvedHistoryInterruptRef.current = [];
+      }
+
       if (historyHasUnresolvedInterruptRef.current && status.can_reconnect) {
         // Workflow is active → interrupt was answered, reconnect will deliver resolution
         console.log('[Reconnect] Unresolved interrupt from history, reconnecting to get resolution events');
@@ -953,11 +986,12 @@ export function useChatMessages(
         }
         unresolvedHistoryInterruptRef.current = [];
         historyHasUnresolvedInterruptRef.current = false;
-      } else if (status.can_reconnect) {
+      } else if (status.can_reconnect && !watchStreamsRun) {
         console.log('[Reconnect] Workflow status:', status.status, 'can_reconnect:', status.can_reconnect, 'active_tasks:', status.active_tasks);
         await reconnectToStream({ activeTasks: status.active_tasks || [], runId: status.run_id ?? null, resetCursor: true, snapshotAtMs });
       } else if ((status.active_tasks || []).some((t) => !isSettledTask(t))) {
-        // Main workflow completed but subagent tasks still running.
+        // Main workflow completed, or the report-back watch streams it, but
+        // subagent tasks still running; this load's cleanup detached the mux.
         // Attach the thread mux so cards stay live after refresh. Tasks the
         // stale /status snapshot calls active but that are already settled
         // (terminal in history, or seen closing live) are never re-activated —
@@ -989,7 +1023,7 @@ export function useChatMessages(
         }
         attachSubagentMux(threadId, processEvent, snapshotAtMs);
         setHasActiveSubagents(true);
-      } else {
+      } else if (!status.can_reconnect) {
         // Workflow is not active. Inline subagent cards are already born with
         // their real status from the replayed task-artifact stamp
         // (handleHistoryTaskArtifactStatus), so no blanket completion here —
@@ -1003,7 +1037,15 @@ export function useChatMessages(
       }
     };
 
-    loadAndMaybeReconnect();
+    const load = {};
+    const endLoad = () => {
+      if (threadLoadingRef.current !== load) return;
+      threadLoadingRef.current = null;
+      setIsLoadingThread(false);
+    };
+    threadLoadingRef.current = load;
+    setIsLoadingThread(true);
+    void loadAndMaybeReconnect().finally(endLoad);
 
     // Cleanup: Cancel loading if workspace or thread changes or component unmounts.
     // The report-back watch is deliberately NOT torn down here — it is keyed to its
@@ -1012,6 +1054,7 @@ export function useChatMessages(
     return () => {
       cancelled = true;
       historyLoadingRef.current = false;
+      endLoad();
       // Thread switch/unmount: tear the mux down without marking anything
       // completed, and drop the processor so no stale closure can fire.
       if (threadId) peekThreadMux(threadId)?.detach();
@@ -2709,6 +2752,7 @@ export function useChatMessages(
     setIsCompacting,
     queuedSend,
     isLoadingHistory,
+    isLoadingThread,
     isReconnecting,
     modelStatus,
     fallbackSuggestion,

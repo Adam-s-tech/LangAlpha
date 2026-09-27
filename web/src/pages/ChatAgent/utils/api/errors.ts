@@ -71,6 +71,14 @@ export function isClientError(err: unknown): boolean {
   return status !== null && status >= 400 && status < 500;
 }
 
+/** Refusals that can pass: an expired session, a timeout, a rate limit. */
+const PASSING_CLIENT_ERRORS = new Set([401, 408, 429]);
+
+/** A 4xx that asking again won't change, so not one of the refusals that can pass. */
+export function isLastingRefusal(err: unknown): boolean {
+  return isClientError(err) && !PASSING_CLIENT_ERRORS.has(apiErrorStatus(err) ?? 0);
+}
+
 /** React Query `retry`: twice for a server or network failure, never for a 4xx. */
 export function retryUnlessClientError(failureCount: number, err: unknown): boolean {
   return failureCount < 2 && !isClientError(err);

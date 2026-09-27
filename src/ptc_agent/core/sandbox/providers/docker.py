@@ -207,9 +207,9 @@ class DockerRuntime(SandboxRuntime):
 
         # Write script via exec (avoids tar overhead for a single small file)
         write_cmd = (
-            f"python3 -c \"import base64,sys; "
+            f"python3 -I -c \"import base64,sys; "
             f"sys.stdout.buffer.write(base64.b64decode('{encoded}'))\" "
-            f"> {script_path}"
+            f"> {shlex.quote(script_path)}"
         )
         write_result = await self.exec(write_cmd, timeout=15)
         if write_result.exit_code != 0:
@@ -227,7 +227,10 @@ class DockerRuntime(SandboxRuntime):
             env_prefix = f"export {exports} && "
 
         stderr_path = f"{self._working_dir}/_stderr_{uuid.uuid4().hex[:8]}.txt"
-        run_cmd = f"{env_prefix}python3 {script_path} 2>{stderr_path}"
+        run_cmd = (
+            f"{env_prefix}python3 {shlex.quote(script_path)} "
+            f"2>{shlex.quote(stderr_path)}"
+        )
 
         # Run the code. We parse combined stdout for artifacts. The turn's
         # own directory is reached by the shipped ``sitecustomize.py``, which
@@ -244,7 +247,9 @@ class DockerRuntime(SandboxRuntime):
         stderr = ""
         if exec_result.exit_code != 0:
             try:
-                cat_result = await self.exec(f"cat {stderr_path} 2>/dev/null", timeout=5)
+                cat_result = await self.exec(
+                    f"cat {shlex.quote(stderr_path)} 2>/dev/null", timeout=5
+                )
                 if cat_result.exit_code == 0:
                     stderr = cat_result.stdout
             except Exception:
@@ -252,7 +257,10 @@ class DockerRuntime(SandboxRuntime):
 
         # Cleanup temp files (best-effort)
         try:
-            await self.exec(f"rm -f {script_path} {stderr_path}", timeout=5)
+            await self.exec(
+                f"rm -f {shlex.quote(script_path)} {shlex.quote(stderr_path)}",
+                timeout=5,
+            )
         except Exception:
             pass
 
@@ -295,7 +303,7 @@ class DockerRuntime(SandboxRuntime):
         # create them anyway, but this avoids permission issues).
         if parent_dirs:
             mkdir_cmd = "mkdir -p " + " ".join(
-                f"'{d}'" for d in sorted(parent_dirs)
+                shlex.quote(d) for d in sorted(parent_dirs)
             )
             await self.exec(mkdir_cmd, timeout=30)
 

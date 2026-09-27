@@ -568,7 +568,7 @@ class PTCSandbox:
             try:
                 await self._runtime_call(
                     self.runtime.exec,
-                    f"rm -f {vault_path}",
+                    f"rm -f {shlex.quote(vault_path)}",
                     retry_policy=RetryPolicy.SAFE,
                 )
             except Exception as e:
@@ -650,7 +650,7 @@ class PTCSandbox:
             # ``mv`` would. argv-passing keeps the paths out of the shell.
             result = await self._runtime_call(
                 self.runtime.exec,
-                "chmod 600 {t} && python3 -c "
+                "chmod 600 {t} && python3 -I -c "
                 "'import os,sys; os.replace(sys.argv[1], sys.argv[2])' "
                 "{t} {p}".format(t=shlex.quote(tmp_path), p=shlex.quote(path)),
                 retry_policy=RetryPolicy.SAFE,

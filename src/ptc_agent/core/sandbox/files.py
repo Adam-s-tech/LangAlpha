@@ -836,8 +836,9 @@ async def aglob_files(
                     # *intermediate* dir components intersect the excluded set — never
                     # the search-root prefix (so globbing directly into an excluded dir
                     # still works) and never the basename (so a regular file that shares
-                    # a noise-dir name is not dropped).
-                    full_pattern = os.path.join(search_path, pattern)
+                    # a noise-dir name is not dropped). The root is escaped because a
+                    # workspace folder is its name, which may hold '[', '*' or '?'.
+                    full_pattern = os.path.join(glob.escape(search_path), pattern)
                     matches = glob.glob(full_pattern, recursive=True, include_hidden=True)
                     files = []
                     for f in matches:
@@ -858,7 +859,7 @@ async def aglob_files(
             """)
 
         encoded_code = base64.b64encode(glob_code.encode()).decode()
-        cmd = f"python3 -c \"import base64; exec(base64.b64decode('{encoded_code}').decode())\""
+        cmd = f"python3 -I -c \"import base64; exec(base64.b64decode('{encoded_code}').decode())\""
 
         assert sandbox.runtime is not None
         result = await sandbox._runtime_call(

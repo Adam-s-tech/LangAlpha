@@ -178,7 +178,7 @@ finally:
         os.unlink(tmp)
 """
         result = await runtime.exec(
-            f"python3 -c {shlex.quote(script)} {shlex.quote(path)} "
+            f"python3 -I -c {shlex.quote(script)} {shlex.quote(path)} "
             f"{shlex.quote(json.dumps(grants))}"
         )
         if result.exit_code:

@@ -468,7 +468,7 @@ def _build_command(args_path: str) -> str:
         _SCRIPT.replace("__ARGS_PATH__", args_path).encode()
     ).decode()
     return (
-        f"python3 -c \"import base64;exec(base64.b64decode('{script_b64}').decode())\""
+        f"python3 -I -c \"import base64;exec(base64.b64decode('{script_b64}').decode())\""
     )
 
 

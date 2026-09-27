@@ -206,7 +206,7 @@ def _probe_env_command(env_vars: Sequence[str]) -> str:
     # Hash in-sandbox: one exec covers the whole set and plaintext never
     # crosses the exec boundary.
     return (
-        "python3 -c 'import hashlib,os\n"
+        "python3 -I -c 'import hashlib,os\n"
         f"for v in [{names}]:\n"
         '    val = os.environ.get(v, "")\n'
         '    print(hashlib.sha256(val.encode()).hexdigest() if val else "")\''

@@ -614,7 +614,7 @@ def _build_command(args: dict[str, Any]) -> str:
         _SCRIPT.replace("__ARGS_B64__", args_b64).encode()
     ).decode()
     return (
-        'python3 -c "import base64;'
+        'python3 -I -c "import base64;'
         f"exec(base64.b64decode('{script_b64}').decode())\""
     )
 
@@ -778,7 +778,9 @@ async def download_tree(
         sandbox.runtime.download_file, out, retry_policy=RetryPolicy.SAFE
     )
     await sandbox._runtime_call(
-        sandbox.runtime.exec, f"rm -f {out}", retry_policy=RetryPolicy.SAFE
+        sandbox.runtime.exec,
+        f"rm -f {shlex.quote(out)}",
+        retry_policy=RetryPolicy.SAFE,
     )
     if raw is None:
         raise SkillSyncError("download produced no bytes")

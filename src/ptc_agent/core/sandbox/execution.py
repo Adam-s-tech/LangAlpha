@@ -194,7 +194,7 @@ async def execute(
             if thread_id not in sandbox._thread_dirs_created:
                 await sandbox._runtime_call(
                     sandbox.runtime.exec,
-                    f"mkdir -p {_workspace_path(sandbox, f'{_THREADS}/{thread_id}/code')}",
+                    f"mkdir -p {shlex.quote(_workspace_path(sandbox, f'{_THREADS}/{thread_id}/code'))}",
                     retry_policy=RetryPolicy.SAFE,
                 )
                 sandbox._thread_dirs_created.add(thread_id)
@@ -479,7 +479,7 @@ async def execute_bash_command(
             if thread_id not in sandbox._thread_dirs_created:
                 await sandbox._runtime_call(
                     sandbox.runtime.exec,
-                    f"mkdir -p {_workspace_path(sandbox, f'{_THREADS}/{thread_id}/code')}",
+                    f"mkdir -p {shlex.quote(_workspace_path(sandbox, f'{_THREADS}/{thread_id}/code'))}",
                     retry_policy=RetryPolicy.SAFE,
                 )
                 sandbox._thread_dirs_created.add(thread_id)

@@ -611,7 +611,7 @@ async def _upload_mcp_server_files_impl(sandbox: "PTCSandbox") -> None:
 
     await sandbox._runtime_call(
         runtime.exec,
-        f"mkdir -p {mcp_servers_dir}",
+        f"mkdir -p {shlex.quote(mcp_servers_dir)}",
         retry_policy=RetryPolicy.SAFE,
     )
 

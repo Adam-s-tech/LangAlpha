@@ -20,6 +20,8 @@ const PERF_BUILD = !!process.env.PERF && !!process.env.PERF_BUILD;
 
 export default defineConfig({
   testDir: './e2e',
+  // Runs after the web servers are up: compiles the app once before workers race to.
+  globalSetup: './e2e/global-setup.js',
   timeout: 30_000,
   retries: process.env.CI ? 1 : 0,
   // Workers never share scenario state (each owns a mock server), so the suite

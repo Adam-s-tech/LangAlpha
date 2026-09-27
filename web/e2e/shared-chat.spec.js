@@ -2,7 +2,7 @@
  * E2E tests for SharedChatView (/s/:shareToken).
  *
  * This page is public (no auth) and uses raw fetch() against
- * VITE_API_BASE_URL (mock server on :4100) for all API calls.
+ * VITE_API_BASE_URL (the worker's mock server) for all API calls.
  * SSE replay and JSON endpoints are configured on the mock server
  * via configureSSE().
  */

@@ -32,13 +32,15 @@ vi.mock('../utils/threadStorage', () => ({
 
 vi.mock('../../utils/api', async () => (await import('./chatHookHarness')).apiMockModule());
 
-import { getThreadFeedback, getWorkflowStatus, reconnectToWorkflowStream, replayThreadHistory } from '../../utils/api';
+import { fetchThreadTurns, getThreadFeedback, getWorkflowStatus, reconnectToWorkflowStream, replayThreadHistory, sendChatMessageStream } from '../../utils/api';
 import { useChatMessages } from '../useChatMessages';
 
 const mockStatus = getWorkflowStatus as Mock;
 const mockReconnect = reconnectToWorkflowStream as Mock;
 const mockReplay = replayThreadHistory as Mock;
 const mockFeedback = getThreadFeedback as Mock;
+const mockSend = sendChatMessageStream as Mock;
+const mockTurns = fetchThreadTurns as Mock;
 
 describe('useChatMessages — reconnect-on-reactivation (cached view, run started while hidden)', () => {
   beforeEach(() => {
@@ -296,6 +298,21 @@ describe('useChatMessages — reconnect-on-reactivation (cached view, run starte
     for (const turn of turns) onEvent({ event: 'user_message', turn_index: turn, content: `question ${turn}`, role: 'user' });
     return Promise.resolve();
   };
+  /** Sends a turn whose stream stays open until the returned end() is called. */
+  const sendHeldTurn = async (result: { current: { handleSendMessage: (text: string, planMode: boolean) => Promise<unknown> } }) => {
+    let finish!: () => void;
+    mockSend.mockImplementationOnce((...args: unknown[]) => {
+      const onRunIdResolved = args[16] as (runId: string, threadId: string | null) => void;
+      onRunIdResolved('run-own', 'th');
+      return new Promise((resolve) => { finish = () => resolve({ disconnected: false, aborted: false }); });
+    });
+    let sent: Promise<unknown> = Promise.resolve();
+    await act(async () => {
+      sent = result.current.handleSendMessage('a question sent mid-load', false);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    return () => act(async () => { finish(); await sent; });
+  };
 
   it('says whether it could read the thread\'s status, so a failure that can pass is asked again', async () => {
     mockStatus.mockResolvedValue(threadStatus());
@@ -461,5 +478,200 @@ describe('useChatMessages — reconnect-on-reactivation (cached view, run starte
     expect(result.current.isLoadingThread).toBe(false);
     expect(await checkWith(result)).toBe(true);
     expect(mockReplay).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs a reload a send overtook in its status read once that turn ends, not over it', async () => {
+    mockStatus.mockResolvedValue(threadStatus({ latest_turn_index: 0 }));
+    mockReplay.mockImplementation(replayTurns(0));
+    const { result } = renderHookWithProviders(() => useChatMessages('ws', 'th'));
+    await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(1));
+    await settleMountEffect();
+
+    let answerStatus!: () => void;
+    mockStatus
+      .mockResolvedValueOnce(threadStatus({ latest_turn_index: 1 }))
+      .mockImplementationOnce(() => new Promise((resolve) => { answerStatus = () => resolve(threadStatus({ latest_turn_index: 1 })); }));
+    expect(await checkWith(result)).toBe(false);
+    await waitFor(() => expect(mockStatus).toHaveBeenCalledTimes(3));
+
+    const endTurn = await sendHeldTurn(result);
+    await act(async () => { answerStatus(); });
+    await settleMountEffect();
+    // The status predates the turn, so replaying it would run over that turn.
+    expect(mockReplay).toHaveBeenCalledTimes(1);
+
+    mockReplay.mockImplementation(replayTurns(0, 1, 2));
+    await endTurn();
+    await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(2));
+  });
+
+  it('leaves a turn sent after the reload\'s replay alone, reconnecting to no run the status named before it', async () => {
+    mockStatus.mockResolvedValue(threadStatus({ status: 'idle' }));
+    const { result } = renderHookWithProviders(() => useChatMessages('ws', 'th'));
+    await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(1));
+    await settleMountEffect();
+
+    mockStatus.mockResolvedValue(threadStatus({ can_reconnect: true, status: 'running', run_id: 'run-elsewhere' }));
+    let finishFeedback!: () => void;
+    mockFeedback.mockImplementationOnce(() => new Promise((resolve) => { finishFeedback = () => resolve([]); }));
+    expect(await checkWith(result)).toBe(false);
+    await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.isLoadingHistory).toBe(false));
+
+    mockStatus.mockResolvedValue(threadStatus({ status: 'idle' }));
+    const endTurn = await sendHeldTurn(result);
+    await act(async () => { finishFeedback(); });
+    await settleMountEffect();
+    expect(mockReconnect).not.toHaveBeenCalled();
+
+    await endTurn();
+    await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(3));
+    await settleMountEffect();
+    expect(mockReconnect).not.toHaveBeenCalled();
+  });
+
+  it('runs a reload again when a turn sent in its status read has already ended', async () => {
+    mockStatus.mockResolvedValue(threadStatus({ status: 'idle' }));
+    const { result } = renderHookWithProviders(() => useChatMessages('ws', 'th'));
+    await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(1));
+    await settleMountEffect();
+
+    let answerStatus!: () => void;
+    const elsewhere = threadStatus({ can_reconnect: true, status: 'running', run_id: 'run-elsewhere' });
+    mockStatus
+      .mockResolvedValueOnce(elsewhere)
+      .mockImplementationOnce(() => new Promise((resolve) => { answerStatus = () => resolve(elsewhere); }))
+      .mockResolvedValue(threadStatus({ status: 'idle' }));
+    expect(await checkWith(result)).toBe(false);
+    await waitFor(() => expect(mockStatus).toHaveBeenCalledTimes(3));
+
+    const endTurn = await sendHeldTurn(result);
+    await endTurn();
+    await act(async () => { answerStatus(); });
+    await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(2));
+    await settleMountEffect();
+    expect(mockReconnect).not.toHaveBeenCalled();
+  });
+
+  it('runs a reload again when a turn sent after its replay has already ended, reconnecting to no run the status named before it', async () => {
+    mockStatus.mockResolvedValue(threadStatus({ status: 'idle' }));
+    const { result } = renderHookWithProviders(() => useChatMessages('ws', 'th'));
+    await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(1));
+    await settleMountEffect();
+
+    mockStatus.mockResolvedValue(threadStatus({ can_reconnect: true, status: 'running', run_id: 'run-elsewhere' }));
+    let finishFeedback!: () => void;
+    mockFeedback.mockImplementationOnce(() => new Promise((resolve) => { finishFeedback = () => resolve([]); }));
+    expect(await checkWith(result)).toBe(false);
+    await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.isLoadingHistory).toBe(false));
+
+    mockStatus.mockResolvedValue(threadStatus({ status: 'idle' }));
+    const endTurn = await sendHeldTurn(result);
+    await endTurn();
+    await act(async () => { finishFeedback(); });
+    await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(3));
+    await settleMountEffect();
+    expect(mockReconnect).not.toHaveBeenCalled();
+  });
+
+  describe('an edit that lands in a reload', () => {
+    const CHECKPOINTS = { turns: [0, 1].map((i) => ({ turn_index: i, edit_checkpoint_id: `cp-edit-${i}`, regenerate_checkpoint_id: `cp-regen-${i}` })) };
+
+    /** Mounts on two turns and starts a reload whose status read waits for answer(). */
+    const reloadHeldInStatus = async () => {
+      mockStatus.mockResolvedValue(threadStatus({ latest_turn_index: 1 }));
+      mockReplay.mockImplementation(replayTurns(0, 1));
+      const hook = renderHookWithProviders(() => useChatMessages('ws', 'th'));
+      await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(1));
+      await settleMountEffect();
+
+      let answer!: () => void;
+      const elsewhere = threadStatus({ can_reconnect: true, status: 'running', run_id: 'run-elsewhere', latest_turn_index: 2 });
+      mockStatus
+        .mockResolvedValueOnce(elsewhere)
+        .mockImplementationOnce(() => new Promise((resolve) => { answer = () => resolve(elsewhere); }))
+        .mockResolvedValue(threadStatus({ status: 'idle', latest_turn_index: 1 }));
+      expect(await checkWith(hook.result)).toBe(false);
+      await waitFor(() => expect(mockStatus).toHaveBeenCalledTimes(3));
+      return { ...hook, answer: () => act(async () => { answer(); }) };
+    };
+
+    /** Starts an edit of the last question whose checkpoint read waits for answer(). */
+    const editHeldInPreflight = async (result: { current: ReturnType<typeof useChatMessages> }) => {
+      let answer!: (data: unknown) => void;
+      mockTurns.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+      const lastQuestion = result.current.messages.filter((m) => m.role === 'user').at(-1)!;
+      let edited: Promise<unknown> = Promise.resolve();
+      await act(async () => {
+        edited = result.current.handleEditMessage(lastQuestion.id as string, 'an edited question');
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      return {
+        answer: (data: unknown) => act(async () => { answer(data); await new Promise((r) => setTimeout(r, 0)); }),
+        settled: () => edited,
+      };
+    };
+
+    it('waits for the fork it cut the transcript for, not replaying over the cut', async () => {
+      const { result, answer: answerStatus } = await reloadHeldInStatus();
+      const edit = await editHeldInPreflight(result);
+
+      await answerStatus();
+      await settleMountEffect();
+      expect(mockReplay).toHaveBeenCalledTimes(1);
+      expect(mockReconnect).not.toHaveBeenCalled();
+
+      let finish!: () => void;
+      mockSend.mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve({ disconnected: false, aborted: false }); }));
+      await edit.answer(CHECKPOINTS);
+      await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1));
+      await settleMountEffect();
+      expect(mockReplay).toHaveBeenCalledTimes(1);
+
+      await act(async () => { finish(); await edit.settled(); });
+      await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(2));
+      await settleMountEffect();
+      expect(mockReconnect).not.toHaveBeenCalled();
+    });
+
+    it('runs the reload that waited once a failed checkpoint read hands the transcript back', async () => {
+      const { result, answer: answerStatus } = await reloadHeldInStatus();
+      const edit = await editHeldInPreflight(result);
+      await answerStatus();
+      await settleMountEffect();
+
+      await edit.answer({ turns: [] });
+      await edit.settled();
+      await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(2));
+      expect(mockSend).not.toHaveBeenCalled();
+      expect(result.current.messages.some((m) => m.content === 'an edited question')).toBe(false);
+    });
+
+    it('is refused while a replay is rebuilding the transcript it would cut', async () => {
+      mockStatus.mockResolvedValue(threadStatus({ latest_turn_index: 1 }));
+      mockReplay.mockImplementation(replayTurns(0, 1));
+      const { result } = renderHookWithProviders(() => useChatMessages('ws', 'th'));
+      await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(1));
+      await settleMountEffect();
+      const lastQuestion = result.current.messages.filter((m) => m.role === 'user').at(-1)!;
+
+      let finishReplay!: () => void;
+      mockReplay.mockImplementationOnce((tid: string, onEvent: (e: Record<string, unknown>) => void) => {
+        replayTurns(0, 1)(tid, onEvent);
+        return new Promise<void>((resolve) => { finishReplay = resolve; });
+      });
+      mockStatus.mockResolvedValue(threadStatus({ latest_turn_index: 2 }));
+      expect(await checkWith(result)).toBe(false);
+      await waitFor(() => expect(mockReplay).toHaveBeenCalledTimes(2));
+      expect(result.current.messages.some((m) => m.id === lastQuestion.id)).toBe(true);
+
+      await act(async () => {
+        await result.current.handleEditMessage(lastQuestion.id as string, 'an edited question');
+      });
+      expect(mockTurns).not.toHaveBeenCalled();
+      expect(result.current.messages.some((m) => m.content === 'an edited question')).toBe(false);
+      await act(async () => { finishReplay(); });
+    });
   });
 });

@@ -43,6 +43,7 @@ vi.mock('../../utils/api', async () => (await import('./chatHookHarness')).apiMo
 import { sendChatMessageStream, cancelWorkflow, getWorkflowStatus, reconnectToWorkflowStream } from '../../utils/api';
 import { useChatMessages } from '../useChatMessages';
 import type { AssistantMessage } from '@/types/chat';
+import { settleMountEffect } from './chatHookHarness';
 
 const mockSendStream = sendChatMessageStream as Mock;
 const mockCancel = cancelWorkflow as Mock;
@@ -67,6 +68,13 @@ function findReasoning(msg: AssistantMessage | undefined) {
   const procs = (msg.reasoningProcesses as unknown as Record<string, Record<string, unknown>>) || {};
   const keys = Object.keys(procs);
   return keys.length ? procs[keys[keys.length - 1]] : null;
+}
+
+/** Mounts the hook and lets the thread's load settle, since the composer stays closed until it does. */
+async function mountSettled() {
+  const view = renderHookWithProviders(() => useChatMessages('ws-stop', 'th-stop'));
+  await settleMountEffect();
+  return view;
 }
 
 describe('useChatMessages — stopWorkflow (hard stop)', () => {
@@ -116,7 +124,7 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
   }
 
   it('aborts the controller, clears isLoading, and closes the open reasoning block synchronously', async () => {
-    const { result } = renderHookWithProviders(() => useChatMessages('ws-stop', 'th-stop'));
+    const { result } = await mountSettled();
     const { hang, getSignal, send } = await startHangingSendWithReasoning(result);
 
     // Sanity: the reasoning block is open before stop.
@@ -155,7 +163,7 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
   });
 
   it('clears the in-flight tool-call "generating" row on stop (no lingering shimmer)', async () => {
-    const { result } = renderHookWithProviders(() => useChatMessages('ws-stop', 'th-stop'));
+    const { result } = await mountSettled();
 
     const hang = deferred<{ disconnected: boolean; aborted: boolean }>();
     mockSendStream.mockImplementation(async (...args: unknown[]) => {
@@ -194,7 +202,7 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
   });
 
   it('folds an in-progress tool-call process on stop (no row left spinning)', async () => {
-    const { result } = renderHookWithProviders(() => useChatMessages('ws-stop', 'th-stop'));
+    const { result } = await mountSettled();
 
     const hang = deferred<{ disconnected: boolean; aborted: boolean }>();
     mockSendStream.mockImplementation(async (...args: unknown[]) => {
@@ -239,7 +247,7 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
   });
 
   it('double-click stop is idempotent (one cancel, no duplicate synthetic events)', async () => {
-    const { result } = renderHookWithProviders(() => useChatMessages('ws-stop', 'th-stop'));
+    const { result } = await mountSettled();
     const { hang, send } = await startHangingSendWithReasoning(result);
 
     await act(async () => {
@@ -263,7 +271,7 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
       .mockRejectedValueOnce(new Error('net'))
       .mockRejectedValueOnce(new Error('net again'));
 
-    const { result } = renderHookWithProviders(() => useChatMessages('ws-stop', 'th-stop'));
+    const { result } = await mountSettled();
     const { hang, send } = await startHangingSendWithReasoning(result);
 
     await act(async () => {
@@ -295,7 +303,7 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
       message: 'A run is active on this thread but the one to stop is gone.',
     });
 
-    const { result } = renderHookWithProviders(() => useChatMessages('ws-stop', 'th-stop'));
+    const { result } = await mountSettled();
     const { hang, send } = await startHangingSendWithReasoning(result);
 
     await act(async () => {
@@ -320,7 +328,7 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
       // teardown, which is the common case, and train the toast to be ignored.
       mockCancel.mockResolvedValue({ cancelled: false, state, message: 'nothing to cancel' });
 
-      const { result } = renderHookWithProviders(() => useChatMessages('ws-stop', 'th-stop'));
+      const { result } = await mountSettled();
       const { hang, send } = await startHangingSendWithReasoning(result);
 
       await act(async () => {
@@ -335,7 +343,7 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
   );
 
   it('an aborted stream is swallowed — no error banner, no double cleanup', async () => {
-    const { result } = renderHookWithProviders(() => useChatMessages('ws-stop', 'th-stop'));
+    const { result } = await mountSettled();
     const { hang, send } = await startHangingSendWithReasoning(result);
 
     await act(async () => {
@@ -370,7 +378,7 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
       return hang.promise;
     });
 
-    const { result } = renderHookWithProviders(() => useChatMessages('ws-stop', 'th-stop'));
+    const { result } = await mountSettled();
 
     // Mount effect kicks off the reconnect. The first streamed event proves the
     // stream is live, so the "Reconnecting…" spinner clears even while the run

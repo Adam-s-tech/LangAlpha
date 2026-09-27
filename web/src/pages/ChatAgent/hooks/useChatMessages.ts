@@ -107,8 +107,8 @@ export function useChatMessages(
     return workspaceId ? getStoredThreadId(workspaceId) : '__default__';
   });
   const [isLoading, setIsLoading] = useState(false);
-  // For checks that outlive a render: an edit or regenerate sets isLoading
-  // before its checkpoint read, well before it takes the stream.
+  // For checks that outlive a render: isLoading is state, and a check that
+  // runs between renders reads it here.
   const isLoadingRef = useRef(isLoading);
   isLoadingRef.current = isLoading;
   const [isLoadingHistory, setIsLoadingHistory] = useState(
@@ -280,10 +280,10 @@ export function useChatMessages(
   const isStreamingRef = useRef(false);
 
   const acquireStreamOwnership = (tid: string | null) => acquireOwnership(runtime, tid);
-  // A reload asked for mid-stream waits here (a mux resync, or a catch-up
-  // reload a report-back attach overtook): bumping the reload trigger while
-  // streaming runs the load effect's cleanup (detaching the mux) and then bails
-  // on the streaming guard — losing the reload.
+  // A reload asked for mid-stream waits here (a mux resync, a catch-up reload a
+  // report-back attach overtook, or a load a send overtook): bumping the reload
+  // trigger while streaming runs the load effect's cleanup (detaching the mux)
+  // and then bails on the streaming guard — losing the reload.
   const pendingMuxResyncRef = useRef(false);
   // The reloadTrigger the load effect last ran for, so a bail can tell a
   // reload request from a thread change.
@@ -845,12 +845,24 @@ export function useChatMessages(
       // mux attach may lag it by the whole history load.
       const snapshotAtMs = Date.now();
       const onlineEpochAtStart = onlineRetryEpochRef.current;
+      // The composer is open while this load reads the status and after its
+      // replay, and a turn sent then owns the transcript: this load's snapshot
+      // predates it, so replaying or reconnecting would run over that turn, or
+      // reconnect to a run it named that has since ended. The load runs again
+      // after the turn, when its stream releases or at once if it already has.
+      const sessionEpochAtStart = sessionEpochRef.current;
+      const turnTookOver = () => {
+        if (sessionEpochRef.current === sessionEpochAtStart) return false;
+        if (isStreamingRef.current) pendingMuxResyncRef.current = true;
+        else setReloadTrigger((n) => n + 1);
+        return true;
+      };
       const status: WorkflowStatusResponse = await getWorkflowStatus(threadId).catch((statusErr: unknown) => {
         console.log('[Reconnect] Could not check workflow status:', (statusErr as Error).message);
         return { can_reconnect: false, status: 'error' } as WorkflowStatusResponse;
       });
 
-      if (cancelled) return;
+      if (cancelled || turnTookOver()) return;
 
       // Capture share status from workflow status response
       if (status.is_shared !== undefined) {
@@ -859,7 +871,7 @@ export function useChatMessages(
 
       const loadOk = await loadConversationHistory();
 
-      if (cancelled) return;
+      if (cancelled || turnTookOver()) return;
 
       // Only mark the (workspace, thread, reloadTrigger) tuple as loaded
       // when the load actually succeeded. On transient errors the key
@@ -2394,6 +2406,21 @@ export function useChatMessages(
   }, []);
 
   /**
+   * An edit or regenerate cuts the transcript before it reads the checkpoint it
+   * forks from, so it takes the stream slot at the cut: a load or a report-back
+   * attach landing in that read waits for the fork instead of writing over the
+   * cut. A replay in flight is rebuilding the very transcript the fork would
+   * cut, so the fork is refused until it lands. A failed read hands the slot
+   * back, which runs any load that waited.
+   */
+  const claimForkPreflight = (): boolean => {
+    if (isStreamingRef.current || historyLoadingRef.current) return false;
+    sessionEpochRef.current += 1;
+    acquireStreamOwnership(threadId);
+    return true;
+  };
+
+  /**
    * Helper: stream a forked or retried turn (shared by edit, regenerate, retry).
    * Edit/regenerate fork from an explicit `checkpointId`; retry goes through the
    * POST /retry attempt chain with `checkpointId=null` (the server resolves the
@@ -2401,7 +2428,8 @@ export function useChatMessages(
    * stream lifecycle.
    */
   const streamFromCheckpoint = useCallback(async (message: string | null, checkpointId: string | null, truncateIndex: number, forkFromTurn: number | null = null, modelOptions: ModelOptions = {}, viaRetryEndpoint: boolean = false) => {
-    if (isStreamingRef.current) return;
+    // Callers check the slot is free: an edit or regenerate already holds it
+    // for its checkpoint read, and takes it again below with the same result.
 
     // Edit/regenerate/retry are chat activity — bump like a fresh send.
     bumpThreadNavOrder(workspaceId, threadIdRef.current);
@@ -2610,6 +2638,8 @@ export function useChatMessages(
     // Excludes steering assistant messages (mid-turn continuations) which don't map to backend turns.
     const turnIndex = messages.slice(0, msgIndex).filter((m) => m.role === 'assistant' && !isSteeringContinuation(m)).length;
 
+    if (!claimForkPreflight()) return;
+
     // Immediate visual feedback: truncate, show edited message + loading placeholder.
     // Save snapshot so we can restore on failure.
     const snapshotMessages = messages;
@@ -2628,6 +2658,7 @@ export function useChatMessages(
       setIsLoading(false);
       setMessages(snapshotMessages);
       setMessageError('Unable to edit: checkpoint data unavailable');
+      releaseStreamOwnership();
       return;
     }
 
@@ -2636,10 +2667,14 @@ export function useChatMessages(
       setIsLoading(false);
       setMessages(snapshotMessages);
       setMessageError('Unable to edit: this is the first message');
+      releaseStreamOwnership();
       return;
     }
 
     await streamFromCheckpoint(newContent, checkpointId, msgIndex, turnIndex, modelOptions);
+  // The slot helpers reach only refs and the threadId streamFromCheckpoint
+  // already tracks.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, getTurnCheckpoints, streamFromCheckpoint]);
 
   /**
@@ -2671,6 +2706,8 @@ export function useChatMessages(
       }
     }
 
+    if (!claimForkPreflight()) return;
+
     // Immediate visual feedback: truncate at the assistant message, show loading placeholder.
     // Save snapshot so we can restore on failure.
     const snapshotMessages = messages;
@@ -2687,12 +2724,15 @@ export function useChatMessages(
       setIsLoading(false);
       setMessages(snapshotMessages);
       setMessageError('Unable to regenerate: checkpoint data unavailable');
+      releaseStreamOwnership();
       return;
     }
 
     const checkpointId = turnsData.turns[turnIndex].regenerate_checkpoint_id;
     // Truncate at the turn's first assistant bubble (keep everything before it, including user msg)
     await streamFromCheckpoint(null, checkpointId, truncateIndex, turnIndex, modelOptions);
+  // Same as handleEditMessage: the slot helpers reach only refs and threadId.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, getTurnCheckpoints, streamFromCheckpoint]);
 
   /**
@@ -2703,6 +2743,7 @@ export function useChatMessages(
    * positional assistant-bubble count stays aligned with backend turn_index.
    */
   const handleRetry = useCallback(async (modelOptions: ModelOptions = {}) => {
+    if (isStreamingRef.current) return;
     const lastErrorIndex = messages.findLastIndex((m) => m.role === 'assistant' && (m as AssistantMessage).error);
     const truncateIndex = lastErrorIndex !== -1 ? lastErrorIndex : messages.length;
     await streamFromCheckpoint(null, null, truncateIndex, null, modelOptions, true);

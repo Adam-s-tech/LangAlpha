@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { Suspense, useEffect, useEffectEvent, useRef, useState, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, FolderOpen, ScrollText, TextSelect, Minus, Menu, Info, Clock } from 'lucide-react';
@@ -373,9 +373,8 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     }
   }, [returnedSteering, clearReturnedSteering]);
 
-  // Ref to avoid stale closure in unmount cleanup
-  const currentThreadIdRef = useRef(currentThreadId);
-  currentThreadIdRef.current = currentThreadId;
+  // Read by the unmount cleanup, whose own closure holds a stale thread id
+  const readCurrentThreadId = useEffectEvent(() => currentThreadId);
   // Keep resolvedThreadIdRef in sync with the resolved thread ID from useChatMessages
   resolvedThreadIdRef.current = currentThreadId || threadId;
 
@@ -571,7 +570,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
       }
       saveChatSession({
         workspaceId,
-        threadId: currentThreadIdRef.current,
+        threadId: readCurrentThreadId(),
       });
     };
   }, [workspaceId]);

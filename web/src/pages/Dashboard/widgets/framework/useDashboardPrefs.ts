@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePreferences } from '@/hooks/usePreferences';
 import { useToast } from '@/components/ui/use-toast';
@@ -50,11 +50,10 @@ export function useDashboardPrefs() {
 
   const pendingTimer = useRef<number | null>(null);
   const bcRef = useRef<BroadcastChannel | null>(null);
-  // isPending changes mid-effect-cycle; mirror via ref so the
+  // isPending changes mid-effect-cycle; read it through an effect event so the
   // BroadcastChannel onmessage handler reads the latest value without
   // tearing down + rebuilding the channel on every mutation transition.
-  const isMutatingRef = useRef(false);
-  isMutatingRef.current = isPending;
+  const isMutating = useEffectEvent(() => isPending);
   // Deferred-replay: a broadcast that arrives during a pending edit can't be
   // applied immediately (refetching mid-edit would race the response). Set
   // this flag instead and run the invalidate after the current edit settles
@@ -82,7 +81,7 @@ export function useDashboardPrefs() {
     bcRef.current = chan;
     chan.onmessage = (e: MessageEvent) => {
       if ((e.data as { type?: string } | null)?.type !== 'updated') return;
-      if (pendingTimer.current === null && !isMutatingRef.current) {
+      if (pendingTimer.current === null && !isMutating()) {
         queryClient.invalidateQueries({ queryKey: queryKeys.user.preferences() });
       } else {
         // Defer until the current edit settles — runs from either the flush

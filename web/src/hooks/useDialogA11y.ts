@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useEffectEvent, useRef, type MouseEvent as ReactMouseEvent } from 'react';
 import { useStableHandler } from './useStableHandler';
 
 /**
@@ -88,7 +88,7 @@ function isUnderneath(el: Element, dialog: HTMLElement) {
 
 export function useDialogA11y<T extends HTMLElement>(onClose: () => void) {
   const ref = useRef<T>(null);
-  const close = useStableHandler(onClose);
+  const close = useEffectEvent(onClose);
 
   useEffect(() => {
     const node = ref.current;
@@ -219,7 +219,7 @@ export function useDialogA11y<T extends HTMLElement>(onClose: () => void) {
       // the page instead of where they were.
       if (opener?.isConnected) opener.focus?.();
     };
-  }, [close]);
+  }, []);
 
   return ref;
 }

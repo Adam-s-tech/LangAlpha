@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useEffectEvent, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Previewer } from 'pagedjs';
 import { useReactToPrint } from 'react-to-print';
@@ -114,8 +114,7 @@ export default function ExportPreviewModal({
   /** A save in flight, which is a different wait from `rendering` (the preview). */
   const [saving, setSaving] = useState(false);
   const [previewZoom, setPreviewZoom] = useState(0.5);
-  const previewZoomRef = useRef(previewZoom);
-  previewZoomRef.current = previewZoom;
+  const readPreviewZoom = useEffectEvent(() => previewZoom);
 
   // ---- Derived ----
   const activePreset = useMemo(
@@ -263,7 +262,7 @@ export default function ExportPreviewModal({
         // so we set the wrapper height explicitly to fix scroll extent.
         const pagesEl = container.querySelector('.pagedjs_pages') as HTMLElement | null;
         if (pagesEl) {
-          const zoom = previewZoomRef.current;
+          const zoom = readPreviewZoom();
           const naturalHeight = pagesEl.scrollHeight;
           pagesEl.style.transform = `scale(${zoom})`;
           pagesEl.style.transformOrigin = 'top center';

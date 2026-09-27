@@ -1,4 +1,4 @@
-import React, { useContext, useLayoutEffect, useRef } from 'react';
+import React, { useContext, useEffectEvent, useLayoutEffect, useRef } from 'react';
 import {
   animate,
   motion,
@@ -72,15 +72,13 @@ export function LiveRow({ opacity = 1, className, gap = ROW_GAP, gapBottom = gap
   // AnimatePresence only: one wrapped around the whole live zone would not
   // reach here (framer propagates an outer exit only on request).
   const isPresent = useIsPresent();
-  const presentRef = useRef(isPresent);
-  presentRef.current = isPresent;
+  const readPresent = useEffectEvent(() => isPresent);
   const wasPresentRef = useRef(isPresent);
   // A row already there when its AnimatePresence first rendered (a reload
   // mid-run, a tab return) opens settled, as `initial={false}` asks.
   const skipEnterRef = useRef(useContext(PresenceContext)?.initial === false);
   const reduceMotion = useReducedMotion();
-  const reduceRef = useRef(reduceMotion);
-  reduceRef.current = reduceMotion;
+  const readReduceMotion = useEffectEvent(() => reduceMotion);
   const settleRef = useRef<(reenter?: boolean) => void>(() => {});
 
   useLayoutEffect(() => {
@@ -91,7 +89,7 @@ export function LiveRow({ opacity = 1, className, gap = ROW_GAP, gapBottom = gap
     let target = 0;
     let running: AnimationPlaybackControls | null = null;
     const settle = (reenter = false, animateShrink = false) => {
-      if (!presentRef.current) return;
+      if (!readPresent()) return;
       // No boxes at all: the view holding this row is display:none (a cached
       // background thread that keeps streaming). Its content is still there;
       // measuring it as 0 would fold every row and clamp the scroll on return.
@@ -108,7 +106,7 @@ export function LiveRow({ opacity = 1, className, gap = ROW_GAP, gapBottom = gap
       // Animate discrete DOM changes, but follow measured resizing directly:
       // a nested disclosure already animates its height. Starting another
       // spring on every resize leaves an empty row trailing that collapse.
-      if (!reduceRef.current && ((shrink && animateShrink) || performance.now() - mountedAt < ENTER_MS)) {
+      if (!readReduceMotion() && ((shrink && animateShrink) || performance.now() - mountedAt < ENTER_MS)) {
         running = animate(height, next, SPRING_SNAPPY);
         return;
       }

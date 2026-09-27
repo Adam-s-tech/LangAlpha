@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from '@/lib/framer';
 import { Newspaper, Clock, Search, X } from 'lucide-react';
@@ -200,8 +200,9 @@ function NewsFeedWidget({ instance, updateConfig }: WidgetRenderProps<NewsFeedCo
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   // Read the latest paging state inside the observer without re-creating it on
   // every page (which would re-fire on an already-visible sentinel and cascade).
-  const pageStateRef = useRef({ hasNextPage, isFetchingNextPage, fetchNextPage });
-  pageStateRef.current = { hasNextPage, isFetchingNextPage, fetchNextPage };
+  const loadNextPageIfIdle = useEffectEvent(() => {
+    if (hasNextPage && !isFetchingNextPage && fetchNextPage) fetchNextPage();
+  });
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -209,8 +210,7 @@ function NewsFeedWidget({ instance, updateConfig }: WidgetRenderProps<NewsFeedCo
     const obs = new IntersectionObserver(
       (entries) => {
         if (!entries[0]?.isIntersecting) return;
-        const s = pageStateRef.current;
-        if (s.hasNextPage && !s.isFetchingNextPage && s.fetchNextPage) s.fetchNextPage();
+        loadNextPageIfIdle();
       },
       { root: scrollRef.current, rootMargin: '500px' },
     );

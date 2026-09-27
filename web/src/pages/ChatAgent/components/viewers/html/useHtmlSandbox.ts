@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useState } from 'react';
 import { resolveThemeVars } from './buildHtmlSrcDoc';
 
 interface UseHtmlSandboxOptions {
@@ -73,10 +73,9 @@ export function useHtmlSandbox({
   }, [handleMessage]);
 
   // Re-push theme vars whenever the app toggles data-theme.
-  const pushThemeRef = useRef(pushTheme);
-  pushThemeRef.current = pushTheme;
+  const onThemeToggle = useEffectEvent(pushTheme);
   useEffect(() => {
-    const observer = new MutationObserver(() => pushThemeRef.current());
+    const observer = new MutationObserver(() => onThemeToggle());
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['data-theme'],

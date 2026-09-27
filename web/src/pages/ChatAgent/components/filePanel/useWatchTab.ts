@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useEffectEvent, useRef } from 'react';
 import type { MarketWatchState } from '../../session/marketWatchEvents';
 import type { FileTabsApi } from './useFileTabs';
 
@@ -16,11 +16,10 @@ import type { FileTabsApi } from './useFileTabs';
 export function useWatchTab(tabs: FileTabsApi, marketWatch: MarketWatchState | null | undefined): void {
   const watching = (marketWatch?.symbols.length ?? 0) > 0;
   const wasWatching = useRef(watching);
-  const tabsRef = useRef(tabs);
-  tabsRef.current = tabs;
+  const openStatusUnfocused = useEffectEvent(() => tabs.openStatus({ focus: false }));
   useEffect(() => {
     if (watching === wasWatching.current) return;
     wasWatching.current = watching;
-    if (watching) tabsRef.current.openStatus({ focus: false });
+    if (watching) openStatusUnfocused();
   }, [watching]);
 }

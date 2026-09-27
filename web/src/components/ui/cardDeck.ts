@@ -11,7 +11,7 @@
  * Sizes differ between decks on purpose and travel in `DeckGeometry`; the
  * formulas do not.
  */
-import { useEffect, useRef, type CSSProperties } from 'react';
+import { useEffect, useEffectEvent, useRef, type CSSProperties } from 'react';
 
 export interface DeckGeometry {
   cardHeight: number;
@@ -77,8 +77,9 @@ export function deckSlot(i: number, count: number, fanned: boolean, g: DeckGeome
  * what "outside" means.
  *
  * The listeners are attached a frame late, so the click that opened the deck
- * cannot immediately shut it again, and `onCollapse` is read through a ref, so
- * a caller passing an inline arrow does not re-register them on every render.
+ * cannot immediately shut it again, and `onCollapse` is read through an effect
+ * event, so a caller passing an inline arrow does not re-register them on every
+ * render.
  *
  * Escape takes the focus back with it. Shutting the deck unmounts the cards
  * behind the front one, so a reader who had tabbed onto one of them was left on
@@ -103,8 +104,7 @@ export function useDeckCollapse({
   boundary?: React.RefObject<HTMLElement | null>;
 }): React.RefObject<HTMLDivElement | null> {
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const collapse = useRef(onCollapse);
-  collapse.current = onCollapse;
+  const collapse = useEffectEvent(onCollapse);
 
   useEffect(() => {
     if (!open || suspend) return;
@@ -115,12 +115,12 @@ export function useDeckCollapse({
       // A click on something already detached says nothing about intent.
       if (!document.body.contains(target)) return;
       if ((boundary?.current ?? rootRef.current)?.contains(target)) return;
-      collapse.current();
+      collapse();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       const held = !!rootRef.current?.contains(document.activeElement);
-      collapse.current();
+      collapse();
       if (!held) return;
       // A frame late for the same reason the listeners are: the card holding
       // the focus is still mounted until the collapse has rendered, and the

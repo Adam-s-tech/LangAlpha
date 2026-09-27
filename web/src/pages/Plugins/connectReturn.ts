@@ -13,7 +13,7 @@
  * does is the part no advance note can cover: a provider can refuse for reasons
  * nobody listed, and the user is owed a sentence either way.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useState } from 'react';
 import { readConnectOutcome } from './connectOutcome';
 
 const PENDING_KEY = 'mcp:connect-started';
@@ -122,8 +122,8 @@ export function useConnectReturn(handlers: ConnectReturnHandlers): void {
   // callback params strips them from the URL in an effect of its own, and
   // whether that has happened yet is not a thing this hook should have to know.
   const [landedWith] = useState(() => window.location.search);
-  const handler = useRef(handlers);
-  handler.current = handlers;
+  const standDown = useEffectEvent((server: string) => handlers.onStandDown(server));
+  const abandoned = useEffectEvent((server: string) => handlers.onAbandoned(server));
 
   useEffect(() => {
     const settle = (search: string) => {
@@ -145,7 +145,7 @@ export function useConnectReturn(handlers: ConnectReturnHandlers): void {
         // brokerage left switched on is inherited by every workspace, where it
         // fails on first use with no connection to explain it.
         if (entry?.broughtLive && outcome.kind === 'failed') {
-          handler.current.onStandDown(settled);
+          standDown(settled);
         }
         return;
       }
@@ -157,7 +157,7 @@ export function useConnectReturn(handlers: ConnectReturnHandlers): void {
       // callbacks.
       if (pending.length !== 1) return;
       writePending([]);
-      handler.current.onAbandoned(pending[0].server);
+      abandoned(pending[0].server);
     };
     settle(landedWith);
     // Backing out of the vendor's page is usually a bfcache restore, which

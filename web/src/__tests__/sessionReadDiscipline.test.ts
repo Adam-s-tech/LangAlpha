@@ -104,6 +104,9 @@ describe('who is allowed to read the Supabase session', () => {
       // the one request that legitimately predates the cache being populated.
       'contexts/AuthContext.tsx',
       'lib/authToken.ts',
+      // The auth client's default header, as supabase-js sets it: the
+      // publishable key, never a user token.
+      'lib/supabase.ts',
     ]);
   });
 });

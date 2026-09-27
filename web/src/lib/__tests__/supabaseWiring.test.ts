@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
 /**
- * `global: { fetch: authFetch }` is the whole activation.
+ * `fetch: authFetch` on the auth client is the whole activation.
  *
  * Both corrections for issue #379 that live below the app -- recomputing
  * `expires_at` on the local clock, and answering a rate limit with a status
@@ -11,12 +11,11 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
  * would notice: the storm suite builds its own client to drive auth-js
  * directly, so it proves the corrections work, not that they are installed.
  */
-// Typed to the real call shape so the third argument is inspectable below; an
-// untyped `vi.fn` infers no parameters and `calls[0][2]` comes out as `never`.
-const createBrowserClient = vi.fn(
-  (_url: string, _key: string, _options?: { global?: { fetch?: typeof fetch } }) => ({ auth: {} }),
-);
-vi.mock('@supabase/ssr', () => ({ createBrowserClient }));
+// Typed to the real call shape so the options are inspectable below; an untyped
+// `vi.fn` infers no parameters and `calls[0][0]` comes out as `never`. A
+// `function`, not an arrow, because the client is built with `new`.
+const AuthClient = vi.fn(function AuthClient(_options?: { fetch?: typeof fetch }) {});
+vi.mock('@supabase/supabase-js', () => ({ AuthClient }));
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -32,9 +31,9 @@ describe('the Supabase client the app actually uses', () => {
     const { authFetch } = await import('../authFetch');
     await import('../supabase');
 
-    expect(createBrowserClient).toHaveBeenCalledTimes(1);
+    expect(AuthClient).toHaveBeenCalledTimes(1);
     // Identity, not shape: a wrapper around it would still be a different fetch.
-    expect(createBrowserClient.mock.calls[0][2]?.global?.fetch).toBe(authFetch);
+    expect(AuthClient.mock.calls[0][0]?.fetch).toBe(authFetch);
   });
 
   it('is not built at all without the env vars, so OSS ships no client', async () => {
@@ -44,7 +43,7 @@ describe('the Supabase client the app actually uses', () => {
 
     const { supabase } = await import('../supabase');
 
-    expect(createBrowserClient).not.toHaveBeenCalled();
+    expect(AuthClient).not.toHaveBeenCalled();
     expect(supabase).toBeNull();
   });
 });

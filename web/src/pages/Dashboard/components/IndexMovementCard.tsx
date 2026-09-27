@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
-import { LineChart, Line, ResponsiveContainer, YAxis, Tooltip } from 'recharts';
+import { LineChart, Line, YAxis, Tooltip } from 'recharts';
 import { motion, AnimatePresence, type PanInfo } from '@/lib/framer';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { createFormatter } from '@/lib/format';
@@ -103,47 +103,45 @@ function IndexCardContent({ index }: { index: IndexData }) {
       {/* Sparkline chart */}
       <div className="mt-2 px-1 pb-2" style={{ height: 100 }}>
         {chartData.length > 1 ? (
-          <ResponsiveContainer width="100%" height={100}>
-            <LineChart data={chartData}>
-              <Line
-                type="monotone"
-                dataKey="val"
-                stroke={
-                  hasQuote
-                    ? pos ? 'var(--color-profit)' : 'var(--color-loss)'
-                    : 'var(--color-text-secondary)'
-                }
-                strokeWidth={1.5}
-                dot={false}
-                isAnimationActive={false}
-              />
-              <Tooltip
-                content={({ active, payload }) => {
-                  if (!active || !payload?.[0]) return null;
-                  const d = payload[0].payload;
-                  return (
-                    <div
-                      className="rounded-lg px-2.5 py-1.5 text-xs shadow-lg border"
-                      style={{
-                        backgroundColor: 'var(--color-bg-card)',
-                        borderColor: 'var(--color-border-muted)',
-                        color: 'var(--color-text-primary)',
-                      }}
-                    >
-                      {d.time && (
-                        <div style={{ color: 'var(--color-text-secondary)' }}>{d.time}</div>
-                      )}
-                      <div className="font-semibold dashboard-mono">
-                        {fmt2(Number(d.val))}
-                      </div>
+          <LineChart responsive width="100%" height={100} data={chartData}>
+            <Line
+              type="monotone"
+              dataKey="val"
+              stroke={
+                hasQuote
+                  ? pos ? 'var(--color-profit)' : 'var(--color-loss)'
+                  : 'var(--color-text-secondary)'
+              }
+              strokeWidth={1.5}
+              dot={false}
+              isAnimationActive={false}
+            />
+            <Tooltip
+              content={({ active, payload }) => {
+                if (!active || !payload?.[0]) return null;
+                const d = payload[0].payload;
+                return (
+                  <div
+                    className="rounded-lg px-2.5 py-1.5 text-xs shadow-lg border"
+                    style={{
+                      backgroundColor: 'var(--color-bg-card)',
+                      borderColor: 'var(--color-border-muted)',
+                      color: 'var(--color-text-primary)',
+                    }}
+                  >
+                    {d.time && (
+                      <div style={{ color: 'var(--color-text-secondary)' }}>{d.time}</div>
+                    )}
+                    <div className="font-semibold dashboard-mono">
+                      {fmt2(Number(d.val))}
                     </div>
-                  );
-                }}
-                cursor={{ stroke: 'var(--color-border-default)', strokeWidth: 1 }}
-              />
-              <YAxis domain={['dataMin', 'dataMax']} hide />
-            </LineChart>
-          </ResponsiveContainer>
+                  </div>
+                );
+              }}
+              cursor={{ stroke: 'var(--color-border-default)', strokeWidth: 1 }}
+            />
+            <YAxis domain={['dataMin', 'dataMax']} hide />
+          </LineChart>
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>

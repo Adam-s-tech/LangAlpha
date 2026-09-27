@@ -40,6 +40,12 @@ let setupWindow = null
 // single-use magic link may not survive. Held until `server:use` gives it an
 // origin, and only one, because the newest link is the one being acted on.
 let deferredLink = null
+// The window whose page last sent the user to the system browser. An
+// integration login leaves through the bridge's `openExternal`, so this is the
+// window it was started in. Taken from the sender, not from focus or blur: those
+// move with every switch between our windows and the browser, and a second
+// launch moves focus again before the link it carries is delivered.
+let lastSentOutWindow = null
 
 const SETUP_DIR = path.join(__dirname, '..', 'setup')
 
@@ -97,6 +103,14 @@ function openExternally(url) {
     console.warn(`[shell] the system opener refused '${forDisplay(url).slice(0, 120)}': ${err.code || err.message}`)
   })
   return true
+}
+
+/** The bridge's `openExternal`, remembering which window's page asked. */
+function openExternallyFrom(event, url) {
+  const opened = openExternally(url)
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (opened && win) lastSentOutWindow = win
+  return opened
 }
 
 /**
@@ -641,8 +655,84 @@ function openDeepLink(win, raw, base) {
   return true
 }
 
+/**
+ * An integration login handed back from the browser, already mapped onto the
+ * console's callback page. It goes back to the page that started it: the
+ * console window that sent the user to the browser, or else any window showing
+ * the console. Either can be the one, and both can show it at once: an account
+ * window opened before the console reserved the strip stays open after the
+ * main window starts showing the console too.
+ *
+ * With no window showing the console, it goes wherever a navigation to the
+ * console goes, decided here and before the load: `navigate` is loadURL and
+ * never passes through will-navigate, so a console URL loaded straight into
+ * the main window would skip the routing that gives the console a window of
+ * its own when the main one cannot show it.
+ *
+ * Restored as well as raised: the window may have been minimized while the
+ * browser had the login, and show() does not bring a minimized window back.
+ */
+function openIntegrationLogin(url) {
+  const showsConsole = (w) => Boolean(w) && !w.isDestroyed()
+    && (w === platformWindow || (w === mainWindow && origins.isPlatform(w.webContents.getURL())))
+  let win = [lastSentOutWindow, mainWindow, platformWindow].find(showsConsole)
+  if (win) {
+    navigate(win, url)
+  } else {
+    const verdict = policy.classifyNavigation(url, { isMainWindow: true })
+    if (verdict === 'allow') win = showInMainWindow(url)
+    else if (verdict === 'platform-window') win = openPlatformWindow(url)
+    else return null
+  }
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+  return win
+}
+
+/** Where a link the OS handed us goes: every arrival path ends here. */
+function onDeepLink(raw) {
+  // Settled before any window is picked, because the answer picks it, and never
+  // left to fall through: the app's /callback would try to redeem the
+  // provider's code as a sign-in. That includes an edition with no console,
+  // which has nowhere to finish one.
+  if (deeplink.isIntegrationLogin(raw)) {
+    const target = deeplink.toIntegrationUrl(raw)
+    if (target) openIntegrationLogin(target)
+    else console.warn('[shell] ignoring an integration login link this build cannot finish')
+    return
+  }
+
+  // The main window, never the focused one. A deep link resolves to a URL on
+  // the app origin, and the server picker is the one window that must never
+  // load one: its preload carries `server:use`, which repoints the whole
+  // app, and it is deliberately outside the navigation policy because
+  // nothing remote was ever supposed to reach it. A link arriving while the
+  // picker had focus put a remote page in exactly that window.
+  const win = (mainWindow && !mainWindow.isDestroyed()) ? mainWindow : openInitialWindow()
+  if (!win) {
+    // The picker is up, so there is no app origin to resolve against yet.
+    deferredLink = raw
+    return
+  }
+  openDeepLink(win, raw)
+}
+
+/**
+ * The windows a launch opens. A link the app was launched by is waiting in
+ * deeplink's queue and is delivered by `attach` before anything else opens, so
+ * it has already put up the window it belongs in. Opening the entry after it
+ * would cover that window, or, when the entry is the console's own window,
+ * load sign-in over the page the link just opened.
+ */
+function openLaunchWindows() {
+  deeplink.attach(onDeepLink)
+  const opened = [mainWindow, platformWindow, setupWindow].some((w) => w && !w.isDestroyed())
+  if (!opened) openInitialWindow()
+}
+
 function registerIpc() {
-  ipcMain.handle('shell:open-external', (_event, url) => openExternally(url))
+  ipcMain.handle('shell:open-external', openExternallyFrom)
 
   // The one auth-shaped thing the page may ask for, and it hands back a local
   // URL rather than anything secret. Our own sign-in stays intercepted and
@@ -790,23 +880,7 @@ if (!app.requestSingleInstanceLock()) {
       onOpenInBrowser: openCurrentInBrowser,
     }))
 
-    deeplink.attach((raw) => {
-      // The main window, never the focused one. A deep link resolves to a URL on
-      // the app origin, and the server picker is the one window that must never
-      // load one: its preload carries `server:use`, which repoints the whole
-      // app, and it is deliberately outside the navigation policy because
-      // nothing remote was ever supposed to reach it. A link arriving while the
-      // picker had focus put a remote page in exactly that window.
-      const win = (mainWindow && !mainWindow.isDestroyed()) ? mainWindow : openInitialWindow()
-      if (!win) {
-        // The picker is up, so there is no app origin to resolve against yet.
-        deferredLink = raw
-        return
-      }
-      openDeepLink(win, raw)
-    })
-
-    openInitialWindow()
+    openLaunchWindows()
     updater.init(() => mainWindow)
 
     app.on('activate', () => {
@@ -848,9 +922,12 @@ app.on('web-contents-created', (_event, contents) => {
 })
 
 // Exported for the tests: the verdict path that policy cannot own (it opens the
-// system browser), the one store write a completed load makes, and the load
-// watcher, whose status/URL pairing is only observable by driving both events.
-module.exports = { decide, noteAppReached, adoptServer, watchLoads }
+// system browser), the one store write a completed load makes, the load
+// watcher, whose status/URL pairing is only observable by driving both events,
+// and the launch and the bridge's openExternal, since which window a link lands
+// in depends on what a launch opened, in which order, and which page sent the
+// user out.
+module.exports = { decide, noteAppReached, adoptServer, watchLoads, openLaunchWindows, openExternallyFrom }
 
 // Surfacing this as a dialog rather than a silent log: an unhandled rejection in
 // the main process leaves the window alive but the shell half-dead, which is

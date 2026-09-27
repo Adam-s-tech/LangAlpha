@@ -75,6 +75,12 @@ export interface DesktopBridge {
    * which build this is instead of assuming.
    */
   readonly scheme?: string;
+  /**
+   * What the shell does that has no method to feature-detect, such as
+   * `'integration-login'`. Ask with `includes`; absent on a shell older than
+   * the list, which means none of them.
+   */
+  readonly capabilities?: readonly string[];
   /** Tells the shell which theme the page settled on. Added in shell 0.1.0. */
   setTheme?(theme: 'light' | 'dark'): void;
   openExternal?(url: string): Promise<void>;

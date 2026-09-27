@@ -38,12 +38,12 @@ import { desktop, isDesktopShell } from './desktop';
  * scheme read off a crafted link would launch whatever that machine had
  * registered. A segment this table does not know is simply not a handoff.
  */
-const SHELL_SEGMENTS: Record<string, string> = {
+export const SHELL_SEGMENTS: Record<string, string> = {
   langalpha: 'desktop',
   'langalpha-oss': 'desktop-oss',
 };
 
-const SCHEME_BY_SEGMENT: Record<string, string> = Object.fromEntries(
+export const SCHEME_BY_SEGMENT: Record<string, string> = Object.fromEntries(
   Object.entries(SHELL_SEGMENTS).map(([scheme, segment]) => [segment, scheme])
 );
 

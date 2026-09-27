@@ -48,6 +48,22 @@ contextBridge.exposeInMainWorld('langalphaDesktop', {
   scheme: flag('shell-scheme'),
 
   /**
+   * What this shell does that a page cannot detect by looking for a method,
+   * because it is behaviour rather than a function to call. Ask with
+   * `includes`, never with the version; a shell older than the list has none,
+   * which reads as "can do none of these".
+   *
+   * - `integration-login`: a `<scheme>://integrations/login/<name>/callback`
+   *   link opens the console's callback page for that login in this app, so a
+   *   browser that finished the login can hand the provider's answer back
+   *   rather than redeem it itself.
+   *
+   * A static list, and deliberately not a channel: nothing on it hands the page
+   * a way to drive anything.
+   */
+  capabilities: Object.freeze(['integration-login']),
+
+  /**
    * Tell the shell which theme the page settled on, so the window background
    * matches the page. A mismatch shows as a coloured band during a live resize,
    * because the frame outruns the paint and the window colour fills the gap.

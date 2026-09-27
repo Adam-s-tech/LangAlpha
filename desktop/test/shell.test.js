@@ -6,7 +6,10 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { EventEmitter } = require('node:events')
 const http = require('node:http')
-const { loadShell, loadEntryWith, cleanup, opened, setOnline, setSaveDialog, tempDir, electronStub } = require('./helpers')
+const {
+  loadShell, loadEntryWith, loadPreload, cleanup, opened, setOnline, setSaveDialog, tempDir, electronStub,
+  emitApp, windows, focusOrder,
+} = require('./helpers')
 
 after(cleanup)
 
@@ -1636,6 +1639,414 @@ describe('deep links', () => {
       'langalpha://callback?code=Z')
     assert.equal(deeplink.fromArgv(['/path/App', '--flag']), null)
     assert.equal(deeplink.fromArgv(undefined), null)
+  })
+})
+
+// The console's integration logins finish on the provider's page in the system
+// browser, which hands the answer back through the scheme when the login was
+// started here. These pin what the shell makes of that link: the only one whose
+// host and path it reads, and the only one bound for the console rather than for
+// whichever origin the window shows.
+describe('an integration login handed back from the browser', () => {
+  const LINK = 'langalpha://integrations/login/slack/callback?code=C&state=S'
+  const CONSOLE = 'https://platform.example.com/integrations/login/slack/callback?code=C&state=S'
+
+  test('lands on the console callback for that login', () => {
+    const { deeplink } = loadShell({ edition: 'saas' })
+    assert.equal(deeplink.isIntegrationLogin(LINK), true)
+    assert.equal(deeplink.toIntegrationUrl(LINK), CONSOLE)
+    // A cancel or a provider fault comes back the same way and must arrive too:
+    // the console's page is what tells the user which one it was.
+    assert.equal(
+      deeplink.toIntegrationUrl('langalpha://integrations/login/discord/callback?error=access_denied&error_description=The%20user%20said%20no&state=S'),
+      'https://platform.example.com/integrations/login/discord/callback?error=access_denied&error_description=The+user+said+no&state=S',
+    )
+  })
+
+  test('on the configured console, never on the app or anything the link names', () => {
+    const { deeplink } = loadShell({ edition: 'saas', platformOrigin: 'https://console.example.org' })
+    assert.equal(
+      deeplink.toIntegrationUrl('langalpha://integrations/login/slack/callback?code=C'),
+      'https://console.example.org/integrations/login/slack/callback?code=C',
+    )
+    // Credentials in the link are part of nothing the shell builds.
+    assert.equal(
+      deeplink.toIntegrationUrl('langalpha://evil.example.com@integrations/login/slack/callback?code=C'),
+      'https://console.example.org/integrations/login/slack/callback?code=C',
+    )
+  })
+
+  test('carries the provider answer and nothing else', () => {
+    const { deeplink } = loadShell({ edition: 'saas' })
+    const mapped = deeplink.toIntegrationUrl(
+      'langalpha://integrations/login/slack/callback?code=C&next=https%3A%2F%2Fevil.example.com&state=S%26T&redirect_to=x&type=magiclink#frag',
+    )
+    const url = new URL(mapped)
+    assert.deepEqual([...url.searchParams], [['code', 'C'], ['state', 'S&T']])
+    assert.equal(url.hash, '')
+  })
+
+  // oauth.js refuses the same thing on the loopback port, and for the same
+  // reason: whatever reads the query takes one value, so a doubled `state` is a
+  // link approved on one value and redeemed on the other.
+  test('a repeated parameter refuses the whole link', () => {
+    const { deeplink } = loadShell({ edition: 'saas' })
+    for (const query of ['code=A&code=B&state=S', 'code=A&state=S&state=T', 'code=A&state=S&x=1&x=2']) {
+      const link = `langalpha://integrations/login/slack/callback?${query}`
+      assert.equal(deeplink.isIntegrationLogin(link), true, `${query} should still be recognised`)
+      assert.equal(deeplink.toIntegrationUrl(link), null, query)
+    }
+  })
+
+  // A name is the one part of the link that reaches the path, so it is the one
+  // part held to a pattern. Refused rather than reinterpreted: a link addressed
+  // to a login is never handed to /callback as a sign-in.
+  test('a name outside the pattern is refused', () => {
+    const { deeplink } = loadShell({ edition: 'saas' })
+    for (const name of ['Slack', 'SLACK', '1slack', '-slack', 'sl_ack', 'sl.ack', 'sl%2Fack', 'sl%61ck', 'sl%20ack', '', 'a'.repeat(33)]) {
+      const link = `langalpha://integrations/login/${name}/callback?code=C&state=S`
+      assert.equal(deeplink.isIntegrationLogin(link), true, `'${name}' should still be recognised`)
+      assert.equal(deeplink.toIntegrationUrl(link), null, `'${name}'`)
+    }
+    for (const name of ['a', 'a'.repeat(32), 'google-chat', 'x1']) {
+      assert.equal(
+        deeplink.toIntegrationUrl(`langalpha://integrations/login/${name}/callback?code=C`),
+        `https://platform.example.com/integrations/login/${name}/callback?code=C`,
+        name,
+      )
+    }
+  })
+
+  // Anything that is not the shape is an ordinary link, and keeps exactly the
+  // route every link had before this one existed.
+  test('any other shape is not one, and keeps going to /callback', () => {
+    const { deeplink } = loadShell({ edition: 'saas' })
+    for (const link of [
+      'langalpha://integrations/login/slack/extra/callback?code=C',
+      'langalpha://integrations/login/slack/callback/extra?code=C',
+      'langalpha://integrations/login/slack/callback/?code=C',
+      'langalpha://integrations//login/slack/callback?code=C',
+      // Dot segments are resolved by the parser before the shape is asked, so
+      // these are the paths `/callback` and `/admin/callback`.
+      'langalpha://integrations/login/../callback?code=C',
+      'langalpha://integrations/login/slack/../../../admin/callback?code=C',
+      'langalpha://integrations/login%2Fslack%2Fcallback?code=C',
+      'langalpha://INTEGRATIONS/login/slack/callback?code=C',
+      'langalpha://integrations/LOGIN/slack/callback?code=C',
+      'langalpha://integrations/login/slack/CALLBACK?code=C',
+      'langalpha://integrations:443/login/slack/callback?code=C',
+      'langalpha://integrations.evil.example.com/login/slack/callback?code=C',
+      'langalpha://evil.example.com/integrations/login/slack/callback?code=C',
+      'langalpha:///integrations/login/slack/callback?code=C',
+      'langalpha:integrations/login/slack/callback?code=C',
+      'langalpha://integrations/other?code=C',
+      'langalpha://callback?code=C',
+    ]) {
+      assert.equal(deeplink.isIntegrationLogin(link), false, link)
+      assert.equal(deeplink.toIntegrationUrl(link), null, link)
+      assert.equal(deeplink.toAppUrl(link, 'about:blank'), 'https://app.example.com/callback?code=C', link)
+    }
+  })
+
+  test('a link folded into the shape still goes only where its name says', () => {
+    const { deeplink } = loadShell({ edition: 'saas' })
+    assert.equal(
+      deeplink.toIntegrationUrl('langalpha://integrations/login/evil/%2e%2e/slack/callback?code=C'),
+      'https://platform.example.com/integrations/login/slack/callback?code=C',
+    )
+  })
+
+  test('the other edition\'s scheme is not ours to read', () => {
+    const { deeplink } = loadShell({ edition: 'saas' })
+    const link = 'langalpha-oss://integrations/login/slack/callback?code=C'
+    assert.equal(deeplink.isIntegrationLogin(link), false)
+    assert.equal(deeplink.toIntegrationUrl(link), null)
+  })
+
+  // The self-hosted build has no console, so it has no page to finish one on.
+  // Recognised all the same, because the alternative is /callback trying to
+  // redeem a provider's code as a sign-in.
+  test('the self-hosted build recognises one and has nowhere to send it', () => {
+    const { deeplink } = loadShell({ edition: 'oss' })
+    const link = 'langalpha-oss://integrations/login/slack/callback?code=C&state=S'
+    assert.equal(deeplink.isIntegrationLogin(link), true)
+    assert.equal(deeplink.toIntegrationUrl(link), null)
+  })
+})
+
+// Which window a link lands in depends on what the launch opened, in what
+// order, and on which way the OS delivered it, so these drive the launch and the
+// OS events themselves against a stubbed BrowserWindow rather than calling the
+// mapping. `windows` is every window the shell constructed, and each one's
+// `loaded` is every URL it was sent to.
+describe('which window an integration login lands in', () => {
+  const LINK = 'langalpha://integrations/login/slack/callback?code=C&state=S'
+  const CONSOLE = 'https://platform.example.com/integrations/login/slack/callback?code=C&state=S'
+  const APP = 'https://app.example.com'
+  const openUrl = (url) => emitApp('open-url', { preventDefault() {} }, url)
+  const isAccount = (win) => win.options.title === 'Account'
+
+  // A saas install that has signed in before, so a launch opens the app.
+  const signedIn = ({ consoleSharesMainWindow }) => {
+    const shell = loadShell({ edition: 'saas' })
+    shell.store.set('reachedApp', true)
+    shell.store.set('appChrome', true)
+    shell.store.set('platformChrome', consoleSharesMainWindow)
+    return shell
+  }
+
+  test('the console shares the main window, so the login finishes there', () => {
+    const { main } = signedIn({ consoleSharesMainWindow: true })
+    main.openLaunchWindows()
+    openUrl(LINK)
+    assert.equal(windows.length, 1)
+    assert.deepEqual(windows[0].loaded, [APP, CONSOLE])
+  })
+
+  // The one layout where loading it into the main window directly would be
+  // wrong: that load never passes through will-navigate, so the routing that
+  // gives the console a window of its own has to be asked first.
+  test('a console that cannot share it gets its own window, and the app is left alone', () => {
+    const { main } = signedIn({ consoleSharesMainWindow: false })
+    main.openLaunchWindows()
+    openUrl(LINK)
+    assert.equal(windows.length, 2)
+    const [app, account] = windows
+    assert.deepEqual(app.loaded, [APP], 'the app window was navigated, and a turn in it would be gone')
+    assert.ok(isAccount(account))
+    assert.deepEqual(account.loaded, [CONSOLE])
+    assert.equal(focusOrder.at(-1), account)
+  })
+
+  test('an open console window is where the next one lands, even once the console could share', () => {
+    const { main, store } = signedIn({ consoleSharesMainWindow: false })
+    main.openLaunchWindows()
+    openUrl(LINK)
+    // The console reserving the strip flips the verdict for the rest of the
+    // session, while the page that started the login is still in its window.
+    store.set('platformChrome', true)
+    openUrl('langalpha://integrations/login/discord/callback?code=D&state=T')
+    assert.equal(windows.length, 2)
+    const [app, account] = windows
+    assert.deepEqual(app.loaded, [APP])
+    assert.deepEqual(account.loaded, [
+      CONSOLE, 'https://platform.example.com/integrations/login/discord/callback?code=D&state=T',
+    ])
+  })
+
+  // The account window outlives the flip, and the main window can show the
+  // console too. Where the login lands is where it was pressed: the one whose
+  // page sent the user to the provider.
+  const bothShowTheConsole = () => {
+    const shell = signedIn({ consoleSharesMainWindow: false })
+    shell.main.openLaunchWindows()
+    openUrl(LINK)
+    shell.store.set('platformChrome', true)
+    const [app, account] = windows
+    app.loadURL('https://platform.example.com/integrations')
+    const pressIn = (win) => shell.main.openExternallyFrom({ sender: win.webContents }, AUTHORIZE)
+    return { app, account, pressIn, main: shell.main }
+  }
+  const AUTHORIZE = 'https://provider.example.com/authorize?state=S'
+  const SECOND = 'https://platform.example.com/integrations/login/discord/callback?code=D&state=T'
+
+  test('a login pressed in the main window finishes there, not in an account window left open', () => {
+    const { app, account, pressIn } = bothShowTheConsole()
+    pressIn(app)
+    openUrl('langalpha://integrations/login/discord/callback?code=D&state=T')
+    assert.equal(windows.length, 2)
+    assert.equal(app.loaded.at(-1), SECOND)
+    assert.deepEqual(account.loaded, [CONSOLE], 'the page left waiting in the account window was replaced')
+    assert.equal(focusOrder.at(-1), app)
+  })
+
+  test('a login pressed in the account window finishes there, though the main window shows the console', () => {
+    const { app, account, pressIn } = bothShowTheConsole()
+    pressIn(account)
+    openUrl('langalpha://integrations/login/discord/callback?code=D&state=T')
+    assert.equal(app.loaded.at(-1), 'https://platform.example.com/integrations')
+    assert.equal(account.loaded.at(-1), SECOND)
+  })
+
+  // Back to the app while the provider's page waits, then out to it again:
+  // every switch moves focus and blur, and none of them started the login.
+  test('switching between the windows and the browser does not move where the login lands', () => {
+    const { app, account, pressIn } = bothShowTheConsole()
+    pressIn(account)
+    emitApp('browser-window-blur', {}, account)
+    emitApp('browser-window-focus', {}, app)
+    emitApp('browser-window-blur', {}, app)
+    openUrl('langalpha://integrations/login/discord/callback?code=D&state=T')
+    assert.equal(app.loaded.at(-1), 'https://platform.example.com/integrations')
+    assert.equal(account.loaded.at(-1), SECOND)
+  })
+
+  test('a link the shell refused to open does not mark its window as the one that sent the user out', () => {
+    const { app, account, pressIn, main } = bothShowTheConsole()
+    pressIn(account)
+    assert.equal(main.openExternallyFrom({ sender: app.webContents }, 'file:///etc/passwd'), false)
+    openUrl('langalpha://integrations/login/discord/callback?code=D&state=T')
+    assert.equal(app.loaded.at(-1), 'https://platform.example.com/integrations')
+    assert.equal(account.loaded.at(-1), SECOND)
+  })
+
+  // Windows and Linux: the link rides a second launch, whose handler raises the
+  // main window before deeplink's delivers it, and Windows can report that
+  // focus synchronously. None of it moves where the user left from.
+  test('a second launch raising the main window first does not take the login from the account window', () => {
+    const { app, account, pressIn } = bothShowTheConsole()
+    pressIn(account)
+    const raise = app.focus
+    app.focus = function () { raise.call(this); emitApp('browser-window-focus', {}, this) }
+    emitApp('second-instance', {}, ['/Applications/LangAlpha', 'langalpha://integrations/login/discord/callback?code=D&state=T'], '/')
+    assert.equal(app.loaded.at(-1), 'https://platform.example.com/integrations')
+    assert.equal(account.loaded.at(-1), SECOND)
+    assert.equal(focusOrder.at(-1), account)
+  })
+
+  test('a window showing something else is passed over, though its page last sent the user out', () => {
+    const { main } = signedIn({ consoleSharesMainWindow: false })
+    main.openLaunchWindows()
+    openUrl(LINK)
+    const [app, account] = windows
+    main.openExternallyFrom({ sender: app.webContents }, 'https://example.com/docs')
+    openUrl('langalpha://integrations/login/discord/callback?code=D&state=T')
+    assert.deepEqual(app.loaded, [APP], 'the app was navigated, and a turn in it would be gone')
+    assert.equal(account.loaded.at(-1), SECOND)
+  })
+
+  test('a window minimized while the browser had the login is restored, not just raised', () => {
+    for (const shares of [true, false]) {
+      const { main } = signedIn({ consoleSharesMainWindow: shares })
+      main.openLaunchWindows()
+      openUrl(LINK)
+      const win = windows.at(-1)
+      let minimized = true
+      win.isMinimized = () => minimized
+      win.restore = () => { minimized = false }
+      openUrl('langalpha://integrations/login/discord/callback?code=D&state=T')
+      assert.equal(win.loaded.at(-1), SECOND)
+      assert.equal(minimized, false, `shares=${shares}: the login finished in a window still minimized`)
+    }
+  })
+
+  // macOS: `open-url` fires before the app is ready, and the link waits in the
+  // queue until the launch attaches to it.
+  test('a cold start from the link opens it, and not the entry over it', () => {
+    const { main } = signedIn({ consoleSharesMainWindow: true })
+    openUrl(LINK)
+    assert.equal(windows.length, 0, 'delivered before the launch attached')
+    main.openLaunchWindows()
+    assert.equal(windows.length, 1)
+    assert.deepEqual(windows[0].loaded, [CONSOLE])
+  })
+
+  // The case the launch order used to get wrong: the entry of an install that
+  // has not reached the app is sign-in in that same console window, and opening
+  // it after the link loaded sign-in over the callback. A signed-in install
+  // would instead have opened the app in front of it.
+  test('a cold start into the console window is not covered by the entry', () => {
+    for (const reachedApp of [false, true]) {
+      const { main, store } = loadShell({ edition: 'saas' })
+      store.set('reachedApp', reachedApp)
+      store.set('appChrome', true)
+      store.set('platformChrome', false)
+      openUrl(LINK)
+      main.openLaunchWindows()
+      assert.equal(windows.length, 1, `reachedApp=${reachedApp}: another window opened over the login`)
+      assert.ok(isAccount(windows[0]))
+      assert.deepEqual(windows[0].loaded, [CONSOLE], `reachedApp=${reachedApp}`)
+    }
+  })
+
+  // Windows and Linux: the link is in our own argv.
+  test('a cold start from argv lands the same way', () => {
+    process.argv.push(LINK)
+    let main
+    try {
+      ({ main } = signedIn({ consoleSharesMainWindow: false }))
+    } finally {
+      process.argv.pop()
+    }
+    main.openLaunchWindows()
+    assert.equal(windows.length, 1)
+    assert.ok(isAccount(windows[0]))
+    assert.deepEqual(windows[0].loaded, [CONSOLE])
+  })
+
+  // Windows and Linux again, with the app already running: the OS launches a
+  // second copy, and the single-instance lock turns that into this event. The
+  // shell's own handler brings the main window forward first, so the login has
+  // to end up in front of it rather than behind.
+  test('a second instance hands it to the running one', () => {
+    const { main } = signedIn({ consoleSharesMainWindow: false })
+    main.openLaunchWindows()
+    emitApp('second-instance', {}, ['/Applications/LangAlpha', '--flag', LINK], '/')
+    assert.equal(windows.length, 2)
+    const [app, account] = windows
+    assert.deepEqual(app.loaded, [APP])
+    assert.ok(isAccount(account))
+    assert.deepEqual(account.loaded, [CONSOLE])
+    assert.equal(focusOrder.at(-1), account)
+  })
+
+  test('any other link still lands on /callback in the main window', () => {
+    for (const consoleSharesMainWindow of [true, false]) {
+      const { main } = signedIn({ consoleSharesMainWindow })
+      main.openLaunchWindows()
+      openUrl('langalpha://callback?code=M&type=magiclink')
+      openUrl('langalpha://integrations/elsewhere?code=N')
+      assert.equal(windows.length, 1, 'no console window for a link that is not a login')
+      assert.deepEqual(windows[0].loaded, [
+        APP, `${APP}/callback?code=M&type=magiclink`, `${APP}/callback?code=N`,
+      ])
+    }
+  })
+
+  test('a refused link moves nothing', () => {
+    const { main } = signedIn({ consoleSharesMainWindow: false })
+    main.openLaunchWindows()
+    openUrl('langalpha://integrations/login/slack/callback?code=A&code=B&state=S')
+    openUrl('langalpha://integrations/login/Slack/callback?code=C&state=S')
+    assert.equal(windows.length, 1)
+    assert.deepEqual(windows[0].loaded, [APP])
+  })
+
+  test('the self-hosted build ignores one rather than sending it to /callback', () => {
+    const { main } = loadShell({ edition: 'oss', serverUrl: 'http://localhost:5173' })
+    main.openLaunchWindows()
+    openUrl('langalpha-oss://integrations/login/slack/callback?code=C&state=S')
+    assert.equal(windows.length, 1)
+    assert.deepEqual(windows[0].loaded, ['http://localhost:5173'])
+  })
+})
+
+// The bridge is feature-detected, so what it advertises is the whole of how a
+// page learns what this shell can do. Run for real rather than read, because
+// what matters is the value the page receives.
+describe('the bridge says what the shell can do', () => {
+  test('a frozen list naming integration-login', () => {
+    const bridge = loadPreload().langalphaDesktop
+    assert.ok(Array.isArray(bridge.capabilities))
+    assert.ok(Object.isFrozen(bridge.capabilities))
+    assert.ok(bridge.capabilities.includes('integration-login'))
+    for (const entry of bridge.capabilities) assert.equal(typeof entry, 'string')
+  })
+
+  // Nothing auth-related is exposed to the page, and a capability is a word
+  // rather than a way in. Pinning the callable surface means a new method has
+  // to be added here on purpose, by someone who has read why.
+  test('and the page gains nothing it can call', () => {
+    const bridge = loadPreload().langalphaDesktop
+    const callable = Object.keys(bridge).filter((k) => typeof bridge[k] === 'function').sort()
+    assert.deepEqual(callable, [
+      'beginMcpOAuth', 'bindMcpOAuth', 'cancelMcpOAuth', 'openExternal', 'savePdf', 'setTheme',
+    ])
+  })
+
+  test('the web app declares the field it feature-detects', () => {
+    const desktopTs = fs.readFileSync(path.join(__dirname, '..', '..', 'web/src/lib/desktop.ts'), 'utf8')
+    assert.match(desktopTs, /^\s*readonly capabilities\?: readonly string\[\];$/m)
   })
 })
 

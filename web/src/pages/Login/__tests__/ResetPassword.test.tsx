@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import ResetPassword from '@/pages/Login/ResetPassword';
 
 // The canvas pane needs a real 2d context and is irrelevant here.
-vi.mock('@/pages/Login/WavesBackground', () => ({ default: () => null }));
+vi.mock('@/pages/Login/EdgeGrain', () => ({ default: () => null }));
 
 vi.mock('@/config/hostMode', () => ({
   isPlatformMode: true,

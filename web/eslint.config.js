@@ -130,6 +130,11 @@ export default [
   // lib/framer is the only module that may import framer-motion: it arms the
   // hidden-tab rule, and ES module order only guarantees that runs first for
   // code that imports framer through it.
+  //
+  // zod core sits in the entry chunk, because the entry validates with
+  // zod/mini, so the core code any lazy schema reaches is paid on first load.
+  // Classic zod reaches nearly all of it (its methods do not tree-shake) and
+  // adds its own API and English locale in a chunk of their own.
   {
     files: ['src/**/*.{js,jsx,ts,tsx}'],
     ignores: ['src/lib/framer.ts'],
@@ -138,6 +143,11 @@ export default [
         paths: [{
           name: 'framer-motion',
           message: 'Import from @/lib/framer, which sets up framer before any animation exists.',
+        }],
+        // zod/v4 and zod/v3 are classic zod under another name.
+        patterns: [{
+          regex: '^zod(/v3|/v4)?$',
+          message: 'Import zod/mini. Classic zod puts most of zod core on the entry chunk.',
         }],
       }],
     },

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/mini';
 import { INTERVALS } from '@/lib/bars/chartConstants';
 import { readTypedTicker } from '@/lib/marketUtils';
 import type { FileLocation } from '../../utils/fileLocation';
@@ -116,7 +116,11 @@ const INTERVAL_KEYS = new Set(INTERVALS.map(({ key }) => key));
 // discriminated union: the union is the one zod feature nothing on the first
 // load uses, and pulling it in charges the entry chunk for a lazy panel.
 const persistedTabSchemas = {
-  file: z.object({ kind: z.literal('file'), path: z.string().min(1), preview: z.boolean().catch(false) }),
+  file: z.object({
+    kind: z.literal('file'),
+    path: z.string().check(z.minLength(1)),
+    preview: z.catch(z.boolean(), false),
+  }),
   settings: z.object({ kind: z.literal('settings') }),
   memory: z.object({ kind: z.literal('memory') }),
   memo: z.object({ kind: z.literal('memo') }),
@@ -124,26 +128,29 @@ const persistedTabSchemas = {
     kind: z.literal('preview'),
     // Outside the served range the tab would restore as a permanent error
     // card rather than an app, so it is dropped with the entry.
-    port: z.number().int().min(PREVIEW_PORT_MIN).max(PREVIEW_PORT_MAX),
-    title: z.string().optional(),
-    previewPath: z.string().optional(),
-    command: z.string().optional(),
+    port: z.int().check(z.gte(PREVIEW_PORT_MIN), z.lte(PREVIEW_PORT_MAX)),
+    title: z.optional(z.string()),
+    previewPath: z.optional(z.string()),
+    command: z.optional(z.string()),
   }),
   chart: z.object({
     kind: z.literal('chart'),
     // A tab whose symbol is not a ticker is dropped like any other entry this
     // build cannot read; a blank one would open every request on a blank name.
-    symbol: z.string().transform((v, ctx) => {
-      const ticker = readTypedTicker(v);
-      if (!ticker) { ctx.addIssue({ code: 'custom', message: 'not a ticker' }); return z.NEVER; }
-      return ticker;
-    }),
+    symbol: z.pipe(
+      z.string(),
+      z.transform((v, ctx) => {
+        const ticker = readTypedTicker(v);
+        if (!ticker) { ctx.issues.push({ code: 'custom', message: 'not a ticker', input: v }); return z.NEVER; }
+        return ticker;
+      }),
+    ),
     // An interval this build does not carry has no toolbar label and asks the
     // bars endpoint for a bucket it does not serve, so a restored tab would
     // come back blank rather than on the daily view.
-    timeframe: z.string().refine((v) => INTERVAL_KEYS.has(v)).catch(DEFAULT_TIMEFRAME),
+    timeframe: z.catch(z.string().check(z.refine((v) => INTERVAL_KEYS.has(v))), DEFAULT_TIMEFRAME),
     // A workspace gone or never an id would be asked for on every open.
-    workspaceId: z.string().refine(isValidUuid).optional().catch(undefined),
+    workspaceId: z.catch(z.optional(z.string().check(z.refine(isValidUuid))), undefined),
   }),
 };
 type PersistedTabKind = keyof typeof persistedTabSchemas;
@@ -160,9 +167,9 @@ function parsePersistedTab(entry: unknown): PersistedTab | null {
 const MAX_PERSISTED_TABS = 64;
 
 const persistedStateSchema = z.object({
-  tabs: z.array(z.unknown()).transform((tabs) => tabs.slice(0, MAX_PERSISTED_TABS)),
+  tabs: z.pipe(z.array(z.unknown()), z.transform((tabs) => tabs.slice(0, MAX_PERSISTED_TABS))),
   // -1 is the empty tab, which is not stored as an entry.
-  active: z.number().int().catch(0),
+  active: z.catch(z.int(), 0),
 });
 
 /**

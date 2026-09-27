@@ -48,6 +48,8 @@ Streaming perf benchmarks live in `e2e/perf/`, are gated behind `PERF=1`, and th
   - Floating surfaces deliberately do **not** share one fill yet (popover/select on `--popover`, tooltips + menus on `bg-elevated`, four dialogs still on `bg-page`); unification is deferred pending a side-by-side visual call — don't converge one of them in isolation.
   - Every `var(--color-*)` must be declared in `tokens.css` (`styles/__tests__/tokenRefs.test.ts` fails on undeclared names); canvas painters that can't read CSS variables go through `lib/themeTokens.ts`, never a fresh hex literal.
 - **Tests:** co-located in `__tests__/` next to the code; Vitest + jsdom + Testing Library. Global setup mocks `matchMedia`/`IntersectionObserver`/`ResizeObserver` (`src/test/setup.ts`).
+  - `vitest.config.ts` splits the suite into three projects. A new file runs under jsdom in the vm pool. A DOM-free file may join the explicit `NODE_FILES` list, where reading any browser global fails the file (`src/test/setup.node.ts`). A file that replaces `window` or `window.location`, or needs Node's `ReadableStream`, goes in `FORKS_FILES`, since a vm context's global is the jsdom window itself.
+  - Playwright specs import `test` from `e2e/fixtures.js`, which gives each worker its own mock server and routes the app's API origin to it. On bare `@playwright/test`, an API call reaches a port nothing listens on.
 - **Side-by-side ChatView + FilePanel headers must stay height-aligned** — if you touch either header's padding/icon size, verify they still line up (`FilePanel.css` `file-panel-header`).
 
 ## Working principles

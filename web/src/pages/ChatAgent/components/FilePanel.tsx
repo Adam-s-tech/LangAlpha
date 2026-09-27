@@ -570,7 +570,7 @@ function FilePanel({
   }, []);
 
   return (
-    <RouteLeaveGuardContext.Provider value={guardLeave}>
+    <RouteLeaveGuardContext value={guardLeave}>
     <div className="file-panel" ref={panelRef} onKeyDown={tree.onEscape}>
       <TabStrip
         tabs={tabs.tabs}
@@ -836,7 +836,7 @@ function FilePanel({
         />
       )}
     </div>
-    </RouteLeaveGuardContext.Provider>
+    </RouteLeaveGuardContext>
   );
 }
 

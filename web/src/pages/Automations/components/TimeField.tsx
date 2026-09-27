@@ -1,4 +1,4 @@
-import React, { forwardRef, useLayoutEffect, useRef, useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Popover } from '@/components/ui/aria-popover';
 import { Input } from '@/components/ui/input';
@@ -65,7 +65,7 @@ export function TimeSlotList({ value, min, onPick, className }: TimeSlotListProp
   );
 }
 
-interface TimeInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> {
+interface TimeInputProps extends Omit<React.ComponentProps<'input'>, 'value' | 'onChange'> {
   value: TimeOfDay | null;
   onCommit: (t: TimeOfDay) => void;
   /** Enter was pressed and whatever was typed is now committed. */
@@ -77,10 +77,7 @@ interface TimeInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement
  * clock format once it is committed, on Enter or on leaving the field. ↑/↓
  * step a quarter hour, in the direction the list beside it runs.
  */
-export const TimeInput = forwardRef<HTMLInputElement, TimeInputProps>(function TimeInput(
-  { value, onCommit, onEnter, onKeyDown, onBlur, className, ...rest },
-  ref,
-) {
+export function TimeInput({ value, onCommit, onEnter, onKeyDown, onBlur, className, ...rest }: TimeInputProps) {
   // A draft belongs to the time it was typed over. A slot picked from the
   // list moves the value while focus stays here, and the draft left behind
   // must not be committed over the pick when the field is left.
@@ -96,7 +93,6 @@ export const TimeInput = forwardRef<HTMLInputElement, TimeInputProps>(function T
   };
   return (
     <Input
-      ref={ref}
       {...rest}
       inputMode="text"
       autoComplete="off"
@@ -124,7 +120,7 @@ export const TimeInput = forwardRef<HTMLInputElement, TimeInputProps>(function T
       className={cn('automation-mono automation-time-input', className)}
     />
   );
-});
+}
 
 interface TimeFieldProps {
   value: TimeOfDay;

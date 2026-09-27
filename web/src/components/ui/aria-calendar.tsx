@@ -43,14 +43,14 @@ function Calendar<T extends AriaDateValue>({
   ...props
 }: CalendarProps<T>) {
   return (
-    <TodayContext.Provider value={today ?? todayIn(getLocalTimeZone())}>
+    <TodayContext value={today ?? todayIn(getLocalTimeZone())}>
       <AriaCalendar
         className={composeRenderProps(className, (className) =>
           cn("w-fit", className)
         )}
         {...props}
       />
-    </TodayContext.Provider>
+    </TodayContext>
   )
 }
 

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, useImperativeHandle } from 'react';
 import {
   Plus, ArrowUp, X, FileText, Archive, Square, ClipboardList,
   ChartCandlestick, TextSelect, MoreHorizontal, Mic, MicOff,
@@ -110,7 +110,7 @@ export interface ChatInputProps {
 
 /* --- MAIN COMPONENT --- */
 
-const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput({
+function ChatInput({
   onSend,
   disabled = false,
   isLoading = false,
@@ -147,7 +147,8 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   dropdownDirection = 'up',
   // Minimum visible rows for the textarea (default 1 = compact; pass 2 for roomier non-ChatView callsites)
   minRows = 1,
-}, ref) {
+  ref,
+}: ChatInputProps & { ref?: React.Ref<ChatInputHandle> }) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const { preferences } = usePreferences();
@@ -1058,7 +1059,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
       />
     </div>
   );
-});
+}
 
 // Memoized: ChatView re-renders on every streamed chunk, and without the memo
 // the whole composer subtree (model menu, attachment deck, autocomplete) rides

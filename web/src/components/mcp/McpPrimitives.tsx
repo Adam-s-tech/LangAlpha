@@ -309,14 +309,13 @@ export function EnabledToggle({
   );
 }
 
-/** Kebab trigger for the row actions dropdown (forwardRef for Radix asChild). */
-export const KebabTrigger = React.forwardRef<
-  HTMLButtonElement,
-  { busy?: boolean } & React.ButtonHTMLAttributes<HTMLButtonElement>
->(function KebabTrigger({ busy = false, ...props }, ref) {
+/** Kebab trigger for the row actions dropdown; the ref reaches the button for Radix asChild. */
+export function KebabTrigger({
+  busy = false,
+  ...props
+}: { busy?: boolean } & React.ComponentProps<'button'>) {
   return (
     <button
-      ref={ref}
       type="button"
       className="p-1.5 rounded transition-colors hover:bg-foreground/10"
       style={{ color: 'var(--color-text-tertiary)' }}
@@ -325,7 +324,7 @@ export const KebabTrigger = React.forwardRef<
       {busy ? <Loader size={16} className="text-current" /> : <MoreVertical className="h-4 w-4" />}
     </button>
   );
-});
+}
 
 /** Small caps label above a group of rows (`Platform servers`, `Your skills`). */
 export function SectionHeader({ children }: { children: React.ReactNode }) {

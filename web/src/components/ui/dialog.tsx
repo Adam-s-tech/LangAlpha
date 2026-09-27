@@ -20,19 +20,19 @@ const DialogPortal = DialogPrimitive.Portal
 
 const DialogClose = DialogPrimitive.Close
 
-const DialogOverlay = React.forwardRef<
-  React.ComponentRef<typeof DialogPrimitive.Overlay>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
->(({ className, ...props }, ref) => (
-  <DialogPrimitive.Overlay
-    ref={ref}
-    className={cn(
-      "fixed inset-0 z-1030 bg-(--color-bg-overlay-strong) overlay-fade",
-      className
-    )}
-    {...props} />
-))
-DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
+function DialogOverlay({
+  className,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
+  return (
+    <DialogPrimitive.Overlay
+      className={cn(
+        "fixed inset-0 z-1030 bg-(--color-bg-overlay-strong) overlay-fade",
+        className
+      )}
+      {...props} />
+  )
+}
 
 // Mobile swipe variant: flex column container, no overflow (inner scroll child handles it)
 const DIALOG_MOBILE_SHEET_CLASSES =
@@ -45,13 +45,17 @@ const DIALOG_MOBILE_SHEET_CLASSES =
 const DIALOG_CENTERED_CLASSES =
   "fixed left-[50%] top-[50%] z-1030 grid w-full max-w-lg gap-4 border bg-background p-6 shadow-lg [transform:translate(-50%,-50%)] rounded-lg max-h-[85vh] overflow-y-auto pop-in-center";
 
-const DialogContent = React.forwardRef<
-  React.ComponentRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
-    /** 'default' = bottom-sheet on mobile, centered on desktop. 'centered' = always centered. */
-    variant?: 'default' | 'centered';
-  }
->(({ className, children, variant = 'default', onCloseAutoFocus, ...props }, ref) => {
+function DialogContent({
+  className,
+  children,
+  variant = 'default',
+  onCloseAutoFocus,
+  ref,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Content> & {
+  /** 'default' = bottom-sheet on mobile, centered on desktop. 'centered' = always centered. */
+  variant?: 'default' | 'centered';
+}) {
   const isMobile = useIsMobile();
   const swipeEnabled = isMobile && variant === 'default';
 
@@ -156,8 +160,7 @@ const DialogContent = React.forwardRef<
       </DialogPrimitive.Content>
     </DialogPortal>
   );
-})
-DialogContent.displayName = DialogPrimitive.Content.displayName
+}
 
 const DialogHeader = ({
   className,
@@ -179,27 +182,27 @@ const DialogFooter = ({
 )
 DialogFooter.displayName = "DialogFooter"
 
-const DialogTitle = React.forwardRef<
-  React.ComponentRef<typeof DialogPrimitive.Title>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Title>
->(({ className, ...props }, ref) => (
-  <DialogPrimitive.Title
-    ref={ref}
-    className={cn("text-lg font-semibold leading-none tracking-tight", className)}
-    {...props} />
-))
-DialogTitle.displayName = DialogPrimitive.Title.displayName
+function DialogTitle({
+  className,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Title>) {
+  return (
+    <DialogPrimitive.Title
+      className={cn("text-lg font-semibold leading-none tracking-tight", className)}
+      {...props} />
+  )
+}
 
-const DialogDescription = React.forwardRef<
-  React.ComponentRef<typeof DialogPrimitive.Description>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Description>
->(({ className, ...props }, ref) => (
-  <DialogPrimitive.Description
-    ref={ref}
-    className={cn("text-sm text-muted-foreground", className)}
-    {...props} />
-))
-DialogDescription.displayName = DialogPrimitive.Description.displayName
+function DialogDescription({
+  className,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Description>) {
+  return (
+    <DialogPrimitive.Description
+      className={cn("text-sm text-muted-foreground", className)}
+      {...props} />
+  )
+}
 
 export {
   Dialog,

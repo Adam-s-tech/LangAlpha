@@ -199,7 +199,7 @@ export function DispatchStatusProvider({ children }: { children: ReactNode }) {
     [register, unregister, slices],
   );
 
-  return createElement(DispatchStatusContext.Provider, { value }, children);
+  return createElement(DispatchStatusContext, { value }, children);
 }
 
 /** Lifecycle-store status → card status; null while the store has nothing

@@ -97,7 +97,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         + 'every authenticated request will be rejected.',
       );
     }
-    return <AuthContext.Provider value={_localDevValue}>{children}</AuthContext.Provider>;
+    return <AuthContext value={_localDevValue}>{children}</AuthContext>;
   }
 
   return <SupabaseAuthProvider>{children}</SupabaseAuthProvider>;
@@ -350,7 +350,7 @@ function SupabaseAuthProvider({ children }: { children: React.ReactNode }) {
     updatePassword,
   };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return <AuthContext value={value}>{children}</AuthContext>;
 }
 
 // eslint-disable-next-line react-refresh/only-export-components

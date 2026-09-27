@@ -847,8 +847,8 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
           </div>
         ) : (
           <div style={{ padding: '16px 24px', maxWidth: '100%' }}>
-            <ChartSurfaceContext.Provider value={chartSurface}>
-              <SubagentTelemetryContext.Provider value={resolveSubagentTelemetry}>
+            <ChartSurfaceContext value={chartSurface}>
+              <SubagentTelemetryContext value={resolveSubagentTelemetry}>
                 <MessageActionsProvider actions={messageActions}>
                   <MessageList
                     messages={messages as never[]}
@@ -860,8 +860,8 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
                     previousDirNames={previousDirNames}
                   />
                 </MessageActionsProvider>
-              </SubagentTelemetryContext.Provider>
-            </ChartSurfaceContext.Provider>
+              </SubagentTelemetryContext>
+            </ChartSurfaceContext>
             {messageError && (
               <div style={{ margin: '8px 0' }}>
                 <ErrorBanner error={messageError} />

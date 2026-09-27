@@ -1465,9 +1465,9 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                 resolver identity changes on every SSE token (cards is a dep),
                 but only context consumers re-render — MessageBubble /
                 MessageContentSegments stay React.memo'd. */}
-            <SubagentTelemetryContext.Provider value={resolveSubagentTelemetry}>
-            <WorkflowRunContext.Provider value={resolveWorkflowRun}>
-            <TranscriptDisplayContext.Provider value={transcriptDisplay}>
+            <SubagentTelemetryContext value={resolveSubagentTelemetry}>
+            <WorkflowRunContext value={resolveWorkflowRun}>
+            <TranscriptDisplayContext value={transcriptDisplay}>
             <div
               ref={msgAreaRef}
               className="flex-1 overflow-hidden"
@@ -1625,9 +1625,9 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                 />
               )}
             </div>
-            </TranscriptDisplayContext.Provider>
-            </WorkflowRunContext.Provider>
-            </SubagentTelemetryContext.Provider>
+            </TranscriptDisplayContext>
+            </WorkflowRunContext>
+            </SubagentTelemetryContext>
 
             {/* Input Area */}
             <div className={`shrink-0 ${isMobile ? 'p-3' : 'p-4'} flex justify-center`}>

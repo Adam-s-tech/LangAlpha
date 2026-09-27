@@ -10,41 +10,45 @@ const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger
 
 const DropdownMenuGroup = DropdownMenuPrimitive.Group
 
-const DropdownMenuContent = React.forwardRef<
-  React.ComponentRef<typeof DropdownMenuPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content> & {
-    container?: HTMLElement | null
-  }
->(({ className, sideOffset = 4, collisionPadding = 8, container, onCloseAutoFocus, ...props }, ref) => (
-  <DropdownMenuPrimitive.Portal container={container ?? undefined}>
-    <DropdownMenuPrimitive.Content
-      ref={ref}
-      sideOffset={sideOffset}
-      collisionPadding={collisionPadding}
-      onCloseAutoFocus={(event) => {
-        onCloseAutoFocus?.(event)
-        // Radix hands focus back to the trigger on close so a keyboard user
-        // keeps their place. Chromium carries :focus-visible across that
-        // programmatic move, so a menu opened and dismissed with the mouse
-        // leaves the trigger ringed until the next click. Skip the restore
-        // when no key was pressed: focus falls to <body>, which is where
-        // clicking anywhere else would have put it anyway.
-        if (!event.defaultPrevented && lastInputWasPointer()) event.preventDefault()
-      }}
-      className={cn(
-        // Radix measures the space left to the collision boundary and publishes
-        // it as --radix-…-available-height; capping there is what keeps a long
-        // menu (the model list) from running off-screen with no way to reach
-        // the items past the fold.
-        "z-1030 min-w-32 max-h-(--radix-dropdown-menu-content-available-height) overflow-y-auto overflow-x-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md",
-        "pop-in",
-        className
-      )}
-      {...props}
-    />
-  </DropdownMenuPrimitive.Portal>
-))
-DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName
+function DropdownMenuContent({
+  className,
+  sideOffset = 4,
+  collisionPadding = 8,
+  container,
+  onCloseAutoFocus,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Content> & {
+  container?: HTMLElement | null
+}) {
+  return (
+    <DropdownMenuPrimitive.Portal container={container ?? undefined}>
+      <DropdownMenuPrimitive.Content
+        sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event)
+          // Radix hands focus back to the trigger on close so a keyboard user
+          // keeps their place. Chromium carries :focus-visible across that
+          // programmatic move, so a menu opened and dismissed with the mouse
+          // leaves the trigger ringed until the next click. Skip the restore
+          // when no key was pressed: focus falls to <body>, which is where
+          // clicking anywhere else would have put it anyway.
+          if (!event.defaultPrevented && lastInputWasPointer()) event.preventDefault()
+        }}
+        className={cn(
+          // Radix measures the space left to the collision boundary and publishes
+          // it as --radix-…-available-height; capping there is what keeps a long
+          // menu (the model list) from running off-screen with no way to reach
+          // the items past the fold.
+          "z-1030 min-w-32 max-h-(--radix-dropdown-menu-content-available-height) overflow-y-auto overflow-x-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md",
+          "pop-in",
+          className
+        )}
+        {...props}
+      />
+    </DropdownMenuPrimitive.Portal>
+  )
+}
 
 // The only focus indication a menu item gets. Items wear no ring by design, so
 // this tint answers pointer and keyboard alike, and it is written once: a value
@@ -67,105 +71,110 @@ const itemVariants: Record<string, string> = {
   setting: `${SETTING_ROW} ${ITEM_HIGHLIGHT}`,
 }
 
-const DropdownMenuItem = React.forwardRef<
-  React.ComponentRef<typeof DropdownMenuPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Item> & {
-    variant?: "default" | "destructive" | "setting"
-  }
->(({ className, variant = "default", ...props }, ref) => (
-  <DropdownMenuPrimitive.Item
-    ref={ref}
-    className={cn(ITEM_BOX, itemVariants[variant], className)}
-    {...props}
-  />
-))
-DropdownMenuItem.displayName = DropdownMenuPrimitive.Item.displayName
+function DropdownMenuItem({
+  className,
+  variant = "default",
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Item> & {
+  variant?: "default" | "destructive" | "setting"
+}) {
+  return (
+    <DropdownMenuPrimitive.Item
+      className={cn(ITEM_BOX, itemVariants[variant], className)}
+      {...props}
+    />
+  )
+}
 
 // Radix gives it role="menuitemcheckbox" and aria-checked from `checked`. The
 // caller draws the mark, as it draws an item's icon, so the mark sits in the
 // same column as the icons on the rows beside it.
-const DropdownMenuCheckboxItem = React.forwardRef<
-  React.ComponentRef<typeof DropdownMenuPrimitive.CheckboxItem>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.CheckboxItem>
->(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.CheckboxItem
-    ref={ref}
-    className={cn(ITEM_BOX, ITEM_HIGHLIGHT, className)}
-    {...props}
-  />
-))
-DropdownMenuCheckboxItem.displayName = DropdownMenuPrimitive.CheckboxItem.displayName
+function DropdownMenuCheckboxItem({
+  className,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.CheckboxItem>) {
+  return (
+    <DropdownMenuPrimitive.CheckboxItem
+      className={cn(ITEM_BOX, ITEM_HIGHLIGHT, className)}
+      {...props}
+    />
+  )
+}
 
-const DropdownMenuLabel = React.forwardRef<
-  React.ComponentRef<typeof DropdownMenuPrimitive.Label>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Label>
->(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.Label
-    ref={ref}
-    className={cn("px-2.5 py-1.5 text-sm font-medium", className)}
-    {...props}
-  />
-))
-DropdownMenuLabel.displayName = DropdownMenuPrimitive.Label.displayName
+function DropdownMenuLabel({
+  className,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Label>) {
+  return (
+    <DropdownMenuPrimitive.Label
+      className={cn("px-2.5 py-1.5 text-sm font-medium", className)}
+      {...props}
+    />
+  )
+}
 
-const DropdownMenuSeparator = React.forwardRef<
-  React.ComponentRef<typeof DropdownMenuPrimitive.Separator>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Separator>
->(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.Separator
-    ref={ref}
-    className={cn("-mx-1 my-1 h-px bg-border", className)}
-    {...props}
-  />
-))
-DropdownMenuSeparator.displayName = DropdownMenuPrimitive.Separator.displayName
+function DropdownMenuSeparator({
+  className,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Separator>) {
+  return (
+    <DropdownMenuPrimitive.Separator
+      className={cn("-mx-1 my-1 h-px bg-border", className)}
+      {...props}
+    />
+  )
+}
 
 const DropdownMenuSub = DropdownMenuPrimitive.Sub
 
-const DropdownMenuSubTrigger = React.forwardRef<
-  React.ComponentRef<typeof DropdownMenuPrimitive.SubTrigger>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubTrigger> & {
-    variant?: "default" | "setting"
-  }
->(({ className, children, variant = "default", ...props }, ref) => (
-  <DropdownMenuPrimitive.SubTrigger
-    ref={ref}
-    className={cn(
-      "flex cursor-default select-none items-center gap-2 rounded-sm px-2.5 py-1.5 text-sm data-[state=open]:bg-accent/15",
-      ITEM_HIGHLIGHT,
-      variant === "setting" && SETTING_ROW,
-      className
-    )}
-    {...props}
-  >
-    {children}
-  </DropdownMenuPrimitive.SubTrigger>
-))
-DropdownMenuSubTrigger.displayName = DropdownMenuPrimitive.SubTrigger.displayName
+function DropdownMenuSubTrigger({
+  className,
+  children,
+  variant = "default",
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.SubTrigger> & {
+  variant?: "default" | "setting"
+}) {
+  return (
+    <DropdownMenuPrimitive.SubTrigger
+      className={cn(
+        "flex cursor-default select-none items-center gap-2 rounded-sm px-2.5 py-1.5 text-sm data-[state=open]:bg-accent/15",
+        ITEM_HIGHLIGHT,
+        variant === "setting" && SETTING_ROW,
+        className
+      )}
+      {...props}
+    >
+      {children}
+    </DropdownMenuPrimitive.SubTrigger>
+  )
+}
 
 // Radix anchors a submenu to its trigger *row*, which the parent panel's
 // border + p-1 inset 5px from the panel edge — so the stock offset of 0 opens
 // the submenu 5px on top of the panel. Clear that, then add the same 4px gap
 // DropdownMenuContent leaves against its own trigger.
-const DropdownMenuSubContent = React.forwardRef<
-  React.ComponentRef<typeof DropdownMenuPrimitive.SubContent>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
->(({ className, sideOffset = 9, collisionPadding = 8, ...props }, ref) => (
-  <DropdownMenuPrimitive.Portal>
-    <DropdownMenuPrimitive.SubContent
-      ref={ref}
-      sideOffset={sideOffset}
-      collisionPadding={collisionPadding}
-      className={cn(
-        "z-1030 min-w-32 max-h-(--radix-dropdown-menu-content-available-height) overflow-y-auto overflow-x-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-lg",
-        "pop-in",
-        className
-      )}
-      {...props}
-    />
-  </DropdownMenuPrimitive.Portal>
-))
-DropdownMenuSubContent.displayName = DropdownMenuPrimitive.SubContent.displayName
+function DropdownMenuSubContent({
+  className,
+  sideOffset = 9,
+  collisionPadding = 8,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
+  return (
+    <DropdownMenuPrimitive.Portal>
+      <DropdownMenuPrimitive.SubContent
+        sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
+        className={cn(
+          "z-1030 min-w-32 max-h-(--radix-dropdown-menu-content-available-height) overflow-y-auto overflow-x-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-lg",
+          "pop-in",
+          className
+        )}
+        {...props}
+      />
+    </DropdownMenuPrimitive.Portal>
+  )
+}
 
 export {
   DropdownMenu,

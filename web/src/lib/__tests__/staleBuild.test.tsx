@@ -441,11 +441,11 @@ describe('StaleBuildBoundary', () => {
     // The whole point of the classification: a boundary that catches everything
     // turns deterministic bugs into "stale build" reports.
     class Catcher extends React.Component<{ children: React.ReactNode }, { hit: boolean }> {
-      state = { hit: false };
+      override state = { hit: false };
       static getDerivedStateFromError() {
         return { hit: true };
       }
-      render() {
+      override render() {
         return this.state.hit ? <div data-testid="outer" /> : this.props.children;
       }
     }
@@ -467,11 +467,11 @@ describe('StaleBuildBoundary', () => {
     // was thrown", so the boundary renders the children that just threw and
     // they throw again — a loop where a rethrow was intended.
     class Catcher extends React.Component<{ children: React.ReactNode }, { hit: boolean }> {
-      state = { hit: false };
+      override state = { hit: false };
       static getDerivedStateFromError() {
         return { hit: true };
       }
-      render() {
+      override render() {
         return this.state.hit ? <div data-testid="outer" /> : this.props.children;
       }
     }

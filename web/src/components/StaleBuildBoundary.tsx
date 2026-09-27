@@ -76,13 +76,13 @@ interface State {
 }
 
 export class StaleBuildBoundary extends React.Component<Props, State> {
-  state: State = { caught: false, error: null, stale: false };
+  override state: State = { caught: false, error: null, stale: false };
 
   static getDerivedStateFromError(error: unknown): State {
     return { caught: true, error, stale: isStaleBuildError(error) };
   }
 
-  componentDidCatch(error: unknown): void {
+  override componentDidCatch(error: unknown): void {
     // Reached only on the stale branch. componentDidCatch runs in the commit
     // phase, and the rethrow below happens during render, so for an ordinary
     // error this never commits and never logs — React reports that one itself.
@@ -97,7 +97,7 @@ export class StaleBuildBoundary extends React.Component<Props, State> {
     if (isStaleBuildError(error)) reportStaleBuild('chunk', { silent: true });
   }
 
-  render(): React.ReactNode {
+  override render(): React.ReactNode {
     const { caught, error, stale } = this.state;
 
     if (caught && !stale) {

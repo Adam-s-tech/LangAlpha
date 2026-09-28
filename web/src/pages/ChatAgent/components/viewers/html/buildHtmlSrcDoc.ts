@@ -147,6 +147,9 @@ export function buildHtmlSrcDoc(
 
   // Injected before any widget code runs:
   // 1. Patch JSON.parse to handle NaN/Infinity from Python's json.dumps (not valid JSON).
+  //    A flat token scan with a per-parse inString flag, not a string-matching
+  //    regexp: V8 keeps a backtrack-stack entry per iteration of nested
+  //    repetition, so one quoted string above ~8M chars threw RangeError.
   // 2. Catch uncaught errors and unhandled rejections, display an inline error overlay.
   // 3. Route link clicks to window.open(..., 'noopener'): a plain <a href>
   //    navigates the IFRAME itself, rendering the target inside the sandbox
@@ -155,7 +158,13 @@ export function buildHtmlSrcDoc(
 (function(){
   var _p=JSON.parse;
   JSON.parse=function(t,r){
-    if(typeof t==='string')t=t.replace(/"(?:\\\\[\\s\\S]|[^"\\\\])*"?|(?<!\\w)(?:NaN|-?Infinity)\\b/g,function(token){return token.charAt(0)==='"'?token:'null';});
+    if(typeof t==='string'){
+      var inString=false;
+      t=t.replace(/\\\\[\\s\\S]|"|(?<!\\w)(?:NaN|-?Infinity)\\b/g,function(token){
+        if(token==='"'){inString=!inString;return token;}
+        return inString||token.charAt(0)==='\\\\'?token:'null';
+      });
+    }
     return _p.call(this,t,r);
   };
   var shown={},count=0,rendering=false;

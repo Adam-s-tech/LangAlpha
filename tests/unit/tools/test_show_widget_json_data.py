@@ -73,8 +73,8 @@ def test_truncated_json_with_escaped_quotes_is_intact_and_fast():
     """A file cut off inside a string full of escaped quotes is the worst case
     for a string-first scan that can backtrack: it used to rescan to the end
     from every quote (O(n^2); measured ~108 s at this size before the fix). The
-    tail is one unterminated
-    string, so nothing may be rewritten, and the call must stay linear."""
+    tail is one unterminated string, so nothing may be rewritten, and the call
+    must stay linear."""
     payload = '{"rows":[{"html":"' + '\\"' * 100_000
     backend = AsyncMock()
     backend.aread_text.return_value = payload

@@ -102,4 +102,47 @@ describe.each(['widget-inline', 'widget-fullscreen'] as const)('%s JSON data', (
     // is four orders of magnitude below this bound.
     expect(elapsed).toBeLessThan(2000);
   });
+
+  it('parses a 12 MB single-string payload that used to overflow the regexp stack', () => {
+    // V8 keeps a backtrack-stack entry per iteration of the string-matching
+    // alternative, so a single quoted string above ~8.4M characters threw
+    // RangeError before the native parser ever saw it. The flat token scan has
+    // no repetition to backtrack; it must parse and keep the string intact.
+    const blob = 'A'.repeat(12_000_000) + ' NaN Infinity -Infinity tail';
+    const parsed = parseWidgetData(
+      variant,
+      `{"blob":"${blob}","v":-Infinity,"scale":1.2300e+02}`,
+    ) as { blob: string; v: unknown; scale: unknown };
+
+    expect(parsed.blob).toBe(blob);
+    expect(parsed.v).toBeNull();
+    expect(parsed.scale).toBe(123);
+  }, 60_000);
+
+  it('preserves a large escaped string while a bare NaN beside it becomes null', () => {
+    // Every quote and backslash in the value is escaped in the JSON text, so
+    // this runs the escape branch at scale; the bare NaN outside the string is
+    // the only token that may be rewritten.
+    const text = '"\\NaN Infinity -Infinity '.repeat(50_000);
+    const parsed = parseWidgetData(
+      variant,
+      `{"text":${JSON.stringify(text)},"v":NaN}`,
+    ) as { text: string; v: unknown };
+
+    expect(parsed.text).toBe(text);
+    expect(parsed.v).toBeNull();
+  }, 60_000);
+
+  it('rejects a truncated 12 MB string as SyntaxError, not RangeError', () => {
+    // The malformed counterpart of the payload above: the scan must finish and
+    // hand the text to the native parser, which rejects it.
+    let error: unknown;
+    try {
+      parseWidgetData(variant, `{"blob":"${'A'.repeat(12_000_000)}`);
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect((error as Error).name).toBe('SyntaxError');
+  }, 60_000);
 });

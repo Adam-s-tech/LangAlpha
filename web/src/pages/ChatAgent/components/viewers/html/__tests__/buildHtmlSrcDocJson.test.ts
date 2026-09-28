@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 
 import { buildHtmlSrcDoc, type HtmlSrcDocVariant } from '../buildHtmlSrcDoc';
 
+/**
+ * Feeds `payload` through the widget's own JSON.parse patch without touching the
+ * test runner's JSON.parse: builds the full srcDoc, runs the injected early
+ * script and the `data.json` script in a fresh `node:vm` realm with stubbed
+ * window/document, then returns the result re-parsed in the test realm.
+ * `reviver` is forwarded to the in-realm parse.
+ */
 function parseWidgetData(
   variant: HtmlSrcDocVariant,
   payload: string,

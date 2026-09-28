@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Download, FileDown, Link2, Pencil, Save, Settings2, X, Undo2, Redo2, FileDiff, FileText, Check, Clipboard } from 'lucide-react';
+import { Download, FileDown, Link2, Pencil, Settings2, X, Undo2, Redo2, FileDiff, FileText, Check, Clipboard } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -203,7 +203,7 @@ function FileHeaderActions({
           title={t('filePanel.save')}
           disabled={!hasUnsavedChanges || isSaving}
         >
-          <Save className={`h-4 w-4 ${isSaving ? 'animate-pulse' : ''}`} />
+          <Check className={`h-4 w-4 ${isSaving ? 'animate-pulse' : ''}`} />
         </button>
         <button
           onClick={onCancelEdit}

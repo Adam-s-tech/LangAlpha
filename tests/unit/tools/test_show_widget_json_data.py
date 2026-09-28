@@ -49,6 +49,8 @@ from ptc_agent.agent.tools.show_widget import _resolve_data_files
     ],
 )
 def test_json_data_preserves_strings_while_cleaning_constants(extension, payload, expected):
+    """For every JSON-family extension, quoted text survives untouched and
+    only bare NaN/Infinity constants become null."""
     backend = AsyncMock()
     backend.aread_text.return_value = payload
     filename = f"chart.{extension}"
@@ -60,6 +62,8 @@ def test_json_data_preserves_strings_while_cleaning_constants(extension, payload
 
 
 def test_csv_data_is_not_cleaned_as_json():
+    """CSV text is returned byte-for-byte: sanitizing is limited to the
+    JSON-family extensions."""
     backend = AsyncMock()
     payload = "label,value\nInfinity Growth,NaN\n"
     backend.aread_text.return_value = payload
@@ -88,3 +92,26 @@ def test_truncated_json_with_escaped_quotes_is_intact_and_fast():
     # Generous quadratic-scan detector, not a microbenchmark: the fixed scan
     # takes well under 10ms here.
     assert elapsed < 5.0
+
+
+def test_large_single_string_is_preserved_while_bare_nan_becomes_null():
+    """A 450,000-character string plus quoted NaN/Infinity tokens must come
+    back byte-for-byte while the adjacent bare NaN is rewritten to null in
+    the same sanitizer pass."""
+    blob = "A" * 450_000
+    payload = f'{{"blob":"{blob}","label":"NaN Infinity -Infinity","v":NaN,"scale":1.2300e+02}}'
+    expected = f'{{"blob":"{blob}","label":"NaN Infinity -Infinity","v":null,"scale":1.2300e+02}}'
+    backend = AsyncMock()
+    backend.aread_text.return_value = payload
+    filename = "large.json"
+
+    # Sized to fit under the real 500 KB inline cap, so no test-local cap
+    # patch is needed to get the sanitized value back.
+    result = asyncio.run(_resolve_data_files(backend, [f"/work/{filename}"]))
+
+    assert result == {filename: expected}
+    parsed = json.loads(result[filename])
+    assert parsed["blob"] == blob
+    assert parsed["label"] == "NaN Infinity -Infinity"
+    assert parsed["v"] is None
+    assert parsed["scale"] == 123

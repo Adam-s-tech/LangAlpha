@@ -67,11 +67,21 @@ def _task() -> BackgroundTask:
 
 
 @pytest.mark.asyncio
-async def test_a_stopped_launch_is_stamped_an_error(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize(
+    "action, ending",
+    [
+        ("init", "was stopped before it started."),
+        ("resume", "was stopped before the resume started."),
+    ],
+)
+async def test_a_stopped_launch_is_stamped_an_error(
+    monkeypatch: pytest.MonkeyPatch, action: str, ending: str
+):
     """A stop mid-setup refuses the writer; the refusal must not read success.
 
-    Like an admission refusal it opens no run and no channel, so a defaulted
-    success never settles the launch card.
+    The run was admitted and the stop settles it cancelled, but this reply
+    carries no task artifact, so nothing else settles the launch card: a
+    defaulted success leaves it looking like it ran.
     """
 
     async def _stopped(*_args: Any, **_kwargs: Any) -> None:
@@ -87,11 +97,11 @@ async def test_a_stopped_launch_is_stamped_an_error(monkeypatch: pytest.MonkeyPa
         prompt="p",
         description="d",
         tool_call_id="call-1",
-        action="init",
+        action=action,
     )
 
     assert message is not None
-    assert "was stopped before it started" in message.content
+    assert message.content == f"Background subagent {_task().display_id} {ending}"
     assert message.status == "error"
 
 

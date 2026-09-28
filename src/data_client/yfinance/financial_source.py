@@ -284,6 +284,7 @@ def _get_financial_ratios(symbol: str) -> list[dict[str, Any]]:
         "dividendYieldTTM": _percent_to_fraction(info.get("dividendYield")),
         "dividendPayoutRatioTTM": info.get("payoutRatio"),
         "priceToEarningsRatioTTM": info.get("trailingPE"),
+        "priceToEarningsGrowthRatioTTM": info.get("trailingPegRatio"),
         "priceToBookRatioTTM": info.get("priceToBook"),
         "priceToSalesRatioTTM": info.get("priceToSalesTrailing12Months"),
         "revenuePerShareTTM": info.get("revenuePerShare"),

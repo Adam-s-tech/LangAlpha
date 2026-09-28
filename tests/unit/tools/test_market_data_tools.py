@@ -737,6 +737,7 @@ class TestFetchCompanyOverview:
 
         info = {
             "trailingPE": 38.44,
+            "trailingPegRatio": 2.71,
             "priceToBook": 57.97,
             "returnOnEquity": 1.55,
             "returnOnAssets": 0.30,
@@ -759,6 +760,7 @@ class TestFetchCompanyOverview:
 
         assert "| P/E Ratio | 38.44x |" in content
         assert "| P/B Ratio | 57.97x |" in content
+        assert "| PEG Ratio | 2.71 |" in content
         assert "| ROE (Return on Equity) | 155.00% |" in content
         assert "| Net Profit Margin | 24.30% |" in content
         assert "| Debt/Equity Ratio | 1.54 |" in content
@@ -862,6 +864,7 @@ class TestFetchCompanyOverview:
 
         info = {
             "trailingPE": 12.0,
+            "trailingPegRatio": 0.0,
             "returnOnEquity": 0.0,
             "operatingMargins": 0.0,
             "debtToEquity": 0.0,
@@ -878,6 +881,7 @@ class TestFetchCompanyOverview:
         content = await self._overview_metrics(full_profile, key_metrics, ratios)
 
         assert "| P/E Ratio | 12.00x |" in content
+        assert "| PEG Ratio | 0.00 |" in content
         assert "| ROE (Return on Equity) | 0.00% |" in content
         assert "| Operating Margin | 0.00% |" in content
         assert "| Debt/Equity Ratio | 0.00 |" in content

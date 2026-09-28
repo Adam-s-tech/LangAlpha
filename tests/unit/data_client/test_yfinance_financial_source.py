@@ -138,6 +138,7 @@ class TestKeyMetricsAndRatiosShape:
 
     _INFO = {
         "trailingPE": 38.44,
+        "trailingPegRatio": 2.71,
         "priceToBook": 57.97,
         "priceToSalesTrailing12Months": 9.3,
         "enterpriseToEbitda": 27.3,
@@ -167,6 +168,7 @@ class TestKeyMetricsAndRatiosShape:
     def test_ratios_use_stable_names_and_fraction_units(self):
         r = self._run("_get_financial_ratios", self._INFO)
         assert r["priceToEarningsRatioTTM"] == 38.44
+        assert r["priceToEarningsGrowthRatioTTM"] == 2.71
         assert r["priceToBookRatioTTM"] == 57.97
         assert r["netProfitMarginTTM"] == 0.243
         assert r["debtToEquityRatioTTM"] == pytest.approx(1.54)
@@ -187,3 +189,8 @@ class TestKeyMetricsAndRatiosShape:
         r = self._run("_get_financial_ratios", info)
         assert r["debtToEquityRatioTTM"] is None
         assert r["dividendYieldTTM"] is None
+
+    def test_missing_peg_stays_none(self):
+        info = {k: v for k, v in self._INFO.items() if k != "trailingPegRatio"}
+        r = self._run("_get_financial_ratios", info)
+        assert r["priceToEarningsGrowthRatioTTM"] is None

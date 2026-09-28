@@ -222,8 +222,13 @@ async def _resolve_data_files(
             # json.dumps emits by default — these break browser JSON.parse.
             _, ext = os.path.splitext(path)
             if ext.lower() in ('.json', '.geojson', '.topojson'):
-                value = re.sub(r'\bNaN\b', 'null', value)
-                value = re.sub(r'(?<![A-Za-z_])-?Infinity\b', 'null', value)
+                # Match quoted strings first so names and labels stay intact.
+                # Avoid a parse/dump round trip that could alter numeric precision.
+                value = re.sub(
+                    r'"(?:\\.|[^"\\])*"|(?P<constant>(?<!\w)(?:NaN|-?Infinity)\b)',
+                    lambda token: "null" if token.group("constant") else token.group(0),
+                    value,
+                )
         else:
             b64 = base64.b64encode(content).decode()  # type: ignore[arg-type]
             value = f"data:{mime};base64,{b64}"

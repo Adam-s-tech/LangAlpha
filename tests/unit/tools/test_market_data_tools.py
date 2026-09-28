@@ -763,6 +763,125 @@ class TestFetchCompanyOverview:
         assert "| Net Profit Margin | 24.30% |" in content
         assert "| Debt/Equity Ratio | 1.54 |" in content
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value, shown", [
+        (1.55, "155.00%"),
+        (-0.12, "-12.00%"),
+        (0.0, "0.00%"),
+    ])
+    async def test_profitability_rows_show_any_reported_value(
+        self, full_profile, value, shown,
+    ):
+        """Above 100%, negative and exactly 0 all render: 0 is a reported value."""
+        content = await self._overview_metrics(
+            full_profile,
+            [{"returnOnEquityTTM": value, "returnOnAssetsTTM": value}],
+            [{"netProfitMarginTTM": value, "operatingProfitMarginTTM": value}],
+        )
+        for label in (
+            "ROE (Return on Equity)",
+            "ROA (Return on Assets)",
+            "Net Profit Margin",
+            "Operating Margin",
+        ):
+            assert f"| {label} | {shown} |" in content
+
+    @pytest.mark.asyncio
+    async def test_zero_ratios_render_and_zero_pe_beats_profile_pe(self, full_profile):
+        """A TTM P/E of 0 is shown as 0, not swapped for the profile's 32.5."""
+        content = await self._overview_metrics(
+            full_profile,
+            [{"evToOperatingCashFlowTTM": 0.0}],
+            [{
+                "priceToEarningsRatioTTM": 0.0,
+                "priceToBookRatioTTM": 0.0,
+                "priceToEarningsGrowthRatioTTM": 0.0,
+                "debtToEquityRatioTTM": 0.0,
+                "currentRatioTTM": 0.0,
+                "quickRatioTTM": 0.0,
+                "interestCoverageRatioTTM": 0.0,
+            }],
+        )
+        assert "| P/E Ratio | 0.00x |" in content
+        assert content.count("| P/E Ratio |") == 1
+        assert "| P/B Ratio | 0.00x |" in content
+        assert "| PEG Ratio | 0.00 |" in content
+        assert "| EV/OCF | 0.00x |" in content
+        assert "| Debt/Equity Ratio | 0.00 |" in content
+        assert "| Current Ratio | 0.00 |" in content
+        assert "| Quick Ratio | 0.00 |" in content
+        assert "| Interest Coverage | 0.00x |" in content
+
+    @pytest.mark.asyncio
+    async def test_missing_ratios_are_omitted_and_pe_falls_back_to_profile(
+        self, full_profile,
+    ):
+        """None or absent fields drop their row; only a missing TTM P/E falls
+        back to the profile's P/E.
+        """
+        content = await self._overview_metrics(
+            full_profile,
+            [{
+                "evToOperatingCashFlowTTM": None,
+                "returnOnEquityTTM": None,
+                "returnOnAssetsTTM": 0.30,
+            }],
+            [{
+                "priceToEarningsRatioTTM": None,
+                "priceToBookRatioTTM": None,
+                "netProfitMarginTTM": None,
+                "debtToEquityRatioTTM": None,
+                "interestCoverageRatioTTM": None,
+            }],
+        )
+        assert "| P/E Ratio | 32.50x |" in content
+        assert "| ROA (Return on Assets) | 30.00% |" in content
+        for label in (
+            "P/B Ratio",
+            "PEG Ratio",
+            "EV/OCF",
+            "ROE (Return on Equity)",
+            "Net Profit Margin",
+            "Operating Margin",
+            "Debt/Equity Ratio",
+            "Current Ratio",
+            "Quick Ratio",
+            "Interest Coverage",
+        ):
+            assert f"| {label} |" not in content
+
+    @pytest.mark.asyncio
+    async def test_zero_from_yfinance_fallback_reaches_the_table(self, full_profile):
+        """A debt-free company's 0 debt/equity survives the percent conversion
+        and renders, as do 0% returns and margins.
+        """
+        from src.data_client.yfinance.financial_source import (
+            _get_financial_ratios,
+            _get_key_metrics,
+        )
+
+        info = {
+            "trailingPE": 12.0,
+            "returnOnEquity": 0.0,
+            "operatingMargins": 0.0,
+            "debtToEquity": 0.0,
+        }
+        with patch("src.data_client.yfinance.financial_source.yf.Ticker") as ticker_cls:
+            ticker = MagicMock()
+            ticker.info = info
+            ticker.fast_info = {"marketCap": 1_000_000_000}
+            ticker_cls.return_value = ticker
+            key_metrics = _get_key_metrics("AAPL")
+            ratios = _get_financial_ratios("AAPL")
+
+        assert ratios[0]["debtToEquityRatioTTM"] == 0.0
+        content = await self._overview_metrics(full_profile, key_metrics, ratios)
+
+        assert "| P/E Ratio | 12.00x |" in content
+        assert "| ROE (Return on Equity) | 0.00% |" in content
+        assert "| Operating Margin | 0.00% |" in content
+        assert "| Debt/Equity Ratio | 0.00 |" in content
+
 
 # ---------------------------------------------------------------------------
 # fetch_sector_performance

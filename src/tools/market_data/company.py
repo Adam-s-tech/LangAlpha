@@ -793,18 +793,22 @@ No data found for symbol {symbol}"""
             # the yfinance fallback emits too. Stable moved the valuation
             # multiples to ratios and ROE/ROA to key metrics.
             # Valuation Ratios
-            pe_ratio = ratios.get("priceToEarningsRatioTTM") or profile.get("pe")
+            # A reported 0 is data, not a gap: test `is not None` throughout,
+            # and fall back to the profile P/E only when the TTM value is absent.
+            pe_ratio = ratios.get("priceToEarningsRatioTTM")
+            if pe_ratio is None:
+                pe_ratio = profile.get("pe")
             pb_ratio = ratios.get("priceToBookRatioTTM")
             peg_ratio = ratios.get("priceToEarningsGrowthRatioTTM")
             ev_to_ebitda = metrics.get("evToOperatingCashFlowTTM")
 
-            if pe_ratio:
+            if pe_ratio is not None:
                 metrics_rows.append(("P/E Ratio", f"{pe_ratio:.2f}x"))
-            if pb_ratio:
+            if pb_ratio is not None:
                 metrics_rows.append(("P/B Ratio", f"{pb_ratio:.2f}x"))
-            if peg_ratio:
+            if peg_ratio is not None:
                 metrics_rows.append(("PEG Ratio", f"{peg_ratio:.2f}"))
-            if ev_to_ebitda:
+            if ev_to_ebitda is not None:
                 metrics_rows.append(("EV/OCF", f"{ev_to_ebitda:.2f}x"))
 
             # Profitability Metrics
@@ -814,14 +818,16 @@ No data found for symbol {symbol}"""
             operating_margin = ratios.get("operatingProfitMarginTTM")
 
             # Always fractions: a ROE of 1.55 is 155%, not 1.55%.
-            if roe:
+            if roe is not None:
                 metrics_rows.append(("ROE (Return on Equity)", f"{roe * 100:.2f}%"))
-            if roa:
+            if roa is not None:
                 metrics_rows.append(("ROA (Return on Assets)", f"{roa * 100:.2f}%"))
-            if net_margin:
+            if net_margin is not None:
                 metrics_rows.append(("Net Profit Margin", f"{net_margin * 100:.2f}%"))
-            if operating_margin:
-                metrics_rows.append(("Operating Margin", f"{operating_margin * 100:.2f}%"))
+            if operating_margin is not None:
+                metrics_rows.append(
+                    ("Operating Margin", f"{operating_margin * 100:.2f}%")
+                )
 
             # Leverage & Liquidity
             debt_to_equity = ratios.get("debtToEquityRatioTTM")
@@ -829,13 +835,13 @@ No data found for symbol {symbol}"""
             quick_ratio = ratios.get("quickRatioTTM")
             interest_coverage = ratios.get("interestCoverageRatioTTM")
 
-            if debt_to_equity:
+            if debt_to_equity is not None:
                 metrics_rows.append(("Debt/Equity Ratio", f"{debt_to_equity:.2f}"))
-            if current_ratio:
+            if current_ratio is not None:
                 metrics_rows.append(("Current Ratio", f"{current_ratio:.2f}"))
-            if quick_ratio:
+            if quick_ratio is not None:
                 metrics_rows.append(("Quick Ratio", f"{quick_ratio:.2f}"))
-            if interest_coverage:
+            if interest_coverage is not None:
                 metrics_rows.append(("Interest Coverage", f"{interest_coverage:.2f}x"))
 
             # Output as markdown table

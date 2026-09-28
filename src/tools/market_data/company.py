@@ -789,10 +789,13 @@ No data found for symbol {symbol}"""
             # Collect all metrics for table
             metrics_rows = []
 
+            # Field names are FMP stable's (key-metrics-ttm, ratios-ttm), which
+            # the yfinance fallback emits too. Stable moved the valuation
+            # multiples to ratios and ROE/ROA to key metrics.
             # Valuation Ratios
-            pe_ratio = metrics.get("peRatioTTM") or profile.get("pe")
-            pb_ratio = metrics.get("pbRatioTTM")
-            peg_ratio = metrics.get("pegRatioTTM")
+            pe_ratio = ratios.get("priceToEarningsRatioTTM") or profile.get("pe")
+            pb_ratio = ratios.get("priceToBookRatioTTM")
+            peg_ratio = ratios.get("priceToEarningsGrowthRatioTTM")
             ev_to_ebitda = metrics.get("evToOperatingCashFlowTTM")
 
             if pe_ratio:
@@ -805,37 +808,26 @@ No data found for symbol {symbol}"""
                 metrics_rows.append(("EV/OCF", f"{ev_to_ebitda:.2f}x"))
 
             # Profitability Metrics
-            roe = metrics.get("roeTTM") or ratios.get("returnOnEquityTTM")
-            roa = metrics.get("roaTTM") or ratios.get("returnOnAssetsTTM")
+            roe = metrics.get("returnOnEquityTTM")
+            roa = metrics.get("returnOnAssetsTTM")
             net_margin = ratios.get("netProfitMarginTTM")
             operating_margin = ratios.get("operatingProfitMarginTTM")
 
+            # Always fractions: a ROE of 1.55 is 155%, not 1.55%.
             if roe:
-                roe_val = f"{roe * 100:.2f}%" if roe < 1 else f"{roe:.2f}%"
-                metrics_rows.append(("ROE (Return on Equity)", roe_val))
+                metrics_rows.append(("ROE (Return on Equity)", f"{roe * 100:.2f}%"))
             if roa:
-                roa_val = f"{roa * 100:.2f}%" if roa < 1 else f"{roa:.2f}%"
-                metrics_rows.append(("ROA (Return on Assets)", roa_val))
+                metrics_rows.append(("ROA (Return on Assets)", f"{roa * 100:.2f}%"))
             if net_margin:
-                nm_val = (
-                    f"{net_margin * 100:.2f}%"
-                    if net_margin < 1
-                    else f"{net_margin:.2f}%"
-                )
-                metrics_rows.append(("Net Profit Margin", nm_val))
+                metrics_rows.append(("Net Profit Margin", f"{net_margin * 100:.2f}%"))
             if operating_margin:
-                om_val = (
-                    f"{operating_margin * 100:.2f}%"
-                    if operating_margin < 1
-                    else f"{operating_margin:.2f}%"
-                )
-                metrics_rows.append(("Operating Margin", om_val))
+                metrics_rows.append(("Operating Margin", f"{operating_margin * 100:.2f}%"))
 
             # Leverage & Liquidity
-            debt_to_equity = ratios.get("debtEquityRatioTTM")
+            debt_to_equity = ratios.get("debtToEquityRatioTTM")
             current_ratio = ratios.get("currentRatioTTM")
             quick_ratio = ratios.get("quickRatioTTM")
-            interest_coverage = ratios.get("interestCoverageTTM")
+            interest_coverage = ratios.get("interestCoverageRatioTTM")
 
             if debt_to_equity:
                 metrics_rows.append(("Debt/Equity Ratio", f"{debt_to_equity:.2f}"))

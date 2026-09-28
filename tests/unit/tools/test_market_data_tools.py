@@ -482,11 +482,12 @@ class TestFetchCompanyOverview:
                 "fiscalDateEnding": "2025-06-30",
             }],
             price_change=[{"1D": 0.5, "5D": 1.2, "1M": -2.3, "ytd": 15.0, "1Y": 30.0}],
-            key_metrics=[{"peRatioTTM": 32.5, "pbRatioTTM": 50.0, "roeTTM": 1.60}],
+            key_metrics=[{"returnOnEquityTTM": 1.60, "returnOnAssetsTTM": 0.30}],
             ratios=[{
-                "returnOnEquityTTM": 1.60,
+                "priceToEarningsRatioTTM": 32.5,
+                "priceToBookRatioTTM": 50.0,
                 "netProfitMarginTTM": 0.245,
-                "debtEquityRatioTTM": 1.87,
+                "debtToEquityRatioTTM": 1.87,
                 "currentRatioTTM": 0.99,
             }],
             price_target_consensus=[{"targetMedian": 260.0, "targetLow": 200.0, "targetHigh": 300.0, "targetConsensus": "Buy"}],
@@ -652,6 +653,115 @@ class TestFetchCompanyOverview:
             content, artifact = await fetch_company_overview("AAPL")
 
         assert content.startswith("[Live: AAPL $236.10")
+
+    @staticmethod
+    async def _overview_metrics(profile, key_metrics, ratios):
+        financial = _make_fake_financial_source(
+            profile_data=profile, key_metrics=key_metrics, ratios=ratios,
+        )
+        provider = _make_fake_financial_provider(financial=financial)
+        market_provider = _make_fake_market_provider()
+        market_provider.get_snapshots = AsyncMock(return_value=[])
+        with (
+            patch(f"{_COMPANY_MOD}.get_financial_data_provider", return_value=provider),
+            patch(f"{_COMPANY_MOD}.get_market_data_provider", return_value=market_provider),
+            patch(f"{_COMPANY_MOD}._fmp_request", return_value=[]),
+        ):
+            content, _ = await fetch_company_overview("AAPL")
+        return content
+
+    @pytest.mark.asyncio
+    async def test_key_metrics_read_fmp_stable_ttm_fields(self, full_profile):
+        """The table reads the field names FMP's stable key-metrics-ttm and
+        ratios-ttm endpoints actually return, and prints ROE above 100% as such.
+        """
+        profile = [{k: v for k, v in full_profile[0].items() if k != "pe"}]
+        key_metrics = [{
+            "symbol": "AAPL",
+            "marketCap": 3_500_000_000_000,
+            "evToOperatingCashFlowTTM": 35.66,
+            "returnOnEquityTTM": 1.55,
+            "returnOnAssetsTTM": 0.30,
+            "currentRatioTTM": 0.87,
+        }]
+        ratios = [{
+            "symbol": "AAPL",
+            "priceToEarningsRatioTTM": 38.44,
+            "priceToBookRatioTTM": 57.97,
+            "priceToEarningsGrowthRatioTTM": 14.54,
+            "netProfitMarginTTM": 0.243,
+            "operatingProfitMarginTTM": 0.319,
+            "debtToEquityRatioTTM": 1.54,
+            "currentRatioTTM": 0.87,
+            "quickRatioTTM": 0.83,
+            "interestCoverageRatioTTM": 30.5,
+        }]
+        content = await self._overview_metrics(profile, key_metrics, ratios)
+
+        assert "| P/E Ratio | 38.44x |" in content
+        assert "| P/B Ratio | 57.97x |" in content
+        assert "| PEG Ratio | 14.54 |" in content
+        assert "| ROE (Return on Equity) | 155.00% |" in content
+        assert "| ROA (Return on Assets) | 30.00% |" in content
+        assert "| Debt/Equity Ratio | 1.54 |" in content
+        assert "| Interest Coverage | 30.50x |" in content
+
+    @pytest.mark.asyncio
+    async def test_key_metrics_fields_unaffected_by_rename(self, full_profile):
+        """Control: fields whose stable names never changed render as before."""
+        content = await self._overview_metrics(
+            full_profile,
+            [{"symbol": "AAPL", "evToOperatingCashFlowTTM": 35.66}],
+            [{
+                "netProfitMarginTTM": 0.243,
+                "operatingProfitMarginTTM": 0.319,
+                "currentRatioTTM": 0.87,
+                "quickRatioTTM": 0.83,
+            }],
+        )
+        assert "| EV/OCF | 35.66x |" in content
+        assert "| Net Profit Margin | 24.30% |" in content
+        assert "| Operating Margin | 31.90% |" in content
+        assert "| Current Ratio | 0.87 |" in content
+        assert "| Quick Ratio | 0.83 |" in content
+
+    @pytest.mark.asyncio
+    async def test_key_metrics_from_yfinance_fallback(self, full_profile):
+        """The yfinance fallback feeds the same table: its rows carry the stable
+        names and Yahoo's percent-scaled debt/equity comes out as a ratio.
+        """
+        from src.data_client.yfinance.financial_source import (
+            _get_financial_ratios,
+            _get_key_metrics,
+        )
+
+        info = {
+            "trailingPE": 38.44,
+            "priceToBook": 57.97,
+            "returnOnEquity": 1.55,
+            "returnOnAssets": 0.30,
+            "profitMargins": 0.243,
+            "operatingMargins": 0.319,
+            "debtToEquity": 154.0,
+            "currentRatio": 0.87,
+            "quickRatio": 0.83,
+        }
+        with patch("src.data_client.yfinance.financial_source.yf.Ticker") as ticker_cls:
+            ticker = MagicMock()
+            ticker.info = info
+            ticker.fast_info = {"marketCap": 3_500_000_000_000}
+            ticker_cls.return_value = ticker
+            key_metrics = _get_key_metrics("AAPL")
+            ratios = _get_financial_ratios("AAPL")
+
+        profile = [{k: v for k, v in full_profile[0].items() if k != "pe"}]
+        content = await self._overview_metrics(profile, key_metrics, ratios)
+
+        assert "| P/E Ratio | 38.44x |" in content
+        assert "| P/B Ratio | 57.97x |" in content
+        assert "| ROE (Return on Equity) | 155.00% |" in content
+        assert "| Net Profit Margin | 24.30% |" in content
+        assert "| Debt/Equity Ratio | 1.54 |" in content
 
 
 # ---------------------------------------------------------------------------

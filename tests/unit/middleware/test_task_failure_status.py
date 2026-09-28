@@ -16,9 +16,13 @@ import pytest
 
 from ptc_agent.agent.middleware.background_subagent import task_actions
 from ptc_agent.agent.middleware.background_subagent.registry import (
+    BackgroundTask,
     BackgroundTaskRegistry,
 )
-from ptc_agent.agent.middleware.background_subagent.spawn import TaskRunRefused
+from ptc_agent.agent.middleware.background_subagent.spawn import (
+    SpawnStoppedError,
+    TaskRunRefused,
+)
 
 
 class _RefusingMiddleware:
@@ -50,6 +54,71 @@ async def test_a_refused_task_launch_is_stamped_an_error():
 
     assert message.content.startswith("Error: could not start ")
     assert message.status == "error"
+
+
+def _task() -> BackgroundTask:
+    return BackgroundTask(
+        tool_call_id="call-1",
+        task_id="k7Xm2p",
+        description="d",
+        prompt="p",
+        subagent_type="research",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_launch_is_stamped_an_error(monkeypatch: pytest.MonkeyPatch):
+    """A stop mid-setup refuses the writer; the refusal must not read success.
+
+    Like an admission refusal it opens no run and no channel, so a defaulted
+    success never settles the launch card.
+    """
+
+    async def _stopped(*_args: Any, **_kwargs: Any) -> None:
+        raise SpawnStoppedError("Task-k7Xm2p was stopped before it started")
+
+    monkeypatch.setattr(task_actions, "spawn_task_writer", _stopped)
+
+    message = await task_actions._spawn_writer(
+        _RefusingMiddleware(),
+        _task(),
+        None,
+        None,
+        prompt="p",
+        description="d",
+        tool_call_id="call-1",
+        action="init",
+    )
+
+    assert message is not None
+    assert "was stopped before it started" in message.content
+    assert message.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_a_completed_spawn_carries_no_refusal_message(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Control: a spawn that completes hands the writer off with no message."""
+
+    async def _spawned(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(task_actions, "spawn_task_writer", _spawned)
+
+    assert (
+        await task_actions._spawn_writer(
+            _RefusingMiddleware(),
+            _task(),
+            None,
+            None,
+            prompt="p",
+            description="d",
+            tool_call_id="call-1",
+            action="init",
+        )
+        is None
+    )
 
 
 _SWEPT_FILES = ("task_actions.py", "middleware.py")

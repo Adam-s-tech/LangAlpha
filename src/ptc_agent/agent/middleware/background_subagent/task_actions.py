@@ -206,6 +206,7 @@ async def _spawn_writer(
             ),
             tool_call_id=tool_call_id,
             name="Task",
+            status="error",
         )
     return None
 

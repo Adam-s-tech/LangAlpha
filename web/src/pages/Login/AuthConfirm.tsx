@@ -8,7 +8,7 @@ import { AUTH_BROADCAST_CHANNEL, type AuthBroadcastMessage } from '../../lib/oau
 import { authErrorMessage } from '../../lib/authErrors';
 import { useShellHandoff } from './useShellHandoff';
 import ShellHandoff from './ShellHandoff';
-import WavesBackground from './WavesBackground';
+import EdgeGrain from './EdgeGrain';
 import './LoginPage.css';
 
 /** How long to wait for the client's automatic `?code=` exchange to land. */
@@ -149,7 +149,7 @@ function AuthConfirm() {
 
   return (
     <div className="login-page owns-its-edge">
-      <WavesBackground />
+      <EdgeGrain centered />
       <div className="login-page__card">
         {handingOff ? (
           <ShellHandoff onContinueHere={continueHere} />

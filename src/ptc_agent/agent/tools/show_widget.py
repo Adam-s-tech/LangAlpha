@@ -224,8 +224,12 @@ async def _resolve_data_files(
             if ext.lower() in ('.json', '.geojson', '.topojson'):
                 # Match quoted strings first so names and labels stay intact.
                 # Avoid a parse/dump round trip that could alter numeric precision.
+                # The closing quote is optional and a backslash escapes any
+                # character, so the string branch can never backtrack after it
+                # starts: a truncated string (malformed JSON) stays linear and
+                # is left byte-for-byte intact.
                 value = re.sub(
-                    r'"(?:\\.|[^"\\])*"|(?P<constant>(?<!\w)(?:NaN|-?Infinity)\b)',
+                    r'"(?:\\[\s\S]|[^"\\])*"?|(?P<constant>(?<!\w)(?:NaN|-?Infinity)\b)',
                     lambda token: "null" if token.group("constant") else token.group(0),
                     value,
                 )

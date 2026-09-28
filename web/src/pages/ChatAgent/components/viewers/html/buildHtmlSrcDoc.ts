@@ -155,7 +155,7 @@ export function buildHtmlSrcDoc(
 (function(){
   var _p=JSON.parse;
   JSON.parse=function(t,r){
-    if(typeof t==='string')t=t.replace(/"(?:\\\\.|[^"\\\\])*"|(?<!\\w)(?:NaN|-?Infinity)\\b/g,function(token){return token.charAt(0)==='"'?token:'null';});
+    if(typeof t==='string')t=t.replace(/"(?:\\\\[\\s\\S]|[^"\\\\])*"?|(?<!\\w)(?:NaN|-?Infinity)\\b/g,function(token){return token.charAt(0)==='"'?token:'null';});
     return _p.call(this,t,r);
   };
   var shown={},count=0,rendering=false;

@@ -1,10 +1,11 @@
-import React, { Suspense, useEffect, useEffectEvent, useRef, useState, useCallback, useMemo } from 'react';
+import React, { Suspense, useEffect, useEffectEvent, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, FolderOpen, ScrollText, TextSelect, Minus, Menu, Info, Clock } from 'lucide-react';
+import { ArrowLeft, FolderOpen, ScrollText, TextSelect, Menu, Info, Clock } from 'lucide-react';
 import { HoverCard, HoverCardTrigger, HoverCardContent } from '@/components/ui/hover-card';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useStableHandler } from '@/hooks/useStableHandler';
+import { useLatestRef } from '@/hooks/useLatestRef';
 import { ScrollArea } from '../../../components/ui/scroll-area';
 import { usePreferences } from '@/hooks/usePreferences';
 import { readTurnEndScroll } from '@/lib/turnEndScroll';
@@ -55,12 +56,8 @@ import WorkflowRunDetail from './WorkflowRunDetail';
 import { WORKFLOW_TASK_TYPE } from '../session/subagents/workflowRunState';
 import { deriveSubagentStatus, isTerminalStatus } from '../session/subagents/subagentStatus';
 import Markdown from './Markdown';
-import NavigationPanel from './NavigationPanel';
-import NavDisplayOptions from './NavDisplayOptions';
 import ChatMinimap from './ChatMinimap';
 import JumpToLatestPill from './JumpToLatestPill';
-import { useNavTreeProps } from '../hooks/useNavTreeProps';
-import type { NavWorkspace } from '../hooks/useNavigationData';
 import ShareButton from './ShareButton';
 import { WorkspaceProvider } from '../contexts/WorkspaceContext';
 import SubagentStatusBar from './SubagentStatusBar';
@@ -88,6 +85,7 @@ import { FallbackSuggestionPill } from './chatView/FallbackSuggestionPill';
 import { ChatDiskWarning } from './chatView/ChatDiskWarning';
 import { useToolCallAnnouncer } from './chatView/useToolCallAnnouncer';
 import { useNavPanel } from './chatView/useNavPanel';
+import { MobileNavDrawer } from './chatView/MobileNavDrawer';
 import { useChatScroll } from './chatView/useChatScroll';
 import { useTurnEndScroll } from './chatView/useTurnEndScroll';
 import { useSubagentTabs } from './chatView/useSubagentTabs';
@@ -130,12 +128,12 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   // the same freeze and cannot simply be dropped: three navigations set it
   // without an `agentMode` beside it (the sidebar's workspace-home jump, the
   // archive fallback, and the gallery hops that inherit state).
-  const navModeRef = useRef({
+  const [navMode] = useState(() => ({
     agentMode: state?.agentMode,
     isFlash: state?.workspaceStatus === 'flash',
-  });
-  const agentMode = navModeRef.current.agentMode || (workspaceRecord?.status === 'flash' ? 'flash' : 'ptc');
-  const isFlashMode = agentMode === 'flash' || navModeRef.current.isFlash;
+  }));
+  const agentMode = navMode.agentMode || (workspaceRecord?.status === 'flash' ? 'flash' : 'ptc');
+  const isFlashMode = agentMode === 'flash' || navMode.isFlash;
 
   // The mode's currently-configured model — fallback initializer for the
   // suggestion pill's nextSendModel, mirroring ChatInput's own modePreferredModel.
@@ -164,26 +162,26 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   const [wasStopped, setWasStopped] = useState(false);
   // Track intentional back navigation (skip session save on unmount)
   const intentionalExitRef = useRef(false);
-  // Ref mirrors isActive prop for use in unmount cleanup closures (R1)
+  // Ref mirrors isActive prop for use in unmount cleanup closures (R1). Written
+  // here rather than through useLatestRef so the hooks lint can see it carries a
+  // value, not a node, where the unmount cleanup reads it.
   const isActiveRef = useRef(isActive);
-  isActiveRef.current = isActive;
+  useLayoutEffect(() => {
+    isActiveRef.current = isActive;
+  });
 
   // Nav-panel controller — mobile drawer only now (desktop nav lives in the
   // app-shell AppSidebar); hover/pin members are unused here.
   const {
     navPanelVisible,
     contentAreaRef,
-    skipNavAnimRef,
+    navSlideIn,
     handleNavMinimize,
     handleNavExpand,
     inheritNavOnActivate,
   } = useNavPanel({ isMobile, isActiveRef });
 
 
-
-  // Ref for resolved thread ID — updated after useChatMessages, handed to
-  // useSubagentTabs so its callbacks don't close over currentThreadId (defined later).
-  const resolvedThreadIdRef = useRef(threadId);
 
 
 
@@ -375,8 +373,9 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
 
   // Read by the unmount cleanup, whose own closure holds a stale thread id
   const readCurrentThreadId = useEffectEvent(() => currentThreadId);
-  // Keep resolvedThreadIdRef in sync with the resolved thread ID from useChatMessages
-  resolvedThreadIdRef.current = currentThreadId || threadId;
+  // The resolved thread ID, handed to useSubagentTabs so its callbacks read the
+  // current one without closing over it.
+  const resolvedThreadIdRef = useLatestRef(currentThreadId || threadId);
 
   // A pending interrupt or rejection clears isLoading but the turn is still
   // open: the reply resumes once the reader answers, so the follow keeps its
@@ -481,28 +480,6 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     return () => clearSidebarAgents(sidebarAgentsKey);
   }, [isActive, sidebarAgentsKey, sidebarAgentRows, activeAgentId, handleSelectAgent, handleRemoveAgent]);
 
-  // Read back the tree's rows without making the new-thread handler depend on
-  // them — the handler is an input to the hook that produces them.
-  const navWorkspacesRef = useRef<NavWorkspace[]>([]);
-
-  // MOBILE INTENT: the drawer's ✎ opens a BLANK thread in that workspace, so a
-  // one-tap new chat needs no second stop on the gallery. `__default__` + a
-  // workspaceId in route state resolves to a brand-new thread (ChatAgent only
-  // restores a stored session for the bare /chat route). The desktop sidebar
-  // deliberately differs; see AppSidebar's openWorkspaceHome.
-  const handleNewThread = useCallback((wsId: string) => {
-    const ws = navWorkspacesRef.current.find((w) => w.workspace_id === wsId);
-    const status = ws?.status || null;
-    navigate('/chat/t/__default__', {
-      state: {
-        workspaceId: wsId,
-        workspaceName: ws?.name || '',
-        workspaceStatus: status,
-        agentMode: status === 'flash' ? 'flash' : 'ptc',
-      },
-    });
-  }, [navigate]);
-
   // The same inputs the AppSidebar receives over the bridge, so the drawer's
   // tree and the desktop tree render identically.
   const navAgentsSlice = useMemo(() => ({
@@ -512,52 +489,6 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     onRemoveAgent: handleRemoveAgent,
   }), [sidebarAgentRows, activeAgentId, handleSelectAgent, handleRemoveAgent]);
 
-  // Navigation panel data — only the MOBILE drawer renders this tree, so on
-  // desktop the whole data layer is parked: five cached ChatViews would
-  // otherwise each run the workspace list, the thread queries and the store
-  // subscriptions for a panel that is never shown.
-  // NavigationPanel is memoized, and this node is one of its props: built
-  // inline it was new on every render of this view, which is every streamed
-  // token, and the whole sidebar tree rendered with it.
-  const navHeaderActions = useMemo(() => (
-      <>
-        {/* Sidebar display options (workspace/thread visibility) —
-            pinned to the left edge; margin-right:auto pushes the pin +
-            minimize controls to the right of the header row. */}
-        <div style={{ marginRight: 'auto', display: 'flex', alignItems: 'center' }}>
-          <NavDisplayOptions />
-        </div>
-        {/* Minimize button — closes the drawer */}
-        <button
-          onClick={handleNavMinimize}
-          className="nav-panel-dismiss-btn"
-          style={{
-            padding: 4,
-            background: 'transparent',
-            border: 'none',
-            cursor: 'pointer',
-            borderRadius: 4,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          title={t('nav.minimize')}
-          aria-label={t('nav.minimize')}
-        >
-          <Minus className="h-4 w-4" style={{ color: 'var(--color-text-tertiary)' }} />
-        </button>
-      </>
-  ), [handleNavMinimize, t]);
-
-  const navTreeProps = useNavTreeProps({
-    currentWorkspaceId: workspaceId,
-    currentThreadId: sidebarAgentsKey,
-    agents: navAgentsSlice,
-    onNewThread: handleNewThread,
-    enabled: isMobile,
-    fallbackWorkspaceName: workspaceName,
-  });
-  navWorkspacesRef.current = navTreeProps.workspaces;
 
   // Save chat session on unmount for cross-tab restoration (workspace + thread only).
   // Only the active view saves — evicted hidden views must not overwrite (R1).
@@ -855,7 +786,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     previewData,
     panelWrapperRef,
     isDragging,
-    dragJustEndedRef,
+    dragJustEnded,
     handleDividerMouseDown,
     popPanelHistory,
     handleOpenFileFromChat,
@@ -898,7 +829,9 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   });
 
   // Keep the ref in sync so SSE events (via handleOpenPreviewFromStream) use the latest closure
-  openPreviewRef.current = handleOpenPreview;
+  useLayoutEffect(() => {
+    openPreviewRef.current = handleOpenPreview;
+  });
 
   // A deliverable card names its own workspace only for a cross-workspace ref;
   // otherwise the file belongs to the thread's own workspace, which the card
@@ -1263,11 +1196,10 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   const prevIsActiveRef = useRef(false);
   useEffect(() => {
     if (isActive && !prevIsActiveRef.current) {
-      const wantNavVisible = inheritNavOnActivate();
+      inheritNavOnActivate();
 
       const tidNow = currentThreadId || threadId;
       requestAnimationFrame(() => {
-        if (wantNavVisible) skipNavAnimRef.current = false;
         // First-mount restore is owned by the entry-restore effect. Here we only
         // catch up a cached re-entry to the bottom if the user left it at bottom;
         // otherwise the DOM scroll position preserved under display:none stands.
@@ -1277,7 +1209,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
       });
     }
     prevIsActiveRef.current = isActive;
-  }, [isActive, getScrollContainer, currentThreadId, threadId, pinToBottom, inheritNavOnActivate, skipNavAnimRef, isNearBottomRef, restoredForThreadRef]);
+  }, [isActive, getScrollContainer, currentThreadId, threadId, pinToBottom, inheritNavOnActivate, isNearBottomRef, restoredForThreadRef]);
 
   const feedThreadId = currentThreadId || threadId;
   useForeignRunCatchUp({
@@ -1407,56 +1339,18 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
         {/* Content area: Chat Window (+ nav drawer on mobile — desktop nav
             lives in the app-shell AppSidebar now) */}
         <div ref={contentAreaRef} className="flex-1 flex overflow-hidden" style={{ position: 'relative', containerType: 'inline-size' }}>
-          {/* Mobile backdrop — dimmed overlay behind nav drawer */}
-          {isMobile && navPanelVisible && (
-            <div
-              style={{
-                position: 'absolute',
-                inset: 0,
-                zIndex: 39,
-                backgroundColor: 'rgba(0, 0, 0, 0.5)',
-              }}
-              onClick={handleNavMinimize}
+          {isMobile && (
+            <MobileNavDrawer
+              visible={navPanelVisible}
+              slideIn={navSlideIn}
+              onMinimize={handleNavMinimize}
+              isActive={isActive}
+              workspaceId={workspaceId}
+              threadId={sidebarAgentsKey}
+              agents={navAgentsSlice}
+              workspaceName={workspaceName}
             />
           )}
-          {/* Navigation drawer area (mobile only) — interactive only when visible */}
-          <div
-            style={{
-              position: 'absolute',
-              left: 0,
-              top: 0,
-              bottom: 0,
-              width: 'min(320px, calc(100% - 48px))',
-              zIndex: 40,
-              pointerEvents: isMobile && navPanelVisible ? 'auto' : 'none',
-            }}
-          >
-            <AnimatePresence>
-              {isMobile && navPanelVisible && (
-                <motion.div
-                  initial={skipNavAnimRef.current ? false : { x: '-100%', opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                  exit={{ x: '-100%', opacity: 0 }}
-                  transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                  {...(isMobile ? {
-                    drag: 'x' as const,
-                    dragConstraints: { left: -320, right: 0 },
-                    dragElastic: { left: 0.3, right: 0 },
-                    onDragEnd: (_: unknown, info: PanInfo) => {
-                      if (info.velocity.x < -300 || info.offset.x < -100) handleNavMinimize();
-                    },
-                  } : {})}
-                  style={{ width: '100%', height: '100%', position: 'absolute', left: 0, top: 0 }}
-                >
-                  <NavigationPanel
-                    headerActions={navHeaderActions}
-                    isActive={isActive}
-                    {...navTreeProps}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
 
           {/* Chat Window — full width; the mobile nav drawer overlays (never pushes) */}
           <div className="flex-1 flex flex-col overflow-hidden min-w-0">
@@ -1928,7 +1822,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
               initial={{ width: 0, opacity: 0 }}
               animate={{ width: rightPanelWidth, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
-              transition={(isDragging || dragJustEndedRef.current)
+              transition={(isDragging || dragJustEnded)
                 ? { duration: 0 }
                 : { duration: 0.25, ease: [0.22, 1, 0.36, 1] }
               }

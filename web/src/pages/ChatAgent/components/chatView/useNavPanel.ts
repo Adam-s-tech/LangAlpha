@@ -23,9 +23,12 @@ export function useNavPanel({ isMobile, isActiveRef }: {
   // True when the content area is too narrow for the docked push layout; a
   // pinned panel then stays visible but overlays without pushing content.
   const [contentNarrow, setContentNarrow] = useState(false);
-  // Skip nav panel slide-in on mount if already open (inherited from previous thread or pinned).
-  const skipNavAnimRef = useRef(initialNavOpen);
-  useEffect(() => { skipNavAnimRef.current = false; return () => { if (navHideTimerRef.current) clearTimeout(navHideTimerRef.current); }; }, []);
+  // Whether the drawer slides in when it next appears: only when the user
+  // opens it. Open on arrival (inherited from the previous thread, or pinned),
+  // it appears in place. State set beside the visibility it describes, so the
+  // render that mounts the drawer reads both together.
+  const [navSlideIn, setNavSlideIn] = useState(!initialNavOpen);
+  useEffect(() => () => { if (navHideTimerRef.current) clearTimeout(navHideTimerRef.current); }, []);
   // Auto-close nav panel when content area shrinks below threshold (e.g., right panel opens)
   useEffect(() => {
     const container = contentAreaRef.current;
@@ -60,6 +63,7 @@ export function useNavPanel({ isMobile, isActiveRef }: {
     if (navHideTimerRef.current) clearTimeout(navHideTimerRef.current);
     navPanelVisibleRef.current = true;
     _sharedNav.visible = true;
+    setNavSlideIn(true);
     setNavPanelVisible(true);
   }, []);
 
@@ -100,6 +104,7 @@ export function useNavPanel({ isMobile, isActiveRef }: {
       _sharedNav.locked = false;
       navPanelVisibleRef.current = true;
       _sharedNav.visible = true;
+      setNavSlideIn(true);
       setNavPanelVisible(true);
     } else {
       navPanelVisibleRef.current = false;
@@ -115,13 +120,13 @@ export function useNavPanel({ isMobile, isActiveRef }: {
     if (navHideTimerRef.current) clearTimeout(navHideTimerRef.current);
     navPanelVisibleRef.current = true;
     _sharedNav.visible = true;
+    setNavSlideIn(true);
     setNavPanelVisible(true);
   }, []);
 
   // On view activation: inherit the shared nav state (see the become-active
-  // effect in ChatView). Returns wantNavVisible so the caller's rAF can clear
-  // the skip-animation flag it set here.
-  const inheritNavOnActivate = useCallback((): boolean => {
+  // effect in ChatView).
+  const inheritNavOnActivate = useCallback((): void => {
     // Clear stale nav-hide timer from a previous activation period
     if (navHideTimerRef.current) clearTimeout(navHideTimerRef.current);
     // Reset nav lock — matches the old per-thread-change reset so the
@@ -136,9 +141,8 @@ export function useNavPanel({ isMobile, isActiveRef }: {
     // Sync nav panel from shared state
     navPanelVisibleRef.current = wantNavVisible;
     setNavPanelVisible(wantNavVisible);
-    // Skip slide-in animation if inheriting open state
-    if (wantNavVisible) skipNavAnimRef.current = true;
-    return wantNavVisible;
+    // An inherited open state appears in place
+    if (wantNavVisible) setNavSlideIn(false);
   }, []);
 
   return {
@@ -147,7 +151,7 @@ export function useNavPanel({ isMobile, isActiveRef }: {
     contentNarrow,
     contentAreaRef,
     navPanelVisibleRef,
-    skipNavAnimRef,
+    navSlideIn,
     handleNavEnter,
     handleNavLeave,
     handleNavMinimize,

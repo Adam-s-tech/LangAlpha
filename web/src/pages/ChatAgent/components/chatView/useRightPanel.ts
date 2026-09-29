@@ -6,6 +6,7 @@ import { appendPathSuffix, getPreviewUrl } from '../../utils/api';
 import { computeAgentArtifactRouting } from '../../utils/agentPaths';
 import { collectRecentWritePaths, collectWriteLog, type TurnMessage } from '../../utils/fileRefResolver';
 import { useStableHandler } from '@/hooks/useStableHandler';
+import { useLatestRef } from '@/hooks/useLatestRef';
 import { isValidUuid } from '../../utils/uuid';
 import { clampPanelWidth as clampPanelWidthUtil } from '@/lib/panelUtils';
 import { buildMarketViewUrl } from '@/pages/MarketView/utils/marketRoute';
@@ -90,7 +91,9 @@ export function useRightPanel({
   const [isDragging, setIsDragging] = useState(false);
   // True for exactly one render after drag ends — forces transition duration:0
   // so Framer Motion jumps to the final width instead of animating from pre-drag.
-  const dragJustEndedRef = useRef(false);
+  // State, not a ref read in render: it is a render input, and a render has to
+  // follow it back to false so the next close or resize animates again.
+  const [dragJustEnded, setDragJustEnded] = useState(false);
   // Armed for the duration of a divider drag; unmount mid-drag would otherwise
   // strand document listeners, app-wide col-resize/no-select body styles, and
   // pointer-events:none on every iframe.
@@ -134,9 +137,6 @@ export function useRightPanel({
   const [previewData, setPreviewData] = useState<PreviewData | null>(null);
   const panelWrapperRef = useRef<HTMLDivElement>(null);
 
-  // Clear the drag-just-ended flag after each render so future transitions animate normally.
-  useEffect(() => { dragJustEndedRef.current = false; });
-
   // Clear preview cache and cross-workspace state when workspace changes to avoid leaking old workspace data.
   useEffect(() => {
     previewMapRef.current.clear();
@@ -162,8 +162,7 @@ export function useRightPanel({
 
   // Read by the landing below, which is called from handlers whose identity
   // must not follow the panel type.
-  const rightPanelTypeRef = useRef(rightPanelType);
-  rightPanelTypeRef.current = rightPanelType;
+  const rightPanelTypeRef = useLatestRef(rightPanelType);
 
   /**
    * Size the file panel for what is landing in it. A closed panel opens at
@@ -180,7 +179,7 @@ export function useRightPanel({
     panelMaxRatioRef.current = ratio;
     const containerW = containerRef.current?.offsetWidth || window.innerWidth;
     setRightPanelWidth((prev) => clampPanelWidthUtil(open ? Math.max(prev, desired) : desired, containerW, ratio));
-  }, [containerRef]);
+  }, [containerRef, rightPanelTypeRef]);
 
   // A chart coming to the front, by landing, by a click on its tab or by a
   // strip restored with it in front, widens the panel to its floor and no
@@ -239,7 +238,10 @@ export function useRightPanel({
     function onMouseUp() {
       // Flag ensures the next render uses duration:0 so Framer doesn't
       // animate from the stale pre-drag width to the final width.
-      dragJustEndedRef.current = true;
+      setDragJustEnded(true);
+      // Mouseup renders synchronously, so the frame after it has the final
+      // width committed and later changes animate again.
+      requestAnimationFrame(() => setDragJustEnded(false));
       setIsDragging(false);
       setRightPanelWidth(currentWidth);
       teardown();
@@ -715,7 +717,7 @@ export function useRightPanel({
     previewData,
     panelWrapperRef,
     isDragging,
-    dragJustEndedRef,
+    dragJustEnded,
     handleDividerMouseDown,
     popPanelHistory,
     handleOpenFileFromChat,

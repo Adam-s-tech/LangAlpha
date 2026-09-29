@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import shlex
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -21,6 +22,7 @@ from ptc_agent.core.sandbox.runtime import SandboxGoneError
 from ptc_agent.core.session import Session, SessionManager
 
 from src.server.database.computer import (
+    DEFAULT_ROOT_DIR,
     get_computer,
     stamp_computer_layout_version,
     stamp_computer_mcp_config_version,
@@ -103,6 +105,73 @@ class ProvisioningMixin:
             await self._detached_sandbox_teardown(
                 durable_sandbox_id, delete=True, binding=binding
             )
+
+    _thread_dir_removals: set[asyncio.Task] = set()
+
+    @classmethod
+    def schedule_thread_dirs_removal(cls, workspace_id: str, thread_id: str) -> None:
+        try:
+            manager = cls.get_instance()
+        except Exception:
+            return
+
+        async def _run() -> None:
+            try:
+                await manager.remove_thread_dirs_if_running(workspace_id, thread_id)
+            except Exception as e:
+                logger.warning(
+                    f"Could not remove sandbox dirs of deleted thread {thread_id}: {e}"
+                )
+
+        task = asyncio.create_task(_run())
+        cls._thread_dir_removals.add(task)
+        task.add_done_callback(cls._thread_dir_removals.discard)
+
+    async def remove_thread_dirs_if_running(
+        self, workspace_id: str, thread_id: str
+    ) -> None:
+        """A deleted thread's history leaves the machine now, if it is up.
+
+        Never wakes a stopped machine: the transcript reconcile removes what this
+        misses on the next turn end or restore. Dirs are keyed by the id's first
+        8 characters, so a prefix a live sibling thread still uses is kept.
+        """
+        from src.server.database.computer import get_computer_for_workspace
+        from src.server.database.conversation import get_workspace_thread_short_ids
+        from src.server.services.transcripts import held_layout
+
+        short_id = thread_id[:8]
+        if short_id in await get_workspace_thread_short_ids(workspace_id):
+            return
+        computer = await get_computer_for_workspace(workspace_id)
+        provider_ref = computer.get("provider_ref") if computer else None
+        if not provider_ref or computer.get("status") != "running":
+            return
+        async with held_layout(
+            computer.get("root_dir") or DEFAULT_ROOT_DIR, workspace_id
+        ) as layout:
+            if layout is None:
+                return
+            command = "rm -rf " + " ".join(
+                shlex.quote(path)
+                for path in (
+                    layout.thread_dir(short_id),
+                    layout.join(WorkspaceLayout.large_results_subdir(short_id)),
+                )
+            )
+            session = self.get_session_if_ready(
+                workspace_id, expected_sandbox_id=str(provider_ref)
+            )
+            if session is not None and session.sandbox.runtime is not None:
+                result = await session.sandbox.runtime.exec(command)
+            else:
+                binding = self._binding_from_computer(workspace_id, computer)
+                async with self._detached_runtime(
+                    str(provider_ref), binding=binding
+                ) as runtime:
+                    result = await runtime.exec(command)
+        if result.exit_code != 0:
+            raise RuntimeError(f"thread dir removal exited {result.exit_code}")
 
     def _forget_project(self, workspace_id: str) -> None:
         """The computer owns the session, metadata and lock; they outlive a project."""
@@ -835,12 +904,71 @@ class ProvisioningMixin:
                         root=binding.root_dir,
                     ),
                 )
-            return True
         except RestoreGuardUnavailable:
             raise
         except Exception as e:
             logger.warning(f"File restore check failed for {workspace_id}: {e}")
             return False
+        self._schedule_after_restore(workspace_id, sandbox, binding.root_dir)
+        return True
+
+    _after_restore: dict[tuple[str, str | None], asyncio.Task] = {}
+
+    @classmethod
+    def _schedule_after_restore(
+        cls, workspace_id: str, sandbox: Any, root: Optional[str]
+    ) -> None:
+        """What a usable folder can wait for, in the background.
+
+        Evicted results come back first, then transcripts are rebuilt (they
+        are not backed up) and deleted threads' dirs are cleared. A bring-up
+        checks the restore more than once; a job still running for
+        the same sandbox is left to finish rather than doubled. A replaced
+        sandbox gets its own job, since the old one's work stayed behind.
+        The folder is read when the job runs, under the folder hold: a settle
+        may have renamed it since the restore, and a sibling may hold the old
+        name.
+        """
+        key = (workspace_id, getattr(sandbox, "sandbox_id", None))
+        running = cls._after_restore.get(key)
+        if running is not None and not running.done():
+            return
+        runtime = getattr(sandbox, "runtime", None)
+        if runtime is None:
+            return
+
+        async def _run() -> None:
+            from src.server.services.transcripts import held_layout, sync_workspace
+
+            try:
+                async with held_layout(root or DEFAULT_ROOT_DIR, workspace_id) as layout:
+                    if layout is None:
+                        return
+                    try:
+                        outcome = await FilePersistenceService.restore_deferred(
+                            workspace_id, sandbox, layout=layout
+                        )
+                        if outcome["restored"] or outcome["errors"]:
+                            logger.info(
+                                f"Deferred restore for workspace {workspace_id}: {outcome}"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Deferred restore failed for workspace {workspace_id}: {e}"
+                        )
+                    outcome = await sync_workspace(runtime, layout, workspace_id)
+                    if any(outcome.values()):
+                        logger.info(
+                            f"Transcript sync for workspace {workspace_id}: {outcome}"
+                        )
+            except Exception as e:
+                logger.warning(
+                    f"Transcript sync failed for workspace {workspace_id}: {e}"
+                )
+            finally:
+                cls._after_restore.pop(key, None)
+
+        cls._after_restore[key] = asyncio.create_task(_run())
 
     async def _ensure_workspace_dirs(
         self, workspace_id: str, sandbox: Any, dir_name: Optional[str]

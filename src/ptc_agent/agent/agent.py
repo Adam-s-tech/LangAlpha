@@ -579,7 +579,7 @@ class PTCAgent:
         subagent_summary = format_subagent_summary(subagents)
 
         eviction_dir = (
-            WorkspaceLayout.thread_subdir(short_thread_id, "large_tool_results")
+            WorkspaceLayout.large_results_subdir(short_thread_id)
             if short_thread_id
             else WorkspaceLayout.LARGE_TOOL_RESULTS_DIR
         )

@@ -54,6 +54,7 @@ from ptc_agent.agent.middleware.compaction.types import (
 )
 from ptc_agent.agent.middleware.compaction.utils import (
     DEFAULT_SUMMARY_PROMPT,
+    apply_recorded_offloads,
     build_compaction_event,
     build_summary_message,
     count_tokens_tiktoken,
@@ -61,20 +62,45 @@ from ptc_agent.agent.middleware.compaction.utils import (
     get_effective_messages,
     strip_base64_from_messages,
     partition_at_cutoff,
+    SummaryStart,
+    summary_resumes_at,
+    tool_call_ids,
     truncate_message_args,
     truncate_read_results,
 )
 from ptc_agent.agent.middleware.compaction.offloading import (
     aoffload_base64_content,
-    aoffload_to_backend,
     aoffload_truncated_args,
     get_thread_id,
 )
+from ptc_agent.agent.transcript import BackendIO, TranscriptTarget, export_live
 
 logger = logging.getLogger(__name__)
 
 
 _COMPACTION_USER_NUDGE = "Generate the summary now."
+
+# The export shares the summary call's wall clock and is usually far shorter;
+# this only caps a sandbox that stopped answering.
+_TRANSCRIPT_EXPORT_TIMEOUT = 30.0
+
+
+async def aexport_transcript(
+    backend: Any, transcript: TranscriptTarget | None, messages: list[AnyMessage]
+) -> None:
+    """Bring the transcript a summary points at up to date; never raises."""
+    if backend is None or transcript is None:
+        return
+    try:
+        await asyncio.wait_for(
+            export_live(BackendIO(backend), transcript, messages),
+            timeout=_TRANSCRIPT_EXPORT_TIMEOUT,
+        )
+    except Exception as e:
+        # The pointer stays: the server's turn-end export fills it in.
+        logger.warning(
+            "[Compaction] transcript export to %s failed: %s", transcript.directory, e
+        )
 
 
 def _build_summary_request(
@@ -297,8 +323,10 @@ class CompactionMiddleware(AgentMiddleware):
 
         # 2. Reconstruct effective messages
         ensure_message_ids(request.messages)
-        effective_messages = self._get_effective_messages(
-            request.messages, previous_event
+        effective_messages = self._apply_recorded_offloads(
+            self._get_effective_messages(request.messages, previous_event),
+            offloaded_tool_call_ids,
+            offloaded_read_result_ids,
         )
 
         # 3. Count tokens once (prefer cached from last model call, fall back to tiktoken).
@@ -400,6 +428,7 @@ class CompactionMiddleware(AgentMiddleware):
                             last_truncation_msg_count=last_truncation_msg_count,
                             cached_input_tokens=cached_input_tokens,
                             cached_output_tokens=cached_output_tokens,
+                            offloads_changed=state_changed,
                         )
                     ),
                 )
@@ -426,6 +455,7 @@ class CompactionMiddleware(AgentMiddleware):
                         last_truncation_msg_count=last_truncation_msg_count,
                         cached_input_tokens=cached_input_tokens,
                         cached_output_tokens=cached_output_tokens,
+                        offloads_changed=state_changed,
                     )
                 ),
             )
@@ -438,17 +468,26 @@ class CompactionMiddleware(AgentMiddleware):
         cached_input_tokens = 0
         cached_output_tokens = 0
 
-        # Offload evicted messages to backend (non-fatal)
-        file_path = await aoffload_to_backend(self._backend, messages_to_summarize)
-
-        # Generate summary (emits SSE start/complete/error signals)
-        summary = await self._acreate_summary(
-            messages_to_summarize, original_count=len(truncated_messages)
+        # Summarize (emits SSE start/complete/error signals) while the
+        # transcript the summary points at catches up with this turn.
+        summarized = self._trim_messages_for_summary(messages_to_summarize)
+        transcript = self._transcript_target()
+        summary, _ = await asyncio.gather(
+            self._acreate_summary(
+                messages_to_summarize,
+                original_count=len(truncated_messages),
+                trimmed=summarized,
+            ),
+            aexport_transcript(self._backend, transcript, request.messages),
         )
 
-        # Build summary message
         summary_message = self._build_summary_message(
-            summary, file_path, original_message_count=len(truncated_messages)
+            summary,
+            transcript,
+            original_message_count=len(truncated_messages),
+            resumes_at=summary_resumes_at(
+                request.messages, messages_to_summarize, summarized
+            ),
         )
 
         # Create summarization event with an id anchor (cutoff grounded in raw list)
@@ -456,7 +495,7 @@ class CompactionMiddleware(AgentMiddleware):
             raw_messages=request.messages,
             preserved_messages=preserved_messages,
             summary_message=summary_message,
-            file_path=file_path,
+            file_path=transcript.directory if transcript else None,
         )
 
         # Call handler with summarized messages
@@ -468,6 +507,10 @@ class CompactionMiddleware(AgentMiddleware):
 
         # Reset batch counter after summarization (message count drops dramatically)
         last_truncation_msg_count = 0
+        # Summarized calls never reach the model again, so their ids are dead.
+        live_ids = tool_call_ids(preserved_messages)
+        offloaded_tool_call_ids &= live_ids
+        offloaded_read_result_ids &= live_ids
 
         # Return with state update to persist summarization event + offloaded IDs
         return ExtendedModelResponse(
@@ -512,8 +555,10 @@ class CompactionMiddleware(AgentMiddleware):
         cached_output_tokens: int = request.state.get("_cached_output_tokens", 0)
 
         ensure_message_ids(request.messages)
-        effective_messages = self._get_effective_messages(
-            request.messages, previous_event
+        effective_messages = self._apply_recorded_offloads(
+            self._get_effective_messages(request.messages, previous_event),
+            offloaded_tool_call_ids,
+            offloaded_read_result_ids,
         )
 
         truncated_messages, truncated, originals = self._truncate_args(
@@ -574,6 +619,7 @@ class CompactionMiddleware(AgentMiddleware):
                             last_truncation_msg_count=last_truncation_msg_count,
                             cached_input_tokens=cached_input_tokens,
                             cached_output_tokens=cached_output_tokens,
+                            offloads_changed=state_changed,
                         )
                     ),
                 )
@@ -597,6 +643,7 @@ class CompactionMiddleware(AgentMiddleware):
                         last_truncation_msg_count=last_truncation_msg_count,
                         cached_input_tokens=cached_input_tokens,
                         cached_output_tokens=cached_output_tokens,
+                        offloads_changed=state_changed,
                     )
                 ),
             )
@@ -608,24 +655,22 @@ class CompactionMiddleware(AgentMiddleware):
         cached_input_tokens = 0
         cached_output_tokens = 0
 
-        # Sync path skips backend persistence (SandboxBackend is async-only).
-        # It is not the runtime path (the agent runs async via abefore_model /
+        # Sync path skips the transcript export and its pointer (SandboxBackend
+        # is async-only). It is not the runtime path (the agent runs async via
         # _acreate_summary, which carries the compaction_timeout); a blocking
         # invoke() can't be bounded by asyncio.wait_for, so no timeout here.
-        file_path = None
-
         summary = self._create_summary(
             messages_to_summarize, original_count=len(truncated_messages)
         )
         summary_message = self._build_summary_message(
-            summary, file_path, original_message_count=len(truncated_messages)
+            summary, None, original_message_count=len(truncated_messages)
         )
 
         new_event = build_compaction_event(
             raw_messages=request.messages,
             preserved_messages=preserved_messages,
             summary_message=summary_message,
-            file_path=file_path,
+            file_path=None,
         )
 
         modified_messages = [summary_message, *preserved_messages]
@@ -634,6 +679,9 @@ class CompactionMiddleware(AgentMiddleware):
 
         # Reset batch counter after summarization
         last_truncation_msg_count = 0
+        live_ids = tool_call_ids(preserved_messages)
+        offloaded_tool_call_ids &= live_ids
+        offloaded_read_result_ids &= live_ids
 
         return ExtendedModelResponse(
             model_response=response,
@@ -797,6 +845,42 @@ class CompactionMiddleware(AgentMiddleware):
 
         return len(messages)
 
+    def _transcript_target(self) -> TranscriptTarget | None:
+        """This agent's transcript, or None where there is no sandbox to hold one."""
+        if self._backend is None:
+            return None
+        try:
+            configurable = get_config().get("configurable", {})
+        except RuntimeError:
+            return None
+        thread_id = configurable.get("thread_id")
+        if not thread_id:
+            return None
+        return TranscriptTarget.for_agent(
+            str(thread_id), str(configurable.get("checkpoint_ns") or "")
+        )
+
+    def _offload_thread_dir(self) -> str | None:
+        # Markers name the offload path only when originals are written there.
+        if self._backend is None:
+            return None
+        return WorkspaceLayout.thread_subdir(get_thread_id())
+
+    def _apply_recorded_offloads(
+        self,
+        messages: list[AnyMessage],
+        arg_ids: set[str],
+        read_ids: set[str],
+    ) -> list[AnyMessage]:
+        return apply_recorded_offloads(
+            messages,
+            arg_ids,
+            read_ids,
+            self._max_arg_length,
+            self._truncation_text,
+            self._offload_thread_dir(),
+        )
+
     def _truncate_args(
         self,
         messages: list[AnyMessage],
@@ -840,17 +924,12 @@ class CompactionMiddleware(AgentMiddleware):
         if cutoff_index >= len(messages):
             return messages, False, {}
 
-        # Compute thread_dir so truncation markers can reference the offload path
-        thread_dir = None
-        if self._backend is not None:
-            thread_dir = WorkspaceLayout.thread_subdir(get_thread_id())
-
         return truncate_message_args(
             messages,
             cutoff_index,
             self._max_arg_length,
             self._truncation_text,
-            thread_dir,
+            self._offload_thread_dir(),
         )
 
     def _truncate_read_results(
@@ -901,11 +980,15 @@ class CompactionMiddleware(AgentMiddleware):
     def _build_summary_message(
         self,
         summary: str,
-        file_path: str | None = None,
+        transcript: TranscriptTarget | None = None,
         original_message_count: int = 0,
+        *,
+        resumes_at: SummaryStart | None = None,
     ) -> HumanMessage:
         """Delegate to shared utility."""
-        return build_summary_message(summary, file_path, original_message_count)
+        return build_summary_message(
+            summary, transcript, original_message_count, resumes_at=resumes_at
+        )
 
     # =========================================================================
     # Summarization trigger and cutoff logic
@@ -1106,15 +1189,22 @@ class CompactionMiddleware(AgentMiddleware):
         last_truncation_msg_count: int,
         cached_input_tokens: int,
         cached_output_tokens: int,
+        offloads_changed: bool = True,
     ) -> dict[str, Any]:
-        """Build a state update dict for persisting per-invocation state."""
-        return {
-            "_offloaded_tool_call_ids": offloaded_tool_call_ids,
-            "_offloaded_read_result_ids": offloaded_read_result_ids,
-            "_truncation_batch_count": last_truncation_msg_count,
+        """Build a state update dict for persisting per-invocation state.
+
+        The offload fields ride along only when they changed: each write is a
+        new checkpoint blob, and the id sets live as long as the thread.
+        """
+        update: dict[str, Any] = {
             "_cached_input_tokens": cached_input_tokens,
             "_cached_output_tokens": cached_output_tokens,
         }
+        if offloads_changed:
+            update["_offloaded_tool_call_ids"] = offloaded_tool_call_ids
+            update["_offloaded_read_result_ids"] = offloaded_read_result_ids
+            update["_truncation_batch_count"] = last_truncation_msg_count
+        return update
 
     def _find_safe_cutoff(
         self, messages: list[AnyMessage], messages_to_keep: int
@@ -1167,13 +1257,25 @@ class CompactionMiddleware(AgentMiddleware):
         return summary
 
     async def _acreate_summary(
-        self, messages_to_summarize: list[AnyMessage], *, original_count: int = 0
+        self,
+        messages_to_summarize: list[AnyMessage],
+        *,
+        original_count: int = 0,
+        trimmed: list[AnyMessage] | None = None,
     ) -> str:
-        """Generate summary for the given messages (async version with custom events)."""
+        """Generate summary for the given messages (async version with custom events).
+
+        ``trimmed`` is the already-trimmed list, for a caller that also needs
+        to know what trimming dropped.
+        """
         if not messages_to_summarize:
             return "No previous conversation history."
 
-        trimmed_messages = self._trim_messages_for_summary(messages_to_summarize)
+        trimmed_messages = (
+            trimmed
+            if trimmed is not None
+            else self._trim_messages_for_summary(messages_to_summarize)
+        )
         if not trimmed_messages:
             return "Previous conversation was too long to summarize."
 

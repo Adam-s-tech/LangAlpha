@@ -24,6 +24,12 @@ from src.llms.attachment_payload import has_attachment
 # Using 4 chars per token as a conservative approximation (actual ratio varies by content)
 NUM_CHARS_PER_TOKEN = 4
 
+# Evicted results are backed up with the workspace, and a strict backup aborts
+# on any file its transfer path cannot store (100 MiB inline, 256 MiB relayed).
+# Half the smallest leaves headroom and is still far past anything a model
+# reads in slices.
+MAX_EVICTED_BYTES = 50 * 1024 * 1024
+
 # Tools excluded from eviction (PascalCase versions of the original snake_case tools)
 # These either have built-in truncation or are problematic to evict.
 # Glob is deliberately NOT excluded: it self-caps (GLOB_MATCH_LIMIT) for the common
@@ -83,6 +89,16 @@ def _create_content_preview(
     )
 
     return head_sample + truncation_notice + tail_sample
+
+
+def _cap_evicted(content_str: str) -> tuple[str, int | None]:
+    """The part of an evicted result that is kept, and its full size if cut."""
+    if len(content_str) * 4 <= MAX_EVICTED_BYTES:
+        return content_str, None
+    raw = content_str.encode()
+    if len(raw) <= MAX_EVICTED_BYTES:
+        return content_str, None
+    return raw[:MAX_EVICTED_BYTES].decode(errors="ignore"), len(raw)
 
 
 def _detect_extension(content_str: str) -> str:
@@ -177,7 +193,8 @@ class LargeResultEvictionMiddleware(AgentMiddleware):
         file_path = f"{self._eviction_dir}/{sanitized_id}{_detect_extension(content_str)}"
         # Middleware rewrites by-id paths (same tool_call_id retries overwrite prior eviction);
         # opt out of protocol's create-only default.
-        result = await self.backend.awrite(file_path, content_str, overwrite=True)
+        kept, full_size = _cap_evicted(content_str)
+        result = await self.backend.awrite(file_path, kept, overwrite=True)
         if result is None or result.error:
             return message
 
@@ -188,6 +205,11 @@ class LargeResultEvictionMiddleware(AgentMiddleware):
             file_path=file_path,
             content_sample=content_sample,
         )
+        if full_size is not None:
+            replacement_text += (
+                f"\nThe file holds only the first {MAX_EVICTED_BYTES // 2**20} MiB "
+                f"of this {full_size / 2**20:.0f} MiB result.\n"
+            )
 
         # Preserve artifact from content_and_artifact tools
         # The eviction rebuilds the message, so anything not copied here is

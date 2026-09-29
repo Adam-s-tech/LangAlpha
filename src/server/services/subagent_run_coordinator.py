@@ -216,6 +216,16 @@ class SubagentRunCoordinator:
         )
         if result["applied"]:
             run = result["run"]
+            # In the background, not awaited: the export may still be running,
+            # or folded into one already under way, when the report-back wakes
+            # the parent, so the transcript it reads for this task can lag the
+            # run's last word.
+            try:
+                from src.server.services.transcripts import schedule_thread_export
+
+                schedule_thread_export(self.thread_id)
+            except Exception:
+                pass
             if not defer_run_end:
                 await self._append_v2_frame(
                     task_run_id,

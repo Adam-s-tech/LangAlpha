@@ -140,18 +140,11 @@ async def test_compact_messages_calls_llm_with_system_message(monkeypatch):
     )
 
     # Short-circuit offloading so the test doesn't need a sandbox.
-    async def _passthrough_offload(backend, messages):
+    async def _passthrough_offload(backend, messages, **kwargs):
         return messages
 
     monkeypatch.setattr(
         compact_module, "aoffload_base64_content", _passthrough_offload
-    )
-
-    async def _noop_offload_to_backend(backend, messages):
-        return None
-
-    monkeypatch.setattr(
-        compact_module, "aoffload_to_backend", _noop_offload_to_backend
     )
 
     async def _noop_offload_args(*args, **kwargs):
@@ -200,15 +193,10 @@ async def test_chained_compaction_anchors_and_reconstructs_safely(monkeypatch):
     )
     monkeypatch.setattr(compact_module, "get_llm_by_type", lambda model_name: fake_llm)
 
-    async def _passthrough_offload(backend, messages):
+    async def _passthrough_offload(backend, messages, **kwargs):
         return messages
 
     monkeypatch.setattr(compact_module, "aoffload_base64_content", _passthrough_offload)
-
-    async def _noop_offload_to_backend(backend, messages):
-        return None
-
-    monkeypatch.setattr(compact_module, "aoffload_to_backend", _noop_offload_to_backend)
 
     async def _noop_offload_args(*args, **kwargs):
         return None
@@ -258,14 +246,13 @@ class TestCompactMessagesErrorPath:
     invisible."""
 
     def _patch_offload_stubs(self, monkeypatch, compact_module):
-        async def _passthrough(backend, messages):
+        async def _passthrough(backend, messages, **kwargs):
             return messages
 
         async def _noop(*args, **kwargs):
             return None
 
         monkeypatch.setattr(compact_module, "aoffload_base64_content", _passthrough)
-        monkeypatch.setattr(compact_module, "aoffload_to_backend", _noop)
         monkeypatch.setattr(compact_module, "aoffload_truncated_args", _noop)
 
     @pytest.mark.asyncio
@@ -329,14 +316,13 @@ class TestCompactMessagesTimeout:
     call, not on a flat admission-side 409 clock."""
 
     def _patch_offload_stubs(self, monkeypatch, compact_module):
-        async def _passthrough(backend, messages):
+        async def _passthrough(backend, messages, **kwargs):
             return messages
 
         async def _noop(*args, **kwargs):
             return None
 
         monkeypatch.setattr(compact_module, "aoffload_base64_content", _passthrough)
-        monkeypatch.setattr(compact_module, "aoffload_to_backend", _noop)
         monkeypatch.setattr(compact_module, "aoffload_truncated_args", _noop)
 
     @pytest.mark.asyncio
@@ -415,7 +401,7 @@ class TestAcreateSummaryWindowClose:
         # aoffload_base64_content is awaited inside _acreate_summary — stub it
         from ptc_agent.agent.middleware.compaction import middleware as mw_mod
 
-        async def _passthrough(backend, messages):
+        async def _passthrough(backend, messages, **kwargs):
             return messages
 
         monkeypatch.setattr(mw_mod, "aoffload_base64_content", _passthrough)
@@ -448,7 +434,7 @@ class TestAcreateSummaryWindowClose:
 
         from ptc_agent.agent.middleware.compaction import middleware as mw_mod
 
-        async def _passthrough(backend, messages):
+        async def _passthrough(backend, messages, **kwargs):
             return messages
 
         monkeypatch.setattr(mw_mod, "aoffload_base64_content", _passthrough)
@@ -484,7 +470,7 @@ class TestAcreateSummaryWindowClose:
 
         from ptc_agent.agent.middleware.compaction import middleware as mw_mod
 
-        async def _passthrough(backend, messages):
+        async def _passthrough(backend, messages, **kwargs):
             return messages
 
         monkeypatch.setattr(mw_mod, "aoffload_base64_content", _passthrough)

@@ -24,9 +24,9 @@ from langchain_core.messages import HumanMessage
 
 from ptc_agent.agent.middleware.runtime_context.templates import render_template
 
-#: ``lc_source`` tag on a persisted row. Registered by the history projector,
-#: which keeps these out of the transcript, and by ``is_run_boundary_message``,
-#: which must never open a run on one.
+#: ``lc_source`` tag on a persisted row. Registered in the shared message
+#: classifier (``ptc_agent/agent/transcript/classify.py``), so neither replay
+#: nor the transcript ever opens a turn or a run on one.
 RUNTIME_UPDATE_SOURCE = "runtime_update"
 
 #: The one ``additional_kwargs`` key the row's metadata rides under.

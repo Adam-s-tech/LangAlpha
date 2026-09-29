@@ -439,6 +439,48 @@ async def get_thread_with_summary(
         raise
 
 
+async def get_workspace_thread_short_ids(workspace_id: str) -> set[str]:
+    """First 8 characters of every thread id in a workspace.
+
+    A thread's sandbox scratch is keyed by that prefix, so two threads can
+    share a directory; cleanup keeps any prefix a live thread still uses.
+    """
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT DISTINCT left(conversation_thread_id::text, 8)
+                FROM conversation_threads
+                WHERE workspace_id = %s
+                """,
+                (workspace_id,),
+            )
+            return {row[0] for row in await cur.fetchall()}
+
+
+async def list_computer_threads(computer_id: str) -> List[Dict[str, Any]]:
+    """Threads of every live workspace on a computer, newest first.
+
+    What the transcript export needs to reconcile a workspace's thread dirs
+    and to write the computer's thread index, in one query.
+    """
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT t.conversation_thread_id, t.title, t.latest_checkpoint_id,
+                       t.created_at, t.updated_at, w.workspace_id,
+                       w.name AS workspace_name, w.dir_name
+                FROM conversation_threads t
+                JOIN workspaces w ON w.workspace_id = t.workspace_id
+                WHERE w.computer_id = %s AND w.status <> 'deleted'
+                ORDER BY t.updated_at DESC
+                """,
+                (computer_id,),
+            )
+            return [dict(row) for row in await cur.fetchall()]
+
+
 async def get_thread_by_id(conversation_thread_id: str) -> Optional[Dict[str, Any]]:
     """
     Get thread by ID.

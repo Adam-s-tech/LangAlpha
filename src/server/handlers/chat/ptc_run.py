@@ -879,6 +879,21 @@ async def astream_ptc_workflow(
                 logger.warning(
                     f"[PTC_COMPLETE] file backup failed for {thread_id}: {e}"
                 )
+            if session and session.sandbox:
+                from src.server.services.transcripts import export_thread
+
+                try:
+                    # Read under the folder hold, as the reconcile above is.
+                    await export_thread(
+                        session.sandbox.runtime,
+                        session.sandbox.working_dir,
+                        workspace_id,
+                        thread_id,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[PTC_COMPLETE] transcript export failed for {thread_id}: {e}"
+                    )
             # A turn is what fills the shared disk, so its end is when the
             # reading the warning and the next turn's context rely on moves.
             if session and session.computer_id:

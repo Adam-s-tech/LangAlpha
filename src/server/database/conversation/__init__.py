@@ -29,6 +29,8 @@ from src.server.database.conversation.threads_read import (
     get_thread_with_summary,
     get_threads_for_user,
     get_workspace_threads,
+    list_computer_threads,
+    get_workspace_thread_short_ids,
     _like_escape,
     lookup_thread_by_external_id,
 )
@@ -105,6 +107,8 @@ __all__ = [
     "get_thread_with_summary",
     "get_threads_for_user",
     "get_workspace_threads",
+    "list_computer_threads",
+    "get_workspace_thread_short_ids",
     "get_thread_lifecycle_rows",
     "_like_escape",
     "lookup_thread_by_external_id",

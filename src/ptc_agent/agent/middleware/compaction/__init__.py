@@ -2,8 +2,8 @@
 
 This module provides SSE-enabled context compaction middleware that emits custom
 events for frontend visibility. Compaction covers the full context window lifecycle:
-token counting, tool-argument truncation, base64 offloading, sandbox persistence of
-evicted messages, and LLM-based summarization.
+token counting, tool-argument truncation, base64 offloading, and LLM-based
+summarization that points the model at the thread's transcript in the sandbox.
 """
 
 from ptc_agent.agent.middleware.compaction.middleware import (

@@ -7,6 +7,7 @@ transfer is ``direct``; everything else is uploaded from this process.
 import asyncio
 import hashlib
 import logging
+import shlex
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -48,6 +49,8 @@ from src.server.services.persistence.resolve import (
 )
 from src.server.services.user_skills.reconcile import RECONCILE_TIMEOUT_SECONDS
 from src.server.services.persistence.transfer import (
+    DEFERRED_MARKER,
+    DEFERRED_RESTORE_DIR,
     SYNC_MARKER_NAME,
     transfer_mode,
     INPROCESS_MAX_INFLIGHT_BYTES,
@@ -64,6 +67,12 @@ from src.utils.storage import get_signed_url
 # whole row before it uploads. So this is a count only, and what those files
 # weigh is bounded by INPROCESS_MAX_INFLIGHT_BYTES alongside it.
 RESTORE_UPLOAD_CONCURRENCY = 16
+
+# The deferred pass takes the sync lock per batch, so a backup or a strict
+# caller waits for one batch rather than for every evicted result.
+DEFERRED_BATCH_BYTES = 64 * 1024 * 1024
+DEFERRED_BATCH_ROWS = 256
+_DEFERRED_LOCK_ATTEMPTS = 3
 
 logger = logging.getLogger(__name__)
 
@@ -208,25 +217,80 @@ async def restore_to_sandbox(
 async def _restore_locked(
     workspace_id: str, sandbox: Any, conn: Any, layout: WorkspaceLayout
 ) -> dict[str, Any]:
-    result = {"restored": 0, "errors": 0}
-
+    # Evicted results come afterwards, in restore_deferred.
     rows = await get_files_for_workspace(
-        workspace_id, include_content=True, all_kinds=True, conn=conn
+        workspace_id,
+        include_content=True,
+        all_kinds=True,
+        outside=DEFERRED_RESTORE_DIR,
+        conn=conn,
     )
 
-    if not rows:
+    if rows:
+        # Object keys are scoped to the owner; read once for the whole restore.
+        user_id = await workspace_owner(workspace_id, conn=conn)
+        rows = await _without_shared_skill_copies(
+            workspace_id, rows, user_id, sandbox, conn=conn
+        )
+        logger.info(f"Restoring {len(rows)} entries for workspace {workspace_id}")
+        result = await _transfer_rows(
+            workspace_id, sandbox, rows, user_id=user_id, layout=layout
+        )
+    else:
         # An empty manifest is mirrored completely by any sandbox.
         logger.info(f"No files to restore for workspace {workspace_id}")
-        await _clear_restore_flag(workspace_id, sandbox, conn=conn)
-        return result
+        result = {"restored": 0, "errors": 0}
 
-    # Object keys are scoped to the owner; read once for the whole restore.
-    user_id = await workspace_owner(workspace_id, conn=conn)
-    rows = await _without_shared_skill_copies(
-        workspace_id, rows, user_id, sandbox, conn=conn
+    complete = result["errors"] == 0
+
+    # The marker only claims "this sandbox has been populated", so it
+    # goes in the sandbox and is withheld on a partial restore to make
+    # the next start retry. A sandbox failure here propagates: every
+    # file just restored through this same sandbox, so one failing now
+    # is a real condition, and swallowing it is what leaves a recreated
+    # sandbox looking populated with no attributable reason. False is
+    # the only outcome left to check — path validation rejected it.
+    if complete:
+        marker_written = await sandbox.aupload_file_bytes(
+            _sync_marker_path(layout),
+            datetime.now(timezone.utc).isoformat().encode("utf-8"),
+        )
+        if not marker_written:
+            # Costs one redundant restore next start. Safe in the
+            # direction that matters: nothing is deleted on its account.
+            logger.warning(
+                f"Could not write the sync marker for workspace "
+                f"{workspace_id}; the next start will restore again"
+            )
+        # Last, on the lock connection: a worker whose wait on this lock
+        # timed out flagged the workspace before it began waiting, and
+        # this clear has to be the later write (see restore_to_sandbox).
+        await _clear_restore_flag(workspace_id, sandbox, conn=conn)
+    else:
+        logger.warning(
+            f"Restore for workspace {workspace_id} left {result['errors']} "
+            f"file(s) unrestored; the workspace stays flagged so the next "
+            f"start retries and sync leaves the manifest alone"
+        )
+
+    logger.info(
+        f"File restore completed for workspace {workspace_id}: "
+        f"restored={result['restored']}, errors={result['errors']}"
     )
 
-    logger.info(f"Restoring {len(rows)} entries for workspace {workspace_id}")
+    return result
+
+
+async def _transfer_rows(
+    workspace_id: str,
+    sandbox: Any,
+    rows: list[dict[str, Any]],
+    *,
+    user_id: str,
+    layout: WorkspaceLayout,
+) -> dict[str, Any]:
+    """Put manifest rows into the sandbox: direct pulls first, relay for the rest."""
+    result = {"restored": 0, "errors": 0}
 
     mode = transfer_mode(sandbox)
     structural: list[dict[str, Any]] = []
@@ -301,43 +365,6 @@ async def _restore_locked(
         await _restore_relay(
             user_id, workspace_id, sandbox, relay, result, dirs, layout=layout
         )
-
-    complete = result["errors"] == 0
-
-    # The marker only claims "this sandbox has been populated", so it
-    # goes in the sandbox and is withheld on a partial restore to make
-    # the next start retry. A sandbox failure here propagates: every
-    # file just restored through this same sandbox, so one failing now
-    # is a real condition, and swallowing it is what leaves a recreated
-    # sandbox looking populated with no attributable reason. False is
-    # the only outcome left to check — path validation rejected it.
-    if complete:
-        marker_written = await sandbox.aupload_file_bytes(
-            _sync_marker_path(layout),
-            datetime.now(timezone.utc).isoformat().encode("utf-8"),
-        )
-        if not marker_written:
-            # Costs one redundant restore next start. Safe in the
-            # direction that matters: nothing is deleted on its account.
-            logger.warning(
-                f"Could not write the sync marker for workspace "
-                f"{workspace_id}; the next start will restore again"
-            )
-        # Last, on the lock connection: a worker whose wait on this lock
-        # timed out flagged the workspace before it began waiting, and
-        # this clear has to be the later write (see restore_to_sandbox).
-        await _clear_restore_flag(workspace_id, sandbox, conn=conn)
-    else:
-        logger.warning(
-            f"Restore for workspace {workspace_id} left {result['errors']} "
-            f"file(s) unrestored; the workspace stays flagged so the next "
-            f"start retries and sync leaves the manifest alone"
-        )
-
-    logger.info(
-        f"File restore completed for workspace {workspace_id}: "
-        f"restored={result['restored']}, errors={result['errors']}"
-    )
 
     return result
 
@@ -842,3 +869,128 @@ async def maybe_restore(
         expected_sandbox_id=_identity_of(sandbox),
         layout=layout,
     )
+
+
+def _deferred_batches(due: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    dirs = [r for r in due if r.get("kind") == "dir"]
+    batches: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    size = 0
+    for row in due:
+        if row.get("kind") == "dir":
+            continue
+        n = int(row.get("file_size") or 0)
+        if current and (
+            size + n > DEFERRED_BATCH_BYTES or len(current) >= DEFERRED_BATCH_ROWS
+        ):
+            batches.append(current)
+            current, size = [], 0
+        current.append(row)
+        size += n
+    if current:
+        batches.append(current)
+    if dirs:
+        batches = [dirs + batches[0], *batches[1:]] if batches else [dirs]
+    return batches
+
+
+async def _deferred_present(
+    sandbox: Any, layout: WorkspaceLayout
+) -> dict[str, tuple[str, int]] | None:
+    """What the sandbox already holds under the deferred dir, by path.
+
+    None when the marker is there: an earlier pass finished on this sandbox.
+    """
+    base = layout.join(DEFERRED_RESTORE_DIR)
+    probe = await sandbox.runtime.exec(
+        f"test -e {shlex.quote(layout.join(DEFERRED_MARKER))} && echo '#done' && exit 0; "
+        f"find {shlex.quote(base)} -printf '%y %s %P\\n' 2>/dev/null; true"
+    )
+    lines = (probe.stdout or "").splitlines()
+    if lines[:1] == ["#done"]:
+        return None
+    present: dict[str, tuple[str, int]] = {}
+    for line in lines:
+        parts = line.split(" ", 2)
+        if len(parts) < 2 or not parts[1].isdigit():
+            continue
+        rel = parts[2] if len(parts) == 3 else ""
+        path = f"{DEFERRED_RESTORE_DIR}/{rel}" if rel else DEFERRED_RESTORE_DIR
+        present[path] = (parts[0], int(parts[1]))
+    return present
+
+
+async def restore_deferred(
+    workspace_id: str, sandbox: Any, *, layout: WorkspaceLayout
+) -> dict[str, Any]:
+    """The second restore pass: the evicted results this sandbox lacks.
+
+    Runs in the background once the folder is usable. A row whose file is
+    already there at its size is skipped, so a warm sandbox, or one whose
+    earlier pass was cut short, pays only for what is missing. The marker is
+    written only when every row came back; until then backups keep these
+    rows (see DEFERRED_RESTORE_DIR) and the next bring-up tries again.
+    """
+    result = {"restored": 0, "errors": 0, "skipped": 0}
+    present = await _deferred_present(sandbox, layout)
+    if present is None:
+        return result
+
+    rows = await get_files_for_workspace(
+        workspace_id, all_kinds=True, under=DEFERRED_RESTORE_DIR
+    )
+    due = []
+    for row in rows:
+        kind = row.get("kind") or "file"
+        have = present.get(row["file_path"])
+        if have is not None and (
+            (kind == "dir" and have[0] == "d")
+            or (kind == "file" and have == ("f", int(row.get("file_size") or 0)))
+        ):
+            result["skipped"] += 1
+        else:
+            due.append(row)
+
+    if due:
+        logger.info(
+            f"Restoring {len(due)} deferred entries for workspace {workspace_id}"
+        )
+        user_id = await workspace_owner(workspace_id)
+    for batch in _deferred_batches(due):
+        for attempt in range(1, _DEFERRED_LOCK_ATTEMPTS + 1):
+            try:
+                async with workspace_sync_lock(workspace_id) as conn:
+                    full = await get_files_for_workspace(
+                        workspace_id,
+                        include_content=True,
+                        all_kinds=True,
+                        paths=[r["file_path"] for r in batch],
+                        conn=conn,
+                    )
+                    part = await _transfer_rows(
+                        workspace_id, sandbox, full, user_id=user_id, layout=layout
+                    )
+                break
+            except WorkspaceSyncBusy:
+                if attempt == _DEFERRED_LOCK_ATTEMPTS:
+                    raise
+                await asyncio.sleep(5 * attempt)
+        result["restored"] += part["restored"]
+        result["errors"] += part["errors"]
+
+    if result["errors"]:
+        logger.warning(
+            f"Deferred restore for workspace {workspace_id} left "
+            f"{result['errors']} evicted result(s) unrestored; the next "
+            f"bring-up retries and backups keep their rows until then"
+        )
+        return result
+    if not await sandbox.aupload_file_bytes(
+        layout.join(DEFERRED_MARKER),
+        datetime.now(timezone.utc).isoformat().encode("utf-8"),
+    ):
+        logger.warning(
+            f"Could not write the deferred restore marker for workspace "
+            f"{workspace_id}; the next bring-up checks again"
+        )
+    return result

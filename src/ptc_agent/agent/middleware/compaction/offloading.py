@@ -1,46 +1,28 @@
-"""Backend filesystem offloading for evicted messages and truncated args."""
+"""Backend filesystem offloading for truncated args and inline attachments."""
 
 import base64
 import logging
 import uuid
 from typing import Any
 
-from langchain_core.messages import AIMessage, AnyMessage
-from langchain_core.messages.human import HumanMessage
+from langchain_core.messages import AnyMessage
 from langgraph.config import get_config
 
 from ptc_agent.core.paths import WorkspaceLayout
 from src.llms.attachment_payload import FILE_BLOCK_TYPES
-from ptc_agent.agent.middleware.compaction.utils import (
-    _extract_text_from_content,
-    strip_base64_from_messages,
-)
+from ptc_agent.agent.middleware.compaction.utils import strip_base64_from_messages
 
 logger = logging.getLogger(__name__)
 
 
-def is_summary_message(msg: AnyMessage) -> bool:
-    """Check if a message is a previous summarization message.
+def get_thread_id(thread_id: str | None = None) -> str:
+    """Short thread id: the one passed, else graph config's, else a session id.
 
-    Summary messages are tagged with lc_source='summarization' in additional_kwargs.
-    These should be filtered from offloads to avoid summary-of-summary noise.
+    Manual /compact and /offload run outside the graph, so they pass the id;
+    the session fallback is fresh on every call and names no real thread.
     """
-    if not isinstance(msg, HumanMessage):
-        return False
-    return msg.additional_kwargs.get("lc_source") == "summarization"
-
-
-def filter_summary_messages(messages: list[AnyMessage]) -> list[AnyMessage]:
-    """Filter out previous summary messages from a message list."""
-    return [msg for msg in messages if not is_summary_message(msg)]
-
-
-def get_thread_id() -> str:
-    """Extract short thread_id from langgraph config.
-
-    Returns:
-        First 8 characters of thread_id, or a generated session ID.
-    """
+    if thread_id:
+        return str(thread_id)[:8]
     try:
         config = get_config()
         thread_id = config.get("configurable", {}).get("thread_id")
@@ -52,85 +34,11 @@ def get_thread_id() -> str:
     return f"session_{uuid.uuid4().hex[:8]}"
 
 
-async def aoffload_to_backend(backend: Any, messages: list[AnyMessage]) -> str | None:
-    """Persist evicted messages to sandbox before summarization (async).
-
-    Each message is written to its own file keyed by message ID:
-    `.agents/threads/{tid}/evicted_{message_id}.md`
-
-    Previous summary messages are filtered out to avoid summary-of-summary noise.
-    Individual messages are truncated at 5000 chars for storage.
-
-    Args:
-        backend: The Daytona backend for filesystem operations.
-        messages: Messages being summarized (evicted from context).
-
-    Returns:
-        The thread directory path where files were stored, or None if
-        offload failed or backend is not available.
-    """
-    if backend is None:
-        return None
-
-    # Filter out previous summary messages
-    filtered_messages = filter_summary_messages(messages)
-    if not filtered_messages:
-        return None
-
-    thread_id = get_thread_id()
-    thread_dir = WorkspaceLayout.thread_subdir(thread_id)
-    written = 0
-
-    for msg in filtered_messages:
-        msg_id = msg.id or uuid.uuid4().hex[:8]
-        path = f"{thread_dir}/evicted_{msg_id}.md"
-
-        content = _extract_text_from_content(msg.content)
-        if len(content) > 5000:
-            content = content[:5000] + "\n...(truncated)"
-
-        # Include tool call info for AI messages
-        tool_info = ""
-        if isinstance(msg, AIMessage) and msg.tool_calls:
-            tool_names = [tc["name"] for tc in msg.tool_calls]
-            tool_info = f" [tools: {', '.join(tool_names)}]"
-
-        file_content = f"# {msg.type}{tool_info}\n\n{content}\n"
-
-        try:
-            result = await backend.awrite(path, file_content, overwrite=True)
-            if result is None or result.error:
-                error_msg = result.error if result else "backend returned None"
-                logger.warning(
-                    "Failed to offload evicted message %s to %s: %s",
-                    msg_id,
-                    path,
-                    error_msg,
-                )
-            else:
-                written += 1
-        except Exception as e:
-            logger.warning(
-                "Exception offloading evicted message %s to %s: %s",
-                msg_id,
-                path,
-                e,
-            )
-
-    if written > 0:
-        logger.debug(
-            "Offloaded %d/%d evicted messages to %s",
-            written,
-            len(filtered_messages),
-            thread_dir,
-        )
-        return thread_dir
-
-    return None
-
-
 async def aoffload_truncated_args(
-    backend: Any, originals: dict[str, dict[str, Any]]
+    backend: Any,
+    originals: dict[str, dict[str, Any]],
+    *,
+    thread_id: str | None = None,
 ) -> None:
     """Persist original tool call args to sandbox before truncation discards them.
 
@@ -147,11 +55,11 @@ async def aoffload_truncated_args(
     if backend is None or not originals:
         return
 
-    thread_id = get_thread_id()
+    short_id = get_thread_id(thread_id)
 
     for tool_call_id, original in originals.items():
         path = WorkspaceLayout.thread_subdir(
-            thread_id, f"truncated_args_{tool_call_id}.md"
+            short_id, f"truncated_args_{tool_call_id}.md"
         )
         tool_name = original["name"]
         args = original["args"]
@@ -252,6 +160,8 @@ def _extract_base64_info(block: dict) -> tuple[str, str, str] | None:
 async def aoffload_base64_content(
     backend: Any,
     messages: list[AnyMessage],
+    *,
+    thread_id: str | None = None,
 ) -> list[AnyMessage]:
     """Offload base64 content blocks to sandbox files, replacing with path references.
 
@@ -275,8 +185,7 @@ async def aoffload_base64_content(
     if backend is None:
         return strip_base64_from_messages(messages)
 
-    thread_id = get_thread_id()
-    thread_dir = WorkspaceLayout.thread_subdir(thread_id)
+    thread_dir = WorkspaceLayout.thread_subdir(get_thread_id(thread_id))
 
     result: list[AnyMessage] = []
     changed = False

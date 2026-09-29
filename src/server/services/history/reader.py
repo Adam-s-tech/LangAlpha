@@ -24,7 +24,7 @@ from typing_extensions import NotRequired
 
 from ptc_agent.agent.middleware.compaction.types import CompactionEvent
 from ptc_agent.agent.state import DeltaAgentState
-from src.server.services.history.projector import is_run_boundary_message
+from ptc_agent.agent.transcript.classify import is_run_boundary_message
 from src.server.utils.checkpoint_helpers import walk_current_branch_boundaries
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,12 @@ def _silence_pending_sends_noise() -> None:
     materialization. Live graphs contain all their nodes, so the warning never
     fires for them; filtering the message on the emitting logger is safe.
     """
-    algo_logger = logging.getLogger("langgraph.pregel._algo")
+    # The warning goes out on pregel's shared logger, not one named for its
+    # module; a filter on "langgraph.pregel._algo" never saw a record.
+    try:
+        from langgraph.pregel._log import logger as algo_logger
+    except ImportError:
+        algo_logger = logging.getLogger("langgraph")
     marker = "in pending sends"
     if any(getattr(f, "_history_reader_filter", False) for f in algo_logger.filters):
         return
@@ -483,6 +488,13 @@ class CheckpointHistoryReader:
         await advance_thread_checkpoint_id(
             thread_id, from_checkpoint_id=built_on, to_checkpoint_id=new_id
         )
+
+    async def aget_state(self, thread_id: str, checkpoint_id: str | None = None):
+        """The thread's state at ``checkpoint_id``, or at its latest checkpoint."""
+        configurable = {"thread_id": thread_id}
+        if checkpoint_id:
+            configurable["checkpoint_id"] = checkpoint_id
+        return await self._graph.aget_state({"configurable": configurable})
 
     async def aget_task_history(
         self, thread_id: str, task_id: str

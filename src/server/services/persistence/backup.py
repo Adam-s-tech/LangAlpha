@@ -46,6 +46,7 @@ from src.server.services.persistence.transfer import (
     ScanEntry,
     ScanMark,
     ScanRules,
+    is_deferred,
     scan_workspace,
 )
 from src.utils.storage import is_storage_enabled
@@ -293,6 +294,14 @@ async def _sync_locked(
         )
         may_prune = False
 
+    # Evicted results the deferred restore has not brought back yet are on
+    # their way, not deleted; see DEFERRED_RESTORE_DIR.
+    withheld = (
+        frozenset()
+        if scan.deferred_restored
+        else frozenset(p for p in existing if is_deferred(p))
+    )
+
     if not scan.entries:
         logger.info(f"No files found for workspace {workspace_id}")
         if not may_prune:
@@ -305,12 +314,13 @@ async def _sync_locked(
         else:
             result.deleted = await delete_removed_files(
                 workspace_id,
-                oversized_paths,
+                oversized_paths | withheld,
                 walked_dir_name=layout.dir_name,
                 untouched_since=started_at,
                 conn=conn,
             )
-            result.pruned = True
+            # A kept evicted result is a prune this pass could not make.
+            result.pruned = not withheld
         # Rows kept for oversized files, or by a skipped prune, still count.
         result.total_size = await get_workspace_total_size(workspace_id, conn=conn)
         return result
@@ -416,6 +426,7 @@ async def _sync_locked(
             pack_members,
             existing,
             may_prune=may_prune,
+            withheld=withheld,
             layout=layout,
         )
         rows.extend(packed)
@@ -454,18 +465,18 @@ async def _sync_locked(
     if may_prune:
         deleted = await delete_removed_files(
             workspace_id,
-            active_paths,
+            active_paths | withheld,
             walked_dir_name=layout.dir_name,
             untouched_since=started_at,
             conn=conn,
         )
         result.deleted += deleted
-        result.pruned = True
+        result.pruned = not (withheld - active_paths)
     else:
-        withheld = len(set(existing) - active_paths)
-        if withheld:
+        kept = len(set(existing) - active_paths)
+        if kept:
             logger.warning(
-                f"Keeping {withheld} manifest row(s) for workspace "
+                f"Keeping {kept} manifest row(s) for workspace "
                 f"{workspace_id} whose files are absent from the sandbox: "
                 f"it is a known-incomplete mirror, so a missing file means "
                 f"a failed restore, not a user deletion. The next workspace "

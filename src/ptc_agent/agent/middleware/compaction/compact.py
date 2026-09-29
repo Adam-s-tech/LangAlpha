@@ -22,25 +22,28 @@ from ptc_agent.agent.middleware.compaction.types import (
 )
 from ptc_agent.agent.middleware.compaction.utils import (
     DEFAULT_SUMMARY_PROMPT,
+    apply_recorded_offloads,
     build_compaction_event,
     build_summary_message,
     count_tokens_tiktoken,
     find_group_safe_cutoff,
     get_effective_messages,
     partition_at_cutoff,
+    summary_resumes_at,
     truncate_message_args,
     truncate_read_results,
 )
 from ptc_agent.agent.middleware.compaction.middleware import (
     _build_summary_request,
+    aexport_transcript,
 )
 from src.llms import maybe_disable_streaming
 from ptc_agent.agent.middleware.compaction.offloading import (
     aoffload_base64_content,
-    aoffload_to_backend,
     aoffload_truncated_args,
     get_thread_id,
 )
+from ptc_agent.agent.transcript import TranscriptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +56,7 @@ async def compact_messages(
     previous_event: CompactionEvent | None = None,
     compaction_config: CompactionConfig | None = None,
     llm_client: BaseChatModel | None = None,
+    thread_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Compact conversation messages with two-tier context management.
@@ -63,7 +67,8 @@ async def compact_messages(
 
     Two-tier offloading (when backend is provided):
     - Tier 1: Truncate large tool args in old messages, offload originals to sandbox
-    - Tier 2: Summarize evicted messages, offload conversation history to sandbox
+    - Tier 2: Summarize evicted messages; the summary points at the thread's
+      transcript, which is brought up to date alongside
 
     When backend is None, offloading is skipped but truncation and summarization
     still occur.
@@ -76,6 +81,8 @@ async def compact_messages(
         previous_event: Previous CompactionEvent for chained compactions.
         compaction_config: Optional CompactionConfig override.
         llm_client: Pre-built OAuth/BYOK client. When None, built from model_name.
+        thread_id: The thread being compacted. This runs outside the graph, so
+            without it offloads and the transcript pointer have no thread dir.
 
     Returns:
         Dict with:
@@ -115,7 +122,7 @@ async def compact_messages(
         cutoff = max(0, len(effective) - truncate_keep)
         thread_dir = None
         if backend is not None:
-            thread_dir = WorkspaceLayout.thread_subdir(get_thread_id())
+            thread_dir = WorkspaceLayout.thread_subdir(get_thread_id(thread_id))
 
         effective, truncated, originals = truncate_message_args(
             effective,
@@ -127,7 +134,7 @@ async def compact_messages(
 
         # Offload original args before they're lost
         if truncated and originals and backend is not None:
-            await aoffload_truncated_args(backend, originals)
+            await aoffload_truncated_args(backend, originals, thread_id=thread_id)
             offloaded_arg_ids = set(originals.keys())
 
         # Truncate duplicate/non-critical Read results (same cutoff)
@@ -149,10 +156,14 @@ async def compact_messages(
 
     messages_to_summarize, preserved = partition_at_cutoff(effective, cutoff_index)
 
-    # ---- Tier 2: Offload evicted messages to backend ----
-    file_path = await aoffload_to_backend(backend, messages_to_summarize)
+    # ---- Tier 2: Summarize, pointing at the transcript ----
+    transcript = (
+        TranscriptTarget.for_agent(thread_id)
+        if backend is not None and thread_id
+        else None
+    )
+    to_summarize = messages_to_summarize
 
-    # ---- Generate summary ----
     if llm_client is not None:
         compaction_model: BaseChatModel = llm_client
     else:
@@ -183,9 +194,11 @@ async def compact_messages(
                 -_DEFAULT_FALLBACK_MESSAGE_COUNT:
             ]
 
+    resumes_at = summary_resumes_at(messages, to_summarize, messages_to_summarize)
+
     # Strip base64 blobs before sending to LLM
     messages_to_summarize = await aoffload_base64_content(
-        backend, messages_to_summarize
+        backend, messages_to_summarize, thread_id=thread_id
     )
 
     # Manual /compact MUST fail loudly on LLM error. Swallowing the exception
@@ -198,11 +211,14 @@ async def compact_messages(
     # except below re-raises -> HTTP 500. The timeout lives on the call, not on
     # a flat admission-side 409 clock.
     try:
-        response = await asyncio.wait_for(
-            compaction_model.ainvoke(
-                _build_summary_request(DEFAULT_SUMMARY_PROMPT, messages_to_summarize)
+        response, _ = await asyncio.gather(
+            asyncio.wait_for(
+                compaction_model.ainvoke(
+                    _build_summary_request(DEFAULT_SUMMARY_PROMPT, messages_to_summarize)
+                ),
+                timeout=get_compaction_timeout(),
             ),
-            timeout=get_compaction_timeout(),
+            aexport_transcript(backend, transcript, messages),
         )
     except Exception as e:
         logger.error(f"[Compaction] manual compact LLM call failed: {e}")
@@ -216,9 +232,11 @@ async def compact_messages(
     if not summary_text:
         raise RuntimeError("Compaction LLM returned empty summary")
 
-    # Build summary message using shared utility
     summary_message = build_summary_message(
-        summary_text, file_path, original_message_count=len(effective)
+        summary_text,
+        transcript,
+        original_message_count=len(effective),
+        resumes_at=resumes_at,
     )
 
     # Build the event with an id anchor (cutoff grounded in the raw list)
@@ -226,7 +244,7 @@ async def compact_messages(
         raw_messages=messages,
         preserved_messages=preserved,
         summary_message=summary_message,
-        file_path=file_path,
+        file_path=transcript.directory if transcript else None,
     )
 
     return {
@@ -244,51 +262,31 @@ async def offload_tool_args(
     backend: Any | None = None,
     already_offloaded: set[str] | None = None,
     compaction_config: CompactionConfig | None = None,
+    already_offloaded_reads: set[str] | None = None,
+    thread_id: str | None = None,
 ) -> dict[str, Any]:
     """Offload large tool args and stale read results (Tier 1 only).
 
-    Performs only the lightweight offload pass — no LLM summarization,
-    no message eviction. Use this when the conversation is long enough for tool
-    args to bloat the context but not yet large enough to warrant a full summary.
-
-    Two sub-passes:
-    - **Arg offload**: Truncate large Write/Edit/ExecuteCode arguments, persist
-      originals to sandbox filesystem when backend is provided.
-    - **Read offload**: Replace duplicate and non-critical Read results with
-      short markers (files already exist in sandbox, agent can re-read).
-
-    Args:
-        messages: Current conversation messages.
-        backend: Optional SandboxBackend for offloading originals to sandbox.
-        already_offloaded: IDs of tool calls already offloaded by the middleware,
-            to skip re-offloading.
+    Records which calls to offload and never rewrites checkpoint messages: the
+    middleware re-applies every recorded id on each model call, so the
+    checkpoint keeps full args and a write here cannot race a live turn's
+    appends. ``messages`` is the effective list (after any summarization), so
+    the cutoff and batch count match what the middleware sees.
 
     Returns:
-        Dict with:
-        - "messages": Only the changed messages, keyed by their existing ids, for
-          an in-place ``aupdate_state`` overwrite (NOT a REMOVE_ALL full rewrite)
-        - "offloaded_args": Number of tool call args offloaded (Write/Edit/ExecuteCode)
-        - "offloaded_reads": Number of Read results offloaded (duplicates + non-critical)
-        - "original_count": Total message count (unchanged)
-        - "new_offloaded_ids": Set of newly offloaded tool call IDs (args + reads)
+        Dict with "offloaded_arg_ids" and "offloaded_read_ids" (new ids only),
+        their counts as "offloaded_args" / "offloaded_reads", and
+        "original_count".
 
     Raises:
-        ValueError: If no messages are provided or nothing can be offloaded.
+        ValueError: If no messages are provided or nothing new can be offloaded.
     """
     if not messages:
         raise ValueError("No messages to offload")
 
-    # Ensure all messages have IDs, then snapshot the list so we can detect which
-    # messages truncation actually changed. The truncate_* helpers preserve order
-    # and length, returning the SAME object for unchanged messages and a
-    # model_copy (same id) for changed ones, so an identity diff isolates the
-    # changes.
     ensure_message_ids(messages)
-    original_messages = list(messages)
 
     config = (compaction_config or CompactionConfig()).model_dump()
-
-    # Use truncation settings, applying reasonable defaults for manual trigger
     truncate_keep = int(config.get("truncate_args_keep_messages", 20))
     truncate_max_length = int(config.get("truncate_args_max_length", 2000))
     truncation_text = "...(argument truncated)"
@@ -302,53 +300,33 @@ async def offload_tool_args(
 
     thread_dir = None
     if backend is not None:
-        thread_dir = WorkspaceLayout.thread_subdir(get_thread_id())
+        thread_dir = WorkspaceLayout.thread_subdir(get_thread_id(thread_id))
 
-    messages, truncated, originals = truncate_message_args(
+    # Start from the view the model already has, so only new offloads count.
+    messages = apply_recorded_offloads(
         messages,
-        cutoff,
+        already_offloaded or set(),
+        already_offloaded_reads or set(),
         truncate_max_length,
         truncation_text,
         thread_dir,
     )
+    messages, _, originals = truncate_message_args(
+        messages, cutoff, truncate_max_length, truncation_text, thread_dir
+    )
+    _, _, read_ids = truncate_read_results(messages, cutoff)
 
-    # Also offload duplicate/non-critical Read results
-    messages, read_truncated, read_ids = truncate_read_results(messages, cutoff)
-
-    if not truncated and not read_truncated:
+    if not originals and not read_ids:
         raise ValueError("Nothing to offload at the current threshold")
 
-    # Dedup: skip tool calls already offloaded by middleware
-    if already_offloaded and originals:
-        new_originals = {
-            k: v for k, v in originals.items() if k not in already_offloaded
-        }
-        skipped = len(originals) - len(new_originals)
-        if skipped:
-            logger.info("[Offload] Skipped %d already-offloaded tool calls", skipped)
-        originals = new_originals
-
-    # Persist original args to backend before they're lost
+    # Persist original args before the view hides them
     if originals and backend is not None:
-        await aoffload_truncated_args(backend, originals)
-
-    # Return ONLY the messages truncation actually changed, keyed by their
-    # existing ids, so the DeltaChannel reducer overwrites them in place. A
-    # blanket REMOVE_ALL + full-list rewrite would, if it ran concurrently with a
-    # live turn (e.g. an offload during a Redis outage that bypassed the admission
-    # gate), rebuild from a stale snapshot and silently wipe messages appended in
-    # between. In-place id-keyed writes leave concurrently-appended messages
-    # untouched.
-    changed = [
-        msg
-        for original, msg in zip(original_messages, messages)
-        if msg is not original
-    ]
+        await aoffload_truncated_args(backend, originals, thread_id=thread_id)
 
     return {
-        "messages": changed,
+        "offloaded_arg_ids": set(originals),
+        "offloaded_read_ids": read_ids,
         "offloaded_args": len(originals),
         "offloaded_reads": len(read_ids),
         "original_count": len(messages),
-        "new_offloaded_ids": set(originals.keys()) | read_ids,
     }

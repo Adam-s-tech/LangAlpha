@@ -734,7 +734,10 @@ async def test_restore_caps_concurrency_at_semaphore_size(mock_get):
 @pytest.mark.asyncio
 @patch("src.server.services.persistence.restore.get_files_for_workspace", new_callable=AsyncMock)
 async def test_restore_empty_file_list_is_noop(mock_get, restore_flag):
-    """Zero files → no sandbox calls, no errors, and nothing left flagged."""
+    """Zero files → no transfer, no errors, the marker, and nothing left flagged.
+
+    The marker matters when every row is deferred: without it each start
+    would find no marker and run this restore again."""
     mock_get.return_value = []
     sandbox = _mock_sandbox()
 
@@ -742,7 +745,9 @@ async def test_restore_empty_file_list_is_noop(mock_get, restore_flag):
 
     assert result == {"restored": 0, "errors": 0}
     sandbox.acreate_directories.assert_not_awaited()
-    sandbox.aupload_file_bytes.assert_not_awaited()
+    assert [c.args[0] for c in sandbox.aupload_file_bytes.await_args_list] == [
+        restore._sync_marker_path(LAYOUT)
+    ]
     assert [c.args for c in restore_flag.await_args_list] == [("ws-1", True), ("ws-1", False)]
 
 

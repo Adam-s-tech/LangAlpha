@@ -483,8 +483,13 @@ class SandboxBackend(SandboxBackendProtocol):
     # --- Path helpers (sync, pure delegation) ---
 
     def normalize_path(self, path: str) -> str:
-        """Convert a virtual/relative path to an absolute sandbox path."""
-        return self.sandbox.normalize_path(path)
+        """Convert a virtual/relative path to an absolute sandbox path.
+
+        Honors a pinned root like the file ops that resolve privately; the
+        text reads and writes go through here, and a pinned backend reading
+        from the ambient tier while it writes to its pin misses its own files.
+        """
+        return self._normalize_path(path)
 
     def virtualize_path(self, path: str) -> str:
         """Strip the working-directory prefix to produce an agent-visible path."""

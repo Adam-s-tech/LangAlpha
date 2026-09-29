@@ -79,7 +79,9 @@ def build_fallback_pairs(config: Any) -> list[tuple[str, Any]]:
 
     Prefers the pre-resolved OAuth/BYOK-aware clients (with the parallel names
     list kept aligned by ``_resolve_fallback_clients``); falls back to
-    resolving names via the platform manifest.
+    resolving names via the platform manifest. A name with no usable key is
+    skipped, as the chat path does: a fallback that cannot run must not stop
+    the graph from building for the primary.
     """
     clients = getattr(config, "fallback_llm_clients", None)
     if clients is not None:
@@ -93,7 +95,17 @@ def build_fallback_pairs(config: Any) -> list[tuple[str, Any]]:
         return []
     from src.llms import get_llm_by_type
 
-    return [(name, get_llm_by_type(name)) for name in fallback_names]
+    pairs = []
+    for name in fallback_names:
+        try:
+            pairs.append((name, get_llm_by_type(name)))
+        except Exception as e:
+            logger.warning(
+                "[ModelResilience] Skipping unusable fallback model",
+                model=name,
+                error=str(e),
+            )
+    return pairs
 
 
 @dataclass

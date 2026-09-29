@@ -498,7 +498,7 @@ def test_runtime_update_row_is_hidden_and_opens_no_run():
         DurableUpdate,
         build_update_message,
     )
-    from src.server.services.history.projector import is_run_boundary_message
+    from ptc_agent.agent.transcript.classify import is_run_boundary_message
 
     row = build_update_message(
         DurableUpdate(
@@ -574,9 +574,12 @@ def test_unstamped_subagent_followup_falls_back_to_content():
 
 def test_summary_message_projects_summarize_complete():
     from ptc_agent.agent.middleware.compaction.utils import build_summary_message
+    from ptc_agent.agent.transcript import TranscriptTarget
 
     message = build_summary_message(
-        "we discussed rates", "/work/history.md", original_message_count=40
+        "we discussed rates",
+        TranscriptTarget("abcd1234-0000-0000-0000-000000000000"),
+        original_message_count=40,
     )
     items = _sse([message])
     assert [i["event"] for i in items] == ["context_window"]

@@ -90,6 +90,7 @@ TRUNCATABLE_TOOLS = frozenset({"Write", "Edit", "ExecuteCode"})
 NON_CRITICAL_READ_PREFIXES: tuple[str, ...] = (
     # Previously offloaded content (truncated args, evicted messages)
     f"{WorkspaceLayout.THREADS_DIR}/",
+    f"{WorkspaceLayout.LARGE_TOOL_RESULTS_DIR}/",  # Evicted tool results
     f"{SandboxLayout.TMP_DIR}/",  # Temporary agent scratch files
 )
 

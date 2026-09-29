@@ -356,6 +356,15 @@ class WorkspaceLayout:
         """
         return "/".join((WorkspaceLayout.THREADS_DIR, thread_id, *parts))
 
+    @staticmethod
+    def large_results_subdir(thread_id: str) -> str:
+        """A thread's evicted tool results, workspace-relative.
+
+        Outside ``thread_subdir`` on purpose: these are backed up, while thread
+        scratch is regenerable and is not.
+        """
+        return "/".join((WorkspaceLayout.LARGE_TOOL_RESULTS_DIR, thread_id))
+
     def thread_dir(self, thread_id: str) -> str:
         """One thread's scratch directory inside this folder, absolute."""
         return self.join(self.thread_subdir(thread_id))
@@ -417,7 +426,6 @@ BACKUP_EXCLUDE_AGENT_SUBDIRS: tuple[str, ...] = (
     WorkspaceLayout.TOOLS_DIR,
     SandboxLayout.USER_DIR,
     SandboxLayout.WORKFLOWS_DIR,
-    WorkspaceLayout.LARGE_TOOL_RESULTS_DIR,
 )
 
 # Virtual paths route through CompositeFilesystemBackend to LangGraph BaseStore,

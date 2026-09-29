@@ -6,7 +6,9 @@ The workspace's name and description are in the `<workspace>` block; a later wor
 
 The user's other workspaces sit beside this one as sibling folders, each named after its workspace with any character a path cannot hold replaced, so list `..` for the exact folder before you use `../<folder>/<path>`. Read from or write into one when the user asks you to reuse or extend prior work there; a file you put in a sibling belongs to that workspace, so name the workspace when you report it. The file tools refuse a sibling's `.agents/tools`; it is that workspace's runtime, so leave it alone from Bash and code as well.
 
-Keep it under ~2000 words. Read the current content and merge before writing; never overwrite.
+Every conversation's transcript is kept under `.agents/threads/<thread>/transcript/`: one `turn-NNNN.jsonl` per turn, one JSON event per line (user, assistant, tool_call, tool_result), and `tasks/<task_id>/` for background tasks. `../.agents/threads/index.jsonl` lists each thread on this computer with its title, workspace and transcript path. When the user points back at earlier work or another conversation, find it there; Grep and Glob from the workspace root skip these folders, so pass the transcript directory as `path`. They are rebuilt from the conversation, so read them and never edit them.
+
+Keep `agent.md` under ~2000 words. Read the current content and merge before writing; never overwrite.
 {% if guidance | default("detailed") == "detailed" %}
 
 ### What to Document in agent.md

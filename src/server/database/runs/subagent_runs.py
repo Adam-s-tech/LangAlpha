@@ -914,6 +914,27 @@ async def count_open_runs_for_thread(thread_id: str, conn=None) -> int:
             return (await cur.fetchone())[0]
 
 
+async def list_thread_tasks(thread_ids: list[str]) -> List[Dict[str, Any]]:
+    """Every task of the given threads with its latest run, oldest first."""
+    if not thread_ids:
+        return []
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT t.thread_id, t.task_id, t.description, t.subagent_type,
+                       t.created_at, r.task_run_id AS latest_run_id, r.status,
+                       r.launch_tool_call_id, r.final_checkpoint_id, r.finalized_at
+                FROM subagent_tasks t
+                LEFT JOIN subagent_runs r ON r.task_run_id = t.latest_run_id
+                WHERE t.thread_id = ANY(%s::uuid[])
+                ORDER BY t.created_at
+                """,
+                (list(thread_ids),),
+            )
+            return [dict(row) for row in await cur.fetchall()]
+
+
 async def get_task(thread_id: str, task_id: str) -> Optional[Dict[str, Any]]:
     async with pool.get_db_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:

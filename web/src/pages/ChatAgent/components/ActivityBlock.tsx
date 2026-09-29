@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from '@/lib/framer';
 import { ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { INLINE_ARTIFACT_MAP, isInlineArtifactReady, openCardTarget } from './charts/InlineArtifactCards';
-import { isUserProfileReadmePath } from '../utils/agentPaths';
+import { isUserDataReadmePath } from '../utils/agentPaths';
 import { announceAnchoredToggle } from '../utils/anchoredToggle';
 import { summarizeCompletedItems } from './messageList/activitySummary';
 import { type ActivityItem, type PreparingToolCallData, isRunning } from './messageList/activityTypes';
@@ -49,7 +49,7 @@ const ActivityBlock = memo(function ActivityBlock({
     for (const item of items) {
       if (item.type === 'tool_call') {
         const path = filePathOf(item);
-        if (item.toolName === 'Read' && path && isUserProfileReadmePath(path)) continue;
+        if (item.toolName === 'Read' && path && isUserDataReadmePath(path)) continue;
         if (item._liveState === 'completed' && !item._annotationStep
           && isInlineArtifactReady(item.toolName, item.toolCallResult?.artifact)) {
           charts.push(item);

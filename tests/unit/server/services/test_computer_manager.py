@@ -2638,6 +2638,8 @@ class TestStartAnswersToEntitlement(_Base):
         manager._destroy_sandbox = AsyncMock()
         manager._apply_autostop_for_always_on = AsyncMock()
         manager._sync_machine_assets = AsyncMock()
+        manager._serve_livefs = AsyncMock()
+        manager._link_livefs_soon = MagicMock()
         manager._record_sync = MagicMock()
         manager._put_session = MagicMock()
         manager._clear_session = AsyncMock()
@@ -3197,6 +3199,39 @@ async def test_stopped_replacement_drops_the_reading_of_the_sandbox_it_replaced(
         await manager._replace_stopped_sandbox(binding, "original", claim_id="c-1", disk_guard=None, origin_workspace_id=None, user_id="user-1")
     clear.assert_awaited_once_with(binding.computer_id, sandbox_id="original")
     assert order == (["clear"] if gone else ["destroy", "clear"])
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_computers_backup_brings_no_mount_up():
+    """Its session stops once the files are saved, and no revoke follows, so
+    a token minted for it would stay live on a stopped computer."""
+    # The tests above stub the sync on the shared instance.
+    ComputerManager.reset_instance()
+    manager = _make_manager()
+    binding = _make_binding(provider_ref="original")
+    sandbox = SimpleNamespace(
+        sync_sandbox_assets=AsyncMock(return_value=SimpleNamespace(layout_version=4))
+    )
+    session = SimpleNamespace(initialize=AsyncMock(), stop=AsyncMock(), sandbox=sandbox)
+    manager._root_owner_folder = AsyncMock(return_value=None)
+    manager._stamp_layout_version = AsyncMock()
+    manager._backup_machine_files_to_db = AsyncMock()
+    manager._destroy_sandbox = AsyncMock()
+    manager._serve_livefs = AsyncMock()
+    manager._link_livefs_soon = MagicMock()
+    with (
+        patch(f"{_MACHINES}.sandbox_skill_sync_params", AsyncMock(return_value={})),
+        patch(f"{_MACHINES}.get_workspace_dir_names_for_computer", AsyncMock(return_value=())),
+        patch("src.server.services.computer_manager._spec.Session", return_value=session),
+        patch("src.server.services.computer_manager._spec.try_claim_computer_for_start", AsyncMock(return_value={"status": "starting"})),
+        patch("src.server.services.computer_manager._spec.update_computer_status", AsyncMock()),
+        patch("src.server.services.computer_manager._spec.heartbeat_computer_spec_change", AsyncMock(return_value=True)),
+        patch("src.server.services.computer_manager._spec.clear_computer_disk", AsyncMock()),
+    ):
+        await manager._replace_stopped_sandbox(binding, "original", claim_id="c-1", disk_guard=None, origin_workspace_id=None, user_id="user-1")
+    sandbox.sync_sandbox_assets.assert_awaited_once()
+    manager._serve_livefs.assert_not_awaited()
+    manager._link_livefs_soon.assert_not_called()
 
 
 @pytest.mark.asyncio

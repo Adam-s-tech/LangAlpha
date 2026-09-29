@@ -6,6 +6,7 @@
  * regression letting the agent mutate memos doesn't render as "Read memo".
  */
 import { describe, it, expect } from 'vitest';
+import { Clock, User } from 'lucide-react';
 import {
   categorizeTool,
   getCompletedRowTitle,
@@ -60,6 +61,13 @@ describe('categorizeTool — memo classification', () => {
     expect(
       categorizeTool('Edit', { args: { file_path: '.agents/user/profile/portfolio.json' } })
     ).toBe('profileWrite');
+  });
+
+  it('classifies automations reads + writes into automationsRead / automationsWrite buckets', () => {
+    const file_path = '.agents/user/automations/automations.json';
+    expect(categorizeTool('Read', { args: { file_path } })).toBe('automationsRead');
+    expect(categorizeTool('Write', { args: { file_path } })).toBe('automationsWrite');
+    expect(categorizeTool('Edit', { args: { file_path } })).toBe('automationsWrite');
   });
 
   it('does not change file/memory categorization', () => {
@@ -211,5 +219,39 @@ describe('user-profile — entity-aware labels for portfolio/watchlist/preferenc
       const out = getInProgressText('Write', { args: { file_path: filePath } }, tIdentity);
       expect(out).toBe(`toolArtifact.inProgress.updating_${entity}`);
     });
+
+    it(`uses the User icon for ${entity}.json`, () => {
+      expect(getToolIcon('Read', { file_path: filePath })).toBe(User);
+      expect(getToolIcon('Write', { file_path: filePath })).toBe(User);
+    });
   }
+});
+
+describe('automations: entity-aware labels for automations.json', () => {
+  const call = { args: { file_path: '.agents/user/automations/automations.json' } };
+
+  it('titles a completed Read "read_automations" and a Write or Edit "updated_automations"', () => {
+    expect(getCompletedRowTitle('Read', call, tIdentity)).toBe('toolArtifact.completed.read_automations');
+    expect(getCompletedRowTitle('Write', call, tIdentity)).toBe('toolArtifact.completed.updated_automations');
+    expect(getCompletedRowTitle('Edit', call, tIdentity)).toBe('toolArtifact.completed.updated_automations');
+  });
+
+  it('emits "reading_automations" / "updating_automations" in-progress phrases', () => {
+    expect(getInProgressText('Read', call, tIdentity)).toBe('toolArtifact.inProgress.reading_automations');
+    expect(getInProgressText('Edit', call, tIdentity)).toBe('toolArtifact.inProgress.updating_automations');
+  });
+
+  it('carries no summary pill, since the title already names the file', () => {
+    expect(getCompletedSummary('Read', call)).toBeNull();
+  });
+
+  it('uses the Clock icon check_automations uses', () => {
+    expect(getToolIcon('Read', call.args)).toBe(Clock);
+    expect(getToolIcon('Edit', call.args)).toBe(Clock);
+  });
+
+  it('falls back to English without a translator', () => {
+    expect(getCompletedRowTitle('Read', call)).toBe('Read automations');
+    expect(getInProgressText('Write', call)).toBe('updating automations...');
+  });
 });

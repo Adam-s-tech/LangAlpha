@@ -18,3 +18,16 @@ class EditTextResult(TypedDict, total=False):
     message: str
     occurrences: int
     size: int
+
+
+class WriteTextResult(TypedDict, total=False):
+    """What a route's ``awrite_text`` may report instead of a bare ``True``.
+
+    A DB-backed file applies a write as changes to rows, and ``message`` says
+    which ones (created, updated, deleted), so the agent learns the effect of
+    its write without re-reading the file. The Write tool shows it in place
+    of the byte count.
+    """
+
+    success: bool
+    message: str

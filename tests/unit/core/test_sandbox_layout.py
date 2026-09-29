@@ -76,6 +76,7 @@ EXPECTED_ABSOLUTE = {
     "memory_user": "/home/workspace/.agents/user/memory",
     "memo_user": "/home/workspace/.agents/user/memo",
     "user_profile": "/home/workspace/.agents/user/profile",
+    "automations": "/home/workspace/.agents/user/automations",
     "workflows": "/home/workspace/.agents/workflows",
     "system": "/home/workspace/.system",
     "system_code": "/home/workspace/.system/code",
@@ -107,6 +108,7 @@ EXPECTED_RELATIVE = {
     "MEMORY_USER_DIR": ".agents/user/memory",
     "MEMO_USER_DIR": ".agents/user/memo",
     "USER_PROFILE_DIR": ".agents/user/profile",
+    "AUTOMATIONS_DIR": ".agents/user/automations",
     "WORKFLOWS_DIR": ".agents/workflows",
     "TMP_DIR": ".agents/tmp",
     "SYSTEM_DIR": ".system",
@@ -1119,15 +1121,13 @@ class TestGeneratedFrontendModule:
             # folder actually carries.
             "export const MEMORY_WORKSPACE_DIR = '.agents/memory';",
             "export const MEMO_USER_DIR = '.agents/user/memo';",
-            "export const USER_PROFILE_DIR = '.agents/user/profile';",
             "export const SKILLS_DIR = '.agents/skills';",
             "export const MEMORY_INDEX_FILENAME = 'memory.md';",
             "export const MEMO_INDEX_FILENAME = 'memo.md';",
             "  'home/workspace/',",
             "  'home/daytona/',",
-            "  portfolio: 'portfolio.json',",
-            "  watchlist: 'watchlist.json',",
-            "  preference: 'preference.json',",
+            "  '.agents/user/profile': ['portfolio.json', 'watchlist.json', 'preference.json'],",
+            "  '.agents/user/automations': ['automations.json'],",
             # Root directories an earlier layout owned. A sandbox reused
             # across its migration still has them, so the file panel filters
             # on them by name.

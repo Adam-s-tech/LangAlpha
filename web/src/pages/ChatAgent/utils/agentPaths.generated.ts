@@ -17,7 +17,6 @@ export const SANDBOX_ROOT_PREFIXES = [
 export const MEMORY_USER_DIR = '.agents/user/memory';
 export const MEMORY_WORKSPACE_DIR = '.agents/memory';
 export const MEMO_USER_DIR = '.agents/user/memo';
-export const USER_PROFILE_DIR = '.agents/user/profile';
 export const SKILLS_DIR = '.agents/skills';
 export const THREADS_DIR = '.agents/threads';
 export const LARGE_TOOL_RESULTS_DIR = '.agents/large_tool_results';
@@ -31,11 +30,11 @@ export const AGENT_MD_FILE = 'agent.md';
 export const MEMORY_INDEX_FILENAME = 'memory.md';
 export const MEMO_INDEX_FILENAME = 'memo.md';
 
-/** The three virtual JSON files that UserDataBackend serves. */
-export const USER_PROFILE_FILES = {
-  portfolio: 'portfolio.json',
-  watchlist: 'watchlist.json',
-  preference: 'preference.json',
+/** The DB-backed files (rows in Postgres), by the directory that serves
+ *  them beside a README.md. Source: USER_DATA_FILES. */
+export const USER_DATA_FILES = {
+  '.agents/user/profile': ['portfolio.json', 'watchlist.json', 'preference.json'],
+  '.agents/user/automations': ['automations.json'],
 } as const;
 
 /** Agent-infrastructure dirs at the sandbox root, collapsed by

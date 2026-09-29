@@ -15,6 +15,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from src.server.database.pool import get_db_connection
+from src.server.database.user_lock import lock_user_profile
 from src.server.utils.db import UpdateQueryBuilder
 
 logger = logging.getLogger(__name__)
@@ -133,8 +134,9 @@ async def update_portfolio_holding(
         returning_columns=returning_columns,
     )
 
-    async with get_db_connection() as conn:
+    async with get_db_connection() as conn, conn.transaction():
         async with conn.cursor(row_factory=dict_row) as cur:
+            await lock_user_profile(cur, user_id)
             await cur.execute(query, params)
 
             result = await cur.fetchone()
@@ -196,6 +198,7 @@ async def upsert_portfolio_holding(
         # Explicit transaction for atomicity (autocommit is ON by default)
         async with conn.transaction():
             async with conn.cursor(row_factory=dict_row) as cur:
+                await lock_user_profile(cur, user_id)
                 # FOR UPDATE locks the row to prevent concurrent merge races
                 await cur.execute("""
                     SELECT
@@ -312,8 +315,9 @@ async def delete_portfolio_holding(user_portfolio_id: str, user_id: str) -> bool
     Returns:
         True if holding was deleted, False if not found
     """
-    async with get_db_connection() as conn:
+    async with get_db_connection() as conn, conn.transaction():
         async with conn.cursor() as cur:
+            await lock_user_profile(cur, user_id)
             await cur.execute("""
                 DELETE FROM user_portfolios
                 WHERE user_portfolio_id = %s AND user_id = %s

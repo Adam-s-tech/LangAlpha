@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.server.database import automation as auto_db
+from src.server.database import automation_executions as exec_db
 
 
 @pytest.fixture
@@ -14,7 +14,7 @@ def db(mock_connection, mock_cursor):
     async def _connection():
         yield mock_connection
 
-    with patch("src.server.database.automation.get_db_connection", new=_connection):
+    with patch("src.server.database.automation_executions.get_db_connection", new=_connection):
         yield mock_cursor
 
 
@@ -23,7 +23,7 @@ def db(mock_connection, mock_cursor):
 async def test_a_page_reads_one_row_past_itself(db, fetched, has_more):
     db.fetchall.return_value = [{"automation_execution_id": f"run-{i}"} for i in range(fetched)]
 
-    rows, more = await auto_db.list_executions("user-1", limit=2, offset=4)
+    rows, more = await exec_db.list_executions("user-1", limit=2, offset=4)
 
     assert [r["automation_execution_id"] for r in rows] == [f"run-{i}" for i in range(min(fetched, 2))]
     assert more is has_more

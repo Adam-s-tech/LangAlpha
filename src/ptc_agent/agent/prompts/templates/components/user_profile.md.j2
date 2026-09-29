@@ -51,3 +51,9 @@ When handling investment-related queries, check these JSON files under `.agents/
 {% endif %}
 
 **Important**: Always consider the user's risk tolerance and investment preferences when providing financial analysis or recommendations.
+{% if sandbox_enabled %}
+
+## Automations
+
+The user's scheduled and price-triggered automations live in `.agents/user/automations/automations.json`; edit that file to create, change, pause or delete one. Read the README beside it before your first edit, and confirm with the user before you create or delete one.
+{% endif %}

@@ -47,8 +47,8 @@ def test_no_user_id_closes_every_user_scoped_surface(workflows):
 
 
 def test_no_store_closes_the_store_routes_but_not_the_user_data_backend(workflows):
-    """The user-profile backend reads the application DB, not the LangGraph
-    store, so it is gated on identity alone."""
+    """The user-profile and automations backends read the application DB, not
+    the LangGraph store, so they are gated on identity alone."""
     workflows(True)
 
     gates = resolve_identity_gates(

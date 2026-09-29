@@ -15,6 +15,10 @@ PACKAGE_NAME = "livefs"
 #: walkers, ``rm -r`` and backups leave alone unless told to follow them.
 MOUNT = "/mnt/livefs"
 
+#: Where each daemon start mounts a fresh directory that ``MOUNT`` then
+#: points at.
+GENERATIONS = "/mnt/.livefs"
+
 #: The server's endpoint; each action is a path under it (``/list``, ``/write``).
 PREFIX = "/api/v1/livefs"
 
@@ -68,8 +72,8 @@ def code_of(body: bytes) -> str | None:
 
 
 class MountError(StrEnum):
-    """Why the mount is not serving. ``up`` and ``start`` answer all but the
-    last two, which the host adds."""
+    """Why the mount is not serving, or a workspace not linked. ``start`` and
+    ``link`` answer all but the last two, which the host adds."""
 
     NO_CONFIG = "no_config"
     BAD_CONFIG = "bad_config"
@@ -81,9 +85,9 @@ class MountError(StrEnum):
     START_FAILED = "start_failed"
     LINK_FAILED = "link_failed"
     #: ``start`` found other code shipped than the host expects: an asset
-    #: sync is still replacing it, so ``up`` starts the daemon once it lands.
+    #: sync is still replacing it, so the host asks again once it lands.
     STALE_CODE = "stale_code"
-    #: ``up`` printed nothing the host could read.
+    #: The command printed nothing the host could read.
     UNANSWERED = "unanswered"
-    #: The computer's folders were moving, so ``up`` was not asked.
+    #: The computer's folders were moving, so nothing was asked.
     BUSY = "busy"

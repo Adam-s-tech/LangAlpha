@@ -246,7 +246,7 @@ async def patched_get_db_connection(test_db_pool, test_db_uri):
     holders = [
         module
         for name, module in list(sys.modules.items())
-        if name.startswith("src.")
+        if name.startswith(("src.", "ptc_agent."))
         and getattr(module, "get_db_connection", None) is _pool_gdc
     ]
     from contextlib import ExitStack

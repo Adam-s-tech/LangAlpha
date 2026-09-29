@@ -7,6 +7,7 @@ tasks via AutomationExecutor.
 """
 
 import asyncio
+import contextvars
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Set
@@ -16,6 +17,7 @@ from croniter import croniter
 from zoneinfo import ZoneInfo
 
 from src.server.database import automation as auto_db
+from src.server.database import automation_executions as exec_db
 from src.server.services.automation_executor import (
     ABANDONED_AFTER_SECONDS,
     AutomationExecutor,
@@ -50,6 +52,8 @@ class AutomationScheduler:
         self._sweep_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
         self._executor = AutomationExecutor.get_instance()
+        # The context every firing runs in; `start` takes the server's own.
+        self._context = contextvars.Context()
 
     @property
     def server_id(self) -> str:
@@ -65,6 +69,7 @@ class AutomationScheduler:
             f"(server_id={self._server_id}, poll_interval={POLL_INTERVAL}s)"
         )
         self._shutdown_event.clear()
+        self._context = contextvars.copy_context()
         self._executor.resume_waiting()
         self._poll_task = asyncio.create_task(
             self._poll_loop(), name="automation_scheduler_poll"
@@ -134,13 +139,13 @@ class AutomationScheduler:
         and runs its aftermath.
         """
         try:
-            closed = await auto_db.settle_legacy_executions(INTERRUPTED_ERROR)
+            closed = await exec_db.settle_legacy_executions(INTERRUPTED_ERROR)
             if closed:
                 logger.warning(
                     f"[SCHEDULER] Closed {closed} firings left unsettled "
                     f"by an earlier build"
                 )
-            rows = await auto_db.list_abandoned_executions(ABANDONED_AFTER_SECONDS)
+            rows = await exec_db.list_abandoned_executions(ABANDONED_AFTER_SECONDS)
         except Exception as e:
             logger.error(f"[SCHEDULER] Abandoned-firing sweep failed: {e}")
             return
@@ -174,9 +179,16 @@ class AutomationScheduler:
 
         Held here, so shutdown waits for it and then settles it, and the
         loop's weak reference is never the only one.
+
+        It runs in the scheduler's context, not the caller's. A trigger from
+        inside an agent turn would otherwise hand the run that turn's
+        LangChain config, and the run's events would stream into the chat
+        that triggered it.
         """
         task = asyncio.create_task(
-            self._run_execution(automation, execution_id), name=name
+            self._run_execution(automation, execution_id),
+            name=name,
+            context=self._context.copy(),
         )
         self._running_tasks.add(task)
         task.add_done_callback(self._running_tasks.discard)

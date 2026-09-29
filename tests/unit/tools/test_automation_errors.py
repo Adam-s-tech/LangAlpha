@@ -27,7 +27,7 @@ def test_a_refused_price_config_names_what_in_it_is_wrong():
 
 @pytest.mark.asyncio
 async def test_an_ownership_refusal_reaches_the_agent_as_its_reason(monkeypatch):
-    """The handler refuses a foreign target with an HTTP error; the agent gets its detail."""
+    """The lifecycle refuses a foreign target with an HTTP error; the agent gets its detail."""
     from fastapi import HTTPException
 
     from src.tools.automation import tools
@@ -35,7 +35,7 @@ async def test_an_ownership_refusal_reaches_the_agent_as_its_reason(monkeypatch)
     async def refuse(*_args, **_kwargs):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    monkeypatch.setattr(tools.auto_handler, "pause_automation", refuse)
+    monkeypatch.setattr(tools.lifecycle, "pause_automation", refuse)
 
     result = await tools.manage_automation.coroutine(
         automation_id="00000000-0000-4000-8000-0000000000a1", action="pause", config={"configurable": {"user_id": "u1"}}
@@ -53,7 +53,7 @@ async def test_an_id_that_cannot_name_an_automation_is_not_found(monkeypatch):
         raise AssertionError("a malformed id reached the database")
 
     monkeypatch.setattr(tools.auto_db, "get_automation", unreachable)
-    monkeypatch.setattr(tools.auto_handler, "pause_automation", unreachable)
+    monkeypatch.setattr(tools.lifecycle, "pause_automation", unreachable)
     config = {"configurable": {"user_id": "u1"}}
 
     content, _ = await tools.check_automations.coroutine(config=config, automation_id="abc")

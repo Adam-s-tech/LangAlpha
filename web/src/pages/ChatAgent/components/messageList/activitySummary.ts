@@ -14,15 +14,16 @@ import type { ActivityItem, ToolActivityItem } from './activityTypes';
 export type { ActivityItem, LiveState } from './activityTypes';
 
 /**
- * Slot = what the header emits. `memory` and `profile` each collapse read+write
- * into a single fragment whose verb flips on any write (each is conceptually
- * one surface, the user's memory, the user's profile data). `fileRead`/
+ * Slot = what the header emits. `memory`, `profile` and `automations` each
+ * collapse read+write into a single fragment whose verb flips on any write
+ * (each is conceptually one surface: the user's memory, profile data,
+ * automations). `fileRead`/
  * `fileEdit` and `memo`/`memoWrite` stay separate: distinct file/memo paths
  * shouldn't collide under one label, and any memo modification is surfaced
  * distinctly so a future regression letting the agent mutate a memo is visible.
  */
 export type SummarySlot =
-  | 'skill' | 'memory' | 'memo' | 'memoWrite' | 'profile' | 'code'
+  | 'skill' | 'memory' | 'memo' | 'memoWrite' | 'profile' | 'automations' | 'code'
   | 'web' | 'search' | 'fileRead' | 'fileEdit' | 'reasoning' | 'generic';
 
 export interface SummaryFragment {
@@ -34,9 +35,16 @@ export interface SummaryFragment {
 }
 
 const SLOT_ORDER: SummarySlot[] = [
-  'skill', 'memory', 'memo', 'memoWrite', 'profile', 'code',
+  'skill', 'memory', 'memo', 'memoWrite', 'profile', 'automations', 'code',
   'web', 'search', 'fileRead', 'fileEdit', 'reasoning', 'generic',
 ];
+
+/** The slots that collapse a read and a write category into one fragment. */
+const READ_WRITE_SLOTS: Partial<Record<SummarySlot, readonly [ToolCategory, ToolCategory]>> = {
+  memory: ['memoryRead', 'memoryWrite'],
+  profile: ['profileRead', 'profileWrite'],
+  automations: ['automationsRead', 'automationsWrite'],
+};
 
 /** When folded, cap the breakdown so the header stays scannable on a turn with
  *  many tool categories; expanding reveals the full list. */
@@ -56,19 +64,14 @@ export function summaryFragments(items: ActivityItem[]): SummaryFragment[] {
     const key = classifyToolCall(item);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  const memReads = counts.get('memoryRead') ?? 0;
-  const memWrites = counts.get('memoryWrite') ?? 0;
-  const memTotal = memReads + memWrites;
-  const profileReads = counts.get('profileRead') ?? 0;
-  const profileWrites = counts.get('profileWrite') ?? 0;
-  const profileTotal = profileReads + profileWrites;
 
   const out: SummaryFragment[] = [];
   for (const slot of SLOT_ORDER) {
-    if (slot === 'memory') {
-      if (memTotal > 0) out.push({ slot, count: memTotal, modified: memWrites > 0 });
-    } else if (slot === 'profile') {
-      if (profileTotal > 0) out.push({ slot, count: profileTotal, modified: profileWrites > 0 });
+    const readWrite = READ_WRITE_SLOTS[slot];
+    if (readWrite) {
+      const reads = counts.get(readWrite[0]) ?? 0;
+      const writes = counts.get(readWrite[1]) ?? 0;
+      if (reads + writes > 0) out.push({ slot, count: reads + writes, modified: writes > 0 });
     } else if (slot === 'reasoning' && counts.has('reasoning')) {
       out.push({ slot, count: counts.get('reasoning')!, thoughtMs: thoughtDuration(items) });
     } else if (counts.has(slot as ToolCategory | 'reasoning')) {
@@ -99,13 +102,16 @@ function fragmentLabel(f: SummaryFragment, t: TFn): string {
       : t('toolArtifact.nReasoning', { count: f.count });
   }
   if (f.slot === 'skill') return t('toolArtifact.categoryCount.skill', { count: f.count });
-  // No count for memory or profile: each is one surface, and any write/edit
-  // overrules the pure-read framing.
+  // No count for memory, profile or automations: each is one surface, and any
+  // write/edit overrules the pure-read framing.
   if (f.slot === 'memory') {
     return t(f.modified ? 'toolArtifact.categoryCount.memoryUpdated' : 'toolArtifact.categoryCount.memoryRead');
   }
   if (f.slot === 'profile') {
     return t(f.modified ? 'toolArtifact.categoryCount.profileUpdated' : 'toolArtifact.categoryCount.profileRead');
+  }
+  if (f.slot === 'automations') {
+    return t(f.modified ? 'toolArtifact.categoryCount.automationsUpdated' : 'toolArtifact.categoryCount.automationsRead');
   }
   if (f.slot === 'fileRead') return t('toolArtifact.categoryCount.fileRead', { count: f.count });
   if (f.slot === 'fileEdit') return t('toolArtifact.categoryCount.fileEdit', { count: f.count });
@@ -138,7 +144,8 @@ export function summarizeCompletedItems(
     const isPriority = (f: SummaryFragment) =>
       f.slot === 'memoWrite'
       || (f.slot === 'memory' && f.modified === true)
-      || (f.slot === 'profile' && f.modified === true);
+      || (f.slot === 'profile' && f.modified === true)
+      || (f.slot === 'automations' && f.modified === true);
     const ordered = [...fragments.filter(isPriority), ...fragments.filter((f) => !isPriority(f))];
     const overflowing = !options?.expanded && ordered.length > FOLDED_MAX;
     const visible = overflowing ? ordered.slice(0, FOLDED_MAX) : ordered;

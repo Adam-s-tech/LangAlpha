@@ -17,6 +17,7 @@ from src.server.services.computer_manager._bringup import BringUpMixin
 from src.server.services.computer_manager._machine_backup import MachineBackupMixin
 from src.server.services.computer_manager._folders import FolderSettleMixin
 from src.server.services.computer_manager._lifecycle import SessionLifecycleMixin
+from src.server.services.computer_manager._livefs import LivefsMixin
 from src.server.services.computer_manager._machines import MachineLifecycleMixin
 from src.server.services.computer_manager._mcp import McpSecretsMixin
 from src.server.services.computer_manager._providers import ProviderMixin
@@ -31,6 +32,7 @@ class ComputerManager(
     SessionCacheMixin,
     ProviderMixin,
     ProvisioningMixin,
+    LivefsMixin,
     BringUpMixin,
     FolderSettleMixin,
     MachineBackupMixin,

@@ -119,7 +119,9 @@ def _firing(turns, *, runs=None, busy=(), fresh=None, is_byok=(False,)):
     )
     with (
         patch(f"{_MOD}.auto_db", new=db),
+        patch(f"{_MOD}.exec_db", new=db),
         patch("src.server.services.automation_settlement.auto_db", new=db),
+        patch("src.server.services.automation_settlement.exec_db", new=db),
         patch(f"{_MOD}.is_byok_active", new=fx.byok),
         patch(f"{_MOD}.has_any_oauth_token", new=AsyncMock(return_value=False)),
         patch(f"{_MOD}.enforce_credit_limit", new=fx.credit),

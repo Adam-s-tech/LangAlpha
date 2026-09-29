@@ -7,7 +7,7 @@ fresh without the daemon polling anything.
 
 Two things outlive a command without showing it anything stale. The
 directories the server makes up (the root, ``workspaces``, each workspace,
-``user``) change only when the host runs ``up`` again, which rewrites the
+``user``) change only when the host runs ``link`` again, which rewrites the
 daemon's state file. File bytes are kept by version, and a command still takes
 each file's version from a listing of its own.
 """
@@ -34,7 +34,7 @@ VIEW_LIMIT = 32
 UNTAGGED_TTL_S = 2.0
 PID_TTL_S = 2.0
 #: How long a made-up directory's listing answers without being asked again:
-#: a backstop for a layout change no ``up`` followed.
+#: a backstop for a layout change no ``link`` followed.
 STRUCTURE_TTL_S = 300.0
 #: The file bytes kept, at most; less where the sandbox has little memory.
 CONTENT_BYTES = 64 * 1024 * 1024
@@ -230,7 +230,7 @@ class LiveFS:
 
     ``caller`` names the pid of the process a request comes from, and
     ``call_of`` the call that pid runs for. ``layout`` is the state file
-    ``up`` rewrites whenever the computer's workspaces or links may have
+    ``link`` rewrites whenever the computer's workspaces or links may have
     changed.
     """
 
@@ -266,7 +266,7 @@ class LiveFS:
         self._layout_seen: object = None
         self._sources: list[str] | None = None
         self._made: dict[str, _Made] = {}
-        #: Directories each made-up directory holds, as the links ``up`` made
+        #: Directories each made-up directory holds, as the links ``link`` made
         #: through them say: only ever a reason to look no further.
         self._seeded: dict[str, set[str]] = {}
         self._bytes = _Contents(content_bytes)
@@ -310,7 +310,7 @@ class LiveFS:
         return call, self._view(call)
 
     def _check_layout(self) -> None:
-        """Forget the made-up directories once ``up`` has linked a different
+        """Forget the made-up directories once ``link`` has linked a different
         set of mount paths, which it does whenever the computer's workspaces
         or layout change. Checked as each command starts, so no command's
         walk spans two layouts; a rewrite that changed no link (a new token)
@@ -410,7 +410,7 @@ class LiveFS:
             if path in self._seeded:
                 self._seeded[path].intersection_update(entries)
             # One holding a file is this command's alone: a file's version
-            # moves with no ``up``.
+            # moves with no ``link``.
             if listing.get("structural") and all(e.get("type") == "dir" for e in entries.values()):
                 before = self._made.get(path)
                 self._made[path] = _Made(

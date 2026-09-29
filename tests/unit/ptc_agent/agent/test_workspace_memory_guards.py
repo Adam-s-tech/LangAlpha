@@ -20,13 +20,12 @@ from ptc_agent.agent.middleware.background_subagent.workflow.tool import (
 from ptc_agent.agent.middleware.provenance.middleware import (
     _classify_file_source_type,
 )
-from ptc_agent.agent.tools.bash import _command_touches_memory
-from ptc_agent.agent.tools.code_execution import _code_touches_memory
 from ptc_agent.agent.tools.context_file_policy import (
     MAX_MEMORY_BLOCK_SIZE,
     capped_file,
 )
 from ptc_agent.core.paths import MEMORY_INDEX_FILENAME, WorkspaceLayout
+from ptc_agent.core.sandbox.livefs_mount import unserved_tree
 
 WORKSPACE_MEMORY = WorkspaceLayout.MEMORY_DIR
 ROOT = "/home/workspace"
@@ -39,11 +38,12 @@ def test_the_workspace_tier_is_where_the_layout_says():
 
 class TestTheWorkspaceTierIsGuarded:
     def test_bash_refuses_the_path(self):
-        assert _command_touches_memory(f"cat {WORKSPACE_MEMORY}/memory.md")
+        assert unserved_tree(None, f"cat {WORKSPACE_MEMORY}/memory.md") == "memory"
 
     def test_execute_code_refuses_the_path(self):
-        assert _code_touches_memory(
-            f"open('{WORKSPACE_MEMORY}/memory.md').read()"
+        assert (
+            unserved_tree(None, f"open('{WORKSPACE_MEMORY}/memory.md').read()")
+            == "memory"
         )
 
     def test_provenance_classifies_a_read_as_memory(self):
@@ -68,7 +68,7 @@ class TestTheWorkspaceTierIsGuarded:
 
 class TestTheGuardsStayNarrow:
     def test_an_ordinary_agents_path_is_not_refused(self):
-        assert not _command_touches_memory("ls .agents/skills/pdf")
+        assert unserved_tree(None, "ls .agents/skills/pdf") is None
 
     def test_a_work_file_is_not_capped(self):
         assert (

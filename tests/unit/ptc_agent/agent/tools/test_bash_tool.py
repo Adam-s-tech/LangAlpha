@@ -21,6 +21,8 @@ def _make_backend(result: dict) -> Any:
     backend = SimpleNamespace()
     backend.filesystem_config = SimpleNamespace(working_directory="/home/workspace")
     backend.aexecute_bash = AsyncMock(return_value=result)
+    backend.livefs = None
+    backend.settled_livefs = AsyncMock(return_value=None)
     return backend
 
 

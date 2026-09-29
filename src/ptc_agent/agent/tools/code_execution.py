@@ -7,9 +7,11 @@ from langchain_core.tools import BaseTool, tool
 
 from ptc_agent.agent.backends.sandbox import SandboxBackend
 from ptc_agent.agent.tools.code_admission import code_run_slot, max_execution_time_of
+from ptc_agent.agent.tools.mount_guard import run_guarded
 from ptc_agent.core.paths import (
     MEMO_USER_DIR,
     MEMORY_USER_DIR,
+    SandboxLayout,
     WorkspaceLayout,
 )
 from ptc_agent.core.sandbox import livefs_mount
@@ -19,12 +21,6 @@ logger = structlog.get_logger(__name__)
 # Same guard as bash: without the file mount, sandbox Python cannot reach the
 # store-backed memory or user-managed memo store. Memo paths are additionally
 # read-only to the agent.
-_MEMORY_PATH_MARKERS: tuple[str, ...] = (
-    f"{MEMORY_USER_DIR}/",
-    f"{WorkspaceLayout.MEMORY_DIR}/",
-    f"{MEMO_USER_DIR}/",
-)
-
 _MEMORY_ROUTE_ERROR = (
     f"ERROR: Store-backed paths ({MEMORY_USER_DIR}/**, "
     f"{WorkspaceLayout.MEMORY_DIR}/**, "
@@ -36,8 +32,14 @@ _MEMORY_ROUTE_ERROR = (
 )
 
 
-def _code_touches_memory(code: str) -> bool:
-    return any(marker in code for marker in _MEMORY_PATH_MARKERS)
+# The automations file is rows in the database, which the sandbox sees only
+# while the file mount serves it.
+_AUTOMATIONS_ROUTE_ERROR = (
+    f"ERROR: {SandboxLayout.AUTOMATIONS_DIR}/** holds the user's automations in the "
+    "database, not on the sandbox filesystem. Use Read, Edit and Write on "
+    f"{SandboxLayout.AUTOMATIONS_DIR}/automations.json. Read it with the Read tool and "
+    "pass the content in if your code needs it; ExecuteCode can't see or change it."
+)
 
 
 def create_execute_code_tool(
@@ -46,6 +48,7 @@ def create_execute_code_tool(
     thread_id: str = "",
     *,
     session: Any = None,
+    call_context: livefs_mount.CallContext | None = None,
 ) -> BaseTool:
     """Factory function to create execute_code tool with injected dependencies.
 
@@ -56,6 +59,8 @@ def create_execute_code_tool(
         session: The machine's session, read at call time for its ``computer_id``
             and ``resource_tier`` to size per-computer admission. Omitted by
             callers with no notion of a computer, which skips admission.
+        call_context: Who the code runs for, which a save through the file
+            mount reads its defaults from
 
     Returns:
         Configured execute_code tool function
@@ -85,23 +90,16 @@ def create_execute_code_tool(
         if not backend:
             return "ERROR: Sandbox not initialized", {"mcp_trace": []}
 
-        mount = getattr(getattr(backend, "sandbox", None), "livefs", None)
-        if mount is None and _code_touches_memory(code):
-            logger.info(
-                "Blocked execute_code referencing memory path",
-                code_length=len(code),
-            )
-            return _MEMORY_ROUTE_ERROR, {"mcp_trace": []}
-        call_id = None
-        if mount is not None:
-            await mount.prepare()
-            call_id = livefs_mount.new_call_id()
-        text, artifact = await _run(code, call_id)
-        if call_id is not None:
-            report = await mount.report(call_id, text)
-            if report:
-                text = f"{text}\n\n{report}"
-        return text, artifact
+        return await run_guarded(
+            backend,
+            code,
+            call_context,
+            lambda call_id: _run(code, call_id),
+            memory_error=_MEMORY_ROUTE_ERROR,
+            automations_error=_AUTOMATIONS_ROUTE_ERROR,
+            blocked_event="Blocked execute_code referencing a store-backed path",
+            code_length=len(code),
+        )
 
     async def _run(code: str, call_id: str | None) -> tuple[str, dict[str, Any]]:
         try:

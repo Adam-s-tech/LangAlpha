@@ -2,17 +2,20 @@
 
 Locks the cross-tenant contract: a ``workspace_id`` / ``conversation_thread_id``
 naming something the caller does not own is rejected before any row is written.
-The gate lives in the handler because the REST router and the agent's
-automation tool both write through it.
+The gate lives in the lifecycle because the REST router, the agent tools and
+the automations file all write through it.
 """
 
 import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import HTTPException
 
-from src.server.handlers.automation_handler import create_automation, update_automation
+from src.server.services.automations.lifecycle import (
+    TargetRefused,
+    create_automation,
+    update_automation,
+)
 from src.server.models.automation import AutomationCreate
 
 OWNER = "user-owner"
@@ -56,8 +59,8 @@ def _current_row(**overrides):
 
 class TestCreateTargetOwnership:
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
-    @patch("src.server.handlers.automation_handler.get_workspace")
+    @patch("src.server.services.automations.lifecycle.auto_db")
+    @patch("src.server.services.automations.lifecycle.get_workspace")
     async def test_rejects_workspace_owned_by_another_user(
         self, mock_get_workspace, mock_auto_db,
     ):
@@ -65,33 +68,35 @@ class TestCreateTargetOwnership:
             "workspace_id": WORKSPACE_ID, "user_id": OTHER,
         }
 
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(TargetRefused) as exc:
             await create_automation(
                 OWNER, _create_data(agent_mode="ptc", workspace_id=WORKSPACE_ID),
             )
 
         assert exc.value.status_code == 403
+        assert exc.value.field == "workspace_id"
         mock_auto_db.create_automation.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
-    @patch("src.server.handlers.automation_handler.get_workspace")
+    @patch("src.server.services.automations.lifecycle.auto_db")
+    @patch("src.server.services.automations.lifecycle.get_workspace")
     async def test_rejects_workspace_that_does_not_exist(
         self, mock_get_workspace, mock_auto_db,
     ):
         mock_get_workspace.return_value = None
 
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(TargetRefused) as exc:
             await create_automation(
                 OWNER, _create_data(agent_mode="ptc", workspace_id=WORKSPACE_ID),
             )
 
         assert exc.value.status_code == 404
+        assert exc.value.field == "workspace_id"
         mock_auto_db.create_automation.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
-    @patch("src.server.handlers.automation_handler.get_workspace")
+    @patch("src.server.services.automations.lifecycle.auto_db")
+    @patch("src.server.services.automations.lifecycle.get_workspace")
     async def test_rejects_foreign_workspace_even_in_flash_mode(
         self, mock_get_workspace, mock_auto_db,
     ):
@@ -102,23 +107,24 @@ class TestCreateTargetOwnership:
             "workspace_id": WORKSPACE_ID, "user_id": OTHER,
         }
 
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(TargetRefused) as exc:
             await create_automation(
                 OWNER, _create_data(agent_mode="flash", workspace_id=WORKSPACE_ID),
             )
 
         assert exc.value.status_code == 403
+        assert exc.value.field == "workspace_id"
         mock_auto_db.create_automation.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     @patch(_THREAD_OWNER, new_callable=AsyncMock)
     async def test_rejects_pinned_thread_owned_by_another_user(
         self, mock_thread_owner, mock_auto_db,
     ):
         mock_thread_owner.return_value = OTHER
 
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(TargetRefused) as exc:
             await create_automation(
                 OWNER,
                 _create_data(
@@ -127,17 +133,18 @@ class TestCreateTargetOwnership:
             )
 
         assert exc.value.status_code == 403
+        assert exc.value.field == "conversation_thread_id"
         mock_auto_db.create_automation.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     @patch(_THREAD_OWNER, new_callable=AsyncMock)
     async def test_rejects_pinned_thread_that_does_not_exist(
         self, mock_thread_owner, mock_auto_db,
     ):
         mock_thread_owner.return_value = None
 
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(TargetRefused) as exc:
             await create_automation(
                 OWNER,
                 _create_data(
@@ -146,12 +153,13 @@ class TestCreateTargetOwnership:
             )
 
         assert exc.value.status_code == 404
+        assert exc.value.field == "conversation_thread_id"
         mock_auto_db.create_automation.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     @patch(_THREAD_OWNER, new_callable=AsyncMock)
-    @patch("src.server.handlers.automation_handler.get_workspace")
+    @patch("src.server.services.automations.lifecycle.get_workspace")
     async def test_accepts_targets_the_caller_owns(
         self, mock_get_workspace, mock_thread_owner, mock_auto_db,
     ):
@@ -176,8 +184,8 @@ class TestCreateTargetOwnership:
         mock_auto_db.create_automation.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
-    @patch("src.server.handlers.automation_handler.get_workspace")
+    @patch("src.server.services.automations.lifecycle.auto_db")
+    @patch("src.server.services.automations.lifecycle.get_workspace")
     async def test_skips_lookup_when_no_targets_supplied(
         self, mock_get_workspace, mock_auto_db,
     ):
@@ -197,8 +205,8 @@ class TestCreateTargetOwnership:
 
 class TestUpdateTargetOwnership:
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
-    @patch("src.server.handlers.automation_handler.get_workspace")
+    @patch("src.server.services.automations.lifecycle.auto_db")
+    @patch("src.server.services.automations.lifecycle.get_workspace")
     async def test_rejects_repointing_at_another_users_workspace(
         self, mock_get_workspace, mock_auto_db,
     ):
@@ -207,16 +215,17 @@ class TestUpdateTargetOwnership:
             "workspace_id": WORKSPACE_ID, "user_id": OTHER,
         }
 
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(TargetRefused) as exc:
             await update_automation(
                 AUTOMATION_ID, OWNER, {"workspace_id": WORKSPACE_ID},
             )
 
         assert exc.value.status_code == 403
+        assert exc.value.field == "workspace_id"
         mock_auto_db.update_automation.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     @patch(_THREAD_OWNER, new_callable=AsyncMock)
     async def test_rejects_repointing_at_another_users_thread(
         self, mock_thread_owner, mock_auto_db,
@@ -224,17 +233,18 @@ class TestUpdateTargetOwnership:
         mock_auto_db.get_automation = AsyncMock(return_value=_current_row())
         mock_thread_owner.return_value = OTHER
 
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(TargetRefused) as exc:
             await update_automation(
                 AUTOMATION_ID, OWNER, {"conversation_thread_id": THREAD_ID},
             )
 
         assert exc.value.status_code == 403
+        assert exc.value.field == "conversation_thread_id"
         mock_auto_db.update_automation.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
-    @patch("src.server.handlers.automation_handler.get_workspace")
+    @patch("src.server.services.automations.lifecycle.auto_db")
+    @patch("src.server.services.automations.lifecycle.get_workspace")
     async def test_untargeted_update_skips_the_lookup(
         self, mock_get_workspace, mock_auto_db,
     ):
@@ -247,8 +257,8 @@ class TestUpdateTargetOwnership:
         mock_auto_db.update_automation.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
-    @patch("src.server.handlers.automation_handler.get_workspace")
+    @patch("src.server.services.automations.lifecycle.auto_db")
+    @patch("src.server.services.automations.lifecycle.get_workspace")
     async def test_missing_automation_returns_none_without_checking_targets(
         self, mock_get_workspace, mock_auto_db,
     ):

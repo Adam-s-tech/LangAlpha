@@ -105,6 +105,17 @@ class SandboxBackend(SandboxBackendProtocol):
         """The file mount serving the sandbox, or None while none does."""
         return self.sandbox.livefs
 
+    async def settled_livefs(
+        self, workspace_id: str | None = None
+    ) -> MountHandle | None:
+        """The mount as a command in ``workspace_id`` finds it, or None when
+        it does not serve that folder: its links may still be going in when
+        the turn starts, and may not go in at all."""
+        mount = self.sandbox.livefs
+        if mount is None or not await mount.ready(workspace_id):
+            return None
+        return self.sandbox.livefs
+
     @property
     def workspace_dir(self) -> str:
         """The workspace root a relative agent path resolves against.

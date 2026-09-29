@@ -10,69 +10,61 @@ errno and a ``message`` that reaches the agent through the tool result.
 from __future__ import annotations
 
 import logging
-import time
-from collections.abc import Awaitable
-from typing import Any, TypeVar
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 
-from ptc_agent.agent.backends.langgraph_store import MAX_CONTENT_BYTES
-from ptc_agent.core.sandbox.livefs_runtime.protocol import PROVISIONAL_HEADER
+from ptc_agent.core.sandbox.livefs_mount import CallContext
+from ptc_agent.core.sandbox.livefs_runtime.protocol import (
+    CALL_HEADER,
+    MAX_FILE_BYTES,
+    PREFIX,
+    PROVISIONAL_HEADER,
+)
 from src.server.app import setup
 from src.server.services.livefs import outcomes
+from src.server.services.livefs.routes import LivefsError
 from src.server.services.livefs.tokens import (
     LivefsAuthError,
     LivefsIdentity,
+    LivefsThrottled,
     authenticate,
 )
-from src.server.services.livefs.tree import LivefsError, LivefsTree
-from src.utils.cache.redis_cache import get_cache_client
+from src.server.services.livefs.tree import LivefsTree
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/livefs", tags=["Livefs"])
+router = APIRouter(prefix=PREFIX, tags=["Livefs"])
 
-# Per computer. A command that walks the mount costs one request per
-# directory and file it touches, once per command, so this only binds on a
-# runaway loop; it fails open when Redis is down.
-_REQUESTS_PER_MINUTE = 1200
-
-T = TypeVar("T")
+#: A change's outcome fields (None ones left out) and the response it answers with.
+_Change = Callable[[LivefsTree], Awaitable[tuple[dict[str, Any], Any]]]
 
 
-async def _caller(authorization: str | None = Header(None)) -> LivefsIdentity:
+async def _caller(
+    request: Request, authorization: str | None = Header(None)
+) -> LivefsIdentity:
     try:
-        identity = await authenticate(authorization)
+        return await authenticate(authorization)
     except LivefsAuthError:
         raise HTTPException(
             status_code=401,
             detail="Invalid or expired mount token",
             headers={"WWW-Authenticate": "Bearer"},
         ) from None
-    await _rate_limit(identity.computer_id)
-    return identity
-
-
-async def _rate_limit(computer_id: str) -> None:
-    cache = get_cache_client()
-    if not cache.enabled or not cache.client:
-        return
-    now = int(time.time())
-    key = f"livefs:{{{computer_id}}}:rate:{now // 60}"
-    try:
-        async with cache.client.pipeline(transaction=True) as pipe:
-            pipe.incr(key)
-            pipe.expire(key, 120)
-            count, _ = await pipe.execute()
-    except Exception:
-        return
-    if count > _REQUESTS_PER_MINUTE:
+    except LivefsThrottled as exc:
+        # Refused before the request runs, so a retried save cannot land
+        # twice. The program sees EAGAIN, which most never retry, so the
+        # command's tool result says to.
+        call_id = outcomes.valid_call_id(request.headers.get(CALL_HEADER))
+        if call_id:
+            await outcomes.throttled(exc.identity.computer_id, call_id)
         raise HTTPException(
             status_code=429,
             detail="Too many file requests from this computer",
-            headers={"Retry-After": str(60 - now % 60)},
-        )
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
 
 
 def _error(exc: LivefsError) -> JSONResponse:
@@ -80,18 +72,6 @@ def _error(exc: LivefsError) -> JSONResponse:
         {"code": exc.code, "message": exc.message, "path": exc.path},
         status_code=exc.status,
     )
-
-
-async def _answer(work: Awaitable[T], path: str) -> T:
-    try:
-        return await work
-    except LivefsError:
-        raise
-    except Exception as exc:
-        logger.exception("livefs request failed", extra={"path": path})
-        raise LivefsError(
-            503, "unavailable", f"{path} could not be reached; retry", path
-        ) from exc
 
 
 async def _report(
@@ -106,31 +86,53 @@ async def _report(
             "computer_id": identity.computer_id,
             "user_id": identity.user_id,
             "call_id": call_id,
-            **outcome,
+            # The report is the user's automations by name; the tool result
+            # carries it, the log does not.
+            **{k: v for k, v in outcome.items() if k != "report"},
         },
     )
     await outcomes.record(identity.computer_id, call_id, outcome)
 
 
-async def _read_body(request: Request, path: str) -> bytes:
-    declared = request.headers.get("content-length")
-    if declared and declared.isdigit() and int(declared) > MAX_CONTENT_BYTES:
-        raise _too_large(path)
+async def _saving_tree(identity: LivefsIdentity, call_id: str | None) -> LivefsTree:
+    """The tree a change goes through, with who its command runs for. A
+    change whose command filed nothing (Redis was down, or the filing
+    expired) runs for no conversation or workspace, on the user's own clock."""
+    context = await outcomes.call_context(identity.computer_id, call_id)
+    return LivefsTree(identity, setup.store, context or CallContext())
+
+
+async def _mutation(
+    request: Request, identity: LivefsIdentity, op: str, change: _Change
+) -> Any:
+    """Make one change and file its outcome for the command that made it.
+
+    A refused provisional save is only logged: the daemon retries it at
+    release unless real bytes follow, and that retry is the command's.
+    """
+    call_id = outcomes.valid_call_id(request.headers.get(CALL_HEADER))
+    try:
+        fields, response = await change(await _saving_tree(identity, call_id))
+    except LivefsError as exc:
+        refused = {"op": op, "path": exc.path, "ok": False, "error": exc.message}
+        if request.headers.get(PROVISIONAL_HEADER):
+            logger.info("livefs provisional %s refused", op, extra=refused)
+        else:
+            await _report(identity, call_id, refused)
+        return _error(exc)
+    kept = {k: v for k, v in fields.items() if v is not None}
+    await _report(identity, call_id, {"op": op, "ok": True, **kept})
+    return response
+
+
+async def _read_body(request: Request) -> bytes:
+    """The body, stopping once it is past the cap, which the tree refuses."""
     body = bytearray()
     async for chunk in request.stream():
         body += chunk
-        if len(body) > MAX_CONTENT_BYTES:
-            raise _too_large(path)
+        if len(body) > MAX_FILE_BYTES:
+            break
     return bytes(body)
-
-
-def _too_large(path: str) -> LivefsError:
-    return LivefsError(
-        413,
-        "too_large",
-        f"{path}: files here hold at most {MAX_CONTENT_BYTES} bytes; split the content.",
-        path,
-    )
 
 
 @router.get("/list")
@@ -139,12 +141,10 @@ async def list_dir(
     identity: LivefsIdentity = Depends(_caller),
 ) -> Any:
     try:
-        entries, writable = await _answer(
-            LivefsTree(identity, setup.store).list(path), path
-        )
+        listing = await LivefsTree(identity, setup.store).list(path)
     except LivefsError as exc:
         return _error(exc)
-    return {"entries": entries, "writable": writable}
+    return listing._asdict()
 
 
 @router.get("/read")
@@ -153,9 +153,7 @@ async def read_file(
     identity: LivefsIdentity = Depends(_caller),
 ) -> Response:
     try:
-        content, version, _ = await _answer(
-            LivefsTree(identity, setup.store).read(path), path
-        )
+        content, version, _ = await LivefsTree(identity, setup.store).read(path)
     except LivefsError as exc:
         return _error(exc)
     return Response(
@@ -171,32 +169,19 @@ async def write_file(
     path: str = Query(...),
     identity: LivefsIdentity = Depends(_caller),
 ) -> Any:
-    call_id = outcomes.valid_call_id(request.headers.get("x-livefs-call"))
-    try:
-        body = await _read_body(request, path)
-        version, size, saved = await _answer(
-            LivefsTree(identity, setup.store).write(
-                path,
-                body,
-                if_match=request.headers.get("if-match"),
-                if_none_match=request.headers.get("if-none-match"),
-            ),
+    async def save(tree: LivefsTree) -> tuple[dict[str, Any], Any]:
+        saved = await tree.write(
             path,
+            await _read_body(request),
+            if_match=request.headers.get("if-match"),
+            if_none_match=request.headers.get("if-none-match"),
         )
-    except LivefsError as exc:
-        outcome = {
-            "op": "write", "path": exc.path or path, "ok": False, "error": exc.message
-        }
-        if request.headers.get(PROVISIONAL_HEADER):
-            # The daemon retries it at release unless real bytes follow.
-            logger.info("livefs provisional write refused", extra=outcome)
-        else:
-            await _report(identity, call_id, outcome)
-        return _error(exc)
-    await _report(
-        identity, call_id, {"op": "write", "path": saved, "ok": True, "size": size}
-    )
-    return {"version": version, "size": size}
+        return (
+            {"path": saved.path, "size": saved.size, "report": saved.report},
+            {"version": saved.version, "size": saved.size, "as_sent": saved.as_sent},
+        )
+
+    return await _mutation(request, identity, "write", save)
 
 
 @router.post("/delete")
@@ -205,18 +190,10 @@ async def delete_file(
     path: str = Query(...),
     identity: LivefsIdentity = Depends(_caller),
 ) -> Any:
-    call_id = outcomes.valid_call_id(request.headers.get("x-livefs-call"))
-    try:
-        deleted = await _answer(LivefsTree(identity, setup.store).delete(path), path)
-    except LivefsError as exc:
-        await _report(
-            identity,
-            call_id,
-            {"op": "delete", "path": exc.path or path, "ok": False, "error": exc.message},
-        )
-        return _error(exc)
-    await _report(identity, call_id, {"op": "delete", "path": deleted, "ok": True})
-    return Response(status_code=204)
+    async def remove(tree: LivefsTree) -> tuple[dict[str, Any], Any]:
+        return {"path": await tree.delete(path)}, Response(status_code=204)
+
+    return await _mutation(request, identity, "delete", remove)
 
 
 @router.post("/rename")
@@ -226,21 +203,8 @@ async def rename_file(
     to: str = Query(...),
     identity: LivefsIdentity = Depends(_caller),
 ) -> Any:
-    call_id = outcomes.valid_call_id(request.headers.get("x-livefs-call"))
-    try:
-        source, target = await _answer(
-            LivefsTree(identity, setup.store).rename(path, to), path
-        )
-    except LivefsError as exc:
-        await _report(
-            identity,
-            call_id,
-            {"op": "rename", "path": exc.path or path, "ok": False, "error": exc.message},
-        )
-        return _error(exc)
-    await _report(
-        identity,
-        call_id,
-        {"op": "rename", "path": target, "from": source, "ok": True},
-    )
-    return Response(status_code=204)
+    async def move(tree: LivefsTree) -> tuple[dict[str, Any], Any]:
+        source, target, report = await tree.rename(path, to)
+        return {"path": target, "from": source, "report": report}, Response(status_code=204)
+
+    return await _mutation(request, identity, "rename", move)

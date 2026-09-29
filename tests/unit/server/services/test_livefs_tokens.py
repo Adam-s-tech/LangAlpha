@@ -10,17 +10,18 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
-from src.server.services.livefs import tokens
+from src.server.services.livefs import cache, tokens
 from src.server.services.livefs.tokens import (
     LivefsAuthError,
     LivefsIdentity,
     authenticate,
     mint_token,
-    needs_refresh,
     revoke,
+    runs_low,
 )
 
 COMPUTER = "c0ffee00-0000-4000-8000-000000000001"
@@ -39,34 +40,35 @@ class _TokenTable:
     def __init__(self) -> None:
         self.rows: dict[str, dict] = {}
         self.lookups: list[str] = []
+        #: Computers stopping, stopped or deleted, which the fence refuses.
+        self.leaving: set[str] = set()
 
-    async def save_token(self, computer_id, user_id, digest, expires_at) -> None:
+    async def save_token(self, computer_id, user_id, digest, expires_at) -> bool:
+        if computer_id in self.leaving:
+            return False
         row = self.rows.get(computer_id)
         if row is None:
-            self.rows[computer_id] = {
+            row = self.rows[computer_id] = {
                 "user_id": user_id,
                 "token_sha256": digest,
                 "expires_at": expires_at,
                 "prev_token_sha256": None,
                 "prev_expires_at": None,
             }
-            return
-        row.update(
-            prev_token_sha256=row["token_sha256"],
-            prev_expires_at=row["expires_at"],
-            token_sha256=digest,
-            expires_at=expires_at,
-            user_id=user_id,
-        )
+        else:
+            row.update(
+                prev_token_sha256=row["token_sha256"],
+                prev_expires_at=row["expires_at"],
+                token_sha256=digest,
+                expires_at=expires_at,
+                user_id=user_id,
+            )
+        return True
 
     async def load_token(self, computer_id):
         self.lookups.append(computer_id)
         row = self.rows.get(computer_id)
         return None if row is None else {**row, "root_dir": ROOT}
-
-    async def token_expiry(self, computer_id):
-        row = self.rows.get(computer_id)
-        return None if row is None else row["expires_at"]
 
     async def delete_token(self, computer_id) -> None:
         self.rows.pop(computer_id, None)
@@ -76,6 +78,10 @@ class _TokenTable:
 def table(monkeypatch) -> _TokenTable:
     fake = _TokenTable()
     monkeypatch.setattr(tokens, "db", fake)
+    # The row alone, as with Redis down.
+    monkeypatch.setattr(
+        cache, "get_cache_client", lambda: SimpleNamespace(enabled=False, client=None)
+    )
     return fake
 
 
@@ -217,6 +223,61 @@ async def test_revocation_ends_the_current_and_the_previous_token(table):
     assert await _rejects(_bearer(second.token))
 
 
+@pytest.mark.asyncio
+async def test_a_computer_leaving_service_is_minted_no_token(table):
+    table.leaving.add(COMPUTER)
+
+    with pytest.raises(tokens.NotServing):
+        await mint_token(COMPUTER, USER)
+
+    assert COMPUTER not in table.rows
+
+
+@pytest.mark.asyncio
+async def test_a_mirror_the_revoke_could_not_drop_is_dropped_once_redis_answers(
+    table, monkeypatch
+):
+    answers = iter([False, False, False, False, True])
+    drops: list[str] = []
+
+    async def drop(computer_id):
+        drops.append(computer_id)
+        return next(answers)
+
+    monkeypatch.setattr(tokens, "_drop_mirror", drop)
+    monkeypatch.setattr(tokens, "_DROP_RETRY_S", 0)
+    monkeypatch.setattr(tokens, "_REVOKE_ATTEMPTS", 3)
+
+    await revoke(COMPUTER)
+    (pending,) = tokens._dropping
+    await pending
+
+    assert drops == [COMPUTER] * 5
+    assert not tokens._dropping
+
+
+@pytest.mark.asyncio
+async def test_a_revoke_whose_row_delete_fails_still_drops_the_mirror(table, monkeypatch):
+    """Nothing rewrites the mirror after a revoke, so one left standing would
+    keep serving the ended tokens until it lapses."""
+    drops: list[str] = []
+
+    async def drop(computer_id):
+        drops.append(computer_id)
+        return True
+
+    async def delete_token(computer_id):
+        raise OSError("db down")
+
+    monkeypatch.setattr(tokens, "_drop_mirror", drop)
+    monkeypatch.setattr(table, "delete_token", delete_token)
+
+    with pytest.raises(OSError):
+        await revoke(COMPUTER)
+
+    assert drops == [COMPUTER]
+
+
 # -- refresh -----------------------------------------------------------------------
 
 
@@ -224,18 +285,18 @@ async def test_revocation_ends_the_current_and_the_previous_token(table):
     ("minutes_left", "due"),
     [(31, False), (29, True), (-5, True)],
 )
-@pytest.mark.asyncio
-async def test_a_token_is_due_for_refresh_once_under_thirty_minutes_remain(
-    table, minutes_left, due
-):
-    await mint_token(COMPUTER, USER)
-    table.rows[COMPUTER]["expires_at"] = datetime.now(UTC) + timedelta(
-        minutes=minutes_left
-    )
-
-    assert await needs_refresh(COMPUTER) is due
+def test_a_token_is_due_for_refresh_once_under_thirty_minutes_remain(minutes_left, due):
+    assert runs_low(datetime.now(UTC) + timedelta(minutes=minutes_left)) is due
 
 
-@pytest.mark.asyncio
-async def test_a_computer_holding_no_token_is_due_for_refresh(table):
-    assert await needs_refresh(COMPUTER) is True
+def test_a_token_of_unknown_expiry_is_due_for_refresh():
+    assert runs_low(None) is True
+
+
+@pytest.mark.parametrize(
+    ("minutes_left", "gone"),
+    [(29, False), (2, False), (0.5, True), (-5, True)],
+)
+def test_only_a_token_under_a_minute_is_as_good_as_gone(minutes_left, gone):
+    """Anything above that still carries a command while a renewal runs."""
+    assert tokens.lapsed(datetime.now(UTC) + timedelta(minutes=minutes_left)) is gone

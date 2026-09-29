@@ -100,7 +100,7 @@ class TestTheRootOwnerReachesTheSync:
                 AsyncMock(return_value={}),
             ),
         ):
-            await manager._sync_sandbox_assets(
+            await manager._sync_project_assets(
                 _binding(workspace_id), "user-1", sandbox
             )
         return sandbox.sync_sandbox_assets.await_args.kwargs
@@ -181,7 +181,7 @@ class TestTheRootOwnerReachesTheSync:
                 AsyncMock(return_value={}),
             ),
         ):
-            await manager._sync_sandbox_assets(_binding(SIBLING_ID), "user-1", sandbox)
+            await manager._sync_project_assets(_binding(SIBLING_ID), "user-1", sandbox)
 
         kwargs = sandbox.sync_sandbox_assets.await_args.kwargs
         assert kwargs["root_owner_dir_name"] == "gone-ef56"
@@ -211,7 +211,7 @@ class TestTheRootOwnerReachesTheSync:
                 AsyncMock(return_value={}),
             ),
         ):
-            await manager._sync_sandbox_assets(_binding(SIBLING_ID), "user-1", sandbox)
+            await manager._sync_project_assets(_binding(SIBLING_ID), "user-1", sandbox)
 
         assert (
             sandbox.sync_sandbox_assets.await_args.kwargs["root_owner_dir_name"]

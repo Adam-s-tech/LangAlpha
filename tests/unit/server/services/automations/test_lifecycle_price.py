@@ -1,5 +1,5 @@
 """
-Tests for price trigger handling in automation_handler.py.
+Tests for price trigger handling in the automation lifecycle.
 
 Covers create_automation and resume_automation for trigger_type='price':
 next_run_at behavior and status constraints. What a price config must hold is
@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.server.handlers.automation_handler import create_automation, resume_automation
+from src.server.services.automations.lifecycle import create_automation, resume_automation
 from src.server.models.automation import AutomationCreate
 
 # ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ class TestCreatePriceAutomation:
     """Tests for create_automation with trigger_type='price'."""
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_create_price_automation_success(self, mock_auto_db):
         """Successfully creates a price automation with valid trigger_config."""
         expected = _make_automation_row()
@@ -115,7 +115,7 @@ class TestCreatePriceAutomation:
         assert call_kwargs["trigger_config"] == VALID_TRIGGER_CONFIG
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_create_price_automation_with_retrigger(self, mock_auto_db):
         """Successfully creates a price automation with multi-condition + retrigger config."""
         expected = _make_automation_row(trigger_config=VALID_TRIGGER_CONFIG_MULTI)
@@ -128,7 +128,7 @@ class TestCreatePriceAutomation:
         mock_auto_db.create_automation.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_create_price_automation_next_run_at_is_none(self, mock_auto_db):
         """Price triggers set next_run_at to None (event-driven, not scheduled)."""
         expected = _make_automation_row()
@@ -141,7 +141,7 @@ class TestCreatePriceAutomation:
         assert call_kwargs["next_run_at"] is None
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_create_price_automation_ptc_requires_workspace_id(self, mock_auto_db):
         """Raises ValueError when agent_mode='ptc' but workspace_id is not provided."""
         data = _make_create_data(agent_mode="ptc")
@@ -152,8 +152,8 @@ class TestCreatePriceAutomation:
         mock_auto_db.create_automation.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.get_workspace")
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.get_workspace")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_create_price_automation_ptc_with_workspace_id(
         self, mock_auto_db, mock_get_workspace,
     ):
@@ -185,7 +185,7 @@ class TestResumePriceAutomation:
     """Tests for resume_automation with trigger_type='price'."""
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_resume_paused_price_automation(self, mock_auto_db):
         """Successfully resumes a paused price automation without next_run_at recalculation."""
         paused_row = _make_automation_row(status="paused")
@@ -206,7 +206,7 @@ class TestResumePriceAutomation:
         assert "next_run_at" not in call_kwargs
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_resume_disabled_price_automation(self, mock_auto_db):
         """Successfully resumes a disabled price automation (e.g. after max failures)."""
         disabled_row = _make_automation_row(status="disabled", failure_count=3)
@@ -226,7 +226,7 @@ class TestResumePriceAutomation:
         assert call_kwargs["disable_reason"] is None
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_resume_active_price_automation_raises(self, mock_auto_db):
         """Cannot resume a price automation that is already active."""
         active_row = _make_automation_row(status="active")
@@ -238,7 +238,7 @@ class TestResumePriceAutomation:
         mock_auto_db.update_automation.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_resume_completed_price_automation_raises(self, mock_auto_db):
         """Cannot resume a completed price automation."""
         completed_row = _make_automation_row(status="completed")
@@ -250,7 +250,7 @@ class TestResumePriceAutomation:
         mock_auto_db.update_automation.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_resume_not_found_returns_none(self, mock_auto_db):
         """Returns None when the automation does not exist."""
         mock_auto_db.get_automation = AsyncMock(return_value=None)

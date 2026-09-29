@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import math
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -55,10 +54,6 @@ from src.server.services.user_skills import sandbox_skill_sync_params
 
 from src.server.services.computer_manager._types import (
     ComputerBinding,
-    LivefsSeen,
-    _LIVEFS_BUSY_RETRY_S,
-    _LIVEFS_INSTALL_RETRY_S,
-    _LIVEFS_RETRY_S,
     _PROJECTS_ATTACHED_CAP,
     _SEEDED_AGENT_MD,
 )
@@ -108,11 +103,17 @@ class ProvisioningMixin:
             )
 
     def _forget_project(self, workspace_id: str) -> None:
-        """The computer owns the session, metadata and lock; they outlive a project."""
+        """The computer owns the session, metadata and lock; they outlive a project.
+
+        What this worker knows of the project's folder goes with it: a folder
+        made again, on a computer the project left and came back to, holds
+        neither its files nor the mount's links until they are laid again."""
         self._projects_attached = {
             key for key in self._projects_attached if key[0] != workspace_id
         }
         self._session_computer.pop(workspace_id, None)
+        for machine in self._machines.values():
+            machine.livefs.unlinked(workspace_id)
 
     @staticmethod
     def _warn_unshadowed(
@@ -128,92 +129,27 @@ class ProvisioningMixin:
                 f"workspace {workspace_id} unshadowed (moved {sorted(shadowed)})"
             )
 
-    async def _ensure_livefs(
+    async def _sync_sandbox_assets(
         self,
-        computer_id: Any,
+        binding: ComputerBinding,
         user_id: str | None,
         sandbox: Any,
+        reusing_sandbox: bool = False,
+        force_refresh: bool = False,
     ) -> Any:
-        """Bring the machine's file mount to its wanted state, remember it, and
-        hand the file tools the mount (``sandbox.livefs``) while it serves.
-
-        Never raises: without the mount the file tools still reach these files
-        through the store, so a mount failure costs code access, not a turn.
-        """
-        from src.server.services.livefs import mount as livefs
-
-        provider = getattr(getattr(sandbox, "config", None), "sandbox", None)
-        state = await livefs.ensure(
+        """``_sync_project_assets`` for code about to run on ``sandbox``: the
+        file mount comes up beside the sync when due."""
+        return await self._livefs_beside(
+            binding.computer_id,
+            user_id,
             sandbox,
-            computer_id=str(computer_id),
-            user_id=user_id,
-            provider=getattr(provider, "provider", None) or self.config.sandbox.provider,
+            self._sync_project_assets(
+                binding, user_id, sandbox, reusing_sandbox, force_refresh
+            ),
+            workspace_id=binding.workspace_id,
         )
-        if state.error == "busy":
-            # A settle kept the computer's folders past the wait; whatever
-            # this worker last saw of the mount stands until the retry.
-            seen = self._machine(str(computer_id)).livefs
-            if seen is not None:
-                self._machine(str(computer_id)).livefs = replace(
-                    seen, retry_after=time.monotonic() + _LIVEFS_BUSY_RETRY_S
-                )
-            return state
-        if state.mounted:
-            retry_after = 0.0
-        elif state.error == "unsupported":
-            # No /dev/fuse or no root: fixed for this sandbox's life.
-            retry_after = math.inf
-        elif state.error == "installing":
-            retry_after = time.monotonic() + _LIVEFS_INSTALL_RETRY_S
-        else:
-            retry_after = time.monotonic() + _LIVEFS_RETRY_S
-        self._machine(str(computer_id)).livefs = LivefsSeen(
-            sandbox_id=str(getattr(sandbox, "sandbox_id", "") or "") or None,
-            mounted=state.mounted,
-            expires_at=state.expires_at,
-            workspace_ids=state.workspace_ids,
-            retry_after=retry_after,
-        )
-        if sandbox is not None:
-            sandbox.livefs = (
-                livefs.Handle(
-                    str(computer_id),
-                    state,
-                    lambda: self._ensure_livefs(computer_id, user_id, sandbox),
-                )
-                if state.mounted
-                else None
-            )
-        return state
 
-    async def _revoke_livefs(self, computer_id: Any) -> None:
-        """A machine leaving service stops serving its files at once, rather
-        than when the token it holds would have run out."""
-        from src.server.services.livefs import mount as livefs
-
-        await livefs.revoke(computer_id)
-        machine = self._machine_if_known(str(computer_id))
-        if machine is not None:
-            machine.livefs = None
-
-    def _livefs_due(self, computer_id: Any, workspace_id: str, sandbox: Any) -> bool:
-        from src.server.services.livefs.mount import runs_low
-
-        seen = self._machine(str(computer_id)).livefs
-        sandbox_id = str(getattr(sandbox, "sandbox_id", "") or "") or None
-        if seen is None or seen.sandbox_id != sandbox_id:
-            return True
-        if time.monotonic() < seen.retry_after:
-            return False
-        if not seen.mounted:
-            return True
-        if getattr(sandbox, "livefs", None) is None:
-            # Mounted, but this sandbox handle (a reconnect's new one) was
-            # never handed the mount.
-            return True
-        return str(workspace_id) not in seen.workspace_ids or runs_low(seen.expires_at)
-
-    async def _sync_sandbox_assets(
+    async def _sync_project_assets(
         self,
         binding: ComputerBinding,
         user_id: str | None,
@@ -245,14 +181,6 @@ class ProvisioningMixin:
 
         # Include tokens and user data in the manifest hash to skip unchanged uploads.
         _sync_t0 = time.time()
-        _sync_times: dict[str, float] = {}
-
-        async def _timed(name: str, coro: Any) -> Any:
-            t0 = time.time()
-            try:
-                return await coro
-            finally:
-                _sync_times[name] = (time.time() - t0) * 1000
 
         async def _mint_and_sync_assets() -> Any:
             tokens = {}
@@ -308,32 +236,18 @@ class ProvisioningMixin:
             await self._stamp_mcp_config_version(binding.computer_id)
             return result
 
-        tasks: list[Any] = [_timed("mint+manifest", _mint_and_sync_assets())]
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for result in results:
-            if isinstance(result, LayoutMigrationError):
-                raise result
-            if isinstance(result, WorkspaceFolderMoving):
-                logger.info(f"Asset sync for {workspace_id} waits for its folder to land")
-            elif isinstance(result, Exception):
-                logger.warning(f"Asset sync failed for {workspace_id}: {result}")
-
-        # After the layout has settled: a migration moving files under a
-        # bind target would otherwise move them through the mount. A warm
-        # sync of changed tools finds it serving and leaves it be.
-        if self._livefs_due(binding.computer_id, workspace_id, sandbox):
-            await _timed(
-                "livefs", self._ensure_livefs(binding.computer_id, user_id, sandbox)
-            )
-
+        assets: Any = None
+        try:
+            assets = await _mint_and_sync_assets()
+        except LayoutMigrationError:
+            raise
+        except WorkspaceFolderMoving:
+            logger.info(f"Asset sync for {workspace_id} waits for its folder to land")
+        except Exception as e:
+            logger.warning(f"Asset sync failed for {workspace_id}: {e}")
         total = (time.time() - _sync_t0) * 1000
-        parts = " ".join(f"{k}={v:.0f}ms" for k, v in _sync_times.items())
-        logger.info(
-            f"[SYNC_DETAIL] workspace_id={workspace_id} total={total:.0f}ms ({parts})"
-        )
-        assets = results[0]
-        return None if isinstance(assets, Exception) else assets
+        logger.info(f"[SYNC_DETAIL] workspace_id={workspace_id} total={total:.0f}ms")
+        return assets
 
     async def refresh_project_assets(
         self, workspace_id: str, user_id: str | None, sandbox: Any
@@ -343,10 +257,11 @@ class ProvisioningMixin:
         The refresh route's half of the acquisition-path sync, and the same
         call: the folder and the v3 root owner it owes a layout migration are
         derived from the binding, which is the manager's to resolve. A route
-        that rebuilt either would drift from the path that provisions.
+        that rebuilt either would drift from the path that provisions. No
+        command runs next, so the file mount waits for the next turn.
         """
         binding = await self.resolve_binding(workspace_id)
-        return await self._sync_sandbox_assets(
+        return await self._sync_project_assets(
             binding,
             user_id,
             sandbox,
@@ -988,11 +903,12 @@ class ProvisioningMixin:
             # one that did not finish leaves the attachment unrecorded, so the
             # next acquisition retries it before trusting this project.
             self._projects_attached.discard(key)
-        if self._livefs_due(binding.computer_id, workspace_id, sandbox):
-            if not user_id:
-                workspace = await db_get_workspace(workspace_id)
-                user_id = (workspace or {}).get("user_id")
-            await self._ensure_livefs(binding.computer_id, user_id, sandbox)
+        if not self._livefs_owed(binding.computer_id, workspace_id, sandbox):
+            return
+        if not user_id:
+            workspace = await db_get_workspace(workspace_id)
+            user_id = (workspace or {}).get("user_id")
+        await self._keep_livefs(binding.computer_id, user_id, sandbox, workspace_id)
 
     async def _ensure_project_tool_overlay(
         self,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Emit the frontend's copy of the sandbox layout.
 
-The browser classifies agent paths (memory, memo, skills, user profile) and
+The browser classifies agent paths (memory, memo, skills, user data) and
 has to agree with the backend on every prefix. Rather than a second hand-kept
 list, this writes ``agentPaths.generated.ts`` from ``SandboxLayout``, and a
 unit test regenerates and diffs it so drift fails CI.
@@ -30,9 +30,7 @@ from ptc_agent.core.paths import (  # noqa: E402
     MEMO_INDEX_FILENAME,
     MEMORY_INDEX_FILENAME,
     SANDBOX_ROOTS,
-    USER_PROFILE_PORTFOLIO_FILE,
-    USER_PROFILE_PREFERENCE_FILE,
-    USER_PROFILE_WATCHLIST_FILE,
+    USER_DATA_FILES,
     SandboxLayout,
     WorkspaceLayout,
 )
@@ -103,7 +101,6 @@ def render() -> str:
         ("MEMORY_USER_DIR", SandboxLayout, "MEMORY_USER_DIR"),
         ("MEMORY_WORKSPACE_DIR", WorkspaceLayout, "MEMORY_DIR"),
         ("MEMO_USER_DIR", SandboxLayout, "MEMO_USER_DIR"),
-        ("USER_PROFILE_DIR", SandboxLayout, "USER_PROFILE_DIR"),
         ("SKILLS_DIR", WorkspaceLayout, "SKILLS_DIR"),
         ("THREADS_DIR", WorkspaceLayout, "THREADS_DIR"),
         ("LARGE_TOOL_RESULTS_DIR", WorkspaceLayout, "LARGE_TOOL_RESULTS_DIR"),
@@ -123,11 +120,14 @@ def render() -> str:
     out.append(f"'{MEMORY_INDEX_FILENAME}';\n")
     out.append(f"export const MEMO_INDEX_FILENAME = '{MEMO_INDEX_FILENAME}';\n\n")
 
-    out.append("/** The three virtual JSON files that UserDataBackend serves. */\n")
-    out.append("export const USER_PROFILE_FILES = {\n")
-    out.append(f"  portfolio: '{USER_PROFILE_PORTFOLIO_FILE}',\n")
-    out.append(f"  watchlist: '{USER_PROFILE_WATCHLIST_FILE}',\n")
-    out.append(f"  preference: '{USER_PROFILE_PREFERENCE_FILE}',\n")
+    out.append(
+        "/** The DB-backed files (rows in Postgres), by the directory that serves\n"
+        " *  them beside a README.md. Source: USER_DATA_FILES. */\n"
+    )
+    out.append("export const USER_DATA_FILES = {\n")
+    for directory, files in USER_DATA_FILES.items():
+        names = ", ".join(f"'{name}'" for name in files)
+        out.append(f"  '{directory}': [{names}],\n")
     out.append("} as const;\n\n")
 
     out.append(

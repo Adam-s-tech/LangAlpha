@@ -5,8 +5,8 @@ Runs as root, from the copy ``boot`` checked; every read and save goes to the
 server's livefs endpoint with the computer's mount token, and nothing is kept
 on disk.
 
-    python3 -m livefs up --root R [--stage S] [--link SRC:DST ...] [--replace DST ...]
-    python3 -m livefs start --root R [--stage S]
+    python3 -m livefs start --root R --base-url U [--stage S]
+    python3 -m livefs link --root R [--link SRC:DST ...] [--replace DST ...]
     python3 -m livefs down --root R
     python3 -m livefs status --root R
 """
@@ -59,7 +59,7 @@ def _probe(paths: Paths) -> str | None:
 
 
 def _probing(paths: Paths) -> Callable[[], str | None]:
-    """Start ``_probe`` beside the rest of ``up``; the call returned waits
+    """Start ``_probe`` beside the rest of ``start``; the call returned waits
     for its answer. Its request is mostly waiting on the network, which a
     new daemon's start fills."""
     answer: list[str | None] = []
@@ -103,7 +103,7 @@ def _ready(args, paths: Paths) -> tuple[dict | None, Callable[[], str | None] | 
             "reason": "installing libfuse",
         }, None
     rebased = rebase(args.base_url, paths)
-    changed = args.stage or args.probe or rebased or not healthy(paths.mount)
+    changed = args.stage or rebased or not healthy(paths.mount)
     probe = _probing(paths) if changed else None
     return None, probe
 
@@ -111,13 +111,23 @@ def _ready(args, paths: Paths) -> tuple[dict | None, Callable[[], str | None] | 
 def _serving(
     args, paths: Paths, state: dict, probe: Callable[[], str | None] | None
 ) -> tuple[bool, dict | None]:
-    """Under the lock: start the daemon if it is not serving current code.
-    Whether one was started, and why the mount does not serve if it does not."""
+    """Under the lock: start the daemon if it is not serving current code,
+    and record what the probe answered. Whether one was started, and why the
+    mount does not serve if it does not."""
+    if probe is None and state.get("unreachable"):
+        # A probe that failed is asked again until one answers, whichever
+        # host asks: a daemon up since then serves nothing it can save. Read
+        # under the lock, so a start that waited on the one that failed asks.
+        probe = _probing(paths)
     try:
         started, problem = start(args, state, paths, gate=probe)
     except OSError as exc:
         started, problem = True, str(exc)
     unreachable = probe() if probe else None
+    if unreachable:
+        state["unreachable"] = unreachable
+    elif probe:
+        state.pop("unreachable", None)
     if unreachable:
         return started, {"ok": False, "error": MountError.UNREACHABLE, "reason": unreachable}
     if problem:
@@ -125,21 +135,18 @@ def _serving(
     return started, None
 
 
-def up(args, paths: Paths) -> dict:
-    """Stage the token, make sure the mount serves, and link exactly ``--link``.
+def link_folders(args, paths: Paths) -> dict:
+    """Link exactly ``--link``.
 
     Links an earlier call made that this one does not ask for are removed, so
     the caller's list (every live folder on this computer) is the whole truth
-    and a folder that left needs no separate teardown.
+    and a folder that left needs no separate teardown. Laid whether or not the
+    daemon serves: each points through the mount link, which a start swaps
+    over, so they stay right across a restart.
     """
-    refused, probe = _ready(args, paths)
-    if refused:
-        return refused
+    os.makedirs(paths.private, mode=0o700, exist_ok=True)
     with locked(paths):
         state = read_state(paths)
-        started, refused = _serving(args, paths, state, probe)
-        if refused:
-            return refused
         wanted = {}
         for spec in args.link or ():
             source, _, target = spec.partition(":")
@@ -170,27 +177,24 @@ def up(args, paths: Paths) -> dict:
     return {
         "ok": not failed,
         "error": MountError.LINK_FAILED if failed else None,
-        "started": started or None,
         "failed": failed or None,
         "set_aside": moved or None,
     }
 
 
 def start_mount(args, paths: Paths) -> dict:
-    """``up`` without the links, which need the computer's folder list, so
-    the host can run it beside the asset sync and leave ``up`` only linking.
-    Beside a sync still replacing the code, ``boot`` answers ``stale_code``
-    and ``up`` starts the daemon once the sync has landed."""
+    """Stage the token and make sure the mount serves current code. It needs
+    no folder list, so the host runs it beside the asset sync. Beside a sync
+    still replacing the code, ``boot`` answers ``stale_code`` and the host
+    asks again once the sync has landed."""
     refused, probe = _ready(args, paths)
     if refused:
         return refused
     with locked(paths):
         state = read_state(paths)
         started, refused = _serving(args, paths, state, probe)
-        if refused:
-            return refused
         write_state(paths, state)
-    return {"ok": True, "error": None, "started": started or None}
+    return refused or {"ok": True, "error": None, "started": started or None}
 
 
 def down(args, paths: Paths) -> dict:
@@ -221,12 +225,10 @@ def status(args, paths: Paths) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="livefs")
-    parser.add_argument("command", choices=("serve", "up", "start", "down", "status"))
+    parser.add_argument("command", choices=("serve", "start", "link", "down", "status"))
     parser.add_argument("--root", required=True)
     parser.add_argument("--mount")
     parser.add_argument("--stage")
-    # Ask the server though nothing changed: it was last found unreachable.
-    parser.add_argument("--probe", action="store_true")
     parser.add_argument("--base-url")
     parser.add_argument("--link", action="append")
     parser.add_argument("--replace", action="append")
@@ -236,7 +238,7 @@ def main() -> int:
     if args.command == "serve":
         serve(args, paths)
         return 0
-    commands = {"up": up, "start": start_mount, "down": down, "status": status}
+    commands = {"start": start_mount, "link": link_folders, "down": down, "status": status}
     result = commands[args.command](args, paths)
     print(json.dumps(result))
     return 0 if result.get("ok") else 1

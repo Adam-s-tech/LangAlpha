@@ -392,8 +392,8 @@ class TestExecutionHistory:
     async def test_create_and_list_executions(
         self, seed_user, patched_get_db_connection
     ):
-        from src.server.database.automation import (
-            create_automation,
+        from src.server.database.automation import create_automation
+        from src.server.database.automation_executions import (
             create_execution,
             list_executions,
         )
@@ -426,8 +426,8 @@ class TestExecutionHistory:
     async def test_transition_execution(
         self, seed_user, patched_get_db_connection
     ):
-        from src.server.database.automation import (
-            create_automation,
+        from src.server.database.automation import create_automation
+        from src.server.database.automation_executions import (
             create_execution,
             list_executions,
             transition_execution,

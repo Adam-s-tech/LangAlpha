@@ -239,11 +239,11 @@ def handle_api_exceptions(
     return decorator
 
 
-async def require_thread_owner(thread_id: str, user_id: str) -> None:
+async def require_thread_owner(thread_id: str, user_id: str, *, conn=None) -> None:
     """Verify the user owns the thread (via workspace). Raises 404 or 403."""
     from src.server.database.conversation import get_thread_owner_id
 
-    owner_id = await get_thread_owner_id(thread_id)
+    owner_id = await get_thread_owner_id(thread_id, conn=conn)
     if owner_id is None:
         raise HTTPException(status_code=404, detail="Thread not found")
     if owner_id != user_id:

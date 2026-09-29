@@ -68,11 +68,18 @@ _PATCHES = {
     "is_byok_active": "src.server.services.automation_executor.is_byok_active",
     "has_any_oauth": "src.server.services.automation_executor.has_any_oauth_token",
     "enforce_credit": "src.server.services.automation_executor.enforce_credit_limit",
-    "auto_db": "src.server.services.automation_executor.auto_db",
-    "settlement_db": "src.server.services.automation_settlement.auto_db",
+    "auto_db": "src.server.services.automation_executor",
+    "settlement_db": "src.server.services.automation_settlement",
     "flash_ws": "src.server.services.automation_executor.get_or_create_flash_workspace",
     "get_run": "src.server.database.runs.lifecycle.get_run",
 }
+
+
+@contextmanager
+def _bind_db(module, db):
+    """Point both DB modules a service imports at one mock."""
+    with patch(f"{module}.auto_db", new=db), patch(f"{module}.exec_db", new=db):
+        yield db
 
 
 @contextmanager
@@ -106,8 +113,8 @@ def _patch_all(
             _PATCHES["enforce_credit"],
             new=AsyncMock(side_effect=credit_raises),
         ),
-        "auto_db": patch(_PATCHES["auto_db"], new=db),
-        "settlement_db": patch(_PATCHES["settlement_db"], new=db),
+        "auto_db": _bind_db(_PATCHES["auto_db"], db),
+        "settlement_db": _bind_db(_PATCHES["settlement_db"], db),
         "flash_ws": patch(
             _PATCHES["flash_ws"],
             new=AsyncMock(return_value={"workspace_id": _WS_ID}),

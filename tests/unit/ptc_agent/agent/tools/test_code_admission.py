@@ -290,6 +290,9 @@ class TestExecuteCodeTool:
                 )
             )
 
+            async def settled_livefs(self, workspace_id=None):
+                return None
+
             async def aexecute_code(self, code, thread_id=None, call_id=None):
                 seen.append(dict(_holders(redis)))
                 return SimpleNamespace(
@@ -312,6 +315,9 @@ class TestExecuteCodeTool:
         class _Backend:
             livefs = None
             sandbox = None
+
+            async def settled_livefs(self, workspace_id=None):
+                return None
 
             async def aexecute_code(self, code, thread_id=None, call_id=None):
                 return SimpleNamespace(

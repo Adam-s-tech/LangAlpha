@@ -10,7 +10,7 @@ The computer root, `..` from your workspace:
 .agents/threads.jsonl     every thread on this computer (see history.md)
 .agents/skills/           skills shared across workspaces
 .agents/tools/docs/       docs for every data server any workspace has enabled
-.agents/user/             memory, memos and profile shared by all workspaces
+.agents/user/             memory, memos, profile and automations shared by all workspaces
 .agents/workflows/        saved workflows
 ```
 
@@ -51,12 +51,12 @@ Use Bash for anything outside the workspaces and `/tmp`. Tool output prints your
 - **Grep**: skips hidden and git-ignored files and folders unless `path` points inside one. `.agents/memory/` is the exception and is searched by default. Content mode cuts a line over 500 characters to windows around its first matches.
 - Data-server docs and shared skills are links, which Grep and a pattern starting `**/` do not follow. Spell the folder in the pattern, for example Glob `.agents/tools/docs/**/*.md`, or Read the file directly.
 
-## Memory, memos, profile and workflows live on the server
+## Memory, memos, profile, workflows and automations live on the server
 
-`.agents/memory/` (this workspace), `.agents/user/memory/` (every workspace), `.agents/user/memo/` (the user's uploaded documents, read only), `.agents/user/profile/` (`portfolio.json`, `watchlist.json`, `preference.json`, checked on write) and `.agents/workflows/` are held by the server, not on disk, so they survive every restart and rebuild. The file tools always reach them; Bash and code reach them through the computer's file mount.
+`.agents/memory/` (this workspace), `.agents/user/memory/` (every workspace), `.agents/user/memo/` (the user's uploaded documents, read only), `.agents/user/profile/` (`portfolio.json`, `watchlist.json`, `preference.json`, checked on write), `.agents/user/automations/` (`automations.json`) and `.agents/workflows/` are held by the server, not on disk, so they survive every restart and rebuild. The file tools always reach them; Bash and code reach them through the computer's file mount.
 
-- With the mount up they are ordinary files at the same paths. A save the server refuses (invalid JSON, a file changed since you read it) does not fail the command: the tool result lists it under NOT SAVED, so check there before relying on the write. In the profile folder, save in place: `sed -i` and write-then-rename helpers need a new file there, which fails with Permission denied.
-- Without the mount, ExecuteCode and Bash refuse a call whose text names a memory or memo path, even in a comment. Read the file first and put what you need into the code.
+- With the mount up they are ordinary files at the same paths. A save the server refuses (invalid JSON, a file changed since you read it) does not fail the command: the tool result lists it under NOT SAVED, so check there before relying on the write. In the profile and automations folders, save in place: `sed -i` and write-then-rename helpers need a new file there, which fails with Permission denied.
+- Without the mount, ExecuteCode and Bash refuse a call whose text names a memory, memo or automations path, even in a comment. Read the file first and put what you need into the code.
 - From the workspace, Glob and Grep reach `.agents/memory/` by default; set `path` to `.agents/user` for the rest.
 - A file holds at most 256 KB. Each part of a name uses only ASCII letters, digits and `- _ . @ + ~`, so no spaces; subfolders are fine.
 - The file tools cannot delete a memory file; `rm` through the mount can. To retire one without it, remove its line from `memory.md` and overwrite the file with what is still true.

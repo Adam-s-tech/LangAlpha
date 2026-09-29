@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from .links import swap_link
 from .ops import LiveFS, call_in_environ, content_budget
-from .protocol import MOUNT
+from .protocol import GENERATIONS, MOUNT
 from .remote import Remote
 
 START_TIMEOUT_S = 10
@@ -62,7 +62,7 @@ class Paths:
     #: unmounted. Some runtimes refuse to unmount a FUSE mount from inside
     #: the sandbox (Sysbox answers ENOENT); there a replaced daemon's mount
     #: stays, unreachable, until the sandbox restarts.
-    generations: str = "/mnt/.livefs"
+    generations: str = GENERATIONS
     #: The token, the state naming what root may unmount, kill and unlink,
     #: the lock and the log: root's alone. In a directory the sandbox's own
     #: user can write, a planted symlink or a forged state file would turn
@@ -266,7 +266,7 @@ def serve(args, paths: Paths) -> None:
     # mfusepy prefers libfuse 2 when both are installed, and 2 truncates in a
     # separate call after open, which would make a redirect's empty save look
     # written (see ``LiveFS.flush``). mfusepy loads libfuse on import, so it
-    # is imported only here: ``up`` runs before libfuse may be installed.
+    # is imported only here: ``start`` runs before libfuse may be installed.
     found = libfuse()
     if found in _SONAMES:
         os.environ["FUSE_LIBRARY_PATH"] = found
@@ -284,7 +284,7 @@ def serve(args, paths: Paths) -> None:
         layout=paths.state,
         content_bytes=content_budget(),
     )
-    # Loaded while ``up`` probes the server; mounted only once it answered.
+    # Loaded while ``start`` probes the server; mounted only once it answered.
     if getattr(args, "gated", False) and sys.stdin.readline().strip() != "go":
         return
     fuse.FUSE(

@@ -3,7 +3,8 @@
 A program learns of a refused save only at close(), which most never check,
 so these lines are the agent's one report of it: failures only, short however
 many there were, named by the paths the agent used, and delivered even when
-the save came after its command returned.
+the save came after its command returned. A save whose file reports what it
+changed (the automations file) adds that report above the failures.
 """
 
 from __future__ import annotations
@@ -14,7 +15,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.server.services.livefs import outcomes
+from ptc_agent.core.sandbox.livefs_mount import CallContext
+from src.server.services.livefs import cache, outcomes
 from tests.unit.redis_mock_pipeline import attach_pipeline
 
 ROOT = "/home/workspace"
@@ -22,12 +24,10 @@ COMPUTER = "computer-1"
 CALL_A = "call-aaaa0001"
 CALL_B = "call-bbbb0002"
 HEADER = "NOT SAVED (the exit status does not show this):"
-LINKS = (
-    ("user", f"{ROOT}/.agents/user"),
-    ("workspaces/ws-1/memory", f"{ROOT}/research/.agents/memory"),
-    ("computer/threads.jsonl", f"{ROOT}/.agents/threads.jsonl"),
-)
+MEMORY = f"{ROOT}/.agents/user/memory"
 LATE = " (from an earlier command)"
+AUTOMATIONS = f"{ROOT}/.agents/user/automations/automations.json"
+REPORT = "Saved automations.json: 1 created.\nRead automations.json again before your next edit."
 
 
 def _failed(path: str, error: str = "refused") -> dict[str, Any]:
@@ -36,6 +36,10 @@ def _failed(path: str, error: str = "refused") -> dict[str, Any]:
 
 def _saved(path: str) -> dict[str, Any]:
     return {"op": "write", "path": path, "ok": True, "size": 1}
+
+
+def _reported(path: str, report: str, **extra: Any) -> dict[str, Any]:
+    return {"op": "write", "path": path, "ok": True, "size": 1, "report": report, **extra}
 
 
 def _lua(script: str):
@@ -65,12 +69,20 @@ def _span(items: list, start: int, end: int) -> slice:
 
 
 class _FakeRedis:
-    """Strings and lists in one dict, with TTLs recorded, never expired."""
+    """Strings and lists in one dict, with TTLs recorded, expired only when a
+    test moves the clock."""
 
     def __init__(self) -> None:
         self.data: dict[str, Any] = {}
         self.ttl: dict[str, int] = {}
+        self.now = 0
+        self._expires: dict[str, int] = {}
         attach_pipeline(self)
+
+    def advance(self, seconds: int) -> None:
+        self.now += seconds
+        for key in [k for k, at in self._expires.items() if at <= self.now]:
+            self._delete(key)
 
     def call(self, command: str, *args: Any, **kwargs: Any) -> Any:
         return getattr(self, f"_{command.lower()}")(*args, **kwargs)
@@ -89,23 +101,30 @@ class _FakeRedis:
         argv = {i + 1: str(a) for i, a in enumerate(args[numkeys:])}
         return _lua(script)(self.call, keys, argv)
 
+    def _get(self, key: str) -> Any:
+        return self.data.get(key)
+
     def _exists(self, *keys: str) -> int:
         return sum(k in self.data for k in keys)
 
-    def _set(self, key: str, value: Any, ex: int | None = None) -> bool:
+    def _set(self, key: str, value: Any, ex: int | None = None, nx: bool = False) -> bool:
+        if nx and key in self.data:
+            return False
         self.data[key] = value
         if ex:
-            self.ttl[key] = int(ex)
+            self._expire(key, ex)
         return True
 
     def _expire(self, key: str, seconds: Any) -> bool:
         if key in self.data:
             self.ttl[key] = int(seconds)
+            self._expires[key] = self.now + int(seconds)
         return key in self.data
 
     def _delete(self, *keys: str) -> int:
         for key in keys:
             self.ttl.pop(key, None)
+            self._expires.pop(key, None)
         return sum(self.data.pop(key, None) is not None for key in keys)
 
     def _rpush(self, key: str, *values: Any) -> int:
@@ -126,7 +145,7 @@ class _FakeRedis:
 def redis(monkeypatch):
     fake = _FakeRedis()
     monkeypatch.setattr(
-        outcomes,
+        cache,
         "get_cache_client",
         lambda: SimpleNamespace(enabled=True, client=fake),
     )
@@ -137,38 +156,28 @@ def redis(monkeypatch):
 
 
 def test_only_failed_saves_are_reported():
-    text = outcomes.describe(
-        [_saved(f"{ROOT}/.agents/user/memory/a.md"), _failed("user/memory/b.md")],
-        LINKS,
-    )
-    assert text.splitlines() == [HEADER, f"- {ROOT}/.agents/user/memory/b.md: refused"]
-    assert outcomes.describe([_saved("user/memory/a.md")], LINKS) == ""
+    text = outcomes.describe([_saved(f"{MEMORY}/a.md"), _failed(f"{MEMORY}/b.md")])
+    assert text.splitlines() == [HEADER, f"- {MEMORY}/b.md: refused"]
+    assert outcomes.describe([_saved(f"{MEMORY}/a.md")]) == ""
 
 
 def test_a_long_report_shows_ten_failures_and_counts_the_rest():
-    failed = [_failed(f"user/memory/{i:02d}.md") for i in range(13)]
-    lines = outcomes.describe(failed, LINKS).splitlines()
+    failed = [_failed(f"{MEMORY}/{i:02d}.md") for i in range(13)]
+    lines = outcomes.describe(failed).splitlines()
     assert lines[0] == HEADER
     assert len(lines) == 1 + 10 + 1
-    assert lines[10].startswith(f"- {ROOT}/.agents/user/memory/09.md")
+    assert lines[10].startswith(f"- {MEMORY}/09.md")
     assert lines[-1] == "- and 3 more"
 
 
-def test_each_failure_is_named_by_the_path_the_agent_used():
-    text = outcomes.describe(
-        [
-            _failed("workspaces/ws-1/memory/notes.md"),
-            _failed("computer/threads.jsonl"),
-            # Most refusals come back from the tree in sandbox form already.
-            _failed(f"{ROOT}/.agents/user/memo/brief.md"),
-        ],
-        LINKS,
-    )
-    assert text.splitlines()[1:] == [
-        f"- {ROOT}/research/.agents/memory/notes.md: refused",
-        f"- {ROOT}/.agents/threads.jsonl: refused",
-        f"- {ROOT}/.agents/user/memo/brief.md: refused",
-    ]
+def test_what_a_save_changed_is_shown_above_the_saves_that_failed():
+    text = outcomes.describe([_failed(f"{MEMORY}/b.md"), _reported(AUTOMATIONS, REPORT)])
+    assert text == f"{REPORT}\n\n{HEADER}\n- {MEMORY}/b.md: refused"
+
+
+def test_a_report_from_a_save_after_its_command_returned_says_so():
+    text = outcomes.describe([_reported(AUTOMATIONS, REPORT, late=True)])
+    assert text == f"From an earlier command: {REPORT}"
 
 
 # -- delivery by call id -------------------------------------------------------
@@ -181,17 +190,36 @@ async def test_a_commands_own_failures_are_reported_once(redis):
 
     first = await outcomes.collect(COMPUTER, CALL_A)
     assert [o["path"] for o in first] == ["user/memory/a.md", "user/memory/b.md"]
-    assert LATE not in outcomes.describe(first, LINKS)
+    assert LATE not in outcomes.describe(first)
     assert await outcomes.collect(COMPUTER, CALL_A) == []
+
+
+@pytest.mark.asyncio
+async def test_a_throttled_command_is_told_once_to_retry_apart_from_its_failed_saves(redis):
+    """A throttled command can be refused hundreds of times; the program saw
+    only EAGAIN, so one line has to say what it may have missed."""
+    for _ in range(3):
+        await outcomes.throttled(COMPUTER, CALL_A)
+    await outcomes.record(COMPUTER, CALL_A, _failed(f"{MEMORY}/b.md"))
+
+    text = outcomes.describe(await outcomes.collect(COMPUTER, CALL_A))
+
+    assert text.splitlines() == [
+        "Some file requests were refused as too many: files may be missing "
+        "from what the command read, or saves not made; retry the command.",
+        "",
+        HEADER,
+        f"- {MEMORY}/b.md: refused",
+    ]
 
 
 @pytest.mark.asyncio
 async def test_a_save_after_its_command_returned_reaches_the_next_one_as_late(redis):
     assert await outcomes.collect(COMPUTER, CALL_A) == []
-    await outcomes.record(COMPUTER, CALL_A, _failed("user/memory/a.md"))
+    await outcomes.record(COMPUTER, CALL_A, _failed(f"{MEMORY}/a.md"))
 
-    text = outcomes.describe(await outcomes.collect(COMPUTER, CALL_B), LINKS)
-    assert text.splitlines()[1] == f"- {ROOT}/.agents/user/memory/a.md: refused{LATE}"
+    text = outcomes.describe(await outcomes.collect(COMPUTER, CALL_B))
+    assert text.splitlines()[1] == f"- {MEMORY}/a.md: refused{LATE}"
 
 
 @pytest.mark.asyncio
@@ -225,6 +253,68 @@ async def test_one_computers_late_saves_never_reach_another(redis):
     assert len(await outcomes.collect(COMPUTER, CALL_B)) == 1
 
 
+def _runs_in(thread_id: str, workspace_id: str = "ws-1") -> CallContext:
+    return CallContext(workspace_id=workspace_id, thread_id=thread_id)
+
+
+@pytest.mark.asyncio
+async def test_a_late_save_reaches_its_own_threads_next_command_only(redis):
+    """A background command saves after its call returned; the report belongs
+    to the conversation that launched it, not to whichever runs next."""
+    call_c = "call-cccc0003"
+    await outcomes.open_call(COMPUTER, CALL_A, _runs_in("thread-1"))
+    await outcomes.open_call(COMPUTER, CALL_B, _runs_in("thread-2", "ws-2"))
+    await outcomes.open_call(COMPUTER, call_c, _runs_in("thread-1"))
+    assert await outcomes.collect(COMPUTER, CALL_A, "thread-1") == []
+    await outcomes.record(COMPUTER, CALL_A, _failed(f"{MEMORY}/a.md"))
+
+    assert await outcomes.collect(COMPUTER, CALL_B, "thread-2") == []
+    # Under the computer's hash tag, beside the call's own keys.
+    assert redis.ttl[f"livefs:{{{COMPUTER}}}:late:thread-1"] == 86400
+    collected = await outcomes.collect(COMPUTER, call_c, "thread-1")
+    assert [(o["path"], o.get("late")) for o in collected] == [(f"{MEMORY}/a.md", True)]
+
+
+@pytest.mark.asyncio
+async def test_a_late_save_whose_call_left_no_thread_reaches_any_next_command(redis):
+    # Its filing expired or Redis lost it: no conversation to route it to.
+    assert await outcomes.collect(COMPUTER, CALL_A) == []
+    await outcomes.record(COMPUTER, CALL_A, _failed(f"{MEMORY}/a.md"))
+    await outcomes.open_call(COMPUTER, CALL_B, _runs_in("thread-2"))
+
+    collected = await outcomes.collect(COMPUTER, CALL_B, "thread-2")
+    assert [(o["path"], o.get("late")) for o in collected] == [(f"{MEMORY}/a.md", True)]
+
+
+@pytest.mark.asyncio
+async def test_who_a_command_runs_for_is_read_back_by_its_own_computer_and_call(redis):
+    context = CallContext(workspace_id="ws-1", thread_id="thread-1", timezone="Asia/Tokyo")
+    await outcomes.open_call(COMPUTER, CALL_A, context)
+
+    assert await outcomes.call_context(COMPUTER, CALL_A) == context
+    assert redis.ttl[f"livefs:{{{COMPUTER}}}:ctx:{CALL_A}"] == 86400
+    for computer, call in ((COMPUTER, CALL_B), ("computer-2", CALL_A), (COMPUTER, None)):
+        assert await outcomes.call_context(computer, call) is None
+
+
+@pytest.mark.asyncio
+async def test_a_background_jobs_save_hours_after_launch_keeps_its_conversation(redis):
+    """A job its call left running saves under the call's id until it ends.
+    Hours on, the save still runs for the launching workspace and clock, and
+    its report reaches that thread, not whichever command runs next."""
+    context = CallContext(workspace_id="ws-1", thread_id="thread-1", timezone="Asia/Tokyo")
+    await outcomes.open_call(COMPUTER, CALL_A, context)
+    assert await outcomes.collect(COMPUTER, CALL_A, "thread-1") == []
+    redis.advance(2 * 3600)
+
+    assert await outcomes.call_context(COMPUTER, CALL_A) == context
+    await outcomes.record(COMPUTER, CALL_A, _failed(f"{MEMORY}/a.md"))
+
+    assert await outcomes.collect(COMPUTER, CALL_B, "thread-2") == []
+    collected = await outcomes.collect(COMPUTER, "call-cccc0003", "thread-1")
+    assert [(o["path"], o.get("late")) for o in collected] == [(f"{MEMORY}/a.md", True)]
+
+
 def test_a_call_id_outside_the_key_safe_shape_is_dropped():
     # It arrives in a header the agent's own code can set, and names a key.
     for bad in (None, "", "short", "call:aaaa0001", "call aaaa0001", "x" * 65):
@@ -239,7 +329,7 @@ async def test_a_redis_failure_costs_the_report_never_the_command(monkeypatch):
         pipeline=MagicMock(side_effect=ConnectionError("down")),
     )
     monkeypatch.setattr(
-        outcomes,
+        cache,
         "get_cache_client",
         lambda: SimpleNamespace(enabled=True, client=down),
     )

@@ -433,7 +433,7 @@ async def execute_bash_command(
             timeout: Maximum execution time in seconds (default: 60)
             background: Run command in background
             thread_id: Optional thread ID (first 8 chars) for thread-scoped script storage
-            call_id: The tool call's id for the file mount (foreground only)
+            call_id: The tool call's id for the file mount
 
         Returns:
             Dictionary with success, stdout, stderr, exit_code, bash_id, command_hash
@@ -524,7 +524,7 @@ async def execute_bash_command(
             # get_background_command_status. The audit .sh stays clean; only
             # the executed command carries the exports.
             bg_trace_path, bg_command = sandbox._build_trace_env_command(
-                bash_id, full_command
+                bash_id, full_command, call_id=call_id
             )
             # Track immediately so cleanup() can find it if execute fails
             sentinel_key = f"_pending:{session_id}"
@@ -581,16 +581,8 @@ async def execute_bash_command(
         # only the executed command carries the exports.
         assert sandbox.runtime is not None
         trace_path, exec_command = sandbox._build_trace_env_command(
-            bash_id, full_command
+            bash_id, full_command, call_id=call_id
         )
-        if call_id:
-            # In the environment the shell starts with, not exported inside
-            # it: the file mount reads a process's starting environment, and
-            # the shell's own redirections are requests of the shell's pid.
-            exec_command = (
-                f"env {livefs_protocol.CALL_ENV}={shlex.quote(call_id)} "
-                f"bash -c {shlex.quote(exec_command)}"
-            )
         exec_result = await sandbox._runtime_call(
             sandbox.runtime.exec,
             exec_command,
@@ -697,7 +689,10 @@ async def execute_bash_command(
 
 
 def _build_trace_env_command(
-    sandbox: "PTCSandbox", bash_id: str, full_command: str
+    sandbox: "PTCSandbox",
+    bash_id: str,
+    full_command: str,
+    call_id: str | None = None,
 ) -> tuple[str, str]:
     """Wrap a bash command with the MCP-provenance trace env.
 
@@ -707,6 +702,11 @@ def _build_trace_env_command(
         MCP wrappers records the same ``mcp_trace`` ExecuteCode does. Shared by the
         foreground and background bash paths so the two can't drift in how they
         build PYTHONPATH or quote the trace path.
+
+        ``call_id`` tags the shell for the file mount, in the environment it
+        starts with rather than an export inside it: the mount reads a
+        process's starting environment, and the shell's own redirections are
+        requests of the shell's pid.
         """
     # Use the cached working dir (set on create/reconnect via
     # fetch_working_dir, and used by normalize_path on this same bash path) so
@@ -721,6 +721,11 @@ def _build_trace_env_command(
             f"${{PYTHONPATH:+:$PYTHONPATH}} && "
             f"{full_command}"
     )
+    if call_id:
+        command = (
+            f"env {livefs_protocol.CALL_ENV}={shlex.quote(call_id)} "
+            f"bash -c {shlex.quote(command)}"
+        )
     return trace_path, command
 
 

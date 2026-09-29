@@ -6564,7 +6564,7 @@ class TestGeneratedContentGoesToTheHeldFolder:
         with ExitStack() as stack:
             self._asset_sync_reads(stack)
             self._folder_patches(stack, events, folder="Macro")
-            result = await manager._sync_sandbox_assets(
+            result = await manager._sync_project_assets(
                 _binding("ws-1", dir_name="Research"), "user-1", sandbox
             )
 
@@ -6586,7 +6586,7 @@ class TestGeneratedContentGoesToTheHeldFolder:
                 stack, events, folder="_internal/moving/ws-1",
                 held_by_a_settle=moving == "held by a settle",
             )
-            result = await manager._sync_sandbox_assets(
+            result = await manager._sync_project_assets(
                 _binding("ws-1", dir_name="Research"), "user-1", sandbox
             )
 

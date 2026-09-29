@@ -1,64 +1,143 @@
 """Mount paths resolved onto the store routes the file tools already use.
 
 The mount shows the user's files at paths of its own (``user/memory/...``,
-``workflows/...``, ``workspaces/<id>/memory/...``), which the sandbox
-links in where the file tools show the same files. Past threads
-(``workspaces/<id>/transcripts/...``, ``computer/threads.jsonl``) are the
-exception: read-only renders the file tools reach only through the links. Each request builds
-the routes the agent's filesystem gets, over a stand-in sandbox that only
-answers path questions, so the mount and the tools agree on what is
-readable, writable and valid by construction, and a path no route owns has
-no files behind it to serve.
+``workflows/...``, ``workspaces/<id>/memory/...``), which the sandbox links in
+where the file tools show the same files; ``POINTS`` declares both sides once.
+Past threads (``workspaces/<id>/transcripts/...``, ``computer/threads.jsonl``)
+are the exception: read-only renders the file tools reach only through the
+links. Each request builds the routes the agent's filesystem gets, over a
+stand-in sandbox that only answers path questions, so the mount and the tools
+agree on what is readable, writable and valid by construction, and a path no
+route owns has no files behind it to serve.
 """
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
+import logging
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
-from ptc_agent.agent.backends import (
-    CompositeFilesystemBackend,
-    InvalidStoreKeyError,
-    ReadOnlyStoreError,
-    StoreContentTooLargeError,
-)
-from ptc_agent.agent.backends.langgraph_store import StoreListingIncomplete
+from ptc_agent.agent.backends import CompositeFilesystemBackend
 from ptc_agent.agent.filesystem_routes import (
     build_filesystem_backend,
     resolve_identity_gates,
 )
-from ptc_agent.core.paths import SandboxLayout, WorkspaceLayout
+from ptc_agent.core.paths import USER_DATA_FILES, SandboxLayout, WorkspaceLayout
+from ptc_agent.core.sandbox.livefs_mount import CallContext
+from ptc_agent.core.sandbox.livefs_runtime.protocol import (
+    INLINE_LISTING_MAX_BYTES,
+    INLINE_MAX_BYTES,
+    MAX_FILE_BYTES,
+    MOUNT,
+    Refusal,
+)
 from src.server.database import workspace as workspace_db
+from src.server.database.workspace_folders import is_top_level
+from src.server.services import transcripts
 from src.server.services.livefs.history import IndexRoute, TranscriptRoute
+from src.server.services.livefs.routes import (
+    LivefsError,
+    MountRoute,
+    Saved,
+    adapt,
+    is_root,
+    not_found,
+)
 from src.server.services.livefs.tokens import LivefsIdentity
-from src.server.services.user_data_io import UserDataValidationError
 
-USER_TIERS = ("memory", "memo", "profile")
-
-
-class LivefsError(Exception):
-    """A refusal the daemon turns into an errno and the agent reads as text."""
-
-    def __init__(self, status: int, code: str, message: str, path: str = "") -> None:
-        super().__init__(message)
-        self.status = status
-        self.code = code
-        self.message = message
-        self.path = path
+logger = logging.getLogger(__name__)
 
 
-def version_of(content: str) -> str:
-    return hashlib.sha256(content.encode()).hexdigest()[:32]
+@dataclass(frozen=True)
+class MountPoint:
+    """A directory the mount serves, and where the sandbox links it in.
+
+    A point with files is there only where the file tools' routes serve it,
+    so the gates decide, never this table: without a store, memory is not.
+    A point of past threads is always there, served by its own route.
+    """
+
+    name: str
+    #: Where it is linked, under the computer root or a workspace folder.
+    target: str
+    #: One per workspace (``workspaces/<id>/<name>``) instead of per computer.
+    per_workspace: bool = False
+    #: Also linked in every workspace folder, where Bash and code run and
+    #: the prompts' relative paths land.
+    in_folders: bool = False
+    #: The one file under ``target`` that is linked, when not all of it.
+    only: str = ""
+    #: The directories under ``target`` routes serve, when none serves it.
+    tiers: tuple[str, ...] = ()
+    #: The route of past threads, from (computer id, workspace id, layout).
+    history: Callable[[str, str | None, WorkspaceLayout], MountRoute] | None = None
 
 
-def _not_found(path: str) -> LivefsError:
-    return LivefsError(404, "not_found", f"No such file or directory: {path}", path)
+POINTS = (
+    MountPoint(
+        "user",
+        SandboxLayout.USER_DIR,
+        in_folders=True,
+        tiers=tuple(
+            directory.removeprefix(SandboxLayout.USER_DIR + "/")
+            for directory in (
+                SandboxLayout.MEMORY_USER_DIR,
+                SandboxLayout.MEMO_USER_DIR,
+                *USER_DATA_FILES,
+            )
+        ),
+    ),
+    MountPoint("workflows", SandboxLayout.WORKFLOWS_DIR, in_folders=True),
+    MountPoint(
+        "computer",
+        SandboxLayout.AGENTS_DIR,
+        only=transcripts.INDEX,
+        history=lambda computer_id, _, layout: IndexRoute(computer_id, layout.root),
+    ),
+    MountPoint("memory", WorkspaceLayout.MEMORY_DIR, per_workspace=True),
+    MountPoint(
+        "transcripts",
+        WorkspaceLayout.TRANSCRIPTS_DIR,
+        per_workspace=True,
+        history=lambda _, workspace_id, layout: TranscriptRoute(str(workspace_id), layout),
+    ),
+)
+_COMPUTER_POINTS = {p.name: p for p in POINTS if not p.per_workspace}
+_WORKSPACE_POINTS = {p.name: p for p in POINTS if p.per_workspace}
+_WORKSPACES = "workspaces"
+
+
+def _mounted(path: str) -> str:
+    """The sandbox path of a mount path nothing links in: through the mount."""
+    relative = path.strip("/")
+    return f"{MOUNT}/{relative}" if relative else MOUNT
+
+
+def _segments(path: str) -> tuple[str, ...]:
+    parts = tuple(p for p in path.strip("/").split("/") if p)
+    if any(p in (".", "..") for p in parts):
+        raise LivefsError(Refusal.INVALID, f"Invalid path: {_mounted(path)}", _mounted(path))
+    return parts
 
 
 def _is_directory(path: str) -> LivefsError:
-    return LivefsError(409, "is_directory", f"{path} is a directory", path)
+    return LivefsError(Refusal.IS_DIRECTORY, f"{path} is a directory", path)
+
+
+@contextmanager
+def _answering(path: str) -> Iterator[None]:
+    """Any failure but a refusal, as one the daemon answers with a retry."""
+    try:
+        yield
+    except LivefsError:
+        raise
+    except Exception as exc:
+        logger.exception("livefs request failed", extra={"path": path})
+        raise LivefsError(
+            Refusal.UNAVAILABLE, f"{path} could not be reached; retry", path
+        ) from exc
 
 
 class _PathOnlySandbox:
@@ -80,190 +159,237 @@ class _PathOnlySandbox:
 
 
 @dataclass(frozen=True)
-class _Node:
-    """A virtual directory (``children``) or a path a route answers for."""
+class _Dir:
+    """A directory the mount makes up from the table or the database."""
 
-    children: tuple[str, ...] | None = None
-    route: Any = None
-    path: str = ""
+    path: str
+    names: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _Routed:
+    """A path a route answers for."""
+
+    route: MountRoute
+    path: str
 
     @property
-    def is_route_root(self) -> bool:
-        return self.path.rstrip("/") == self.route.root_prefix.rstrip("/")
+    def is_root(self) -> bool:
+        return is_root(self.route.root_prefix, self.path)
 
 
-def _segments(path: str) -> tuple[str, ...]:
-    parts = tuple(p for p in path.strip("/").split("/") if p)
-    if any(p in (".", "..") for p in parts):
-        raise LivefsError(422, "invalid", f"Invalid path: {path}", path)
-    return parts
+class _Scope(NamedTuple):
+    """Where points resolve: the computer root, or one workspace's folder."""
+
+    workspace_id: str | None
+    layout: WorkspaceLayout
+
+
+class Listing(NamedTuple):
+    entries: list[dict[str, Any]]
+    #: New files can be created in it.
+    writable: bool
+    #: Made up from the layout and the computer's workspaces rather than
+    #: served by a route, so it changes only when those do, which the host
+    #: answers by running ``link`` again.
+    structural: bool
+
+
+def _carried(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop the content a listing may not carry: a file past the per-file
+    cap, and whatever no longer fits the listing's total."""
+    spent = 0
+    for entry in entries:
+        if "content" not in entry:
+            continue
+        size = entry["size"]
+        if size > INLINE_MAX_BYTES or spent + size > INLINE_LISTING_MAX_BYTES:
+            del entry["content"]
+        else:
+            spent += size
+    return entries
+
+
+def _link(mount_path: str, point: MountPoint, layout: WorkspaceLayout) -> tuple[str, str]:
+    if point.only:
+        return f"{mount_path}/{point.only}", layout.join(point.target, point.only)
+    return mount_path, layout.join(point.target)
 
 
 class LivefsTree:
     """One request's view of a computer's mount. Holds no state past it."""
 
-    def __init__(self, identity: LivefsIdentity, store: Any) -> None:
+    def __init__(
+        self, identity: LivefsIdentity, store: Any, context: CallContext | None = None
+    ) -> None:
         self._identity = identity
         self._store = store
+        self._context = context or CallContext()
         self._layout = SandboxLayout.for_root(identity.root_dir)
-        self._root = self._layout.root
+        self._built: dict[_Scope, CompositeFilesystemBackend | None] = {}
 
-    def _backend(
-        self, workspace_id: str | None, layout: WorkspaceLayout | None
-    ) -> CompositeFilesystemBackend | None:
+    def _route_for(self, scope: _Scope, path: str) -> Any:
+        # Built on first use, which past threads never make.
+        if scope not in self._built:
+            self._built[scope] = self._build(scope)
+        files = self._built[scope]
+        return files.route_for(path) if files is not None else None
+
+    def _build(self, scope: _Scope) -> CompositeFilesystemBackend | None:
         user_id = self._identity.user_id
         gates = resolve_identity_gates(
             store=self._store,
             user_id=user_id,
-            workspace_id=workspace_id,
+            workspace_id=scope.workspace_id,
             disable_subagents=True,
         )
         backend, _ = build_filesystem_backend(
-            backend=_PathOnlySandbox(self._root),
+            backend=_PathOnlySandbox(self._layout.root),
             gates=gates,
             store=self._store,
             user_id=user_id,
-            workspace_id=workspace_id,
-            layout=layout,
+            workspace_id=scope.workspace_id,
+            layout=scope.layout,
+            call=self._context,
         )
         return backend if isinstance(backend, CompositeFilesystemBackend) else None
 
-    def _routed(self, backend: CompositeFilesystemBackend | None, path: str) -> _Node:
-        route = backend.route_for(path) if backend is not None else None
-        if route is None:
-            raise _not_found(path)
-        return _Node(route=route, path=path)
+    def _computer(self) -> _Scope:
+        # The call's workspace is where a new automation runs by default.
+        return _Scope(self._context.workspace_id, self._layout.for_workspace(None))
 
-    async def _resolve(self, parts: tuple[str, ...]) -> _Node:
-        if not parts:
-            computer = self._backend(None, None)
-            names = ["computer", "workspaces"]
-            if computer is not None and computer.route_for(self._layout.workflows):
-                names.insert(0, "workflows")
-            if computer is not None and any(
-                computer.route_for(self._layout.join(SandboxLayout.USER_DIR, t))
-                for t in USER_TIERS
-            ):
-                names.insert(0, "user")
-            return _Node(children=tuple(names))
-        head, rest = parts[0], parts[1:]
-        if head == "user":
-            computer = self._backend(None, None)
-            if not rest:
-                return _Node(
-                    children=tuple(
-                        t
-                        for t in USER_TIERS
-                        if computer is not None
-                        and computer.route_for(
-                            self._layout.join(SandboxLayout.USER_DIR, t)
-                        )
-                    )
-                )
-            return self._routed(
-                computer, self._layout.join(SandboxLayout.USER_DIR, *rest)
-            )
-        if head == "computer":
-            route = IndexRoute(self._identity.computer_id, self._root)
-            return _Node(
-                route=route, path=self._layout.join(SandboxLayout.AGENTS_DIR, *rest)
-            )
-        if head == "workflows":
-            return self._routed(
-                self._backend(None, None),
-                self._layout.join(SandboxLayout.WORKFLOWS_DIR, *rest),
-            )
-        if head == "workspaces":
-            if not rest:
-                folders = await workspace_db.get_live_workspace_folders_for_computer(
-                    self._identity.computer_id
-                )
-                return _Node(children=tuple(str(f["workspace_id"]) for f in folders))
-            workspace = await workspace_db.get_workspace(rest[0])
-            # A workspace on another computer has no folder here to link or
-            # name, and separate computers are the isolation boundary.
-            if (
-                workspace is None
-                or workspace.get("user_id") != self._identity.user_id
-                or str(workspace.get("computer_id")) != self._identity.computer_id
-            ):
-                raise _not_found("/".join(parts))
-            layout = self._layout.for_workspace(workspace.get("dir_name"))
-            backend = self._backend(str(workspace["workspace_id"]), layout)
-            if len(rest) == 1:
-                has_memory = backend is not None and backend.route_for(layout.memory)
-                return _Node(
-                    children=("memory", "transcripts") if has_memory else ("transcripts",)
-                )
-            if rest[1] == "transcripts":
-                route = TranscriptRoute(str(workspace["workspace_id"]), layout)
-                return _Node(route=route, path="/".join((layout.transcripts, *rest[2:])))
-            if rest[1] != "memory":
-                raise _not_found("/".join(parts))
-            return self._routed(backend, "/".join((layout.memory, *rest[2:])))
-        raise _not_found("/".join(parts))
+    async def _workspace(self, workspace_id: str, path: str) -> _Scope:
+        """A workspace of the user's on this computer, at its folder here.
 
-    async def _is_dir(self, node: _Node) -> bool:
-        if node.is_route_root:
+        A workspace on another computer has no folder here to link or name,
+        and separate computers are the isolation boundary, so it is not found.
+        """
+        workspace = await workspace_db.get_workspace_placement(workspace_id)
+        if (
+            workspace is None
+            or workspace.get("user_id") != self._identity.user_id
+            or str(workspace.get("computer_id")) != self._identity.computer_id
+        ):
+            raise not_found(path)
+        layout = self._layout.for_workspace(workspace.get("dir_name"))
+        return _Scope(str(workspace["workspace_id"]), layout)
+
+    def _present(self, point: MountPoint, scope: _Scope) -> bool:
+        if point.history is not None:
             return True
-        if hasattr(node.route, "alist"):
-            return await node.route.alist(node.path) is not None
-        return bool(await node.route.aread_tree(node.path))
+        target = scope.layout.join(point.target)
+        return any(
+            self._route_for(scope, path) is not None
+            for path in (target, *(f"{target}/{tier}" for tier in point.tiers))
+        )
 
-    async def _file(self, path: str) -> _Node:
-        node = await self._resolve(_segments(path))
-        if node.children is not None or node.is_route_root:
-            raise _is_directory(node.path or path)
+    def _at(self, point: MountPoint, scope: _Scope, rest: tuple[str, ...]) -> _Dir | _Routed:
+        path = scope.layout.join(point.target, *rest)
+        if point.history is not None:
+            route = point.history(self._identity.computer_id, scope.workspace_id, scope.layout)
+            return _Routed(route, path)
+        if point.tiers and not rest:
+            tiers = tuple(
+                t for t in point.tiers if self._route_for(scope, f"{path}/{t}") is not None
+            )
+            return _Dir(path, tiers)
+        found = self._route_for(scope, path)
+        if found is None:
+            raise not_found(path)
+        return _Routed(adapt(found), path)
+
+    async def _resolve(self, parts: tuple[str, ...]) -> _Dir | _Routed:
+        mounted = _mounted("/".join(parts))
+        if not parts:
+            computer = self._computer()
+            names = [p.name for p in _COMPUTER_POINTS.values() if self._present(p, computer)]
+            return _Dir(mounted, (*names, _WORKSPACES))
+        head, rest = parts[0], parts[1:]
+        if head != _WORKSPACES:
+            if head not in _COMPUTER_POINTS:
+                raise not_found(mounted)
+            return self._at(_COMPUTER_POINTS[head], self._computer(), rest)
+        if not rest:
+            folders = await workspace_db.get_live_workspace_folders_for_computer(
+                self._identity.computer_id
+            )
+            return _Dir(mounted, tuple(str(f["workspace_id"]) for f in folders))
+        scope = await self._workspace(rest[0], mounted)
+        if len(rest) == 1:
+            names = tuple(p.name for p in _WORKSPACE_POINTS.values() if self._present(p, scope))
+            return _Dir(mounted, names)
+        if rest[1] not in _WORKSPACE_POINTS:
+            raise not_found(mounted)
+        return self._at(_WORKSPACE_POINTS[rest[1]], scope, rest[2:])
+
+    async def _node(self, path: str) -> _Dir | _Routed:
+        with _answering(_mounted(path)):
+            return await self._resolve(_segments(path))
+
+    async def _file(self, path: str) -> _Routed:
+        node = await self._node(path)
+        if isinstance(node, _Dir) or node.is_root:
+            raise _is_directory(node.path)
         return node
 
-    async def list(self, path: str) -> tuple[list[dict[str, Any]], bool]:
-        """The directory's entries, and whether new files can be created in it."""
-        node = await self._resolve(_segments(path))
-        if node.children is not None:
-            return [{"name": name, "type": "dir"} for name in node.children], False
-        if hasattr(node.route, "alist"):
-            listed = await node.route.alist(node.path)
+    async def _missing(self, node: _Routed) -> LivefsError:
+        """Why a path its route owns holds no file."""
+        if await node.route.list(node.path) is not None:
+            return _is_directory(node.path)
+        return not_found(node.path)
+
+    async def links(self) -> dict[str | None, list[tuple[str, str]]]:
+        """Each mount path and the sandbox path the file tools show its files
+        at, by the workspace whose folder holds it (None: the computer's own).
+        Every live folder is a key, so the keys are the workspaces a link
+        covers."""
+        computer = self._computer()
+        present = [p for p in _COMPUTER_POINTS.values() if self._present(p, computer)]
+        links: dict[str | None, list[tuple[str, str]]] = {
+            None: [_link(p.name, p, computer.layout) for p in present]
+        }
+        for folder in await workspace_db.get_live_workspace_folders_for_computer(
+            self._identity.computer_id
+        ):
+            dir_name = folder.get("dir_name")
+            if dir_name and not is_top_level(dir_name):
+                # Staged mid-move: a link there would make the staging folder
+                # the move treats as the content. It is linked once it lands.
+                continue
+            workspace_id = str(folder["workspace_id"])
+            scope = _Scope(workspace_id, self._layout.for_workspace(dir_name))
+            # A folder that owns the root reads the computer's own links.
+            own = [
+                _link(p.name, p, scope.layout)
+                for p in present
+                if p.in_folders and dir_name
+            ]
+            own += [
+                _link(f"{_WORKSPACES}/{workspace_id}/{p.name}", p, scope.layout)
+                for p in _WORKSPACE_POINTS.values()
+                if self._present(p, scope)
+            ]
+            links[workspace_id] = own
+        return links
+
+    async def list(self, path: str) -> Listing:
+        node = await self._node(path)
+        if isinstance(node, _Dir):
+            return Listing([{"name": name, "type": "dir"} for name in node.names], False, True)
+        with _answering(node.path):
+            listed = await node.route.list(node.path)
             if listed is None:
-                raise _not_found(node.path)
-            return listed, node.route.is_writable(node.path)
-        try:
-            tree = await node.route.aread_tree(node.path)
-        except StoreListingIncomplete as exc:
-            raise LivefsError(503, "unavailable", str(exc), node.path) from exc
-        if node.path in tree:
-            raise LivefsError(409, "not_directory", f"{node.path} is a file", node.path)
-        base = node.path.rstrip("/") + "/"
-        entries: dict[str, dict[str, Any]] = {}
-        for file_path, content in tree.items():
-            if not file_path.startswith(base):
-                continue
-            name, nested, _ = file_path[len(base):].partition("/")
-            if nested:
-                entries.setdefault(name, {"name": name, "type": "dir"})
-                continue
-            entries[name] = {
-                "name": name,
-                "type": "file",
-                "size": len(content.encode()),
-                "version": version_of(content),
-                "writable": node.route.is_writable(file_path),
-            }
-        if not entries and not node.is_route_root:
-            raise _not_found(node.path)
-        return (
-            sorted(entries.values(), key=lambda e: e["name"]),
-            node.route.is_writable(node.path),
-        )
+                raise not_found(node.path)
+            return Listing(_carried(listed), node.route.is_writable(node.path), False)
 
     async def read(self, path: str) -> tuple[str, str, str]:
         """Content, version and the sandbox path the agent knows it by."""
         node = await self._file(path)
-        content = await node.route.aread_text(node.path)
-        if content is None:
-            if await self._is_dir(node):
-                raise _is_directory(node.path)
-            raise _not_found(node.path)
-        return content, version_of(content), node.path
+        with _answering(node.path):
+            served = await node.route.read(node.path)
+            if served is None:
+                raise await self._missing(node)
+        return (*served, node.path)
 
     async def write(
         self,
@@ -272,102 +398,67 @@ class LivefsTree:
         *,
         if_match: str | None,
         if_none_match: str | None,
-    ) -> tuple[str, int, str]:
-        """Replace a whole file on the precondition the caller saw.
-
-        Every write names what it replaces, the version it read or that
-        there was none, so a save never lands over a change the caller did
-        not see. The check and the write are two steps: a writer landing
-        between them in the same moment is not caught, as with the tools.
-        """
+    ) -> Saved:
+        """Replace a whole file on the precondition the caller saw: the
+        version it read, or that there was none, so a save never lands over
+        a change the caller did not see."""
         node = await self._file(path)
-        try:
-            content = data.decode("utf-8")
-        except UnicodeDecodeError:
-            raise LivefsError(
-                422, "invalid", f"{node.path}: these files hold UTF-8 text", node.path
-            ) from None
-        # Also primes the read a profile write checks its version against.
-        current = await node.route.aread_text(node.path)
-        if if_none_match == "*":
-            if current is not None:
-                raise LivefsError(412, "exists", f"{node.path} already exists", node.path)
-        elif if_match is not None:
-            if current is None or version_of(current) != if_match.strip('"'):
+        with _answering(node.path):
+            if len(data) > MAX_FILE_BYTES:
                 raise LivefsError(
-                    412,
-                    "changed",
-                    f"{node.path} changed since it was read. Read it again and "
-                    "reapply the change.",
+                    Refusal.TOO_LARGE,
+                    f"{node.path}: files here hold at most {MAX_FILE_BYTES} bytes",
                     node.path,
                 )
-        else:
-            raise LivefsError(
-                428, "precondition_required", "Send If-Match or If-None-Match", node.path
-            )
-        await self._write(node, content)
-        stored = await node.route.aread_text(node.path)
-        final = stored if stored is not None else content
-        return version_of(final), len(final.encode()), node.path
+            try:
+                content = data.decode("utf-8")
+            except UnicodeDecodeError:
+                raise LivefsError(
+                    Refusal.INVALID, f"{node.path}: these files hold UTF-8 text", node.path
+                ) from None
+            if if_none_match == "*":
+                version = None
+            elif if_match is None:
+                raise LivefsError(
+                    Refusal.PRECONDITION_REQUIRED,
+                    "Send If-Match or If-None-Match",
+                    node.path,
+                )
+            else:
+                version = if_match.strip('"')
+            return await node.route.write(node.path, content, version)
 
     async def delete(self, path: str) -> str:
         node = await self._file(path)
-        if not await self._delete(node):
-            if await self._is_dir(node):
-                raise _is_directory(node.path)
-            raise _not_found(node.path)
+        with _answering(node.path):
+            if not await node.route.delete(node.path):
+                raise await self._missing(node)
         return node.path
 
-    async def rename(self, path: str, to: str) -> tuple[str, str]:
+    async def rename(self, path: str, to: str) -> tuple[str, str, str | None]:
         """Move a file as write-then-delete, so a failure leaves the source.
 
         Directories are refused as ``is_directory``; the daemon answers that
-        as a cross-device rename, which ``mv`` completes file by file.
+        as a cross-device rename, which ``mv`` completes file by file. Also
+        returns what the save changed, as ``write`` does.
         """
         source = await self._file(path)
         target = await self._file(to)
         if source.path == target.path:
-            return source.path, target.path
-        content = await source.route.aread_text(source.path)
-        if content is None:
-            if await self._is_dir(source):
-                raise _is_directory(source.path)
-            raise _not_found(source.path)
-        if not source.route.is_writable(source.path):
-            raise LivefsError(
-                403, "read_only", f"{source.path} cannot be moved", source.path
+            return source.path, target.path, None
+        with _answering(source.path):
+            if not source.route.movable(source.path):
+                # Before loading it, so an outage cannot answer as not found.
+                raise LivefsError(
+                    Refusal.READ_ONLY, f"{source.path} cannot be moved", source.path
+                )
+            served = await source.route.read(source.path)
+            if served is None:
+                raise await self._missing(source)
+            # A rename replaces whatever is there, so it goes over the live version.
+            current = await target.route.read(target.path)
+            saved = await target.route.write(
+                target.path, served[0], current[1] if current else None
             )
-        await target.route.aread_text(target.path)
-        await self._write(target, content)
-        await self._delete(source)
-        return source.path, target.path
-
-    async def _write(self, node: _Node, content: str) -> None:
-        try:
-            ok = await node.route.awrite_text(node.path, content)
-        except ReadOnlyStoreError as exc:
-            raise LivefsError(403, "read_only", str(exc), node.path) from exc
-        except StoreContentTooLargeError as exc:
-            raise LivefsError(413, "too_large", str(exc), node.path) from exc
-        except UserDataValidationError as exc:
-            status = 412 if exc.error_type == "version_conflict" else 422
-            code = "changed" if status == 412 else "invalid"
-            raise LivefsError(status, code, exc.message, node.path) from exc
-        except (InvalidStoreKeyError, ValueError) as exc:
-            raise LivefsError(422, "invalid", str(exc), node.path) from exc
-        if not ok:
-            raise LivefsError(
-                503, "unavailable", f"{node.path} was not saved; retry", node.path
-            )
-
-    async def _delete(self, node: _Node) -> bool:
-        try:
-            return await node.route.adelete_text(node.path)
-        except ReadOnlyStoreError as exc:
-            raise LivefsError(403, "read_only", str(exc), node.path) from exc
-        except InvalidStoreKeyError as exc:
-            raise LivefsError(422, "invalid", str(exc), node.path) from exc
-        except asyncio.TimeoutError as exc:
-            raise LivefsError(
-                503, "unavailable", f"{node.path} was not deleted; retry", node.path
-            ) from exc
+            await source.route.delete(source.path)
+        return source.path, target.path, saved.report

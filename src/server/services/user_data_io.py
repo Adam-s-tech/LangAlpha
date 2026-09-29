@@ -1,6 +1,6 @@
 """User-data IO layer: fetch + serialize + diff + apply for portfolio, watchlist, preferences.
 
-Called by ``UserDataBackend`` to serve the three virtual files at
+Called by ``profile_files`` to serve the three virtual files at
 ``.agents/user/profile/{portfolio,watchlist,preference}.json`` and validate agent writes.
 
 Decimal precision: stdlib ``json`` cannot emit ``Decimal`` as a JSON number, so
@@ -15,17 +15,15 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID, uuid4
 
-from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from ptc_agent.agent.backends.db_json_route import UserDataValidationError
 from src.server.database import portfolio as portfolio_db
 from src.server.database import user as user_db
 from src.server.database import watchlist as watchlist_db
@@ -38,39 +36,6 @@ logger = logging.getLogger(__name__)
 # so two readers of an empty profile agree on the version without hitting DB
 # timestamps that don't exist yet.
 EMPTY_VERSION = "sha256:0"
-
-
-# =============================================================================
-# Errors
-# =============================================================================
-
-
-@dataclass
-class UserDataValidationError(Exception):
-    """Raised when a write payload fails parse / schema / version / constraint checks.
-
-    The backend's `awrite_text` surfaces the `message` verbatim to the agent's
-    Write/Edit tool, so it must be self-explanatory and tell the agent how to recover.
-    """
-
-    error_type: str  # "parse_error" | "schema_error" | "version_conflict" | "constraint_error"
-    file: str  # e.g. "portfolio.json"
-    field_path: str  # e.g. "holdings[2].quantity"
-    hint: str
-
-    @property
-    def message(self) -> str:
-        base = f"{self.error_type}:{self.file}:{self.field_path}: {self.hint}"
-        # Parse + schema failures usually mean the agent guessed at the shape.
-        # Point it at the static schema doc so the next retry is informed.
-        # Skip when the error itself concerns README.md (it's the wrong pointer
-        # for someone trying to edit README).
-        if self.error_type in {"parse_error", "schema_error"} and self.file != "README.md":
-            base += " See .agents/user/profile/README.md for the full schema and examples."
-        return base
-
-    def __str__(self) -> str:
-        return self.message
 
 
 # =============================================================================
@@ -294,133 +259,6 @@ def _stamp_version(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-# Stable salt so the advisory lock key namespace can't collide with any other
-# pg_advisory_xact_lock callers that hash arbitrary user_ids.
-_PROFILE_LOCK_KEY_PREFIX = "userdata:profile:"
-
-
-async def _acquire_profile_lock(cur: Any, user_id: str) -> None:
-    """Acquire a Postgres advisory tx-lock to serialize cross-process writes.
-
-    Auto-released on COMMIT/ROLLBACK. Same key for all three files (portfolio,
-    watchlist, preference) so an in-flight write of any one file blocks the
-    others — appropriate because the agent's payload_version is per-file and
-    interleaved cross-file writes can still produce inconsistent reads.
-    """
-    await cur.execute(
-        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-        (_PROFILE_LOCK_KEY_PREFIX + user_id,),
-    )
-
-
-@asynccontextmanager
-async def _locked_version_check(
-    user_id: str,
-    *,
-    file: str,
-    payload_version: str,
-    fetch_and_version: Callable[[Any, str], Awaitable[tuple[Any, str]]],
-    conflict_message: str,
-):
-    """Open a transaction, take the advisory lock, recheck content hash.
-
-    Centralises the CAS pattern shared by ``apply_portfolio_diff``,
-    ``apply_watchlist_diff``, and ``apply_preferences``. The caller passes
-    ``fetch_and_version(cur, user_id)`` which must return
-    ``(current_data, current_version)`` using the same cursor so the read is
-    transactionally consistent with the subsequent writes. Raises
-    ``version_conflict`` on hash mismatch before yielding.
-
-    Yields ``(cur, current_data)`` — the writer issues its INSERT/UPDATE/
-    DELETE statements on ``cur`` and current_data is available for any
-    post-lock business logic (e.g. reading existing ``other_preference``).
-    """
-    async with get_db_connection() as conn:
-        async with conn.transaction():
-            async with conn.cursor() as cur:
-                await _acquire_profile_lock(cur, user_id)
-                current_data, current_version = await fetch_and_version(cur, user_id)
-                if payload_version != current_version:
-                    raise UserDataValidationError(
-                        "version_conflict", file, "__version__", conflict_message,
-                    )
-                yield cur, current_data
-
-
-async def _fetch_portfolio_rows(cur: Any, user_id: str) -> list[dict[str, Any]]:
-    """Inline portfolio fetch on the caller's cursor (transactional-consistent)."""
-    async with cur.connection.cursor(row_factory=dict_row) as inner:
-        await inner.execute(
-            """
-            SELECT
-                user_portfolio_id, user_id, symbol, instrument_type, exchange,
-                name, quantity, average_cost, currency, account_name,
-                notes, metadata, first_purchased_at, created_at, updated_at
-            FROM user_portfolios
-            WHERE user_id = %s
-            ORDER BY created_at DESC
-            """,
-            (user_id,),
-        )
-        return [dict(row) for row in await inner.fetchall()]
-
-
-async def _fetch_watchlists_rows(
-    cur: Any, user_id: str,
-) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
-    """Inline watchlist + items fetch on the caller's connection.
-
-    ORDER BY clauses match the existing module-level helpers
-    (``watchlist_db.get_user_watchlists`` / ``get_all_user_watchlist_items``)
-    so the pre-check hash and the in-transaction recheck hash agree on row order.
-    """
-    async with cur.connection.cursor(row_factory=dict_row) as inner:
-        await inner.execute(
-            """
-            SELECT watchlist_id, user_id, name, description, is_default,
-                   display_order, created_at, updated_at
-            FROM watchlists
-            WHERE user_id = %s
-            ORDER BY is_default DESC, display_order ASC, created_at ASC
-            """,
-            (user_id,),
-        )
-        watchlists = [dict(row) for row in await inner.fetchall()]
-
-        await inner.execute(
-            """
-            SELECT wi.watchlist_item_id, wi.watchlist_id, wi.user_id, wi.symbol,
-                   wi.instrument_type, wi.exchange, wi.name, wi.notes,
-                   wi.alert_settings, wi.metadata, wi.created_at, wi.updated_at
-            FROM watchlist_items wi
-            INNER JOIN watchlists w ON wi.watchlist_id = w.watchlist_id
-            WHERE w.user_id = %s
-            ORDER BY wi.created_at DESC
-            """,
-            (user_id,),
-        )
-        items_by_wl: dict[str, list[dict[str, Any]]] = {}
-        for row in await inner.fetchall():
-            items_by_wl.setdefault(str(row["watchlist_id"]), []).append(dict(row))
-    return watchlists, items_by_wl
-
-
-async def _fetch_preferences_row(cur: Any, user_id: str) -> dict[str, Any] | None:
-    """Inline preferences fetch on the caller's connection."""
-    async with cur.connection.cursor(row_factory=dict_row) as inner:
-        await inner.execute(
-            """
-            SELECT user_preference_id, user_id, risk_preference, investment_preference,
-                   agent_preference, other_preference, created_at, updated_at
-            FROM user_preferences
-            WHERE user_id = %s
-            """,
-            (user_id,),
-        )
-        row = await inner.fetchone()
-        return dict(row) if row else None
-
-
 # =============================================================================
 # Portfolio
 # =============================================================================
@@ -483,15 +321,13 @@ class PortfolioDiff:
     updates: list[dict[str, Any]] = field(default_factory=list)
     deletes: list[str] = field(default_factory=list)  # user_portfolio_ids
 
-    def is_empty(self) -> bool:
-        return not self.inserts and not self.updates and not self.deletes
+    def __bool__(self) -> bool:
+        return bool(self.inserts or self.updates or self.deletes)
 
 
-def parse_and_diff_portfolio(
-    content: str,
-    current_rows: list[dict[str, Any]],
-) -> PortfolioDiff:
-    """Parse agent JSON, validate, diff against ``current_rows``."""
+def parse_portfolio(content: str) -> list[dict[str, Any]]:
+    """The holdings ``content`` holds, validated and normalized. Nothing here
+    depends on the rows, so a save refuses bad content before reading any."""
     file = "portfolio.json"
     data = parse_json(content, file)
 
@@ -502,13 +338,7 @@ def parse_and_diff_portfolio(
     if not isinstance(holdings, list):
         raise UserDataValidationError("schema_error", file, "holdings", "must be an array")
 
-    # Identity is the natural unique key — the agent never sees DB UUIDs.
-    by_unique_key: dict[tuple[str, str, str | None], dict[str, Any]] = {
-        (r["symbol"], r["instrument_type"], r.get("account_name")): r for r in current_rows
-    }
-
-    diff = PortfolioDiff()
-    seen_ids: set[str] = set()
+    parsed: list[dict[str, Any]] = []
     seen_payload_keys: set[tuple[str, str, str | None]] = set()
 
     for idx, item in enumerate(holdings):
@@ -570,8 +400,26 @@ def parse_and_diff_portfolio(
                 normalized.get(field_name), max_len,
                 file=file, path=f"holdings[{idx}].{field_name}",
             )
+        parsed.append(normalized)
+    return parsed
 
-        existing = by_unique_key.get((symbol, instrument_type, account_name))
+
+def diff_portfolio(
+    holdings: list[dict[str, Any]],
+    current_rows: list[dict[str, Any]],
+) -> PortfolioDiff:
+    """What writing ``parse_portfolio``'s holdings over ``current_rows`` changes."""
+    # Identity is the natural unique key; the agent never sees DB UUIDs.
+    by_unique_key: dict[tuple[str, str, str | None], dict[str, Any]] = {
+        (r["symbol"], r["instrument_type"], r.get("account_name")): r for r in current_rows
+    }
+
+    diff = PortfolioDiff()
+    seen_ids: set[str] = set()
+    for normalized in holdings:
+        existing = by_unique_key.get(
+            (normalized["symbol"], normalized["instrument_type"], normalized["account_name"])
+        )
 
         if existing is None:
             diff.inserts.append(normalized)
@@ -580,8 +428,7 @@ def parse_and_diff_portfolio(
         seen_ids.add(str(existing["user_portfolio_id"]))
         # Only emit update if any field actually changed.
         if _portfolio_row_differs(existing, normalized):
-            normalized["id"] = str(existing["user_portfolio_id"])
-            diff.updates.append(normalized)
+            diff.updates.append({**normalized, "id": str(existing["user_portfolio_id"])})
 
     diff.deletes = [
         str(r["user_portfolio_id"]) for r in current_rows
@@ -615,46 +462,25 @@ def _portfolio_row_differs(existing: dict[str, Any], proposed: dict[str, Any]) -
     return False
 
 
-async def _portfolio_state(cur: Any, user_id: str) -> tuple[list[dict[str, Any]], str]:
-    rows = await _fetch_portfolio_rows(cur, user_id)
-    return rows, serialize_portfolio(rows)["__version__"]
-
-
-async def apply_portfolio_diff(
-    diff: PortfolioDiff,
-    user_id: str,
-    *,
-    payload_version: str,
-) -> None:
-    """Apply inserts/updates/deletes in a single transaction.
-
-    Race protection delegated to ``_locked_version_check``: advisory tx-lock
-    keyed by ``(user_id, profile)`` plus a content-hash recheck. With the
-    lock held, individual statements no longer need per-row CAS.
-    """
-    if diff.is_empty():
+async def write_portfolio_diff(cur: Any, diff: PortfolioDiff, user_id: str) -> None:
+    """Issue the diff's statements on ``cur``, whose transaction holds the
+    profile lock and has checked the version, so the statements need no
+    per-row CAS. Each kind of change goes as one batch, sent in one round
+    trip."""
+    if not diff:
         return
 
-    async with _locked_version_check(
-        user_id,
-        file="portfolio.json",
-        payload_version=payload_version,
-        fetch_and_version=_portfolio_state,
-        conflict_message=(
-            "portfolio changed between read and write. "
-            "Re-read .agents/user/profile/portfolio.json and reapply your edit."
-        ),
-    ) as (cur, _current_rows):
-        for row in diff.inserts:
-            await cur.execute(
-                """
-                INSERT INTO user_portfolios (
-                    user_portfolio_id, user_id, symbol, instrument_type, exchange,
-                    name, quantity, average_cost, currency, account_name,
-                    notes, metadata, first_purchased_at, created_at, updated_at
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-                """,
+    if diff.inserts:
+        await cur.executemany(
+            """
+            INSERT INTO user_portfolios (
+                user_portfolio_id, user_id, symbol, instrument_type, exchange,
+                name, quantity, average_cost, currency, account_name,
+                notes, metadata, first_purchased_at, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            """,
+            [
                 (
                     row.get("id") or str(uuid4()),
                     user_id, row["symbol"], row["instrument_type"],
@@ -662,34 +488,39 @@ async def apply_portfolio_diff(
                     row.get("average_cost"), row.get("currency") or "USD",
                     row.get("account_name"), row.get("notes"),
                     Json({}), row.get("first_purchased_at"),
-                ),
-            )
+                )
+                for row in diff.inserts
+            ],
+        )
 
-        for row in diff.updates:
-            await cur.execute(
-                """
-                UPDATE user_portfolios SET
-                    symbol = %s, instrument_type = %s, exchange = %s, name = %s,
-                    quantity = %s, average_cost = %s, currency = %s,
-                    account_name = %s, notes = %s, first_purchased_at = %s,
-                    updated_at = NOW()
-                WHERE user_portfolio_id = %s AND user_id = %s
-                """,
+    if diff.updates:
+        await cur.executemany(
+            """
+            UPDATE user_portfolios SET
+                symbol = %s, instrument_type = %s, exchange = %s, name = %s,
+                quantity = %s, average_cost = %s, currency = %s,
+                account_name = %s, notes = %s, first_purchased_at = %s,
+                updated_at = NOW()
+            WHERE user_portfolio_id = %s AND user_id = %s
+            """,
+            [
                 (
                     row["symbol"], row["instrument_type"], row.get("exchange"),
                     row.get("name"), row["quantity"], row.get("average_cost"),
                     row.get("currency") or "USD", row.get("account_name"),
                     row.get("notes"), row.get("first_purchased_at"),
                     row["id"], user_id,
-                ),
-            )
+                )
+                for row in diff.updates
+            ],
+        )
 
-        if diff.deletes:
-            await cur.execute(
-                "DELETE FROM user_portfolios WHERE user_id = %s "
-                "AND user_portfolio_id = ANY(%s)",
-                (user_id, diff.deletes),
-            )
+    if diff.deletes:
+        await cur.execute(
+            "DELETE FROM user_portfolios WHERE user_id = %s "
+            "AND user_portfolio_id = ANY(%s)",
+            (user_id, diff.deletes),
+        )
 
     logger.info(
         "[user_data_io] applied portfolio diff user_id=%s inserts=%d updates=%d deletes=%d",
@@ -790,19 +621,17 @@ class WatchlistDiff:
     item_updates: list[dict[str, Any]] = field(default_factory=list)
     item_deletes: list[str] = field(default_factory=list)
 
-    def is_empty(self) -> bool:
-        return not any([
+    def __bool__(self) -> bool:
+        return any([
             self.wl_inserts, self.wl_updates, self.wl_deletes,
             self.item_inserts, self.item_updates, self.item_deletes,
         ])
 
 
-def parse_and_diff_watchlist(
-    content: str,
-    current_watchlists: list[dict[str, Any]],
-    current_items_by_wl: dict[str, list[dict[str, Any]]],
-) -> WatchlistDiff:
-    """Parse + diff watchlists and items against the current DB state."""
+def parse_watchlist(content: str) -> list[dict[str, Any]]:
+    """The watchlists ``content`` holds, each with its ``items``, validated
+    and normalized. Nothing here depends on the rows, so a save refuses bad
+    content before reading any."""
     file = "watchlist.json"
     data = parse_json(content, file)
     if not isinstance(data, dict):
@@ -812,13 +641,7 @@ def parse_and_diff_watchlist(
     if not isinstance(watchlists_payload, list):
         raise UserDataValidationError("schema_error", file, "watchlists", "must be an array")
 
-    # Identity is the natural unique key — the agent never sees DB UUIDs.
-    # Watchlist rename = recreate (delete old, insert new with fresh items),
-    # since `name` is the only stable identity the agent has.
-    wl_by_name: dict[str, dict[str, Any]] = {w["name"]: w for w in current_watchlists}
-
-    diff = WatchlistDiff()
-    seen_wl_ids: set[str] = set()
+    parsed: list[dict[str, Any]] = []
     seen_wl_names: set[str] = set()
     default_seen = False
 
@@ -852,40 +675,12 @@ def parse_and_diff_watchlist(
                 )
             default_seen = True
 
-        existing_wl = wl_by_name.get(name)
-        current_items: list[dict[str, Any]] = (
-            current_items_by_wl.get(str(existing_wl["watchlist_id"]), [])
-            if existing_wl is not None
-            else []
-        )
-
-        if existing_wl is None:
-            new_id = str(uuid4())
-            diff.wl_inserts.append(
-                {"id": new_id, "name": name, "description": description, "is_default": is_default}
-            )
-            target_wl_id = new_id
-            existing_items_by_key: dict[Any, dict[str, Any]] = {}
-        else:
-            target_wl_id = str(existing_wl["watchlist_id"])
-            seen_wl_ids.add(target_wl_id)
-            if (
-                (existing_wl.get("description") or None) != (description or None)
-                or bool(existing_wl.get("is_default")) != is_default
-            ):
-                diff.wl_updates.append(
-                    {"id": target_wl_id, "name": name, "description": description, "is_default": is_default}
-                )
-            existing_items_by_key = {
-                (it["symbol"], it["instrument_type"]): it for it in current_items
-            }
-
         # Items
         items_payload = wl.get("items", [])
         if not isinstance(items_payload, list):
             raise UserDataValidationError("schema_error", file, f"watchlists[{wl_idx}].items", "must be an array")
 
-        seen_item_ids: set[str] = set()
+        items: list[dict[str, Any]] = []
         seen_item_keys: set[tuple[str, str]] = set()
         for it_idx, item in enumerate(items_payload):
             if not isinstance(item, dict):
@@ -920,7 +715,6 @@ def parse_and_diff_watchlist(
             seen_item_keys.add(dup_key)
 
             normalized = {
-                "watchlist_id": target_wl_id,
                 "symbol": symbol,
                 "instrument_type": instrument_type,
                 "exchange": _coerce_str(item.get("exchange"), file, f"watchlists[{wl_idx}].items[{it_idx}].exchange", required=False),
@@ -934,8 +728,61 @@ def parse_and_diff_watchlist(
                     normalized.get(field_name), max_len,
                     file=file, path=f"watchlists[{wl_idx}].items[{it_idx}].{field_name}",
                 )
+            items.append(normalized)
 
-            existing_item = existing_items_by_key.get((symbol, instrument_type))
+        parsed.append({"name": name, "description": description, "is_default": is_default, "items": items})
+    return parsed
+
+
+def diff_watchlist(
+    watchlists: list[dict[str, Any]],
+    current_watchlists: list[dict[str, Any]],
+    current_items_by_wl: dict[str, list[dict[str, Any]]],
+) -> WatchlistDiff:
+    """What writing ``parse_watchlist``'s watchlists over the current DB
+    state changes."""
+    # Identity is the natural unique key; the agent never sees DB UUIDs.
+    # Watchlist rename = recreate (delete old, insert new with fresh items),
+    # since `name` is the only stable identity the agent has.
+    wl_by_name: dict[str, dict[str, Any]] = {w["name"]: w for w in current_watchlists}
+
+    diff = WatchlistDiff()
+    seen_wl_ids: set[str] = set()
+
+    for wl in watchlists:
+        name, description, is_default = wl["name"], wl["description"], wl["is_default"]
+        existing_wl = wl_by_name.get(name)
+        current_items: list[dict[str, Any]] = (
+            current_items_by_wl.get(str(existing_wl["watchlist_id"]), [])
+            if existing_wl is not None
+            else []
+        )
+
+        if existing_wl is None:
+            new_id = str(uuid4())
+            diff.wl_inserts.append(
+                {"id": new_id, "name": name, "description": description, "is_default": is_default}
+            )
+            target_wl_id = new_id
+            existing_items_by_key: dict[Any, dict[str, Any]] = {}
+        else:
+            target_wl_id = str(existing_wl["watchlist_id"])
+            seen_wl_ids.add(target_wl_id)
+            if (
+                (existing_wl.get("description") or None) != (description or None)
+                or bool(existing_wl.get("is_default")) != is_default
+            ):
+                diff.wl_updates.append(
+                    {"id": target_wl_id, "name": name, "description": description, "is_default": is_default}
+                )
+            existing_items_by_key = {
+                (it["symbol"], it["instrument_type"]): it for it in current_items
+            }
+
+        seen_item_ids: set[str] = set()
+        for item in wl["items"]:
+            normalized = {"watchlist_id": target_wl_id, **item}
+            existing_item = existing_items_by_key.get((item["symbol"], item["instrument_type"]))
             if existing_item is None:
                 diff.item_inserts.append(normalized)
             else:
@@ -966,129 +813,119 @@ def _watchlist_item_differs(existing: dict[str, Any], proposed: dict[str, Any]) 
     return False
 
 
-async def _watchlist_state(
-    cur: Any, user_id: str,
-) -> tuple[tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]], str]:
-    wl, items = await _fetch_watchlists_rows(cur, user_id)
-    return (wl, items), serialize_watchlist(wl, items)["__version__"]
+async def write_watchlist_diff(cur: Any, diff: WatchlistDiff, user_id: str) -> None:
+    """Issue the diff's statements on ``cur``, under the same lock and
+    version check as ``write_portfolio_diff``, one batch per kind of change.
 
-
-async def apply_watchlist_diff(
-    diff: WatchlistDiff,
-    user_id: str,
-    *,
-    payload_version: str,
-) -> None:
-    """Apply watchlist + item diff in a single transaction.
-
-    Race protection delegated to ``_locked_version_check`` (same pattern as
-    ``apply_portfolio_diff``).
+    The parse lets at most one watchlist be the default, so clearing the
+    others once, before the batch that sets it, is what clearing them before
+    each such row did.
     """
-    if diff.is_empty():
+    if not diff:
         return
 
-    async with _locked_version_check(
-        user_id,
-        file="watchlist.json",
-        payload_version=payload_version,
-        fetch_and_version=_watchlist_state,
-        conflict_message=(
-            "watchlists changed between read and write. "
-            "Re-read .agents/user/profile/watchlist.json and reapply your edit."
-        ),
-    ) as (cur, _current):
-        # Item deletes first — explicit order even though watchlist
-        # deletes would cascade through item rows.
-        if diff.item_deletes:
-            await cur.execute(
-                "DELETE FROM watchlist_items WHERE user_id = %s "
-                "AND watchlist_item_id = ANY(%s)",
-                (user_id, diff.item_deletes),
-            )
+    # Item deletes first: explicit order even though watchlist deletes would
+    # cascade through item rows.
+    if diff.item_deletes:
+        await cur.execute(
+            "DELETE FROM watchlist_items WHERE user_id = %s "
+            "AND watchlist_item_id = ANY(%s)",
+            (user_id, diff.item_deletes),
+        )
 
-        # Watchlist inserts
-        for wl in diff.wl_inserts:
-            if wl.get("is_default"):
-                await cur.execute(
-                    "UPDATE watchlists SET is_default = FALSE, updated_at = NOW() "
-                    "WHERE user_id = %s AND is_default = TRUE",
-                    (user_id,),
-                )
+    if diff.wl_inserts:
+        if any(wl.get("is_default") for wl in diff.wl_inserts):
             await cur.execute(
-                """
-                INSERT INTO watchlists (
-                    watchlist_id, user_id, name, description, is_default,
-                    display_order, created_at, updated_at
-                )
-                VALUES (%s, %s, %s, %s, %s, 0, NOW(), NOW())
-                """,
-                (wl["id"], user_id, wl["name"], wl.get("description"), bool(wl.get("is_default"))),
+                "UPDATE watchlists SET is_default = FALSE, updated_at = NOW() "
+                "WHERE user_id = %s AND is_default = TRUE",
+                (user_id,),
             )
+        await cur.executemany(
+            """
+            INSERT INTO watchlists (
+                watchlist_id, user_id, name, description, is_default,
+                display_order, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, 0, NOW(), NOW())
+            """,
+            [
+                (wl["id"], user_id, wl["name"], wl.get("description"), bool(wl.get("is_default")))
+                for wl in diff.wl_inserts
+            ],
+        )
 
-        # Watchlist updates
-        for wl in diff.wl_updates:
-            if wl.get("is_default"):
-                await cur.execute(
-                    "UPDATE watchlists SET is_default = FALSE, updated_at = NOW() "
-                    "WHERE user_id = %s AND is_default = TRUE AND watchlist_id != %s",
-                    (user_id, wl["id"]),
-                )
+    if diff.wl_updates:
+        default = next((wl for wl in diff.wl_updates if wl.get("is_default")), None)
+        if default is not None:
             await cur.execute(
-                """
-                UPDATE watchlists
-                SET name = %s, description = %s, is_default = %s, updated_at = NOW()
-                WHERE watchlist_id = %s AND user_id = %s
-                """,
+                "UPDATE watchlists SET is_default = FALSE, updated_at = NOW() "
+                "WHERE user_id = %s AND is_default = TRUE AND watchlist_id != %s",
+                (user_id, default["id"]),
+            )
+        await cur.executemany(
+            """
+            UPDATE watchlists
+            SET name = %s, description = %s, is_default = %s, updated_at = NOW()
+            WHERE watchlist_id = %s AND user_id = %s
+            """,
+            [
                 (
                     wl["name"], wl.get("description"), bool(wl.get("is_default")),
                     wl["id"], user_id,
-                ),
-            )
-
-        # Item inserts (honor agent-provided id if any, else generate)
-        for item in diff.item_inserts:
-            await cur.execute(
-                """
-                INSERT INTO watchlist_items (
-                    watchlist_item_id, watchlist_id, user_id, symbol, instrument_type,
-                    exchange, name, notes, alert_settings, metadata,
-                    created_at, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-                """,
+                for wl in diff.wl_updates
+            ],
+        )
+
+    # Item inserts (honor agent-provided id if any, else generate)
+    if diff.item_inserts:
+        await cur.executemany(
+            """
+            INSERT INTO watchlist_items (
+                watchlist_item_id, watchlist_id, user_id, symbol, instrument_type,
+                exchange, name, notes, alert_settings, metadata,
+                created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            """,
+            [
                 (
                     item.get("id") or str(uuid4()),
                     item["watchlist_id"], user_id, item["symbol"], item["instrument_type"],
                     item.get("exchange"), item.get("name"), item.get("notes"),
                     Json(item.get("alert_settings") or {}),
                     Json({}),
-                ),
-            )
+                )
+                for item in diff.item_inserts
+            ],
+        )
 
-        # Item updates
-        for item in diff.item_updates:
-            await cur.execute(
-                """
-                UPDATE watchlist_items SET
-                    symbol = %s, instrument_type = %s, exchange = %s, name = %s,
-                    notes = %s, alert_settings = %s, updated_at = NOW()
-                WHERE watchlist_item_id = %s AND user_id = %s
-                """,
+    if diff.item_updates:
+        await cur.executemany(
+            """
+            UPDATE watchlist_items SET
+                symbol = %s, instrument_type = %s, exchange = %s, name = %s,
+                notes = %s, alert_settings = %s, updated_at = NOW()
+            WHERE watchlist_item_id = %s AND user_id = %s
+            """,
+            [
                 (
                     item["symbol"], item["instrument_type"], item.get("exchange"),
                     item.get("name"), item.get("notes"),
                     Json(item.get("alert_settings") or {}),
                     item["id"], user_id,
-                ),
-            )
+                )
+                for item in diff.item_updates
+            ],
+        )
 
-        # Watchlist deletes last (cascade removes any remaining items)
-        if diff.wl_deletes:
-            await cur.execute(
-                "DELETE FROM watchlists WHERE user_id = %s "
-                "AND watchlist_id = ANY(%s)",
-                (user_id, diff.wl_deletes),
-            )
+    # Watchlist deletes last (cascade removes any remaining items)
+    if diff.wl_deletes:
+        await cur.execute(
+            "DELETE FROM watchlists WHERE user_id = %s "
+            "AND watchlist_id = ANY(%s)",
+            (user_id, diff.wl_deletes),
+        )
 
     logger.info(
         "[user_data_io] applied watchlist diff user_id=%s wl_ins=%d wl_upd=%d wl_del=%d it_ins=%d it_upd=%d it_del=%d",
@@ -1186,70 +1023,53 @@ def preferences_equal(current: dict[str, Any] | None, values: dict[str, Any]) ->
     )
 
 
-async def _preferences_state(cur: Any, user_id: str) -> tuple[dict[str, Any] | None, str]:
-    row = await _fetch_preferences_row(cur, user_id)
-    return row, serialize_preferences(row)["__version__"]
-
-
-async def apply_preferences(
-    values: dict[str, Any], user_id: str, *, payload_version: str,
+async def write_preferences(
+    cur: Any, values: dict[str, Any], current: dict[str, Any] | None, user_id: str,
 ) -> None:
-    """Replace-mode upsert of the agent-visible preference columns.
+    """Replace-mode upsert of the agent-visible preference columns, over
+    ``current`` as the version check read it.
 
     Writes only ``risk_preference``, ``investment_preference``, ``agent_preference``.
-    ``other_preference`` and ``model_preference`` are intentionally left
-    untouched — both are server-managed (onboarding state, platform flags, model
-    routing) and not exposed to the agent. New users get empty objects on first
-    insert, from the explicit value and the column default respectively;
-    existing rows keep theirs.
+    ``other_preference`` and ``model_preference`` are left untouched: both are
+    server-managed (onboarding state, platform flags, model routing) and not
+    exposed to the agent. New users get empty objects on first insert, from
+    the explicit value and the column default respectively; existing rows
+    keep theirs. The caller drops the preferences cache once it commits.
     """
-    async with _locked_version_check(
-        user_id,
-        file="preference.json",
-        payload_version=payload_version,
-        fetch_and_version=_preferences_state,
-        conflict_message=(
-            "preferences changed between read and write. "
-            "Re-read .agents/user/profile/preference.json and reapply your edit."
-        ),
-    ) as (cur, current):
-        if current is not None:
-            # Existing row: replace agent-visible cols, keep other_preference.
-            await cur.execute(
-                """
-                UPDATE user_preferences SET
-                    risk_preference = %s::jsonb,
-                    investment_preference = %s::jsonb,
-                    agent_preference = %s::jsonb,
-                    updated_at = NOW()
-                WHERE user_id = %s
-                """,
-                (
-                    Json(values.get("risk_preference") or {}),
-                    Json(values.get("investment_preference") or {}),
-                    Json(values.get("agent_preference") or {}),
-                    user_id,
-                ),
+    if current is not None:
+        await cur.execute(
+            """
+            UPDATE user_preferences SET
+                risk_preference = %s::jsonb,
+                investment_preference = %s::jsonb,
+                agent_preference = %s::jsonb,
+                updated_at = NOW()
+            WHERE user_id = %s
+            """,
+            (
+                Json(values.get("risk_preference") or {}),
+                Json(values.get("investment_preference") or {}),
+                Json(values.get("agent_preference") or {}),
+                user_id,
+            ),
+        )
+    else:
+        await cur.execute(
+            """
+            INSERT INTO user_preferences (
+                user_preference_id, user_id,
+                risk_preference, investment_preference,
+                agent_preference, other_preference,
+                created_at, updated_at
             )
-        else:
-            # First insert — other_preference defaults to empty object.
-            await cur.execute(
-                """
-                INSERT INTO user_preferences (
-                    user_preference_id, user_id,
-                    risk_preference, investment_preference,
-                    agent_preference, other_preference,
-                    created_at, updated_at
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
-                """,
-                (
-                    str(uuid4()), user_id,
-                    Json(values.get("risk_preference") or {}),
-                    Json(values.get("investment_preference") or {}),
-                    Json(values.get("agent_preference") or {}),
-                    Json({}),
-                ),
-            )
-    await user_db.invalidate_user_prefs_cache(user_id)
+            VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+            """,
+            (
+                str(uuid4()), user_id,
+                Json(values.get("risk_preference") or {}),
+                Json(values.get("investment_preference") or {}),
+                Json(values.get("agent_preference") or {}),
+                Json({}),
+            ),
+        )
     logger.info("[user_data_io] applied preferences user_id=%s", user_id)

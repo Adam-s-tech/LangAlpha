@@ -10,6 +10,7 @@ import structlog
 from langchain_core.tools import tool
 
 from ptc_agent.agent.backends import FilesystemBackend, ReadOnlyStoreError
+from ptc_agent.agent.backends.read_window import DEFAULT_READ_LINES, MAX_READ_CHARS, format_cat_n
 from ptc_agent.agent.tools.context_file_policy import (
     CappedFile,
     capped_file,
@@ -17,7 +18,7 @@ from ptc_agent.agent.tools.context_file_policy import (
     over_cap_refusal,
 )
 from ptc_agent.core.paths import MEMO_USER_DIR
-from src.server.services.user_data_io import UserDataValidationError
+from ptc_agent.agent.backends.db_json_route import UserDataValidationError
 
 logger = structlog.get_logger(__name__)
 
@@ -61,16 +62,6 @@ def is_memo_text_path(file_path: str) -> bool:
 # Type alias for operation callback
 OperationCallback = Callable[[dict[str, Any]], None]
 
-# Read tool defaults. The line cap covers the common case; the char cap is the
-# floor that catches files with very long lines (OCR markdown, minified JSON)
-# that would otherwise sneak past the line cap. The char cap matches
-# `LargeResultEvictionMiddleware`'s 40k-token/~160KB budget so a Read result
-# can never single-handedly bust the context window the eviction middleware
-# is otherwise responsible for protecting.
-_DEFAULT_READ_LIMIT = 2000
-_MAX_READ_CHARS = 160_000
-
-
 def create_filesystem_tools(
     backend: FilesystemBackend,
     operation_callback: OperationCallback | None = None,
@@ -85,9 +76,6 @@ def create_filesystem_tools(
     fill note on the capped context files into a hard refusal for a Write that
     would land past the cap.
     """
-
-    def _format_cat_n(lines: list[str], *, start_line_number: int) -> str:
-        return "\n".join(f"{i:6}\t{line}" for i, line in enumerate(lines, start=start_line_number))
 
     def _capped(normalized_path: str) -> CappedFile | None:
         return capped_file(
@@ -146,7 +134,7 @@ def create_filesystem_tools(
                 return f"ERROR: {error_msg}"
 
             start_offset = offset or 0
-            max_lines = limit or _DEFAULT_READ_LIMIT
+            max_lines = limit or DEFAULT_READ_LINES
 
             content = await backend.aread_range(normalized_path, start_offset, max_lines)
 
@@ -170,9 +158,11 @@ def create_filesystem_tools(
                 return f"ERROR: {error_msg}"
 
             lines = content.splitlines()
-            formatted = _format_cat_n(lines, start_line_number=start_offset + 1)
+            if not lines and start_offset > 0:
+                return f"[{file_path} has no lines from offset {start_offset}; it is shorter than that.]"
+            formatted = format_cat_n(lines, start_line_number=start_offset + 1)
 
-            if len(formatted) > _MAX_READ_CHARS:
+            if len(formatted) > MAX_READ_CHARS:
                 # Reserve room for the truncation marker. The single-line
                 # overflow path embeds ``file_path`` three times (narrative +
                 # head -c + sed -n), so the budget has to cover ~200 chars of
@@ -180,7 +170,7 @@ def create_filesystem_tools(
                 # which is past the POSIX 255-char limit for any realistic
                 # filesystem.
                 marker_budget = 1200
-                content_budget = max(_MAX_READ_CHARS - marker_budget, 0)
+                content_budget = max(MAX_READ_CHARS - marker_budget, 0)
 
                 # Clip to the last newline boundary inside the budget so we
                 # report a line range the agent actually saw end-to-end. If
@@ -212,22 +202,30 @@ def create_filesystem_tools(
                     # would include any trailing lines that fit after the
                     # huge first line and overstate the agent's slice target.
                     line_size = len(lines[0]) if lines else 0
-                    slice_budget = _MAX_READ_CHARS // 20  # ~8 KB chunks
+                    slice_budget = MAX_READ_CHARS // 20  # ~8 KB chunks
                     marker = (
                         f"\n\n[Read truncated: line {start_offset + 1} of '{file_path}' "
-                        f"is ~{line_size} characters, exceeds the {_MAX_READ_CHARS}-character "
+                        f"is ~{line_size} characters, exceeds the {MAX_READ_CHARS}-character "
                         f"context budget. Read won't help here (it's line-based). Use bash to "
                         f"slice the file, e.g. `head -c {slice_budget} '{file_path}'` or "
                         f"`sed -n '{start_offset + 1}p' '{file_path}' | head -c {slice_budget}`.]"
                     )
                 else:
                     marker = (
-                        f"\n\n[Read truncated at {_MAX_READ_CHARS} characters to protect the context window. "
+                        f"\n\n[Read truncated at {MAX_READ_CHARS} characters to protect the context window. "
                         f"You saw lines {start_offset + 1}..{next_line}. "
                         f"Call Read(file_path='{file_path}', offset={next_line}, limit={max_lines}) "
                         "to continue, or pass a smaller limit to keep each chunk shorter.]"
                     )
                 formatted = clipped + marker
+            elif len(lines) == max_lines:
+                # The backend returns at most ``max_lines``, so a full window
+                # may be the whole file or its first page; say how to go on.
+                next_line = start_offset + max_lines
+                formatted += (
+                    f"\n\n[Read stopped at the {max_lines}-line limit (lines {start_offset + 1}..{next_line}). "
+                    f"The file may continue: Read(file_path='{file_path}', offset={next_line}) for more.]"
+                )
 
             return formatted
 
@@ -267,7 +265,7 @@ def create_filesystem_tools(
                     return refusal
 
             try:
-                success = await backend.awrite_text(normalized_path, content)
+                result = await backend.awrite_text(normalized_path, content)
             except ReadOnlyStoreError as exc:
                 logger.info(
                     "write rejected on read-only path",
@@ -277,7 +275,7 @@ def create_filesystem_tools(
             except UserDataValidationError as exc:
                 logger.info("user-data write rejected", file_path=file_path, error=str(exc))
                 return f"ERROR: {exc}"
-            if not success:
+            if not result:
                 return "ERROR: Write operation failed"
 
             if operation_callback:
@@ -292,9 +290,12 @@ def create_filesystem_tools(
                 except Exception as cb_err:
                     logger.warning("Operation callback failed", error=str(cb_err))
 
-            bytes_written = len(content.encode("utf-8"))
-            virtual_path = backend.virtualize_path(normalized_path)
-            message = f"Wrote {bytes_written} bytes to {virtual_path}"
+            if isinstance(result, dict) and result.get("message"):
+                message = str(result["message"])
+            else:
+                bytes_written = len(content.encode("utf-8"))
+                virtual_path = backend.virtualize_path(normalized_path)
+                message = f"Wrote {bytes_written} bytes to {virtual_path}"
             note = fill_note(capped.name, len(content), capped.cap) if capped else None
             return f"{message}\n\n{note}" if note else message
 

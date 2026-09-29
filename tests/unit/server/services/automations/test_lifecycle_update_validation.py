@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import ValidationError
 
-from src.server.handlers.automation_handler import (
+from src.server.services.automations.lifecycle import (
     pause_automation,
     resume_automation,
     update_automation,
@@ -41,7 +41,7 @@ def _row(**overrides):
 
 class TestPtcRequiresAWorkspace:
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_activating_ptc_without_any_workspace_is_rejected(self, mock_auto_db):
         mock_auto_db.get_automation = AsyncMock(return_value=_row())
 
@@ -51,8 +51,8 @@ class TestPtcRequiresAWorkspace:
         mock_auto_db.update_automation.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
-    @patch("src.server.handlers.automation_handler.get_workspace")
+    @patch("src.server.services.automations.lifecycle.auto_db")
+    @patch("src.server.services.automations.lifecycle.get_workspace")
     async def test_activating_ptc_with_a_workspace_in_the_same_patch_proceeds(
         self, mock_get_workspace, mock_auto_db,
     ):
@@ -70,8 +70,8 @@ class TestPtcRequiresAWorkspace:
         mock_auto_db.update_automation.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
-    @patch("src.server.handlers.automation_handler.get_workspace")
+    @patch("src.server.services.automations.lifecycle.auto_db")
+    @patch("src.server.services.automations.lifecycle.get_workspace")
     async def test_activating_ptc_on_a_row_that_already_stores_one_proceeds(
         self, mock_get_workspace, mock_auto_db,
     ):
@@ -88,7 +88,7 @@ class TestPtcRequiresAWorkspace:
         mock_auto_db.update_automation.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_leaving_ptc_for_flash_does_not_require_a_workspace(
         self, mock_auto_db,
     ):
@@ -100,7 +100,7 @@ class TestPtcRequiresAWorkspace:
         mock_auto_db.update_automation.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_unrelated_patch_on_a_ptc_row_is_not_falsely_rejected(
         self, mock_auto_db,
     ):
@@ -116,7 +116,7 @@ class TestPtcRequiresAWorkspace:
 
 class TestTriggerKindIsFixed:
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_changing_the_kind_is_refused(self, mock_auto_db):
         mock_auto_db.get_automation = AsyncMock(return_value=_row())
 
@@ -126,7 +126,7 @@ class TestTriggerKindIsFixed:
         mock_auto_db.update_automation.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_restating_the_same_kind_proceeds(self, mock_auto_db):
         mock_auto_db.get_automation = AsyncMock(return_value=_row())
         mock_auto_db.update_automation = AsyncMock(return_value=_row())
@@ -148,7 +148,7 @@ class TestTriggerKindIsFixed:
             }),
         ],
     )
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_another_kinds_schedule_field_is_refused(self, mock_auto_db, kind, field, value):
         # A next_run_at stored on a price row would be claimed and fired by
         # the scheduler as if it were due.
@@ -175,7 +175,7 @@ class TestPriceConfigOnUpdate:
         ],
         ids=["zero-value", "caret", "I-prefix", "too-long"],
     )
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_a_config_the_monitor_would_skip_is_refused(self, mock_auto_db, config):
         mock_auto_db.get_automation = AsyncMock(
             return_value=_row(trigger_type="price", cron_expression=None)
@@ -188,7 +188,7 @@ class TestPriceConfigOnUpdate:
 
 
 @pytest.mark.asyncio
-@patch("src.server.handlers.automation_handler.auto_db")
+@patch("src.server.services.automations.lifecycle.auto_db")
 async def test_an_empty_description_clears_it(mock_auto_db):
     mock_auto_db.get_automation = AsyncMock(return_value=_row(description="old"))
     mock_auto_db.update_automation = AsyncMock(return_value=_row(description=""))
@@ -200,7 +200,7 @@ async def test_an_empty_description_clears_it(mock_auto_db):
 
 class TestPause:
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_a_one_time_automation_keeps_its_run_time(self, mock_auto_db):
         """Resume reads the time back; the scheduler claims only active rows."""
         mock_auto_db.get_automation = AsyncMock(
@@ -211,11 +211,11 @@ class TestPause:
         await pause_automation(AUTOMATION_ID, OWNER)
 
         mock_auto_db.update_automation.assert_awaited_once_with(
-            AUTOMATION_ID, OWNER, status="paused"
+            AUTOMATION_ID, OWNER, conn=None, status="paused"
         )
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_a_cron_clears_its_next_run(self, mock_auto_db):
         mock_auto_db.get_automation = AsyncMock(return_value=_row())
         mock_auto_db.update_automation = AsyncMock(return_value=_row(status="paused"))
@@ -223,14 +223,14 @@ class TestPause:
         await pause_automation(AUTOMATION_ID, OWNER)
 
         mock_auto_db.update_automation.assert_awaited_once_with(
-            AUTOMATION_ID, OWNER, status="paused", next_run_at=None
+            AUTOMATION_ID, OWNER, conn=None, status="paused", next_run_at=None
         )
 
 
 class TestResumeOnce:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status, resumes", [("disabled", True), ("paused", False)])
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_a_past_time_resumes_only_what_the_server_switched_off(
         self, mock_auto_db, status, resumes
     ):
@@ -250,14 +250,14 @@ class TestResumeOnce:
             return
         await resume_automation(AUTOMATION_ID, OWNER)
         mock_auto_db.update_automation.assert_awaited_once_with(
-            AUTOMATION_ID, OWNER, status="active", failure_count=0,
+            AUTOMATION_ID, OWNER, conn=None, status="active", failure_count=0,
             disable_reason=None, next_run_at=None,
         )
 
 
 class TestCronEditRecomputesOnlyWhenActive:
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_active_cron_gets_a_new_next_run(self, mock_auto_db):
         mock_auto_db.get_automation = AsyncMock(return_value=_row())
         mock_auto_db.update_automation = AsyncMock(return_value=_row())
@@ -268,7 +268,7 @@ class TestCronEditRecomputesOnlyWhenActive:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", ["paused", "disabled"])
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_an_edit_does_not_give_a_stopped_cron_a_next_run(self, mock_auto_db, status):
         """Resume computes it from the edited expression and zone."""
         mock_auto_db.get_automation = AsyncMock(
@@ -285,7 +285,7 @@ class TestCronEditRecomputesOnlyWhenActive:
 
 class TestThreadPin:
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_a_named_none_unpins_the_thread(self, mock_auto_db):
         """The agent tool's thread='new'. A pin left behind would be resumed
         by a later switch back to 'persistent'."""
@@ -305,7 +305,7 @@ class TestThreadPin:
         assert written["conversation_thread_id"] is None
 
     @pytest.mark.asyncio
-    @patch("src.server.handlers.automation_handler.auto_db")
+    @patch("src.server.services.automations.lifecycle.auto_db")
     async def test_an_update_that_names_no_thread_keeps_the_pin(self, mock_auto_db):
         mock_auto_db.get_automation = AsyncMock(return_value=_row())
         mock_auto_db.update_automation = AsyncMock(return_value=_row())

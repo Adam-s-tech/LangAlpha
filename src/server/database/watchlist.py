@@ -13,6 +13,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from src.server.database.pool import get_db_connection
+from src.server.database.user_lock import lock_user_profile
 from src.server.utils.db import UpdateQueryBuilder
 
 logger = logging.getLogger(__name__)
@@ -48,8 +49,9 @@ async def create_watchlist(
     """
     watchlist_id = str(uuid4())
 
-    async with get_db_connection() as conn:
+    async with get_db_connection() as conn, conn.transaction():
         async with conn.cursor(row_factory=dict_row) as cur:
+            await lock_user_profile(cur, user_id)
             # Check for existing watchlist with same name
             await cur.execute("""
                 SELECT watchlist_id FROM watchlists
@@ -182,8 +184,9 @@ async def update_watchlist(
         returning_columns=returning_columns,
     )
 
-    async with get_db_connection() as conn:
+    async with get_db_connection() as conn, conn.transaction():
         async with conn.cursor(row_factory=dict_row) as cur:
+            await lock_user_profile(cur, user_id)
             # Check for name conflict if updating name
             if name is not None:
                 await cur.execute("""
@@ -213,8 +216,9 @@ async def delete_watchlist(watchlist_id: str, user_id: str) -> bool:
     Returns:
         True if watchlist was deleted, False if not found
     """
-    async with get_db_connection() as conn:
+    async with get_db_connection() as conn, conn.transaction():
         async with conn.cursor() as cur:
+            await lock_user_profile(cur, user_id)
             await cur.execute("""
                 DELETE FROM watchlists
                 WHERE watchlist_id = %s AND user_id = %s
@@ -251,7 +255,10 @@ async def get_or_create_default_watchlist(user_id: str) -> Dict[str, Any]:
             if result:
                 return dict(result)
 
-            # Create default watchlist
+        # Only the create takes the profile lock, so resolving the default
+        # stays a plain read.
+        async with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            await lock_user_profile(cur, user_id)
             watchlist_id = str(uuid4())
             await cur.execute("""
                 INSERT INTO watchlists (
@@ -404,8 +411,9 @@ async def create_watchlist_item(
     """
     watchlist_item_id = str(uuid4())
 
-    async with get_db_connection() as conn:
+    async with get_db_connection() as conn, conn.transaction():
         async with conn.cursor(row_factory=dict_row) as cur:
+            await lock_user_profile(cur, user_id)
             # Verify watchlist exists and belongs to user
             await cur.execute("""
                 SELECT watchlist_id FROM watchlists
@@ -501,8 +509,9 @@ async def update_watchlist_item(
         returning_columns=returning_columns,
     )
 
-    async with get_db_connection() as conn:
+    async with get_db_connection() as conn, conn.transaction():
         async with conn.cursor(row_factory=dict_row) as cur:
+            await lock_user_profile(cur, user_id)
             await cur.execute(query, params)
 
             result = await cur.fetchone()
@@ -522,8 +531,9 @@ async def delete_watchlist_item(watchlist_item_id: str, user_id: str) -> bool:
     Returns:
         True if item was deleted, False if not found
     """
-    async with get_db_connection() as conn:
+    async with get_db_connection() as conn, conn.transaction():
         async with conn.cursor() as cur:
+            await lock_user_profile(cur, user_id)
             await cur.execute("""
                 DELETE FROM watchlist_items
                 WHERE watchlist_item_id = %s AND user_id = %s

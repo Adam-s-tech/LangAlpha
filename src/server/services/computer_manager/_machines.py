@@ -564,36 +564,25 @@ class MachineLifecycleMixin:
         project's folder for the machine's life."""
         if sandbox is None:
             return
-        # The daemon's start makes no links, so it runs beside the sync; the
-        # links wait for the layout the sync may move.
-        starting = self._livefs_start(computer_id, user_id, sandbox)
-        start = asyncio.ensure_future(starting) if starting is not None else None
-        try:
-            skill_dirs = (
-                self.config.skills.local_skill_dirs_with_sandbox()
-                if self.config.skills.enabled
-                else None
-            )
-            user_skill_params = await sandbox_skill_sync_params(
-                user_id, self.config.skills.sandbox_skills_base
-            )
-            result = await sandbox.sync_sandbox_assets(
-                skill_dirs=skill_dirs,
-                reusing_sandbox=reusing_sandbox,
-                user_id=user_id,
-                workspace_dir_names=await get_workspace_dir_names_for_computer(computer_id),
-                root_owner_dir_name=await self._root_owner_folder(
-                    computer_id, origin_workspace_id
-                ),
-                **user_skill_params,
-            )
-            await self._stamp_layout_version(computer_id, result)
-        except BaseException:
-            if start is not None:
-                start.cancel()
-            raise
-        started = await start if start is not None else None
-        await self._ensure_livefs(computer_id, user_id, sandbox, started=started)
+        skill_dirs = (
+            self.config.skills.local_skill_dirs_with_sandbox()
+            if self.config.skills.enabled
+            else None
+        )
+        user_skill_params = await sandbox_skill_sync_params(
+            user_id, self.config.skills.sandbox_skills_base
+        )
+        result = await sandbox.sync_sandbox_assets(
+            skill_dirs=skill_dirs,
+            reusing_sandbox=reusing_sandbox,
+            user_id=user_id,
+            workspace_dir_names=await get_workspace_dir_names_for_computer(computer_id),
+            root_owner_dir_name=await self._root_owner_folder(
+                computer_id, origin_workspace_id
+            ),
+            **user_skill_params,
+        )
+        await self._stamp_layout_version(computer_id, result)
 
     async def _build_machine_session(
         self,
@@ -679,12 +668,19 @@ class MachineLifecycleMixin:
                 raise RuntimeError(
                     f"Computer {computer_id} came up without a sandbox identity"
                 )
-            await self._sync_machine_assets(
+            # The machine comes up to run code, so its first turn finds the
+            # mount serving rather than starting it on the turn's path.
+            await self._livefs_beside(
                 computer_id,
                 user_id,
                 session.sandbox,
-                reusing_sandbox=reconnected,
-                origin_workspace_id=computer.get("origin_workspace_id"),
+                self._sync_machine_assets(
+                    computer_id,
+                    user_id,
+                    session.sandbox,
+                    reusing_sandbox=reconnected,
+                    origin_workspace_id=computer.get("origin_workspace_id"),
+                ),
             )
 
             restored_projects: list[ComputerBinding] = []

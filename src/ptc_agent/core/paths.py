@@ -84,6 +84,7 @@ class SandboxLayout:
     MEMORY_USER_DIR: ClassVar[str] = ".agents/user/memory"
     MEMO_USER_DIR: ClassVar[str] = ".agents/user/memo"
     USER_PROFILE_DIR: ClassVar[str] = ".agents/user/profile"
+    AUTOMATIONS_DIR: ClassVar[str] = ".agents/user/automations"
     WORKFLOWS_DIR: ClassVar[str] = ".agents/workflows"
     TMP_DIR: ClassVar[str] = ".agents/tmp"
 
@@ -188,6 +189,10 @@ class SandboxLayout:
     @property
     def user_profile(self) -> str:
         return self.join(self.USER_PROFILE_DIR)
+
+    @property
+    def automations(self) -> str:
+        return self.join(self.AUTOMATIONS_DIR)
 
     @property
     def workflows(self) -> str:
@@ -424,21 +429,8 @@ BACKUP_EXCLUDE_DIRS: frozenset[str] = frozenset({
     ".self-improve",
 })
 
-# Exclude ephemeral agent data from backup. Both tiers appear because the
-# names are matched workspace-relative and the two tiers can share a folder.
-# The tool package is here because every byte of it (wrappers, docs, config)
-# is re-emitted by the MCP sync into whatever sandbox the restore lands in.
-BACKUP_EXCLUDE_AGENT_SUBDIRS: tuple[str, ...] = (
-    WorkspaceLayout.THREADS_DIR,
-    WorkspaceLayout.TOOLS_DIR,
-    SandboxLayout.USER_DIR,
-    SandboxLayout.WORKFLOWS_DIR,
-    WorkspaceLayout.MEMORY_DIR,
-    WorkspaceLayout.TRANSCRIPTS_DIR,
-)
-
 # Where the file mount links the user's server-held files in, workspace-
-# relative (a workspace that owns the computer root holds all of them). The
+# relative (every workspace folder holds all of them, as the root does). The
 # server is their only copy: a backup never reads them and a restore never
 # writes them, including rows an older manifest recorded before they were
 # mounted.
@@ -447,6 +439,16 @@ MOUNTED_AGENT_SUBDIRS: tuple[str, ...] = (
     SandboxLayout.WORKFLOWS_DIR,
     WorkspaceLayout.MEMORY_DIR,
     WorkspaceLayout.TRANSCRIPTS_DIR,
+)
+
+# Exclude ephemeral agent data from backup. Both tiers appear because the
+# names are matched workspace-relative and the two tiers can share a folder.
+# The tool package is here because every byte of it (wrappers, docs, config)
+# is re-emitted by the MCP sync into whatever sandbox the restore lands in.
+BACKUP_EXCLUDE_AGENT_SUBDIRS: tuple[str, ...] = (
+    WorkspaceLayout.THREADS_DIR,
+    WorkspaceLayout.TOOLS_DIR,
+    *MOUNTED_AGENT_SUBDIRS,
 )
 
 # Virtual paths route through CompositeFilesystemBackend to LangGraph BaseStore,
@@ -461,12 +463,14 @@ MEMO_INDEX_FILENAME: str = "memo.md"
 # Writes fork shipped workflows into the user store, shadowing the shipped copy.
 WORKFLOW_DIR: str = SandboxLayout.WORKFLOWS_DIR
 
-# DB-backed user_portfolios, watchlists, watchlist_items, and user_preferences;
-# agent JSON writes validate and apply diffs atomically.
-USER_PROFILE_DATA_DIR: str = SandboxLayout.USER_PROFILE_DIR
-USER_PROFILE_PORTFOLIO_FILE: str = "portfolio.json"
-USER_PROFILE_WATCHLIST_FILE: str = "watchlist.json"
-USER_PROFILE_PREFERENCE_FILE: str = "preference.json"
+# The files that are rows in Postgres, by the directory that serves them
+# beside a README.md: the user's portfolio, watchlists and preferences, and
+# their automations. The routes, the file panel and the browser's path
+# classifier all read this one map.
+USER_DATA_FILES: dict[str, tuple[str, ...]] = {
+    SandboxLayout.USER_PROFILE_DIR: ("portfolio.json", "watchlist.json", "preference.json"),
+    SandboxLayout.AUTOMATIONS_DIR: ("automations.json",),
+}
 
 HIDDEN_DIR_NAMES: frozenset[str] = frozenset({SandboxLayout.INTERNAL_DIR})
 
@@ -502,6 +506,8 @@ ALWAYS_HIDDEN_SUFFIXES: tuple[str, ...] = (".pyc",)
 #: first 8 characters of its id.
 THREAD_DIR_NAME = re.compile(r"^[0-9a-f]{8}$")
 
+# Not the backup exclusions: these hide harness scratch from the agent's globs,
+# while a backup skips mounted and regenerated trees. Keep them separate.
 # What the harness wrote about past turns: per-thread scratch (evicted messages,
 # truncated args, offloaded results, scripts) and the thread-less fallback for
 # large results. The agent reaches each through a pointer that names its path,

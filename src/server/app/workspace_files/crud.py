@@ -65,12 +65,10 @@ from ._shared import (
     streamed_download_budget,
     DEFAULT_READ_LIMIT_LINES,
     TOO_LARGE_DETAIL,
-    _USER_PROFILE_FILES,
     _is_text_content_type,
     _is_utf8,
     MAX_UPLOAD_BYTES,
     _CACHEABLE_IMAGE_TYPES,
-    _USER_PROFILE_PREFIX,
     _acquire_sandbox_to_change,
     _decode_file_text,
     owner_layout,
@@ -81,13 +79,13 @@ from ._shared import (
     _is_flash_workspace,
     _is_hidden_path,
     _is_system_path,
-    _is_user_profile_file,
     _normalize_requested_path,
     _record_fs_bytes,
     _requested_hidden_ok,
     _requested_system_ok,
-    _serialize_user_profile_file,
     _to_client_path,
+    _virtual_file,
+    _virtual_files_in_scope,
     http_file_bytes,
     http_file_text,
 )
@@ -273,19 +271,13 @@ async def _live_listing(
 
         files.append(client_path)
 
-    # Splice in the three virtual user-profile files when the request scope
-    # includes .agents/user/profile/. They don't exist on the sandbox FS,
-    # so aglob_files never returns them.
+    # Splice in the virtual DB-backed files (user profile, automations) the
+    # request scope covers. They don't exist on the sandbox FS, so
+    # aglob_files never returns them.
     requested_norm = _normalize_requested_path(path, work_dir, previous_dirs)
-    if (
-        requested_norm == ""
-        or _USER_PROFILE_PREFIX.startswith(f"{requested_norm}/")
-        or _USER_PROFILE_PREFIX.rstrip("/") == requested_norm
-        or requested_norm.startswith(_USER_PROFILE_PREFIX)
-    ):
-        for virtual_path in _USER_PROFILE_FILES:
-            if virtual_path not in files:
-                files.append(virtual_path)
+    for virtual_path in _virtual_files_in_scope(requested_norm):
+        if virtual_path not in files:
+            files.append(virtual_path)
 
     return files
 
@@ -327,13 +319,13 @@ async def resolve_workspace_file(
     if not candidates:
         raise HTTPException(status_code=400, detail="A file reference is required")
 
-    profile = next((c for c in candidates if _is_user_profile_file(c)), None)
-    if profile:
+    virtual = next((c for c in candidates if _virtual_file(c)), None)
+    if virtual:
         return {
             "status": "resolved",
-            "path": profile,
+            "path": virtual,
             "match": "exact",
-            "matches": [profile],
+            "matches": [virtual],
         }
 
     name = candidates[0].rsplit("/", 1)[-1]
@@ -402,24 +394,22 @@ async def read_workspace_file(
             status_code=400, detail="Flash workspaces do not have a sandbox"
         )
 
-    # Virtual user-profile JSON files — served from DB, independent of sandbox state.
-    # Works whether the workspace is running, stopped, or never started.
+    # Virtual DB-backed JSON files (user profile, automations) are served from
+    # the DB, independent of sandbox state. Works whether the workspace is
+    # running, stopped, or never started.
     work_dir = owner_work_dir(workspace)
     previous_dirs = previous_dir_names_of(workspace)
-    normalized_for_profile = _normalize_requested_path(path, work_dir, previous_dirs)
-    if _is_user_profile_file(normalized_for_profile):
+    normalized_for_virtual = _normalize_requested_path(path, work_dir, previous_dirs)
+    virtual = _virtual_file(normalized_for_virtual)
+    if virtual:
         try:
-            text_content = await _serialize_user_profile_file(
-                normalized_for_profile, x_user_id
-            )
+            text_content = await virtual.load(normalized_for_virtual, x_user_id)
         except Exception:
             logger.exception(
-                "user-profile virtual read failed",
-                extra={"path": normalized_for_profile},
+                "virtual file read failed",
+                extra={"path": normalized_for_virtual},
             )
-            raise HTTPException(
-                status_code=500, detail="Failed to read user profile data"
-            )
+            raise HTTPException(status_code=500, detail=virtual.read_failure)
         if unlimited:
             content = text_content
             truncated = False
@@ -429,13 +419,13 @@ async def read_workspace_file(
             truncated = len(lines) > offset + limit
         return {
             "workspace_id": workspace_id,
-            "path": normalized_for_profile,
+            "path": normalized_for_virtual,
             "offset": offset,
             "limit": limit,
             "content": content,
             "mime": "application/json",
             "truncated": truncated,
-            "source": "user_data_backend",
+            "source": virtual.source,
         }
 
     # DB fallback for stopped workspaces
@@ -567,22 +557,16 @@ async def write_workspace_file(
             detail=f"Cannot write files — workspace is {workspace.get('status')}. Wait for it to be running.",
         )
 
-    # User-profile virtual files are read-only through this API. Writes happen
-    # via the dashboard widgets (portfolio/watchlist CRUD) or the agent's
-    # CompositeFilesystemBackend → UserDataBackend route, both of which apply
-    # schema validation and version checks that this generic write endpoint
-    # cannot enforce safely.
+    # Virtual DB-backed files are read-only through this API. Writes happen
+    # via their own UI (dashboard widgets, the Automations page) or the agent's
+    # CompositeFilesystemBackend route (UserDataBackend, AutomationsBackend),
+    # both of which apply schema validation and version checks that this
+    # generic write endpoint cannot enforce safely.
     work_dir = owner_work_dir(workspace)
     previous_dirs = previous_dir_names_of(workspace)
-    normalized_for_profile = _normalize_requested_path(path, work_dir, previous_dirs)
-    if _is_user_profile_file(normalized_for_profile):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "User-profile JSON files are read-only through the file panel. "
-                "Edit via the dashboard widget or ask the agent to update it."
-            ),
-        )
+    virtual = _virtual_file(_normalize_requested_path(path, work_dir, previous_dirs))
+    if virtual:
+        raise HTTPException(status_code=400, detail=virtual.read_only)
 
     content_bytes = body.content.encode("utf-8")
     if len(content_bytes) > MAX_WRITE_BYTES:
@@ -950,6 +934,11 @@ async def upload_workspace_file(
         dest = path or file.filename
         if not dest:
             raise HTTPException(status_code=400, detail="Destination path is required")
+        # The same refusal as write: an upload would land a sandbox file the
+        # virtual route shadows, so it would read as saved and change nothing.
+        virtual = _virtual_file(_normalize_requested_path(dest, work_dir, previous_dirs))
+        if virtual:
+            raise HTTPException(status_code=400, detail=virtual.read_only)
 
         normalized = await _contained_target(sandbox, dest, work_dir, previous_dirs)
 
@@ -1195,16 +1184,9 @@ async def delete_workspace_files(
 
             addressed = candidates[slot]
             client_path = _to_client_path(sandbox, addressed, work_dir)
-            if _is_user_profile_file(client_path):
-                errors.append(
-                    {
-                        "path": path,
-                        "detail": (
-                            "User-profile JSON files cannot be deleted through the file panel. "
-                            "Manage entries via the dashboard widgets."
-                        ),
-                    }
-                )
+            virtual = _virtual_file(client_path)
+            if virtual:
+                errors.append({"path": path, "detail": virtual.undeletable})
                 continue
             if _is_system_path(client_path):
                 errors.append({"path": path, "detail": "Cannot delete system files"})

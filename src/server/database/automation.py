@@ -7,13 +7,12 @@ automations and automation executions in PostgreSQL.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 from uuid import uuid4
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from src.server.contracts.status import INTERRUPT_REASON_CREDIT_PAUSE
 from src.server.database.pool import get_db_connection
 from src.server.utils.db import UpdateQueryBuilder
 
@@ -120,11 +119,12 @@ async def create_automation(
     max_failures: int = 3,
     delivery_config: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    conn=None,
 ) -> Dict[str, Any]:
     """Create a new automation."""
     automation_id = str(uuid4())
 
-    async with get_db_connection() as conn:
+    async with get_db_connection(conn) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(f"""
                 INSERT INTO automations (
@@ -172,9 +172,11 @@ async def create_automation(
 async def get_automation(
     automation_id: str,
     user_id: str,
+    *,
+    conn=None,
 ) -> Optional[Dict[str, Any]]:
     """Get a single automation by ID, verifying ownership."""
-    async with get_db_connection() as conn:
+    async with get_db_connection(conn) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(f"""
                 SELECT {AUTOMATION_COLUMNS}, le.last_execution
@@ -232,9 +234,75 @@ async def list_automations(
             return [dict(row) for row in results], total
 
 
+# Whether the pinned thread is one a run of this automation created, which is
+# how the automations file tells a persistent thread from a pinned
+# conversation once the first run has pinned it.
+_OWNS_THREAD = """
+    EXISTS (
+        SELECT 1 FROM conversation_threads t
+        WHERE t.conversation_thread_id = automations.conversation_thread_id
+          AND t.metadata->'origin'->>'type' = 'automation'
+          AND t.metadata->'origin'->>'id' = automations.automation_id::text
+    ) AS owns_thread
+"""
+
+
+async def list_all_automations(
+    user_id: str, *, conn=None, lock: bool = False
+) -> List[Dict[str, Any]]:
+    """Every automation of the user, oldest first, each with its newest run
+    and ``owns_thread``. ``lock`` holds the rows for the rest of ``conn``'s
+    transaction.
+
+    Unpaged and in creation order because the agent's automations file is the
+    whole set, and a new entry appended at the end should stay at the end.
+    """
+    async with get_db_connection(conn) as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(f"""
+                SELECT {AUTOMATION_COLUMNS}, le.last_execution, {_OWNS_THREAD}
+                FROM automations
+                {_last_execution_join("automations")}
+                WHERE user_id = %s
+                ORDER BY created_at, automation_id
+                {"FOR UPDATE OF automations" if lock else ""}
+            """, (user_id,))
+            return [dict(row) for row in await cur.fetchall()]
+
+
+async def get_user_timezone(user_id: str) -> Optional[str]:
+    """The zone the user keeps, which a new automation runs on when nothing
+    else names one. Only the column: the user row is wide."""
+    async with get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT timezone FROM users WHERE user_id = %s", (user_id,))
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+
+_FILE_LOCK_KEY_PREFIX = "automations:file:"
+
+
+async def lock_user_automations(user_id: str, *, conn) -> None:
+    """Serialize the writers of the user's automations file for the rest of
+    ``conn``'s transaction, even when the user has no rows to lock.
+
+    The rows themselves are locked only by a save that changes them
+    (``list_all_automations(lock=True)``), which holds off REST edits
+    until it commits: a save that changes nothing leaves them alone.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (_FILE_LOCK_KEY_PREFIX + user_id,),
+        )
+
+
 async def update_automation(
     automation_id: str,
     user_id: str,
+    *,
+    conn=None,
     **kwargs,
 ) -> Optional[Dict[str, Any]]:
     """Partial update of an automation. Only provided kwargs are applied.
@@ -244,6 +312,7 @@ async def update_automation(
     """
     nullable_fields = {
         "next_run_at", "last_run_at", "conversation_thread_id", "disable_reason",
+        "description", "llm_model",
     }
     builder = UpdateQueryBuilder()
 
@@ -270,7 +339,7 @@ async def update_automation(
             builder.add_field(field, kwargs[field], is_json=True)
 
     if not builder.has_updates():
-        return await get_automation(automation_id, user_id)
+        return await get_automation(automation_id, user_id, conn=conn)
 
     returning = AUTOMATION_COLUMNS.strip().split(",")
     returning = [c.strip() for c in returning]
@@ -290,7 +359,7 @@ async def update_automation(
         {_last_execution_join("updated")}
     """
 
-    async with get_db_connection() as conn:
+    async with get_db_connection(conn) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(query, params)
             result = await cur.fetchone()
@@ -299,9 +368,11 @@ async def update_automation(
             return dict(result) if result else None
 
 
-async def delete_automation(automation_id: str, user_id: str) -> bool:
+async def delete_automation(
+    automation_id: str, user_id: str, *, conn=None
+) -> bool:
     """Delete an automation (executions cascade deleted)."""
-    async with get_db_connection() as conn:
+    async with get_db_connection(conn) as conn:
         async with conn.cursor() as cur:
             await cur.execute("""
                 DELETE FROM automations
@@ -312,6 +383,22 @@ async def delete_automation(automation_id: str, user_id: str) -> bool:
             if deleted:
                 logger.info(f"[automation_db] delete_automation automation_id={automation_id}")
             return deleted
+
+
+async def delete_automations(
+    automation_ids: Sequence[str], user_id: str, *, conn
+) -> int:
+    """Delete the user's automations among ``automation_ids`` in one
+    statement (executions cascade); how many there were."""
+    async with conn.cursor() as cur:
+        await cur.execute("""
+            DELETE FROM automations
+            WHERE user_id = %s AND automation_id = ANY(%s::uuid[])
+        """, (user_id, list(automation_ids)))
+        logger.info(
+            f"[automation_db] delete_automations user_id={user_id} count={cur.rowcount}"
+        )
+        return cur.rowcount
 
 
 # =============================================================================
@@ -429,58 +516,22 @@ async def claim_price_firing(automation_id: str, server_id: str) -> Optional[str
 async def update_automation_next_run(
     automation_id: str, next_run_at: Optional[datetime]
 ) -> None:
-    """Update next_run_at after claiming."""
+    """Schedule a claimed cron's next run, unless the row moved on meanwhile.
+
+    The claim left ``next_run_at`` NULL. An edit to the schedule or zone made
+    since has already set it from the new expression, and a pause cleared
+    the status; either way the time computed from the claimed row is stale,
+    so it is written only over a NULL on a row still active.
+    """
     async with get_db_connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute("""
                 UPDATE automations
                 SET next_run_at = %s
                 WHERE automation_id = %s
+                  AND next_run_at IS NULL
+                  AND status = 'active'
             """, (next_run_at, automation_id))
-
-
-async def _count_strike(cur, automation_id: str, *, fuse: bool = False) -> int:
-    """Count a failure, disabling the automation once it reaches its limit,
-    or at once for a ``fuse``.
-
-    A disable writes ``disable_reason`` ('provider_auth' for a fuse, else
-    'max_failures'), so the user is told which of the two switched it off.
-    It keeps a one-time automation's time, as a pause does: a manual run that
-    fused it leaves the scheduled one for a resume to restore. Only a live
-    automation is disabled: a pause, a finish or an earlier disable, and its
-    reason, stand.
-    """
-    disables = (
-        "(%(fuse)s OR failure_count + 1 >= max_failures)"
-        " AND status IN ('active', 'executing')"
-    )
-    await cur.execute(f"""
-        UPDATE automations
-        SET failure_count = failure_count + 1,
-            status = CASE WHEN {disables} THEN 'disabled' ELSE status END,
-            next_run_at = CASE WHEN {disables} AND trigger_type <> 'once'
-                               THEN NULL ELSE next_run_at END,
-            disable_reason = CASE WHEN {disables} THEN %(reason)s
-                                  ELSE disable_reason END
-        FROM (SELECT status AS was FROM automations
-              WHERE automation_id = %(automation_id)s) before_strike
-        WHERE automation_id = %(automation_id)s
-        RETURNING failure_count, status = 'disabled' AND before_strike.was <> 'disabled' AS disabled
-    """, {
-        "fuse": fuse,
-        "reason": "provider_auth" if fuse else "max_failures",
-        "automation_id": automation_id,
-    })
-    row = await cur.fetchone()
-    if not row:
-        return 0
-    if row["disabled"]:
-        logger.warning(
-            f"[automation_db] Auto-disabled automation {automation_id} "
-            f"(reason={'provider_auth' if fuse else 'max_failures'}, "
-            f"failure_count={row['failure_count']})"
-        )
-    return row["failure_count"]
 
 
 async def get_active_price_automations() -> List[Dict[str, Any]]:
@@ -495,437 +546,3 @@ async def get_active_price_automations() -> List[Dict[str, Any]]:
             """)
             results = await cur.fetchall()
             return [dict(row) for row in results]
-
-
-# =============================================================================
-# Execution record queries
-# =============================================================================
-
-
-def _execution_update(
-    to: str, where_clause: str, where_params: list, fields: Dict[str, Any]
-) -> tuple[str, tuple]:
-    builder = UpdateQueryBuilder()
-    builder.add_field("status", to)
-    for column, value in fields.items():
-        builder.add_field(column, value)
-    return builder.build(
-        table="automation_executions",
-        where_clause=where_clause,
-        where_params=where_params,
-        returning_columns=["conversation_thread_id", "conversation_response_id"],
-        include_updated_at=False,  # no updated_at column on executions
-    )
-
-
-async def transition_execution(
-    execution_id: str,
-    *,
-    from_statuses: Sequence[str],
-    to: str,
-    automation_id: Optional[str] = None,
-    **fields: Any,
-) -> Optional[Dict[str, Any]]:
-    """Move an execution to ``to`` only while its status is one of
-    ``from_statuses``; the row's thread and run, or None when it was not.
-
-    The guarded write every move of a live firing makes, so the executor, a
-    skip and the sweep can race and exactly one of them wins. Ending a firing
-    is ``settle_execution``. A field passed as None leaves its column as it
-    is.
-    """
-    where_clause = "automation_execution_id = %s AND status = ANY(%s)"
-    where_params: list = [execution_id, list(from_statuses)]
-    if automation_id is not None:
-        where_clause += " AND automation_id = %s"
-        where_params.append(automation_id)
-    query, params = _execution_update(to, where_clause, where_params, fields)
-    async with get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(query, params)
-            row = await cur.fetchone()
-            return dict(row) if row else None
-
-
-# What a settled firing leaves on its automation. A close only lands while the
-# automation is still on the firing being settled: a reschedule, pause or
-# disable made during the run wins, and a manual run never closes anything.
-# The firing that claimed the automation is recognised by the stamp the claim
-# shares with it (see claim_due_automations and claim_price_firing). A price
-# alert with no stamp was claimed before claims wrote one, and only the
-# 'executing' status its trigger set can speak for it.
-_SCHEDULE_SQL = {
-    "close_once": """
-        UPDATE automations SET status = 'completed', next_run_at = NULL
-        WHERE automation_id = %s AND status = 'active'
-          AND next_run_at IS NULL AND last_run_at = %s
-    """,
-    "close_price": """
-        UPDATE automations SET status = 'completed', next_run_at = NULL
-        WHERE automation_id = %s AND status = 'executing'
-          AND (last_run_at = %s OR last_run_at IS NULL)
-    """,
-    "rearm_price": """
-        UPDATE automations SET status = 'active'
-        WHERE automation_id = %s AND status = 'executing'
-          AND (last_run_at = %s OR last_run_at IS NULL)
-    """,
-}
-
-ScheduleAction = Literal["close_once", "close_price", "rearm_price"]
-
-
-async def settle_execution(
-    execution_id: str,
-    *,
-    automation_id: str,
-    from_statuses: Sequence[str],
-    to: str,
-    strike: Optional[Literal["count", "fuse", "reset"]] = None,
-    schedule: Optional[ScheduleAction] = None,
-    quiet_for: Optional[int] = None,
-    **fields: Any,
-) -> Optional[Dict[str, Any]]:
-    """End a firing and write what it leaves on its automation, in one
-    transaction; None when the firing was not in ``from_statuses``.
-
-    One transaction, so a failure between the two can never leave a price
-    alert 'executing' behind a settled firing. ``quiet_for`` settles only a
-    firing whose heartbeat has been quiet that many seconds, which is what
-    keeps the sweep off a firing whose process came back. Returns the row's
-    thread and run, ``settled_from``, the status it left, and the
-    ``previous_failure_reason`` and ``previous_delivery_result`` of the
-    automation's newest firing settled before this one, a server skip aside,
-    so a caller can tell a repeat the channel already heard from news.
-    """
-    async with get_db_connection() as conn:
-        async with conn.transaction():
-            async with conn.cursor(row_factory=dict_row) as cur:
-                # Automation first, execution second: the order a delete's
-                # cascade takes the same two rows in.
-                await cur.execute("""
-                    SELECT 1 FROM automations WHERE automation_id = %s
-                    FOR NO KEY UPDATE
-                """, (automation_id,))
-                if await cur.fetchone() is None:
-                    return None
-                quiet = ""
-                params: list = [execution_id, automation_id]
-                if quiet_for is not None:
-                    quiet = "AND heartbeat_at < NOW() - make_interval(secs => %s)"
-                    params.append(quiet_for)
-                await cur.execute(f"""
-                    SELECT status, created_at FROM automation_executions
-                    WHERE automation_execution_id = %s AND automation_id = %s
-                      {quiet}
-                    FOR UPDATE
-                """, tuple(params))
-                prior = await cur.fetchone()
-                if prior is None or prior["status"] not in from_statuses:
-                    return None
-
-                await cur.execute(f"""
-                    SELECT p.failure_reason, p.delivery_result
-                    FROM automation_executions p
-                    WHERE p.automation_id = %s AND p.automation_execution_id <> %s
-                      AND p.status NOT IN {_UNSETTLED}
-                      AND {_not_a_server_skip("p")}
-                    ORDER BY p.created_at DESC, p.automation_execution_id DESC
-                    LIMIT 1
-                """, (automation_id, execution_id))
-                previous = await cur.fetchone()
-
-                query, update_params = _execution_update(
-                    to, "automation_execution_id = %s", [execution_id], fields
-                )
-                await cur.execute(query, update_params)
-                row = dict(await cur.fetchone())
-
-                if strike in ("count", "fuse"):
-                    await _count_strike(cur, automation_id, fuse=strike == "fuse")
-                elif strike == "reset":
-                    # A disabled automation keeps its count and reason until it
-                    # is resumed: a firing that was already running when
-                    # another one disabled it does not explain the disable away.
-                    await cur.execute("""
-                        UPDATE automations
-                        SET failure_count = CASE WHEN status = 'disabled'
-                                                 THEN failure_count ELSE 0 END,
-                            disable_reason = CASE WHEN status = 'disabled'
-                                                  THEN disable_reason END
-                        WHERE automation_id = %s
-                    """, (automation_id,))
-                # After the strike, which may have disabled the automation.
-                if schedule is not None:
-                    await cur.execute(
-                        _SCHEDULE_SQL[schedule], (automation_id, prior["created_at"])
-                    )
-                return {
-                    **row,
-                    "settled_from": prior["status"],
-                    "previous_failure_reason": (
-                        previous["failure_reason"] if previous else None
-                    ),
-                    "previous_delivery_result": (
-                        previous["delivery_result"] if previous else None
-                    ),
-                }
-
-
-async def record_delivery(execution_id: str, delivery_result: list) -> None:
-    """Record what the webhook delivery returned, whatever the status."""
-    async with get_db_connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("""
-                UPDATE automation_executions SET delivery_result = %s
-                WHERE automation_execution_id = %s
-            """, (Json(delivery_result), execution_id))
-
-
-async def dismiss_execution(execution_id: str, *, automation_id: str) -> bool:
-    """Mark a failed run of this automation dismissed. False when it has no
-    such failed run. A second dismissal keeps the first one's time."""
-    async with get_db_connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("""
-                UPDATE automation_executions
-                SET dismissed_at = COALESCE(dismissed_at, NOW())
-                WHERE automation_execution_id = %s AND automation_id = %s
-                  AND status IN ('failed', 'timeout')
-            """, (execution_id, automation_id))
-            return cur.rowcount > 0
-
-
-async def list_executions(
-    user_id: str,
-    *,
-    automation_id: Optional[str] = None,
-    thread_id: Optional[str] = None,
-    status: Optional[str] = None,
-    limit: int = 20,
-    offset: int = 0,
-) -> tuple[List[Dict[str, Any]], bool]:
-    """A page of a user's executions newest first, narrowed to one
-    automation, thread or status when given, and whether more follow it.
-
-    Every row is scoped by its automation's owner, which is the ownership
-    check: another user's automation lists nothing. ``workspace_id`` prefers
-    the run thread's workspace: a flash automation stores none and runs in
-    the user's shared flash workspace. One row past the page answers whether
-    another follows, where a count would read every run the user has.
-    """
-    where_parts = ["a.user_id = %s"]
-    params: list = [user_id]
-    for column, value in (
-        ("e.automation_id", automation_id),
-        ("e.conversation_thread_id", thread_id),
-        ("e.status", status),
-    ):
-        if value:
-            where_parts.append(f"{column} = %s")
-            params.append(value)
-    where_clause = " AND ".join(where_parts)
-
-    async with get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(f"""
-                SELECT
-                    {EXECUTION_COLUMNS},
-                    a.name AS automation_name, a.agent_mode, a.trigger_type,
-                    COALESCE(t.workspace_id, a.workspace_id) AS workspace_id
-                FROM automation_executions e
-                JOIN automations a ON a.automation_id = e.automation_id
-                LEFT JOIN conversation_threads t
-                    ON t.conversation_thread_id = e.conversation_thread_id
-                WHERE {where_clause}
-                ORDER BY e.created_at DESC, e.automation_execution_id DESC
-                LIMIT %s OFFSET %s
-            """, (*params, limit + 1, offset))
-
-            rows = [dict(row) for row in await cur.fetchall()]
-            return rows[:limit], len(rows) > limit
-
-
-async def count_executions(automation_id: str) -> int:
-    """How many runs an automation has: one index range, unlike a count
-    across every automation of a user."""
-    async with get_db_connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("""
-                SELECT COUNT(*) FROM automation_executions
-                WHERE automation_id = %s
-            """, (automation_id,))
-            return (await cur.fetchone())[0]
-
-
-# =============================================================================
-# Waiting for a busy thread
-# =============================================================================
-#
-# An execution whose thread already has a turn running waits for it to end,
-# rather than steering into it.
-
-
-async def has_earlier_waiting_execution(
-    automation_id: str, execution_id: str
-) -> bool:
-    """Whether a firing of this automation that came before this one is
-    waiting too.
-
-    Strictly earlier, by creation then id, so of two firings that start
-    waiting together exactly one gives way.
-    """
-    async with get_db_connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("""
-                SELECT 1
-                FROM automation_executions w
-                JOIN automation_executions me
-                  ON me.automation_execution_id = %s
-                WHERE w.automation_id = %s AND w.status = 'waiting'
-                  AND (w.created_at, w.automation_execution_id)
-                      < (me.created_at, me.automation_execution_id)
-                LIMIT 1
-            """, (execution_id, automation_id))
-            return await cur.fetchone() is not None
-
-
-async def get_execution_status(
-    execution_id: str, *, automation_id: Optional[str] = None
-) -> Optional[str]:
-    """The execution's status; None when there is none, or none of
-    ``automation_id``'s when that is given."""
-    query = """
-        SELECT status FROM automation_executions
-        WHERE automation_execution_id = %s
-    """
-    params: tuple = (execution_id,)
-    if automation_id is not None:
-        query += " AND automation_id = %s"
-        params += (automation_id,)
-    async with get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(query, params)
-            row = await cur.fetchone()
-            return row["status"] if row else None
-
-
-# =============================================================================
-# Firings whose process died
-# =============================================================================
-#
-# The process holding a firing touches ``heartbeat_at`` while the firing is
-# pending, waiting or running. The row, not a process id, says whether anyone
-# still holds it: every restart gets a fresh process, so an id recorded by the
-# old one is never asked about again.
-
-
-async def touch_execution(execution_id: str) -> None:
-    async with get_db_connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(f"""
-                UPDATE automation_executions SET heartbeat_at = NOW()
-                WHERE automation_execution_id = %s
-                  AND status IN {_UNSETTLED}
-            """, (execution_id,))
-
-
-async def settle_legacy_executions(error_message: str) -> int:
-    """Close firings a build before the heartbeat left unsettled; how many.
-
-    A NULL heartbeat is a row that predates the column. A process on the
-    previous build may still be running it through a deploy, so it gets a
-    day. After that nothing is waiting on it, and it is closed as a row write
-    alone: a failure notice weeks late, or reviving whatever it left on its
-    automation, would do more harm than the stale row. None of these rows is
-    ``waiting``: that status came in with the heartbeat, and every firing
-    that can wait was written with one.
-    """
-    async with get_db_connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(f"""
-                UPDATE automation_executions
-                SET status = 'failed', failure_reason = 'interrupted',
-                    error_message = %s, completed_at = NOW()
-                WHERE status IN {_UNSETTLED}
-                  AND heartbeat_at IS NULL
-                  AND created_at < NOW() - INTERVAL '1 day'
-            """, (error_message,))
-            return cur.rowcount
-
-
-async def list_abandoned_executions(
-    quiet_seconds: int, limit: int = 50
-) -> List[Dict[str, Any]]:
-    """Firings whose heartbeat has been quiet ``quiet_seconds``, oldest first,
-    with what settling each needs: its owner, thread, workspace and run.
-
-    A firing whose run is still going is left out: the sweep would leave it
-    alone anyway, and a page of long turns would starve the rest.
-    """
-    async with get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(f"""
-                SELECT e.automation_execution_id, e.automation_id, e.status,
-                       e.conversation_thread_id, e.conversation_response_id,
-                       a.user_id, t.workspace_id
-                FROM automation_executions e
-                JOIN automations a ON a.automation_id = e.automation_id
-                LEFT JOIN conversation_threads t
-                    ON t.conversation_thread_id = e.conversation_thread_id
-                WHERE e.status IN {_UNSETTLED}
-                  AND e.heartbeat_at < NOW() - make_interval(secs => %s)
-                  AND NOT EXISTS (
-                      SELECT 1 FROM conversation_responses r
-                      WHERE r.conversation_response_id = e.conversation_response_id
-                        AND r.status = 'in_progress'
-                  )
-                ORDER BY e.heartbeat_at
-                LIMIT %s
-            """, (quiet_seconds, limit))
-            return [dict(row) for row in await cur.fetchall()]
-
-
-async def get_settling_run(run_id: str) -> Optional[Dict[str, Any]]:
-    """The columns of a run's ledger row that settling its firing reads.
-
-    ``sse_events`` is the turn's whole event archive, which can run to
-    megabytes, so it is read only for a credit pause, whose interrupt
-    carries the denial the user is told.
-    """
-    async with get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("""
-                SELECT conversation_response_id, status, interrupt_reason,
-                       metadata, errors,
-                       CASE WHEN interrupt_reason = %s THEN sse_events END
-                           AS sse_events
-                FROM conversation_responses
-                WHERE conversation_response_id = %s
-            """, (INTERRUPT_REASON_CREDIT_PAUSE, run_id))
-            row = await cur.fetchone()
-            return dict(row) if row else None
-
-
-async def create_execution(
-    automation_id: str,
-    scheduled_at: datetime,
-    server_id: str,
-) -> str:
-    """Create a new execution record (for manual triggers).
-
-    Returns:
-        The new execution_id.
-    """
-    execution_id = str(uuid4())
-    async with get_db_connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("""
-                INSERT INTO automation_executions (
-                    automation_execution_id, automation_id,
-                    status, scheduled_at, server_id, created_at,
-                    heartbeat_at
-                )
-                VALUES (%s, %s, 'pending', %s, %s, NOW(), NOW())
-            """, (execution_id, automation_id, scheduled_at, server_id))
-    return execution_id

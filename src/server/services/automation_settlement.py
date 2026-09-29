@@ -24,6 +24,7 @@ from typing import Any, Dict, Literal, Optional
 from src.observability import automation_executions, safe_add
 from src.server.contracts.status import INTERRUPT_REASON_CREDIT_PAUSE
 from src.server.database import automation as auto_db
+from src.server.database import automation_executions as exec_db
 from src.server.models.automation import (
     ExecutionStatus,
     FailureReason,
@@ -268,7 +269,7 @@ def _one_shot_price(automation: Dict[str, Any]) -> bool:
 
 def _schedule_action(
     policy: _Policy, automation: Dict[str, Any]
-) -> Optional[auto_db.ScheduleAction]:
+) -> Optional[exec_db.ScheduleAction]:
     """What the firing leaves on the schedule: a one-time automation is
     done, and a price alert is either done or watching again."""
     trigger = automation.get("trigger_type")
@@ -304,7 +305,7 @@ async def settle(
     """
     policy = _POLICIES[outcome]
     error = error or policy.error
-    row = await auto_db.settle_execution(
+    row = await exec_db.settle_execution(
         execution_id,
         automation_id=str(automation["automation_id"]),
         from_statuses=policy.from_statuses,
@@ -393,7 +394,7 @@ async def _after_settling(
         )
         if delivery_result is not None:
             try:
-                await auto_db.record_delivery(execution_id, delivery_result)
+                await exec_db.record_delivery(execution_id, delivery_result)
             except Exception as e:
                 logger.error(
                     f"[AUTOMATION_SETTLE] Recording delivery failed: "
@@ -511,7 +512,7 @@ async def settle_abandoned(
         return Outcome.SKIPPED if settled else None
     return await settle_by_run(
         automation, execution_id, run_id,
-        await auto_db.get_settling_run(run_id) if run_id else None,
+        await exec_db.get_settling_run(run_id) if run_id else None,
         thread_id=thread_id, workspace_id=workspace_id, quiet_for=quiet_for,
     )
 
@@ -535,7 +536,7 @@ async def _settle_finished_run(job: Dict[str, Any]) -> None:
     run_id = str(job["run_id"])
     await settle_by_run(
         automation, payload["execution_id"], run_id,
-        await auto_db.get_settling_run(run_id),
+        await exec_db.get_settling_run(run_id),
         thread_id=str(job["conversation_thread_id"]),
         workspace_id=payload.get("workspace_id"),
     )

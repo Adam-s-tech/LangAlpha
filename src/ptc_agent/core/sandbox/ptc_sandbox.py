@@ -1489,9 +1489,9 @@ class PTCSandbox:
         return await _execution.execute_bash_command(self, command, working_dir, timeout, background=background, thread_id=thread_id, call_id=call_id)
 
     def _build_trace_env_command(
-        self, bash_id: str, full_command: str
+        self, bash_id: str, full_command: str, call_id: str | None = None
     ) -> tuple[str, str]:
-        return _execution._build_trace_env_command(self, bash_id, full_command)
+        return _execution._build_trace_env_command(self, bash_id, full_command, call_id)
 
     # -- sessions --
 

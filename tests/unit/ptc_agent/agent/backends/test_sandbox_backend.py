@@ -92,6 +92,25 @@ class TestStructure:
     def test_id_property_returns_sandbox_id(self, backend):
         assert backend.id == "sbx-abc123"
 
+    @pytest.mark.asyncio
+    async def test_a_command_gets_the_mount_only_where_it_serves_its_folder(self, sandbox):
+        """The links may still be going in when the turn starts and may not go
+        in at all; a command whose folder they missed runs without the mount."""
+        served = {"ws-a"}
+
+        async def ready(workspace_id=None) -> bool:
+            return workspace_id in served
+
+        mount = MagicMock(ready=AsyncMock(side_effect=ready))
+        sandbox.livefs = mount
+        backend = SandboxBackend(sandbox)
+
+        assert await backend.settled_livefs("ws-a") is mount
+        assert await backend.settled_livefs("ws-b") is None
+
+        sandbox.livefs = None
+        assert await backend.settled_livefs("ws-a") is None
+
     def test_every_async_method_is_directly_overridden(self):
         """If any async method were inherited from SandboxBackendProtocol, its
         default would dispatch to a sync method — which we don't implement.

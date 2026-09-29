@@ -3,9 +3,9 @@
 The daemon runs as root in the sandbox, so its link handling decides what
 happens to files the agent already had there, and its save rules decide
 which refusals reach the tool result. A dict-backed server stands in for the
-endpoint and a fake kernel for the FUSE context and ``/proc``; ``up`` runs
-against ``tmp_path`` with the checks that need root or a mount table
-answering as a healthy sandbox would.
+endpoint and a fake kernel for the FUSE context and ``/proc``; ``start`` and
+``link`` run against ``tmp_path`` with the checks that need root or a mount
+table answering as a healthy sandbox would.
 """
 
 from __future__ import annotations
@@ -185,7 +185,7 @@ def _sent(server: _Server) -> list[tuple[bytes, bool]]:
 @pytest.fixture
 def box(tmp_path, monkeypatch):
     """A sandbox in ``tmp_path`` whose daemon is already serving, holding a
-    token from an earlier ``up``."""
+    token from an earlier ``start``."""
     paths = lifecycle.Paths(
         mount=str(tmp_path / "mnt" / "livefs"),
         generations=str(tmp_path / "mnt" / ".livefs"),
@@ -207,13 +207,16 @@ def box(tmp_path, monkeypatch):
     return SimpleNamespace(tmp=tmp_path, private=private, mount=mount, root=root, paths=paths)
 
 
-def _up(box, *links, replace=(), stage=None, base_url=None, probe=False) -> dict:
-    return daemon.up(
+def _start(box, *, stage=None, base_url=None) -> dict:
+    return daemon.start_mount(
+        SimpleNamespace(root=str(box.root), stage=stage, base_url=base_url), box.paths
+    )
+
+
+def _link(box, *links, replace=()) -> dict:
+    return daemon.link_folders(
         SimpleNamespace(
             root=str(box.root),
-            stage=stage,
-            base_url=base_url,
-            probe=probe,
             link=[f"{source}:{box.root / target}" for source, target in links],
             replace=[str(box.root / target) for target in replace],
         ),
@@ -232,7 +235,7 @@ def test_a_staged_token_is_taken_privately_and_the_staged_copy_deleted(box):
     stage = box.root / ".livefs.abc.stage"
     stage.write_text(json.dumps({"base_url": "http://server", "token": "lfs1.new"}))
 
-    assert _up(box, stage=str(stage))["ok"]
+    assert _start(box, stage=str(stage))["ok"]
 
     assert not os.path.lexists(stage)
     assert _installed_token(box) == "lfs1.new"
@@ -245,21 +248,61 @@ def test_a_moved_server_is_written_into_the_config_and_the_token_kept(box, monke
     config = box.private / "config.json"
     before = json.loads(config.read_text())
 
-    assert _up(box, base_url="http://moved")["ok"]
+    assert _start(box, base_url="http://moved")["ok"]
     assert json.loads(config.read_text()) == {**before, "base_url": "http://moved"}
     assert probes == [1]
 
-    assert _up(box, base_url="http://moved")["ok"]
+    assert _start(box, base_url="http://moved")["ok"]
     assert probes == [1]
 
 
-def test_a_server_last_found_unreachable_is_asked_though_nothing_changed(box, monkeypatch):
-    """A serving daemon whose server stopped answering has nothing changed
-    about it, so only the caller knows to ask again."""
-    monkeypatch.setattr(daemon, "_probe", lambda paths: "no answer from http://server")
+def test_a_server_found_unreachable_is_asked_again_until_it_answers(box, monkeypatch):
+    """Nothing about a serving daemon changes when its server stops
+    answering, so the sandbox keeps the failed answer: whichever host asks
+    next, the probe runs again."""
+    answers = ["no answer from http://server", "no answer from http://server", None]
+    probes = []
 
-    assert _up(box)["ok"]
-    assert _up(box, probe=True)["error"] == "unreachable"
+    def probe(paths):
+        probes.append(1)
+        return answers.pop(0)
+
+    monkeypatch.setattr(daemon, "_probe", probe)
+    stage = box.root / ".livefs.abc.stage"
+    stage.write_text(json.dumps({"base_url": "http://server", "token": "lfs1.new"}))
+
+    assert _start(box, stage=str(stage))["error"] == "unreachable"
+    assert _start(box)["error"] == "unreachable"
+    assert _start(box)["ok"]
+    assert _start(box)["ok"]
+
+    assert len(probes) == 3
+
+
+def test_a_start_that_waited_on_one_finding_the_server_unreachable_asks_it_too(
+    box, monkeypatch
+):
+    """Two starts can overlap (an exec retried on the transport): the second
+    may find nothing changed before the first recorded its failed probe, so
+    the failure is read again under the lock."""
+    probes = []
+
+    def probe(paths):
+        probes.append(1)
+        return None
+
+    monkeypatch.setattr(daemon, "_probe", probe)
+    args = SimpleNamespace(root=str(box.root), stage=None, base_url=None)
+    refused, early = daemon._ready(args, box.paths)
+    assert refused is None and early is None
+    # The first start records its failure while the second waits on the lock.
+    lifecycle.write_state(box.paths, {"unreachable": "no answer from http://server"})
+
+    state = lifecycle.read_state(box.paths)
+    started, refused = daemon._serving(args, box.paths, state, early)
+
+    assert refused is None and probes == [1]
+    assert "unreachable" not in state
 
 
 def _link_to_a_valid_config(stage, tmp) -> None:
@@ -279,21 +322,15 @@ def test_a_staged_token_that_is_a_link_or_not_a_mount_config_answers_bad_config(
     stage = box.root / ".livefs.abc.stage"
     plant(stage, box.tmp)
 
-    assert _up(box, stage=str(stage))["error"] == "bad_config"
+    assert _start(box, stage=str(stage))["error"] == "bad_config"
     assert _installed_token(box) == "lfs1.old"
 
 
-# -- the start a bring-up runs beside its asset sync ---------------------------
-
-
-def _start(box, *, stage=None) -> dict:
-    return daemon.start_mount(
-        SimpleNamespace(root=str(box.root), stage=stage, base_url=None, probe=False), box.paths
-    )
+# -- start and link apart -----------------------------------------------------
 
 
 def test_start_serves_and_leaves_every_link_alone(box):
-    _up(box, ("user", ".agents/user"))
+    _link(box, ("user", ".agents/user"))
     link = box.root / ".agents" / "user"
     before = os.readlink(link)
 
@@ -303,7 +340,27 @@ def test_start_serves_and_leaves_every_link_alone(box):
         "started": None,
     }
     assert os.readlink(link) == before
-    assert _up(box, ("user", ".agents/user"))["ok"]
+
+
+def test_link_lays_the_links_without_the_daemon_or_its_token(box, monkeypatch):
+    """The links point through the mount's own link, so they are right
+    whatever the daemon is doing, and laying them asks nothing of it."""
+
+    def untouched(*args, **kwargs):
+        raise AssertionError("link reached the daemon")
+
+    monkeypatch.setattr(daemon, "start", untouched)
+    monkeypatch.setattr(daemon, "_probe", untouched)
+    config = (box.private / "config.json").read_text()
+
+    assert _link(box, ("user", ".agents/user")) == {
+        "ok": True,
+        "error": None,
+        "failed": None,
+        "set_aside": None,
+    }
+    assert os.readlink(box.root / ".agents" / "user") == f"{box.mount}/user"
+    assert (box.private / "config.json").read_text() == config
 
 
 def _shipped(tmp_path):
@@ -380,7 +437,7 @@ def test_a_restart_repoints_the_mount_path_and_leaves_every_link_alone(box):
         (generations / name / "user").mkdir(parents=True)
         (generations / name / "user" / "notes.md").write_text(text)
     lifecycle.point(str(generations / "1"), box.paths)
-    _up(box, ("user", ".agents/user"))
+    _link(box, ("user", ".agents/user"))
     link = box.root / ".agents" / "user"
     assert (link / "notes.md").read_text() == "old daemon"
 
@@ -391,8 +448,8 @@ def test_a_restart_repoints_the_mount_path_and_leaves_every_link_alone(box):
     assert sorted(os.listdir(box.tmp / "mnt")) == [".livefs", "livefs"]
 
 
-def test_up_removes_its_links_no_longer_asked_for_but_not_what_replaced_one(box):
-    _up(
+def test_link_removes_its_links_no_longer_asked_for_but_not_what_replaced_one(box):
+    _link(
         box,
         ("user", ".agents/user"),
         ("workspaces/a/memory", "research/.agents/memory"),
@@ -405,7 +462,7 @@ def test_up_removes_its_links_no_longer_asked_for_but_not_what_replaced_one(box)
     repointed.unlink()
     repointed.symlink_to(mine)
 
-    assert _up(box, ("user", ".agents/user"))["ok"]
+    assert _link(box, ("user", ".agents/user"))["ok"]
 
     assert os.path.islink(box.root / ".agents" / "user")
     assert not os.path.lexists(box.root / "research" / ".agents" / "memory")
@@ -421,7 +478,7 @@ def test_anything_already_at_a_link_path_is_set_aside_under_a_free_name(box):
     index.parent.mkdir()
     index.write_text("{}\n")
 
-    answer = _up(
+    answer = _link(
         box,
         ("workspaces/a/memory", "research/.agents/memory"),
         ("computer/threads.jsonl", ".agents/threads.jsonl"),
@@ -440,7 +497,7 @@ def test_an_empty_directory_at_a_link_path_is_replaced_not_set_aside(box):
     memory = box.root / "research" / ".agents" / "memory"
     memory.mkdir(parents=True)
 
-    answer = _up(box, ("workspaces/a/memory", "research/.agents/memory"))
+    answer = _link(box, ("workspaces/a/memory", "research/.agents/memory"))
 
     assert answer["set_aside"] is None
     assert os.readlink(memory) == f"{box.mount}/workspaces/a/memory"
@@ -452,7 +509,7 @@ def test_replace_removes_an_older_written_copy_instead_of_setting_it_aside(box):
     index.parent.mkdir()
     index.write_text('{"thread": "written by an older build"}\n')
 
-    answer = _up(
+    answer = _link(
         box,
         ("computer/threads.jsonl", ".agents/threads.jsonl"),
         replace=[".agents/threads.jsonl"],
@@ -872,16 +929,16 @@ def test_a_name_the_made_up_directories_lack_is_asked_for_once(kernel):
     assert server.lists == []
 
 
-def test_the_made_up_directories_are_listed_again_once_up_links_another_layout(
+def test_the_made_up_directories_are_listed_again_once_link_lays_another_layout(
     kernel, tmp_path
 ):
     state = tmp_path / "state.json"
 
-    def up_wrote(state_data: dict) -> None:
+    def link_wrote(state_data: dict) -> None:
         (tmp_path / "state.tmp").write_text(json.dumps(state_data))
         os.replace(tmp_path / "state.tmp", state)
 
-    up_wrote({"sources": ["workspaces/w1/memory", "workspaces/w2/memory"]})
+    link_wrote({"sources": ["workspaces/w1/memory", "workspaces/w2/memory"]})
     server = _Server(
         {"workspaces/w1/memory/a.md": b"a", "workspaces/w2/memory/b.md": b"b"},
         structural={"", "workspaces"},
@@ -890,13 +947,13 @@ def test_the_made_up_directories_are_listed_again_once_up_links_another_layout(
     kernel.run(101, "call-a")
     assert fs.readdir("/workspaces", 0) == [".", "..", "w1", "w2"]
 
-    up_wrote({"sources": ["workspaces/w1/memory", "workspaces/w2/memory"], "token": 2})
+    link_wrote({"sources": ["workspaces/w1/memory", "workspaces/w2/memory"], "token": 2})
     kernel.run(201, "call-b")
     fs.readdir("/workspaces", 0)
     assert server.lists.count("workspaces") == 1
 
     del server.files["workspaces/w2/memory/b.md"]
-    up_wrote({"sources": ["workspaces/w1/memory"]})
+    link_wrote({"sources": ["workspaces/w1/memory"]})
     kernel.run(301, "call-c")
     assert fs.readdir("/workspaces", 0) == [".", "..", "w1"]
 

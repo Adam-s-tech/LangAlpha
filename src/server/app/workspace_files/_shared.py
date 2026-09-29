@@ -15,20 +15,19 @@ from charset_normalizer import from_bytes
 from fastapi import HTTPException
 
 
+from ptc_agent.agent.backends.db_json_route import DbJsonRoute
+from ptc_agent.agent.filesystem_routes import route_for
 from ptc_agent.core.paths import (
     AGENT_SYSTEM_DIRS,
     SANDBOX_ROOTS,
+    USER_DATA_FILES,
     ALWAYS_HIDDEN_BASENAMES as _SHARED_BASENAMES,
     ALWAYS_HIDDEN_DIR_NAMES,
     ALWAYS_HIDDEN_PATH_SEGMENTS,
     ALWAYS_HIDDEN_SUFFIXES,
     HIDDEN_DIR_NAMES,
-    USER_PROFILE_DATA_DIR,
     SandboxLayout,
     WorkspaceLayout,
-    USER_PROFILE_PORTFOLIO_FILE,
-    USER_PROFILE_PREFERENCE_FILE,
-    USER_PROFILE_WATCHLIST_FILE,
     strip_previous_dir_name,
 )
 from ptc_agent.core.sandbox.runtime import STREAM_CHUNK_BYTES
@@ -53,7 +52,6 @@ from src.server.services.persistence.resolve import (
     resolve_file_bytes,
     too_large_to_serve,
 )
-from src.server.services import user_data_io
 from src.server.utils.error_sanitization import (
     sandbox_unreachable_detail,
     single_line,
@@ -121,39 +119,39 @@ _CACHEABLE_IMAGE_TYPES = frozenset(
     }
 )
 
-# User-profile virtual files (served by user_data_io, not the sandbox FS).
-# These three paths bypass the system-path filter and route to the DB layer.
-_USER_PROFILE_PREFIX = f"{USER_PROFILE_DATA_DIR.rstrip('/')}/"
-_USER_PROFILE_FILES: dict[str, str] = {
-    f"{_USER_PROFILE_PREFIX}{USER_PROFILE_PORTFOLIO_FILE}": USER_PROFILE_PORTFOLIO_FILE,
-    f"{_USER_PROFILE_PREFIX}{USER_PROFILE_WATCHLIST_FILE}": USER_PROFILE_WATCHLIST_FILE,
-    f"{_USER_PROFILE_PREFIX}{USER_PROFILE_PREFERENCE_FILE}": USER_PROFILE_PREFERENCE_FILE,
-}
+# DB-backed virtual files: rows the agent reaches through a composite route
+# (UserDataBackend, AutomationsBackend), never files on the sandbox FS. These
+# paths bypass the system-path filter and route to the DB layer. The panel
+# serves them read-only: a write belongs to the owning surface or the agent's
+# route, which make the schema and version checks this generic API cannot.
+_VIRTUAL_FILES = tuple(
+    f"{directory}/{name}" for directory, names in USER_DATA_FILES.items() for name in names
+)
+_VIRTUAL_DIRS = frozenset(USER_DATA_FILES)
 
 
-def _is_user_profile_dir(client_path: str) -> bool:
-    """True when the path refers to the .agents/user/profile/ directory itself."""
-    return client_path.rstrip("/") == _USER_PROFILE_PREFIX.rstrip("/")
+def _virtual_file(client_path: str) -> type[DbJsonRoute] | None:
+    return route_for(client_path)
 
 
-def _is_user_profile_file(client_path: str) -> bool:
-    return client_path in _USER_PROFILE_FILES
+def _is_virtual_dir(client_path: str) -> bool:
+    """True when the path is a virtual file's directory itself."""
+    return client_path.rstrip("/") in _VIRTUAL_DIRS
 
 
-async def _serialize_user_profile_file(client_path: str, user_id: str) -> str:
-    """Fetch + serialize one of the three virtual user-profile JSON files."""
-    filename = _USER_PROFILE_FILES[client_path]
-    if filename == USER_PROFILE_PORTFOLIO_FILE:
-        rows = await user_data_io.fetch_portfolio_for_user(user_id)
-        payload = user_data_io.serialize_portfolio(rows)
-    elif filename == USER_PROFILE_WATCHLIST_FILE:
-        watchlists, items = await user_data_io.fetch_watchlist_for_user(user_id)
-        payload = user_data_io.serialize_watchlist(watchlists, items)
-    else:  # preference.json
-        prefs = await user_data_io.fetch_preferences_for_user(user_id)
-        payload = user_data_io.serialize_preferences(prefs)
-    visible = {k: v for k, v in payload.items() if k != "__version__"}
-    return user_data_io.serialize_json(visible)
+def _virtual_files_in_scope(requested_path: str) -> list[str]:
+    """The virtual files a listing rooted at ``requested_path`` covers.
+
+    A root inside a virtual directory covers all of its files, so a listing of
+    one of them still shows its siblings.
+    """
+    return [
+        path
+        for path in _VIRTUAL_FILES
+        if requested_path == ""
+        or path.startswith(f"{requested_path}/")
+        or requested_path.startswith(f"{path.rsplit('/', 1)[0]}/")
+    ]
 
 
 # Derived from shared constants (source of truth: ptc_agent.core.paths)
@@ -435,9 +433,9 @@ def _to_client_path(
 
 
 def _is_system_path(client_path: str) -> bool:
-    # User-profile virtual files live under .agents/ but are first-class
-    # user data — never hide them from the file panel.
-    if _is_user_profile_file(client_path) or _is_user_profile_dir(client_path):
+    # Virtual DB-backed files live under .agents/ but are first-class
+    # user data, so never hide them from the file panel.
+    if client_path in _VIRTUAL_FILES or _is_virtual_dir(client_path):
         return False
     return any(client_path.startswith(prefix) for prefix in _SYSTEM_DIR_PREFIXES)
 
@@ -473,7 +471,8 @@ def _is_serve_blocked_path(client_path: str) -> bool:
     endpoints apply, so the grant-gated wsfiles route and the public share
     serve route never expose agent-infrastructure dirs (``.agents``, ``tools``,
     ``mcp_servers``, ``_internal``, ...) that those endpoints deliberately hide.
-    The user-profile carve-out lives inside ``_is_system_path``.
+    The virtual-file carve-out (user profile, automations) lives inside
+    ``_is_system_path``.
     """
     return (
         _is_always_hidden_path(client_path)

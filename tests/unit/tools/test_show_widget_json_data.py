@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from ptc_agent.agent.tools.show_widget import _resolve_data_files
+from ptc_agent.agent.tools.show_widget import _INLINE_DATA_CAP, _resolve_data_files
 
 
 @pytest.mark.parametrize("extension", ["json", "geojson", "topojson", "JSON"])
@@ -76,8 +76,8 @@ def test_csv_data_is_not_cleaned_as_json():
 
 def test_truncated_json_with_escaped_quotes_is_intact_and_fast():
     """A file cut off inside a string full of escaped quotes is the worst case
-    for a string-first scan that can backtrack: it used to rescan to the end
-    from every quote (O(n^2); measured ~108 s at this size before the fix). The
+    for a string-first scan that can backtrack: if an unterminated string made
+    the scan retry from every quote it would be O(n^2) in the tail length. The
     tail is one unterminated string, so nothing may be rewritten, and the call
     must stay linear."""
     payload = '{"rows":[{"html":"' + '\\"' * 100_000
@@ -90,7 +90,7 @@ def test_truncated_json_with_escaped_quotes_is_intact_and_fast():
     elapsed = time.perf_counter() - started
 
     assert result == {filename: payload}
-    # Generous quadratic-scan detector, not a microbenchmark: the fixed scan
+    # Generous quadratic-scan detector, not a microbenchmark: a linear scan
     # takes well under 10ms here.
     assert elapsed < 5.0
 
@@ -121,18 +121,21 @@ def test_large_single_string_is_preserved_while_bare_nan_becomes_null():
 @pytest.mark.parametrize(
     "body",
     [
-        pytest.param("A" * 4_000_000, id="plain-text"),
-        pytest.param('\\"' * 2_000_000, id="escaped-quote-pairs"),
+        pytest.param("A" * 1_100_000, id="plain-text"),
+        pytest.param('\\"' * 550_000, id="escaped-quote-pairs"),
     ],
 )
-def test_multi_mb_single_string_uses_bounded_memory(body):
-    """The sanitizer runs before the 500 KB inline cap, so a multi-MB file
-    holding one huge string must not cost more than a few copies of itself.
-    A repeated group in a regex keeps per-iteration backtrack state (about
-    120 bytes per character), so the peak here was ~480 MB for 4 MB of input
-    before the string branch became possessive. The peak is measured with
-    tracemalloc rather than wall-clock time, and the bound sits an order of
-    magnitude under the old behaviour and well above the linear cost."""
+def test_large_single_string_scan_uses_bounded_memory(body):
+    """The sanitizer runs on the whole file before the 500 KB inline cap is
+    applied, so a file holding one huge string must not cost more than a few
+    copies of itself. A repeated group in a regex keeps per-iteration
+    backtrack state (about 120 bytes per character for a non-possessive `*`),
+    so the string branch is possessive. The payload is over the cap but below
+    the 9/4 skip threshold, so the scan really runs: a larger body would be
+    skipped by the pre-scan gate and never reach the regex. The peak is
+    measured with tracemalloc rather than wall-clock time; the bound sits well
+    under the 80-150 MB a backtracking quantifier peaks at here and well above
+    the linear cost."""
     payload = f'{{"blob":"{body}","v":NaN}}'
     backend = AsyncMock()
     backend.aread_text.return_value = payload
@@ -145,9 +148,12 @@ def test_multi_mb_single_string_uses_bounded_memory(body):
     finally:
         tracemalloc.stop()
 
-    # Over the inline cap: dropped, exactly as before the sanitizer changed.
+    # The scan must run (the payload is under the skip threshold) ...
+    assert len(payload) * 4 <= _INLINE_DATA_CAP * 9
+    # ... and the entry is still over the inline cap, so it is dropped.
+    assert len(payload) > _INLINE_DATA_CAP
     assert result == {}
-    assert peak < 64 * 1024 * 1024, f"sanitizer peak {peak / 1e6:.0f} MB"
+    assert peak < 32 * 1024 * 1024, f"sanitizer peak {peak / 1e6:.0f} MB"
 
 
 @pytest.mark.parametrize(
@@ -162,9 +168,9 @@ def test_over_cap_dense_json_is_dropped_without_scanning(item):
     """Many short strings make the sanitizer allocate one match string per
     token (~15-21 bytes per input character). The entry is dropped by the
     inline cap afterwards anyway, so text that cannot fit even after
-    sanitizing must not be scanned. Measured with tracemalloc; the old path
-    peaked around 170 MB here, the bound sits well above the linear cost of
-    holding the input itself."""
+    sanitizing must not be scanned. Measured with tracemalloc: scanning this
+    input peaks around 120-170 MB, while the bound sits well above the linear
+    cost of holding the input itself."""
     payload = "[" + ",".join([item] * (8_000_000 // (len(item) + 1))) + "]"
     backend = AsyncMock()
     backend.aread_text.return_value = payload
@@ -213,3 +219,43 @@ def test_remaining_budget_bounds_the_scan_for_later_files():
     # b.json (250 KB) exceeds the ~200 KB left after a.json and is dropped;
     # c.json still fits and is sanitized.
     assert result == {"a.json": first, "c.json": '{"v":null}'}
+
+
+def test_gate_keeps_text_that_exactly_fits_the_remaining_budget():
+    """Exact boundary of the 9/4 skip: with 4 bytes of budget left,
+    `-Infinity` (9 chars, 9 * 4 == 4 * 9) is still sanitized to `null` (4
+    bytes) and kept. A stricter gate (2x instead of 9/4, or `<` instead of
+    `<=`) would skip it and drop the entry."""
+    first = "x" * (_INLINE_DATA_CAP - 4)
+    contents = {"/work/a.txt": first, "/work/b.json": "-Infinity"}
+    backend = AsyncMock()
+    backend.aread_text.side_effect = lambda path: contents[path]
+
+    result = asyncio.run(_resolve_data_files(backend, list(contents)))
+
+    assert result == {"a.txt": first, "b.json": "null"}
+
+
+def test_gate_threshold_follows_the_remaining_budget_not_the_full_cap():
+    """After an earlier file uses most of the cap, dense JSON that is under 9/4
+    of the full cap but over 9/4 of what is left must not be scanned. Measured
+    with tracemalloc: scanning it would allocate one match string per token
+    (~20 MB here), skipping it holds only the input."""
+    first = "x" * (_INLINE_DATA_CAP - 100_000)
+    dense = "[" + ",".join(['""'] * 350_000) + "]"
+    assert len(dense) * 4 <= _INLINE_DATA_CAP * 9
+    assert len(dense) * 4 > 100_000 * 9
+    contents = {"/work/a.txt": first, "/work/b.json": dense}
+    backend = AsyncMock()
+    backend.aread_text.side_effect = lambda path: contents[path]
+
+    tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        result = asyncio.run(_resolve_data_files(backend, list(contents)))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert result == {"a.txt": first}
+    assert peak < 8 * 1024 * 1024, f"sanitizer peak {peak / 1e6:.0f} MB"

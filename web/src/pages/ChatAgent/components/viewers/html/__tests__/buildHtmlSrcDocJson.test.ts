@@ -91,9 +91,9 @@ describe.each(['widget-inline', 'widget-fullscreen'] as const)('%s JSON data', (
 
   it('stays linear on truncated JSON with escaped quotes', () => {
     // A realistic truncated write: the file is cut off inside a string full of
-    // escaped quotes, which used to make the string-first scan rescan to the
-    // end from every quote. The call must finish and the native parser must
-    // still reject the payload.
+    // escaped quotes, the worst case for a string-first scan that retries from
+    // every quote. The call must finish and the native parser must still
+    // reject the payload.
     const truncated = '{"rows":[{"html":"' + '\\"'.repeat(100_000);
     let error: unknown;
     const started = performance.now();
@@ -105,16 +105,16 @@ describe.each(['widget-inline', 'widget-fullscreen'] as const)('%s JSON data', (
     const elapsed = performance.now() - started;
 
     expect((error as Error).name).toBe('SyntaxError');
-    // Generous quadratic-scan detector, not a microbenchmark: the fixed scan
+    // Generous quadratic-scan detector, not a microbenchmark: a linear scan
     // is four orders of magnitude below this bound.
     expect(elapsed).toBeLessThan(2000);
   });
 
-  it('parses a 12 MB single-string payload that used to overflow the regexp stack', () => {
-    // V8 keeps a backtrack-stack entry per iteration of the string-matching
-    // alternative, so a single quoted string above ~8.4M characters threw
-    // RangeError before the native parser ever saw it. The flat token scan has
-    // no repetition to backtrack; it must parse and keep the string intact.
+  it('parses a 12 MB single-string payload without exhausting the regexp stack', () => {
+    // A regexp that matches a whole quoted string keeps a backtrack-stack
+    // entry per character, so a single very long string can throw RangeError
+    // before the native parser ever sees it. The flat token scan has no
+    // repetition to backtrack; it must parse and keep the string intact.
     const blob = 'A'.repeat(12_000_000) + ' NaN Infinity -Infinity tail';
     const parsed = parseWidgetData(
       variant,

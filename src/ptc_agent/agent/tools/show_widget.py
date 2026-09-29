@@ -225,8 +225,10 @@ async def _resolve_data_files(
             # text longer than 9/4 of the remaining budget is over the cap
             # either way; skip the scan, whose per-token cost is ~20 bytes of
             # memory per input character on dense short-string JSON.
-            fits_budget = len(value) * 4 <= (_INLINE_DATA_CAP - inline_total) * 9
-            if fits_budget and ext.lower() in ('.json', '.geojson', '.topojson'):
+            if (
+                ext.lower() in ('.json', '.geojson', '.topojson')
+                and len(value) * 4 <= (_INLINE_DATA_CAP - inline_total) * 9
+            ):
                 # Match quoted strings first so names and labels stay intact.
                 # Avoid a parse/dump round trip that could alter numeric precision.
                 # The closing quote is optional and a backslash escapes any

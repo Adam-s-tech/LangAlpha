@@ -1,5 +1,5 @@
 import { defineConfig } from 'vitest/config';
-import react from '@vitejs/plugin-react';
+import { reactPlugins } from './scripts/react-plugins.ts';
 
 const TEST_FILES = ['src/**/*.test.{ts,tsx}'];
 const EXCLUDE = ['e2e/**', 'node_modules/**'];
@@ -161,7 +161,7 @@ const FORKS_FILES = [
 ];
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: reactPlugins(),
   test: {
     globals: true,
     // A vm worker keeps every file's module graph until its heap reaches this,

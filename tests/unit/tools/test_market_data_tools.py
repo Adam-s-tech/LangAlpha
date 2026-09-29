@@ -452,7 +452,6 @@ class TestFetchCompanyOverview:
             "marketCap": 3_500_000_000_000,
             "price": 235.50,
             "exchangeShortName": "NASDAQ",
-            "pe": 32.5,
         }]
 
     @pytest.fixture
@@ -675,7 +674,6 @@ class TestFetchCompanyOverview:
         """The table reads the field names FMP's stable key-metrics-ttm and
         ratios-ttm endpoints actually return, and prints ROE above 100% as such.
         """
-        profile = [{k: v for k, v in full_profile[0].items() if k != "pe"}]
         key_metrics = [{
             "symbol": "AAPL",
             "marketCap": 3_500_000_000_000,
@@ -696,7 +694,7 @@ class TestFetchCompanyOverview:
             "quickRatioTTM": 0.83,
             "interestCoverageRatioTTM": 30.5,
         }]
-        content = await self._overview_metrics(profile, key_metrics, ratios)
+        content = await self._overview_metrics(full_profile, key_metrics, ratios)
 
         assert "| P/E Ratio | 38.44x |" in content
         assert "| P/B Ratio | 57.97x |" in content
@@ -755,8 +753,7 @@ class TestFetchCompanyOverview:
             key_metrics = _get_key_metrics("AAPL")
             ratios = _get_financial_ratios("AAPL")
 
-        profile = [{k: v for k, v in full_profile[0].items() if k != "pe"}]
-        content = await self._overview_metrics(profile, key_metrics, ratios)
+        content = await self._overview_metrics(full_profile, key_metrics, ratios)
 
         assert "| P/E Ratio | 38.44x |" in content
         assert "| P/B Ratio | 57.97x |" in content
@@ -789,8 +786,11 @@ class TestFetchCompanyOverview:
             assert f"| {label} | {shown} |" in content
 
     @pytest.mark.asyncio
-    async def test_zero_ratios_render_and_zero_pe_beats_profile_pe(self, full_profile):
-        """A TTM P/E of 0 is shown as 0, not swapped for the profile's 32.5."""
+    async def test_zero_placeholders_drop_but_zero_leverage_renders(self, full_profile):
+        """FMP writes 0 for a ratio with a zero denominator (AAPL's interest
+        coverage, with no reported interest expense). A multiple or coverage
+        ratio of 0 is that placeholder and drops; a 0 debt/equity is real.
+        """
         content = await self._overview_metrics(
             full_profile,
             [{"evToOperatingCashFlowTTM": 0.0}],
@@ -804,23 +804,29 @@ class TestFetchCompanyOverview:
                 "interestCoverageRatioTTM": 0.0,
             }],
         )
-        assert "| P/E Ratio | 0.00x |" in content
-        assert content.count("| P/E Ratio |") == 1
-        assert "| P/B Ratio | 0.00x |" in content
-        assert "| PEG Ratio | 0.00 |" in content
-        assert "| EV/OCF | 0.00x |" in content
+        for label in (
+            "P/E Ratio", "P/B Ratio", "PEG Ratio", "EV/OCF", "Interest Coverage",
+        ):
+            assert f"| {label} |" not in content
         assert "| Debt/Equity Ratio | 0.00 |" in content
         assert "| Current Ratio | 0.00 |" in content
         assert "| Quick Ratio | 0.00 |" in content
-        assert "| Interest Coverage | 0.00x |" in content
 
     @pytest.mark.asyncio
-    async def test_missing_ratios_are_omitted_and_pe_falls_back_to_profile(
-        self, full_profile,
-    ):
-        """None or absent fields drop their row; only a missing TTM P/E falls
-        back to the profile's P/E.
-        """
+    async def test_negative_multiples_still_render(self, full_profile):
+        """A loss-maker's negative P/E is real data, unlike FMP's 0."""
+        content = await self._overview_metrics(
+            full_profile,
+            [{"evToOperatingCashFlowTTM": -12.5}],
+            [{"priceToEarningsRatioTTM": -5.8, "interestCoverageRatioTTM": -4.18}],
+        )
+        assert "| P/E Ratio | -5.80x |" in content
+        assert "| EV/OCF | -12.50x |" in content
+        assert "| Interest Coverage | -4.18x |" in content
+
+    @pytest.mark.asyncio
+    async def test_missing_ratios_are_omitted(self, full_profile):
+        """None or absent fields drop their row."""
         content = await self._overview_metrics(
             full_profile,
             [{
@@ -836,9 +842,9 @@ class TestFetchCompanyOverview:
                 "interestCoverageRatioTTM": None,
             }],
         )
-        assert "| P/E Ratio | 32.50x |" in content
         assert "| ROA (Return on Assets) | 30.00% |" in content
         for label in (
+            "P/E Ratio",
             "P/B Ratio",
             "PEG Ratio",
             "EV/OCF",
@@ -855,7 +861,7 @@ class TestFetchCompanyOverview:
     @pytest.mark.asyncio
     async def test_zero_from_yfinance_fallback_reaches_the_table(self, full_profile):
         """A debt-free company's 0 debt/equity survives the percent conversion
-        and renders, as do 0% returns and margins.
+        and renders, as do 0% returns and margins. A 0 PEG drops like FMP's.
         """
         from src.data_client.yfinance.financial_source import (
             _get_financial_ratios,
@@ -881,7 +887,7 @@ class TestFetchCompanyOverview:
         content = await self._overview_metrics(full_profile, key_metrics, ratios)
 
         assert "| P/E Ratio | 12.00x |" in content
-        assert "| PEG Ratio | 0.00 |" in content
+        assert "| PEG Ratio |" not in content
         assert "| ROE (Return on Equity) | 0.00% |" in content
         assert "| Operating Margin | 0.00% |" in content
         assert "| Debt/Equity Ratio | 0.00 |" in content

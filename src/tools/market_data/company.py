@@ -793,23 +793,23 @@ No data found for symbol {symbol}"""
             # the yfinance fallback emits too. Stable moved the valuation
             # multiples to ratios and ROE/ROA to key metrics.
             # Valuation Ratios
-            # A reported 0 is data, not a gap: test `is not None` throughout,
-            # and fall back to the profile P/E only when the TTM value is absent.
+            # FMP writes 0 when a ratio's denominator is zero: Apple reports no
+            # interest expense, so its interest coverage comes back 0. A price
+            # or EV multiple and a coverage ratio are never really 0, so these
+            # rows (and Interest Coverage below) drop a 0 like a missing value.
             pe_ratio = ratios.get("priceToEarningsRatioTTM")
-            if pe_ratio is None:
-                pe_ratio = profile.get("pe")
             pb_ratio = ratios.get("priceToBookRatioTTM")
             peg_ratio = ratios.get("priceToEarningsGrowthRatioTTM")
-            ev_to_ebitda = metrics.get("evToOperatingCashFlowTTM")
+            ev_to_ocf = metrics.get("evToOperatingCashFlowTTM")
 
-            if pe_ratio is not None:
+            if pe_ratio:
                 metrics_rows.append(("P/E Ratio", f"{pe_ratio:.2f}x"))
-            if pb_ratio is not None:
+            if pb_ratio:
                 metrics_rows.append(("P/B Ratio", f"{pb_ratio:.2f}x"))
-            if peg_ratio is not None:
+            if peg_ratio:
                 metrics_rows.append(("PEG Ratio", f"{peg_ratio:.2f}"))
-            if ev_to_ebitda is not None:
-                metrics_rows.append(("EV/OCF", f"{ev_to_ebitda:.2f}x"))
+            if ev_to_ocf:
+                metrics_rows.append(("EV/OCF", f"{ev_to_ocf:.2f}x"))
 
             # Profitability Metrics
             roe = metrics.get("returnOnEquityTTM")
@@ -817,7 +817,9 @@ No data found for symbol {symbol}"""
             net_margin = ratios.get("netProfitMarginTTM")
             operating_margin = ratios.get("operatingProfitMarginTTM")
 
-            # Always fractions: a ROE of 1.55 is 155%, not 1.55%.
+            # A reported 0 is real for returns, margins and the balance-sheet
+            # ratios (a break-even margin, a debt-free company), so those rows
+            # test `is not None`. Always fractions: a ROE of 1.55 is 155%.
             if roe is not None:
                 metrics_rows.append(("ROE (Return on Equity)", f"{roe * 100:.2f}%"))
             if roa is not None:
@@ -841,7 +843,7 @@ No data found for symbol {symbol}"""
                 metrics_rows.append(("Current Ratio", f"{current_ratio:.2f}"))
             if quick_ratio is not None:
                 metrics_rows.append(("Quick Ratio", f"{quick_ratio:.2f}"))
-            if interest_coverage is not None:
+            if interest_coverage:
                 metrics_rows.append(("Interest Coverage", f"{interest_coverage:.2f}x"))
 
             # Output as markdown table

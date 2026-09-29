@@ -247,9 +247,9 @@ describe('useChatMessages — cross-thread navigation reconnect', () => {
     expect(assistantText(result.current.messages)).toBe('already written');
     expect(result.current.isReconnecting).toBe(false);
 
-    // The live tail streams through as it arrives.
+    // The live tail streams through as it arrives, on the next frame.
     await act(async () => { emit?.(textChunk(' and live')); });
-    expect(assistantText(result.current.messages)).toBe('already written and live');
+    await waitFor(() => expect(assistantText(result.current.messages)).toBe('already written and live'));
   });
 
   it('a held event restarts the quiet window; the backlog paints once it goes quiet', async () => {

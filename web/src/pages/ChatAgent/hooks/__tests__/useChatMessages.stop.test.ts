@@ -183,9 +183,12 @@ describe('useChatMessages — stopWorkflow (hard stop)', () => {
     });
     await waitFor(() => expect(result.current.isLoading).toBe(true));
 
-    // Before stop: the preparing tool-call chunks are present (shimmer on).
-    const before = result.current.messages.find((m) => m.role === 'assistant') as AssistantMessage;
-    expect(Object.keys((before.pendingToolCallChunks as Record<string, unknown>) || {}).length).toBeGreaterThan(0);
+    // Before stop: the preparing tool-call chunks are present (shimmer on),
+    // applied on the next frame.
+    await waitFor(() => {
+      const before = result.current.messages.find((m) => m.role === 'assistant') as AssistantMessage;
+      expect(Object.keys((before.pendingToolCallChunks as Record<string, unknown>) || {}).length).toBeGreaterThan(0);
+    });
 
     await act(async () => {
       await result.current.stopWorkflow();

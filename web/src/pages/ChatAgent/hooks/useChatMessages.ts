@@ -63,6 +63,7 @@ import {
 } from '../session/subagents/hydrateTaskTranscript';
 import { loadConversationHistory as replayConversationHistory } from '../session/history/replayHistory';
 import { createStreamEventProcessor, type StreamRouterDeps } from '../session/stream/processStreamEvent';
+import { createFrameQueue } from '../session/stream/frameQueue';
 import {
   acquireStreamOwnership as acquireOwnership,
   releaseStreamOwnership as releaseOwnership,
@@ -98,7 +99,17 @@ export function useChatMessages(
   const userTimezone = useHomeTimezone();
 
   // State
-  const [messages, setMessages] = useState<MessageRecord[]>([]);
+  const [messages, setMessagesState] = useState<MessageRecord[]>([]);
+  // Streamed chunks wait for the next frame (see createFrameQueue). Every
+  // other write carries them along in the same update, so it can neither
+  // overtake a chunk nor be overtaken by one.
+  const [chunkQueue] = useState(() => createFrameQueue<MessageRecord[]>(setMessagesState));
+  const setMessages = useCallback<React.Dispatch<React.SetStateAction<MessageRecord[]>>>((next) => {
+    const queued = chunkQueue.take();
+    if (queued && typeof next === 'function') setMessagesState((prev) => next(queued(prev)));
+    else setMessagesState(next);
+  }, [chunkQueue]);
+  useEffect(() => () => chunkQueue.cancel(), [chunkQueue]);
   const [threadId, setThreadId] = useState<string>(() => {
     // If threadId is provided from URL, use it; otherwise use localStorage
     if (initialThreadId) {
@@ -394,7 +405,7 @@ export function useChatMessages(
     // tracker armed would make the reload's replay SKIP the user message
     // whose optimistic bubble it just cleared (vanished user bubble).
     recentlySentTrackerRef.current.clear();
-  }, []);
+  }, [setMessages]);
   const reportBackWatch = useReportBackWatch({
     threadId,
     workspaceId,
@@ -539,6 +550,8 @@ export function useChatMessages(
     onOnboardingRelatedToolComplete,
     // setters (stable)
     setMessages,
+    queueMessages: chunkQueue.queue,
+    flushMessages: chunkQueue.flush,
     setIsLoading,
     setIsLoadingHistory,
     setHistoryLoadFailed,
@@ -2171,7 +2184,7 @@ export function useChatMessages(
       [interruptId!]: { decisions: [{ type: 'approve' }] },
     };
     resumeWithHitlResponse(hitlResponse, planMode);
-  }, [pendingInterrupt, resumeWithHitlResponse]);
+  }, [pendingInterrupt, resumeWithHitlResponse, setMessages]);
 
   const handleRejectInterrupt = useCallback(() => {
     if (!pendingInterrupt) return;
@@ -2184,7 +2197,7 @@ export function useChatMessages(
     // Store interruptId + planMode so next handleSendMessage routes as rejection feedback
     setPendingRejection({ interruptId: interruptId!, planMode: planMode! });
     setPendingInterrupt(null);
-  }, [pendingInterrupt]);
+  }, [pendingInterrupt, setMessages]);
 
   // Shared HITL collect-then-batch-resume. Parallel interrupts must be answered
   // together (one batched resume), so each handler records its own interrupt_id's
@@ -2217,7 +2230,7 @@ export function useChatMessages(
       { decisions: [{ type: 'approve', message: answer }] },
       currentPlanModeRef.current,
     );
-  }, [collectHitlResponseAndMaybeResume]);
+  }, [collectHitlResponseAndMaybeResume, setMessages]);
 
   const handleSkipQuestion = useCallback((questionId: string, interruptId: string) => {
     if (!questionId || !interruptId) return;
@@ -2231,13 +2244,13 @@ export function useChatMessages(
       { decisions: [{ type: 'reject' }] },
       currentPlanModeRef.current,
     );
-  }, [collectHitlResponseAndMaybeResume]);
+  }, [collectHitlResponseAndMaybeResume, setMessages]);
 
   // Shared helper: update a proposal's status within an AssistantMessage.
   // Used by all HITL approve/reject handlers below.
   const resolveProposal = useCallback((proposalKey: string, pid: string, status: string) => {
     setMessages((prev) => setCardStatus(prev, proposalKey, pid, status));
-  }, []);
+  }, [setMessages]);
 
   const handleApproveCreateWorkspace = useCallback(() => {
     if (!pendingInterrupt || pendingInterrupt.type !== 'create_workspace') return;
@@ -2379,7 +2392,7 @@ export function useChatMessages(
     (text: string, variant: 'info' | 'success' | 'warning' = 'info', detail?: string) => {
       setMessages((prev) => appendMessage(prev, createNotificationMessage(text, variant, detail)));
     },
-    [],
+    [setMessages],
   );
 
   // =====================================================================
@@ -2677,7 +2690,7 @@ export function useChatMessages(
   // The slot helpers reach only refs and the threadId streamFromCheckpoint
   // already tracks.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, getTurnCheckpoints, streamFromCheckpoint]);
+  }, [messages, getTurnCheckpoints, streamFromCheckpoint, setMessages]);
 
   /**
    * Regenerate an assistant response: truncate the assistant message,
@@ -2735,7 +2748,7 @@ export function useChatMessages(
     await streamFromCheckpoint(null, checkpointId, truncateIndex, turnIndex, modelOptions);
   // Same as handleEditMessage: the slot helpers reach only refs and threadId.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, getTurnCheckpoints, streamFromCheckpoint]);
+  }, [messages, getTurnCheckpoints, streamFromCheckpoint, setMessages]);
 
   /**
    * Retry the last failed turn as a new attempt on the same turn (v4 attempt

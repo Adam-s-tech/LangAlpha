@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import ActivityBlock from '../ActivityBlock';
 import type { ActivityItem } from './activityTypes';
 import { INLINE_ARTIFACT_MAP, openCardTarget } from '../charts/InlineArtifactCards';
@@ -168,35 +168,25 @@ export const MessageContentSegments = memo(function MessageContentSegments({ seg
     [onToolCallDetailClick],
   );
 
-  // Force re-render timer for recently-completed tool calls that need minimum exposure
-  const [tick, setTick] = useState(0);
-  const expiryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const nextExpiryRef = useRef<number | null>(null);
-
-  // Schedule timer for next expiry, runs after every render since nextExpiryRef
-  // is set during render, from the memoized renderBlocks below.
-  useEffect(() => {
-    if (expiryTimerRef.current) clearTimeout(expiryTimerRef.current);
-    expiryTimerRef.current = null;
-
-    if (nextExpiryRef.current !== null) {
-      const delay = Math.max(0, nextExpiryRef.current - Date.now()) + 50;
-      expiryTimerRef.current = setTimeout(() => {
-        setTick((n) => n + 1);
-      }, delay);
-    }
-
-    return () => { if (expiryTimerRef.current) clearTimeout(expiryTimerRef.current); };
-  });
+  // The clock live exposure is measured against. A recently completed row
+  // stays live for a minimum exposure and then settles on its own, with no
+  // stream event to re-render for it, so a timer advances this clock when the
+  // next row is due. It is state rather than a `Date.now()` inside the build:
+  // a cached computation only reruns for inputs it can see.
+  const [now, setNow] = useState(Date.now);
 
   const projection = useMemo(() => {
-    if (contentProjection && (contentProjection.nextExpiry === null || contentProjection.nextExpiry > Date.now())) return contentProjection;
-    return projectContent({ segments, reasoningProcesses, toolCallProcesses, isStreaming, isSubagentView, pendingToolCallChunks });
-    // The timer advances live exposure without waiting for another stream event.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contentProjection, segments, reasoningProcesses, toolCallProcesses, isStreaming, isSubagentView, pendingToolCallChunks, tick]);
+    if (contentProjection && (contentProjection.nextExpiry === null || contentProjection.nextExpiry > now)) return contentProjection;
+    return projectContent({ segments, reasoningProcesses, toolCallProcesses, isStreaming, isSubagentView, pendingToolCallChunks, now }, contentProjection);
+  }, [contentProjection, segments, reasoningProcesses, toolCallProcesses, isStreaming, isSubagentView, pendingToolCallChunks, now]);
   const { blocks: renderBlocks, preparingToolCall, nextExpiry } = projection;
-  nextExpiryRef.current = nextExpiry;
+
+  useEffect(() => {
+    if (nextExpiry === null) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, nextExpiry - Date.now()) + 50);
+    return () => clearTimeout(timer);
+    // `now` too: a tick that left the same row due retries rather than stops.
+  }, [nextExpiry, now]);
 
   // Which prose blocks are fully on screen. The typewriter trails the stream,
   // and a tool call lands the moment the model turns to it, right after the

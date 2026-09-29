@@ -79,4 +79,15 @@ describe('readConnectOutcome', () => {
       readConnectOutcome(params('mcp_error=denied&server=ibkr')),
     ).toMatchObject({ kind: 'failed', server: 'ibkr' });
   });
+
+  it('keeps a name saved before the sandbox reserved it', () => {
+    // Such a row still connects, and a return that loses its name leaves the
+    // pending marker behind.
+    for (const legacy of ['class', 'mcp_client', '__init__']) {
+      expect(readConnectOutcome(params(`mcp_connected=${legacy}`))).toEqual({
+        kind: 'connected',
+        server: legacy,
+      });
+    }
+  });
 });

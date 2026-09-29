@@ -31,6 +31,19 @@ export function invalidateWorkspaceMembership(queryClient: QueryClient): void {
 }
 
 /**
+ * Refresh after a workspace is created or duplicated. Besides membership, the
+ * new workspace starts with every account server new workspaces start without
+ * switched off, and a duplicate also copies what its source switched off,
+ * built-ins included. The Plugins scope badges read those switches off both
+ * the catalog and the built-in list.
+ */
+export function invalidateNewWorkspace(queryClient: QueryClient): void {
+  invalidateWorkspaceMembership(queryClient);
+  void queryClient.invalidateQueries({ queryKey: queryKeys.mcp.catalog() });
+  void queryClient.invalidateQueries({ queryKey: queryKeys.mcp.builtins() });
+}
+
+/**
  * Optimistically patch one workspace across every cached list. Returns the
  * snapshot so the caller can roll back on error.
  */

@@ -409,7 +409,9 @@ async def update_plugin_upload(
 
 
 @router.post("/{name}/sse-upgrades", response_model=InstallResponse)
-@handle_api_exceptions("upgrade plugin sse entries", logger)
+@handle_api_exceptions(
+    "upgrade plugin sse entries", logger, conflict_on_value_error=True
+)
 async def sse_upgrades(
     plugin: CurrentPlugin, body: SseUpgradeInput, user_id: CurrentUserId
 ) -> InstallResponse:
@@ -562,7 +564,7 @@ async def set_plugin_enabled_endpoint(
 
 
 @router.delete("/{name}", response_model=UninstallResponse)
-@handle_api_exceptions("uninstall plugin", logger)
+@handle_api_exceptions("uninstall plugin", logger, conflict_on_value_error=True)
 async def delete_plugin_endpoint(
     plugin: CurrentPlugin, user_id: CurrentUserId
 ) -> UninstallResponse:

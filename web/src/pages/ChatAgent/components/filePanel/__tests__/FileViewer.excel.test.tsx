@@ -5,6 +5,7 @@ import { FileViewer, type FileViewerProps } from '../FileViewer';
 
 // The spreadsheet viewer parses workbooks; here it only has to report the
 // focus it was handed.
+vi.mock('@/contexts/ThemeContext', () => ({ useTheme: () => ({ theme: 'dark' }) }));
 vi.mock('../../viewers/ExcelViewer', () => ({
   default: ({ focusCell, focusSeq }: { focusCell?: string | null; focusSeq?: number }) => (
     <div data-testid="excel" data-cell={focusCell ?? ''} data-seq={String(focusSeq)} />

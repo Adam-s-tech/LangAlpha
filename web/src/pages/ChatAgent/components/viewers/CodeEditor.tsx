@@ -1,6 +1,7 @@
 import React from 'react';
 import Editor, { DiffEditor } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
+import { useTheme } from '@/contexts/ThemeContext';
 import { rememberMonaco, saveViewState } from './editorModels';
 
 const EXT_TO_MONACO_LANG: Record<string, string> = {
@@ -14,13 +15,6 @@ const EXT_TO_MONACO_LANG: Record<string, string> = {
 function getLanguageFromFileName(fileName: string | undefined): string {
   const ext = (fileName || '').split('.').pop()?.toLowerCase() || '';
   return EXT_TO_MONACO_LANG[ext] || 'plaintext';
-}
-
-function getTheme(): string {
-  if (typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'light') {
-    return 'vs';
-  }
-  return 'vs-dark';
 }
 
 const EDITOR_OPTIONS: editor.IStandaloneEditorConstructionOptions = {
@@ -63,7 +57,7 @@ interface CodeEditorProps {
 
 export default function CodeEditor({ value, onChange, fileName, readOnly = false, height = '100%', diffMode = false, originalValue, editorRef, modelPath, onUndoRedoChange, onTextSelect }: CodeEditorProps) {
   const language = getLanguageFromFileName(fileName);
-  const theme = getTheme();
+  const theme = useTheme().theme === 'light' ? 'vs' : 'vs-dark';
   const showDiff = diffMode && originalValue != null;
 
   // Track DiffEditor listener disposables to prevent "TextModel got disposed" race

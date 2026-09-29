@@ -5,6 +5,8 @@ Variant providers (OAuth) carry no pricing of their own and inherit the
 parent provider's entry; region variants keep their own rates.
 """
 
+import pytest
+
 from src.llms.pricing_utils import find_model_pricing
 
 
@@ -16,6 +18,7 @@ _TIERED_OPENAI_IDS = (
     "gpt-5.6-luna",
     "gpt-6-astra",
     "gpt-6-sol",
+    "gpt-6.1-sol",
     "gpt-6-luna",
 )
 
@@ -49,9 +52,10 @@ class TestModelPricingResolution:
         assert cn["input"] != intl["input"]
         assert cn["output"] != intl["output"]
 
-    def test_sonnet_5_resolves_and_oauth_inherits(self):
-        direct = find_model_pricing("claude-sonnet-5", provider="anthropic")
-        oauth = find_model_pricing("claude-sonnet-5", provider="claude-oauth")
+    @pytest.mark.parametrize("model_id", ["claude-sonnet-5", "claude-sonnet-5-5"])
+    def test_sonnet_resolves_and_oauth_inherits(self, model_id):
+        direct = find_model_pricing(model_id, provider="anthropic")
+        oauth = find_model_pricing(model_id, provider="claude-oauth")
         assert direct is not None
         assert direct["input"] > 0 and direct["output"] > 0
         assert oauth == direct

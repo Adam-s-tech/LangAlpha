@@ -222,4 +222,17 @@ class MachineBackupMixin:
                 )
             )
         sweep = await sweep_projects(session.sandbox, targets)
-        return unswept + sweep.changed, layouts, sweep
+        moved: list[str] = []
+        if sweep.missing:
+            # The run is over, so a settle on any worker may move a folder
+            # between the read above and the sweep. It records the new name
+            # before it moves anything: a folder that left its path shows a
+            # changed row, and the mirror reads it again under the hold.
+            read = {r["workspace_id"]: r["dir_name"] for r in rows}
+            moved = [
+                r["workspace_id"]
+                for r in await get_scan_marks_for_computer(binding.computer_id)
+                if r["workspace_id"] in sweep.missing
+                and r["dir_name"] != read.get(r["workspace_id"])
+            ]
+        return unswept + sweep.changed + moved, layouts, sweep

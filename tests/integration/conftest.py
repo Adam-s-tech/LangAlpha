@@ -203,13 +203,18 @@ async def db_conn(test_db_pool):
 
 
 @pytest_asyncio.fixture
-async def patched_get_db_connection(test_db_pool):
+async def patched_get_db_connection(test_db_pool, test_db_uri):
     """Patch get_db_connection to use the test pool instead of production.
 
     This allows database module functions (workspace.py, user.py, etc.)
-    to transparently use the test database.
+    to transparently use the test database. The shared lock session opens on
+    it too, fresh per test so no lock outlives the test that took it.
     """
     from contextlib import asynccontextmanager
+
+    import psycopg
+
+    from src.server.database.session_lock import close_shared_lock_session
 
     @asynccontextmanager
     async def _test_get_db_connection(conn=None):
@@ -244,10 +249,22 @@ async def patched_get_db_connection(test_db_pool):
             targets.append(f"{_info.name}.get_db_connection")
     from contextlib import ExitStack
 
+    async def _test_session_connection():
+        return await psycopg.AsyncConnection.connect(
+            test_db_uri, autocommit=True, prepare_threshold=0
+        )
+
     with ExitStack() as stack:
         for target in targets:
             stack.enter_context(patch(target, _test_get_db_connection))
-        yield _test_get_db_connection
+        stack.enter_context(
+            patch("src.server.database.pool.open_session_connection", _test_session_connection)
+        )
+        await close_shared_lock_session()
+        try:
+            yield _test_get_db_connection
+        finally:
+            await close_shared_lock_session()
 
 
 @pytest_asyncio.fixture

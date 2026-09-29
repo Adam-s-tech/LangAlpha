@@ -1,9 +1,18 @@
-"""Release a session-level advisory lock so it never outlives its holder."""
+"""Session-level advisory locks: releases that never outlive their holder,
+and the one session every shared lock in a process is held on."""
 
 from __future__ import annotations
 
 import asyncio
+import logging
+import weakref
 from typing import Any
+
+import psycopg
+
+from src.server.database import pool
+
+logger = logging.getLogger(__name__)
 
 
 async def await_settled(task: asyncio.Future) -> Any:
@@ -26,18 +35,16 @@ async def await_settled(task: asyncio.Future) -> Any:
     return task.result()
 
 
-async def _unlock_or_close(conn, key: str) -> None:
+async def _unlock_or_close(conn, key: str, unlock: str) -> None:
     try:
         async with conn.cursor() as cur:
-            await cur.execute(
-                "SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (key,)
-            )
+            await cur.execute(f"SELECT {unlock}(hashtextextended(%s, 0))", (key,))
     except BaseException:
         await conn.close()
         raise
 
 
-async def release_session_lock(conn, key: str) -> None:
+async def release_session_lock(conn, key: str, *, shared: bool = False) -> None:
     """Release the session lock, or close the session so the lock dies with it.
 
     The release runs as its own task and is awaited until it finishes no
@@ -47,4 +54,113 @@ async def release_session_lock(conn, key: str) -> None:
     connection is closed, which the server treats as a release and the pool
     as a slot to replace.
     """
-    await await_settled(asyncio.ensure_future(_unlock_or_close(conn, key)))
+    unlock = "pg_advisory_unlock_shared" if shared else "pg_advisory_unlock"
+    await await_settled(asyncio.ensure_future(_unlock_or_close(conn, key, unlock)))
+
+
+class SharedLockBusy(Exception):
+    """An exclusive holder kept the key for the whole wait."""
+
+
+async def _try_shared(conn, key: str) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "SELECT pg_try_advisory_lock_shared(hashtextextended(%s, 0))", (key,)
+        )
+        return bool((await cur.fetchone())[0])
+
+
+class SharedLockSession:
+    """This process's shared advisory locks, all held on one session of its own.
+
+    A session lock lasts as long as its session, and a pooled connection kept
+    per holder through a slow sandbox call is a slot nothing else can use:
+    holders that each want one more for a read can take every slot between
+    them. Postgres counts a session's shared locks per key, so one connection
+    carries every holder's, each hold adding one and its release taking it
+    back. Only shared locks belong here; an exclusive one would admit every
+    task in the process at once. The session is execution context: who holds
+    what is still read from Postgres.
+    """
+
+    def __init__(self) -> None:
+        self._conn: Any = None
+        self._opening = asyncio.Lock()
+
+    async def _session(self) -> Any:
+        async with self._opening:
+            if self._conn is not None and self._conn.closed:
+                logger.warning("Shared lock session lost, and every lock held on it")
+                self._conn = None
+            if self._conn is None:
+                self._conn = await pool.open_session_connection()
+            return self._conn
+
+    async def acquire(self, key: str, *, wait_s: float, retry_s: float = 0.1) -> Any:
+        """Hold ``key`` shared, and return the session to release it on.
+
+        Polls rather than waits in Postgres: a waiting statement would hold up
+        every other holder's lock and release on the one session."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + wait_s
+        while True:
+            conn = await self._session()
+            try:
+                if await self._try(conn, key):
+                    return conn
+            except psycopg.OperationalError:
+                if not conn.closed:
+                    raise
+                # A broken session; the next attempt opens another.
+            if loop.time() >= deadline:
+                raise SharedLockBusy(key)
+            await asyncio.sleep(retry_s)
+
+    async def _try(self, conn: Any, key: str) -> bool:
+        attempt = asyncio.ensure_future(_try_shared(conn, key))
+        try:
+            return await await_settled(attempt)
+        except asyncio.CancelledError:
+            # Taken as its holder gave up: left counted, the key would stay
+            # held for as long as the session lives.
+            if not attempt.cancelled() and attempt.exception() is None and attempt.result():
+                await self.release(conn, key)
+            raise
+
+    async def release(self, conn: Any, key: str) -> None:
+        # A session since lost took the lock with it, and its replacement
+        # counts only the holds taken on it.
+        if conn.closed:
+            return
+        try:
+            await release_session_lock(conn, key, shared=True)
+        except psycopg.Error:
+            # Unconfirmed, the release closed the session, which lets go of
+            # this lock with the rest; the holder's work is already done.
+            if not conn.closed:
+                raise
+
+    async def close(self) -> None:
+        if self._conn is not None:
+            await self._conn.close()
+            self._conn = None
+
+
+# Per event loop, as a connection is: one in the server, one per test loop.
+_shared_sessions: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, SharedLockSession] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def shared_lock_session() -> SharedLockSession:
+    loop = asyncio.get_running_loop()
+    session = _shared_sessions.get(loop)
+    if session is None:
+        session = _shared_sessions[loop] = SharedLockSession()
+    return session
+
+
+async def close_shared_lock_session() -> None:
+    session = _shared_sessions.pop(asyncio.get_running_loop(), None)
+    if session is not None:
+        await session.close()

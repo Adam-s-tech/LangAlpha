@@ -873,7 +873,14 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Error closing PTC Agent checkpointer pool: {e}")
 
-    # 7. Close database pools
+    # 7. Close database pools, and the session folder holds share
+    try:
+        from src.server.database.session_lock import close_shared_lock_session
+
+        await close_shared_lock_session()
+    except Exception as e:
+        logger.warning(f"Error closing shared lock session: {e}")
+
     try:
         from src.server.database.pool import get_or_create_pool
 

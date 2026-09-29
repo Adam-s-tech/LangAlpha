@@ -12,6 +12,7 @@ import { OrderActionLink } from '@/components/orders/OrderActionLink';
 import { OrderModeBadge } from '@/components/orders/OrderModeBadge';
 import { useDirectToolVendorLabel } from '@/pages/ChatAgent/components/mcp/useDirectToolVendor';
 import { maskAccountId } from '@/pages/ChatAgent/utils/directTools';
+import { useLocale } from '@/hooks/useLocale';
 import { isDefinitiveOrderError, useOrder } from '@/hooks/useOrders';
 import { fillFigure, type OrderAttempt } from '@/pages/ChatAgent/utils/api';
 import {
@@ -42,8 +43,8 @@ function Body({
   order: OrderAttempt;
   valuesHidden: boolean;
 }) {
-  const { t, i18n } = useTranslation();
-  const locale = i18n.language;
+  const { t } = useTranslation();
+  const locale = useLocale();
   const summary = order.order;
   const none = t('orders.detail.none');
   const assetKey = summary?.asset_class
@@ -131,16 +132,16 @@ function Body({
 
       <DetailSection title={t('orders.detail.timeline')}>
         <DetailField label={t('orders.detail.created')}>
-          {formatOrderTime(order.created_at) || none}
+          {formatOrderTime(order.created_at, locale) || none}
         </DetailField>
         <DetailField label={t('orders.detail.decided')}>
-          {formatOrderTime(order.decided_at) || none}
+          {formatOrderTime(order.decided_at, locale) || none}
         </DetailField>
         <DetailField label={t('orders.detail.executed')}>
-          {formatOrderTime(order.executed_at) || none}
+          {formatOrderTime(order.executed_at, locale) || none}
         </DetailField>
         <DetailField label={t('orders.detail.completed')}>
-          {formatOrderTime(order.completed_at) || none}
+          {formatOrderTime(order.completed_at, locale) || none}
         </DetailField>
         <DetailField label={t('orders.detail.approval')}>
           {t(

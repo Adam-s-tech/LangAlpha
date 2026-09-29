@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import i18n from '@/i18n';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { MessagesSquare, ArrowUpRight, MessageSquareText, Zap } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
@@ -27,9 +28,9 @@ const BUCKET_KEY: Record<BucketKey, string> = {
   older: 'dashboard.widgets.recentThreads.bucket_older',
 };
 
-function bucketFor(date: Date): BucketKey {
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+function bucketFor(date: Date, now: number): BucketKey {
+  const today = new Date(now);
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
   const dayMs = 86_400_000;
   const t = date.getTime();
   if (t >= startOfToday) return 'today';
@@ -37,14 +38,14 @@ function bucketFor(date: Date): BucketKey {
   return 'older';
 }
 
-function formatThreadTime(date: Date, bucket: BucketKey): string {
+function formatThreadTime(date: Date, bucket: BucketKey, locale: string): string {
   if (bucket === 'today') {
-    return date.toLocaleTimeString(i18n.language, { hour: 'numeric', minute: '2-digit' });
+    return date.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
   }
   if (bucket === 'week') {
-    return date.toLocaleDateString(i18n.language, { weekday: 'short' });
+    return date.toLocaleDateString(locale, { weekday: 'short' });
   }
-  return date.toLocaleDateString(i18n.language, { month: 'short', day: 'numeric' });
+  return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
 }
 
 interface GroupedThreads {
@@ -69,12 +70,13 @@ function ThreadRow({
   instanceId: string;
 }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const title =
     thread.title ||
     ((thread as { first_query_content?: string }).first_query_content as string | undefined) ||
     t('dashboard.widgets.recentThreads.untitled');
   const updated = thread.updated_at ? new Date(thread.updated_at) : null;
-  const timeStr = updated ? formatThreadTime(updated, bucket) : '';
+  const timeStr = updated ? formatThreadTime(updated, bucket, locale) : '';
 
   return (
     <div className="row-attach-host relative">
@@ -250,6 +252,7 @@ function RecentThreadsWidget({ instance }: WidgetRenderProps<RecentThreadsConfig
   );
 
   const threads = useMemo(() => data?.threads ?? [], [data]);
+  const now = useNow();
 
   const grouped = useMemo<GroupedThreads>(() => {
     const out: GroupedThreads = { today: [], week: [], older: [] };
@@ -259,10 +262,10 @@ function RecentThreadsWidget({ instance }: WidgetRenderProps<RecentThreadsConfig
         out.older.push(thread);
         continue;
       }
-      out[bucketFor(d)].push(thread);
+      out[bucketFor(d, now)].push(thread);
     }
     return out;
-  }, [threads]);
+  }, [threads, now]);
 
   const handleOpen = (thread: Thread) => {
     navigate(`/chat/t/${thread.thread_id}`);

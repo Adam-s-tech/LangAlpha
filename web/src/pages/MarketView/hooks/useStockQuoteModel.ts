@@ -39,7 +39,7 @@ export interface StockQuoteInputs {
 /** The placeholder a quote figure prints while it has no value. */
 export const DASH = '—';
 /** The quote figures' formatter: `fixed2` takes a number, this decides what an absent one shows. */
-export const fixed2OrDash = (n: number | null | undefined): string => (n != null ? fixed2(n) : DASH);
+export const fixed2OrDash = (n: number | null | undefined, locale: string): string => (n != null ? fixed2(n, locale) : DASH);
 
 export type ChangeTone = 'positive' | 'negative' | '';
 

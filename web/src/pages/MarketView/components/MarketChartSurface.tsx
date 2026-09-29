@@ -14,7 +14,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { StockSearchHit } from '@/lib/marketUtils';
 
-import { useTranslation } from 'react-i18next';
+import { useLocale } from '@/hooks/useLocale';
 import StockHeader from './StockHeader';
 import { LegendLead, LegendStats } from './StockLegendStrip';
 import { legendLeadShapeKey } from './legendLeadShape';
@@ -73,7 +73,7 @@ function MarketChartSurfaceInner({
   variant = 'full',
 }: MarketChartSurfaceProps): React.ReactElement {
   const compact = variant === 'compact';
-  const { i18n } = useTranslation();
+  const locale = useLocale();
   const {
     prices: wsPrices,
     connectionStatus: wsStatus,
@@ -180,7 +180,7 @@ function MarketChartSurfaceInner({
   );
   // The lead re-renders on every tick; the toolbar only needs to re-measure
   // when its width can have moved.
-  const toolbarLeadKey = compact ? legendLeadShapeKey(symbol, q, i18n.language) : undefined;
+  const toolbarLeadKey = compact ? legendLeadShapeKey(symbol, q, locale) : undefined;
   const toolbarTrail = compact ? headerActions : undefined;
   const toolbarSubrow = useMemo(() => (compact ? <LegendStats quote={q} /> : undefined), [compact, q]);
 

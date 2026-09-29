@@ -1,7 +1,9 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import i18n from '@/i18n';
+import type { TFunction } from 'i18next';
 import { relativeTime } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import {
   Workflow,
   ArrowUpRight,
@@ -44,16 +46,16 @@ const CENSUS_WORDS: ReadonlyArray<[keyof AutomationCensus, string]> = [
   ['finished', 'finished'],
 ];
 
-function triggerLabel(a: Automation): string {
+function triggerLabel(a: Automation, t: TFunction): string {
   if (a.trigger_type === 'price') {
     const sym = a.trigger_config?.symbol;
     return sym
-      ? i18n.t('dashboard.widgets.automations.trigger.priceSymbol', { symbol: sym })
-      : i18n.t('dashboard.widgets.automations.trigger.price');
+      ? t('dashboard.widgets.automations.trigger.priceSymbol', { symbol: sym })
+      : t('dashboard.widgets.automations.trigger.price');
   }
-  if (a.trigger_type === 'once') return i18n.t('dashboard.widgets.automations.trigger.once');
-  if (a.cron_expression) return i18n.t('dashboard.widgets.automations.trigger.cron');
-  return i18n.t('dashboard.widgets.automations.trigger.auto');
+  if (a.trigger_type === 'once') return t('dashboard.widgets.automations.trigger.once');
+  if (a.cron_expression) return t('dashboard.widgets.automations.trigger.cron');
+  return t('dashboard.widgets.automations.trigger.auto');
 }
 
 function AutomationRow({
@@ -72,6 +74,8 @@ function AutomationRow({
   busy: boolean;
 }) {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   const { canPause, canResume, canRun, runBusy } = automationActions(automation);
 
   // The Automations list's rule, so the two never read differently; a watch
@@ -83,9 +87,9 @@ function AutomationRow({
     : row.kind === 'state'
       ? t(row.labelKey)
       : row.kind === 'next'
-        ? relativeTime(row.at)
+        ? relativeTime(row.at, locale, now)
         : row.at
-          ? t('dashboard.widgets.automations.lastRun', { when: relativeTime(row.at) })
+          ? t('dashboard.widgets.automations.lastRun', { when: relativeTime(row.at, locale, now) })
           : '';
 
   return (
@@ -117,7 +121,7 @@ function AutomationRow({
             className="text-[0.625rem] uppercase tracking-wider truncate"
             style={{ color: 'var(--color-text-tertiary)', opacity: 0.85 }}
           >
-            {triggerLabel(automation)}
+            {triggerLabel(automation, t)}
           </span>
         </span>
       </button>
@@ -254,7 +258,7 @@ function AutomationsWidget({ instance }: WidgetRenderProps<AutomationsConfig>) {
     full: () => {
       const tableRows = automations.map((a) => ({
         name: a.name || t('dashboard.widgets.automations.untitled'),
-        trigger: triggerLabel(a),
+        trigger: triggerLabel(a, t),
         state: automationState(a),
         next_run: a.next_run_at ?? '',
         last_run: a.last_run_at ?? '',

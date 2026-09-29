@@ -15,41 +15,41 @@ function onceAt(a: Automation): string | null {
 /** A zone's name for a compact line, or null when it is the reader's own:
  *  there every line would repeat it, and the line set elsewhere is the one
  *  worth reading. Sentences and the form always name the zone. */
-export function awayZoneName(tz: string | null | undefined, homeZone: string): string | null {
-  return tz && currentTimezoneName(tz) !== homeZone ? formatTimezoneName(tz) : null;
+export function awayZoneName(tz: string | null | undefined, homeZone: string, locale: string): string | null {
+  return tz && currentTimezoneName(tz) !== homeZone ? formatTimezoneName(tz, locale) : null;
 }
 
 /** The compact line under a name in a list: what makes this automation run. */
-export function scheduleLine(a: Automation, t: TFunction, homeZone: string): string {
-  if (a.trigger_type === 'price') return formatPriceTrigger(a.trigger_config);
+export function scheduleLine(a: Automation, t: TFunction, homeZone: string, locale: string): string {
+  if (a.trigger_type === 'price') return formatPriceTrigger(a.trigger_config, t);
   let line: string;
   if (a.trigger_type === 'once') {
     const at = onceAt(a);
     if (!at) return t('automation.once');
-    line = t('automation.onceAt', { when: formatDateTimeShort(at, a.timezone) });
+    line = t('automation.onceAt', { when: formatDateTimeShort(at, locale, a.timezone) });
   } else {
-    line = cronToHuman(a.cron_expression ?? '');
+    line = cronToHuman(a.cron_expression ?? '', t, locale);
   }
-  return [line, awayZoneName(a.timezone, homeZone)].filter(Boolean).join(' · ');
+  return [line, awayZoneName(a.timezone, homeZone, locale)].filter(Boolean).join(' · ');
 }
 
 /** The inspector's sentence: the schedule, then the next occurrence. */
-export function scheduleSentence(a: Automation, t: TFunction): string {
+export function scheduleSentence(a: Automation, t: TFunction, locale: string, now: number): string {
   if (a.trigger_type === 'price') {
     return t('automation.sentenceWatching', {
-      condition: formatPriceTrigger(a.trigger_config),
-      retrigger: formatRetriggerMode(a.trigger_config),
+      condition: formatPriceTrigger(a.trigger_config, t),
+      retrigger: formatRetriggerMode(a.trigger_config, t),
     });
   }
   if (a.trigger_type === 'once') {
     const at = onceAt(a);
     if (!at) return t('automation.once');
     const key = a.status === 'completed' || !a.next_run_at ? 'automation.sentenceRanOnce' : 'automation.sentenceOnce';
-    return t(key, { when: formatDateTimeShort(at, a.timezone), zone: formatTimezoneName(a.timezone) });
+    return t(key, { when: formatDateTimeShort(at, locale, a.timezone), zone: formatTimezoneName(a.timezone, locale) });
   }
   const schedule = t('automation.sentenceRecurring', {
-    schedule: cronToHuman(a.cron_expression ?? ''),
-    zone: formatTimezoneName(a.timezone),
+    schedule: cronToHuman(a.cron_expression ?? '', t, locale),
+    zone: formatTimezoneName(a.timezone, locale),
   });
   // Only a live schedule has a next run to name: a row switched off under an
   // earlier build can still hold a slot that will never fire.
@@ -57,8 +57,8 @@ export function scheduleSentence(a: Automation, t: TFunction): string {
   return t('automation.sentenceThen', {
     first: schedule,
     then: t('automation.sentenceNextRun', {
-      when: formatUpcoming(a.next_run_at, a.timezone),
-      relative: relativeTime(a.next_run_at),
+      when: formatUpcoming(a.next_run_at, locale, now, a.timezone),
+      relative: relativeTime(a.next_run_at, locale, now),
     }),
   });
 }

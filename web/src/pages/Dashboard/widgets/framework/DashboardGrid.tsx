@@ -1,6 +1,5 @@
 import { Component as ReactComponent, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import i18n from '@/i18n';
 import {
   ResponsiveGridLayout,
   useContainerWidth,
@@ -41,6 +40,21 @@ function WidgetFallback() {
   );
 }
 
+// A function component so the message follows a language switch: the boundary
+// is a class, and its parent's compiled JSX does not re-render it on one.
+function WidgetErrorFallback({ widgetType }: { widgetType: string }) {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="h-full w-full flex flex-col items-center justify-center px-3 py-2 text-center gap-1"
+      style={{ color: 'var(--color-text-tertiary)', fontSize: '0.6875rem', lineHeight: 1.4 }}
+    >
+      <span style={{ fontWeight: 500 }}>{t('dashboard.widgets.frame.errorBoundary')}</span>
+      <span style={{ opacity: 0.75 }}>{widgetType}</span>
+    </div>
+  );
+}
+
 /** Isolates one widget's render failure so a bug in, say, ChartWidget can't
  *  blank out every other widget on the dashboard. */
 class WidgetErrorBoundary extends ReactComponent<
@@ -56,15 +70,7 @@ class WidgetErrorBoundary extends ReactComponent<
   }
   override render() {
     if (this.state.error) {
-      return (
-        <div
-          className="h-full w-full flex flex-col items-center justify-center px-3 py-2 text-center gap-1"
-          style={{ color: 'var(--color-text-tertiary)', fontSize: '0.6875rem', lineHeight: 1.4 }}
-        >
-          <span style={{ fontWeight: 500 }}>{i18n.t('dashboard.widgets.frame.errorBoundary')}</span>
-          <span style={{ opacity: 0.75 }}>{this.props.widgetType}</span>
-        </div>
-      );
+      return <WidgetErrorFallback widgetType={this.props.widgetType} />;
     }
     return this.props.children;
   }

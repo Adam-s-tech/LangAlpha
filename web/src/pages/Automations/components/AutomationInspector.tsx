@@ -2,6 +2,8 @@ import React, { Fragment, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertCircle, ArrowUpRight, EyeOff, Pause, Pencil, Play, Trash2, Zap } from 'lucide-react';
 import { HeaderButton, ListSkeleton } from '@/components/mcp/McpPrimitives';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { cn } from '@/lib/utils';
 import type { Automation, AutomationExecution } from '@/types/automation';
 import type { ErrorLinkSpec } from '@/utils/rateLimitError';
@@ -49,6 +51,8 @@ export default function AutomationInspector({
   onDelete,
 }: AutomationInspectorProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   const openThread = useOpenThread();
   const { pause, resume, trigger, skip, dismiss, busy } = useAutomationMutations();
   const { executions, loading } = useExecutions(a.automation_id);
@@ -91,11 +95,11 @@ export default function AutomationInspector({
       </div>
       <h2 className="title-font automation-inspector-title">{a.name}</h2>
       {a.description && <p className="automation-inspector-desc">{a.description}</p>}
-      <p className="automation-inspector-schedule">{scheduleSentence(a, t)}</p>
+      <p className="automation-inspector-schedule">{scheduleSentence(a, t, locale, now)}</p>
 
       {reading?.reading && (
         <div className="automation-inspector-meter">
-          <div className="automation-mono automation-inspector-reading mb-1">{distanceLabel(reading.reading, t)}</div>
+          <div className="automation-mono automation-inspector-reading mb-1">{distanceLabel(reading.reading, t, locale)}</div>
           <PriceMeter reading={reading.reading} symbol={reading.symbol} />
         </div>
       )}
@@ -204,7 +208,7 @@ export default function AutomationInspector({
           <dt>{t('automation.detailFailures')}</dt>
           <dd>{t('automation.failuresOf', { count: a.failure_count, max: a.max_failures })}</dd>
           <dt>{t('automation.detailCreated')}</dt>
-          <dd>{formatDateTimeShort(a.created_at)}</dd>
+          <dd>{formatDateTimeShort(a.created_at, locale)}</dd>
         </dl>
       </section>
     </article>
@@ -242,9 +246,10 @@ function RunCard({
   onSkip: () => void;
 }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const view = describeRun(e);
-  const meta = [t(view.ui.labelKey), formatDateTimeShort(e.started_at ?? e.scheduled_at)];
-  if (view.showDuration) meta.push(formatDuration(e.started_at, e.completed_at));
+  const meta = [t(view.ui.labelKey), formatDateTimeShort(e.started_at ?? e.scheduled_at, locale)];
+  if (view.showDuration) meta.push(formatDuration(e.started_at, e.completed_at, t));
   return (
     <div className="automation-report">
       <RunReport
@@ -274,6 +279,7 @@ function RunHistory({
   onOpen: (threadId: string | null) => void;
 }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   return (
     <div className="automation-history-scroll">
       <table className="automation-history">
@@ -310,10 +316,10 @@ function RunHistory({
                       aria-current={shown ? 'true' : undefined}
                       onClick={() => onOpenRun(e.automation_execution_id)}
                     >
-                      {formatDateTimeShort(e.started_at ?? e.scheduled_at)}
+                      {formatDateTimeShort(e.started_at ?? e.scheduled_at, locale)}
                     </button>
                   </td>
-                  <td className="automation-mono">{showDuration ? formatDuration(e.started_at, e.completed_at) : ''}</td>
+                  <td className="automation-mono">{showDuration ? formatDuration(e.started_at, e.completed_at, t) : ''}</td>
                   <td>
                     {(e.delivery_result ?? []).map((d) => (
                       <span key={d.method} className="mr-2 inline-flex items-center gap-1">

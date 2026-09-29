@@ -103,7 +103,7 @@ export function FileContextMenu({
       {canDownload && item(
         'download',
         <Download {...ICON} />,
-        downloadLabel(downloadState, t('filePanel.download')),
+        downloadLabel(downloadState, t('filePanel.download'), t),
         downloadState !== 'idle',
       )}
       {canDownload && selectedCount > 1

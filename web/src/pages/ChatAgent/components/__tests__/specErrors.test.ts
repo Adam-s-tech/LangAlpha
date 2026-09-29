@@ -54,7 +54,7 @@ describe('specErrorFromOutcome', () => {
     const files = [{ path: 'data/ticks.parquet', reason: 'too_large' as const, size: 6_549_825_126 }];
     const named = specErrorFromOutcome(failed('backup_incomplete', 'x', files), t);
     expect(named.message).toMatch(/these files could not be backed up/);
-    expect(specErrorFiles(named.files, t)).toEqual([
+    expect(specErrorFiles(named.files, t, 'en-US')).toEqual([
       'data/ticks.parquet: Too large to back up here (6.1 GB). Move or split it.',
     ]);
     const unnamed = specErrorFromOutcome(failed('backup_incomplete'), t);

@@ -54,6 +54,7 @@ import { createValueStore, type ValueStore } from '@/lib/valueStore';
 import { useMarketDataWSContext } from '@/pages/MarketView/contexts/MarketDataWSContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { createFormatter, createDateFormatter } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import type { WidgetRenderProps, WidgetSettingsProps } from '../types';
 import { useWidgetContextExport } from '../framework/contextSnapshot';
 import {
@@ -121,16 +122,16 @@ type Bar = {
 // Hover timestamps are stored as venue-wall-clock-as-UTC (same 'Z' trick the
 // rest of the chart uses); the formatters are pinned to timeZone: 'UTC' so the
 // read reflects market-local values, while month/day names follow the locale.
-function formatHoverTime(timeSec: number, daily: boolean): string {
+function formatHoverTime(timeSec: number, daily: boolean, locale: string): string {
   const d = new Date(timeSec * 1000);
-  return daily ? fmtHoverDay(d) : fmtHoverIntraday(d);
+  return daily ? fmtHoverDay(d, locale) : fmtHoverIntraday(d, locale);
 }
 
-function formatHoverVolume(v: number): string {
+function formatHoverVolume(v: number, locale: string): string {
   // Round-only for sub-1K values matches the prior `String(Math.round(v))`
   // shape (no decimals on small volumes); compact format kicks in above.
-  if (v < 1e3) return fmtVolumeRound(v);
-  return fmtVolumeCompact(v);
+  if (v < 1e3) return fmtVolumeRound(v, locale);
+  return fmtVolumeCompact(v, locale);
 }
 
 type HoverBar =
@@ -138,8 +139,7 @@ type HoverBar =
   | null;
 
 // Subscribes to the hover store so per-mousemove crosshair updates re-render
-// only this strip, never the widget that owns the chart. useTranslation is
-// required — the fmt*/fmtHover* formatters are locale-bound.
+// only this strip, never the widget that owns the chart.
 const HoverReadout = memo(function HoverReadout({
   store,
   daily,
@@ -147,7 +147,7 @@ const HoverReadout = memo(function HoverReadout({
   store: ValueStore<HoverBar>;
   daily: boolean;
 }) {
-  useTranslation();
+  const locale = useLocale();
   const hover = useSyncExternalStore(store.subscribe, store.get);
   if (!hover) return null;
   return (
@@ -156,27 +156,27 @@ const HoverReadout = memo(function HoverReadout({
       style={{ color: 'var(--color-text-tertiary)' }}
     >
       <span style={{ color: 'var(--color-text-secondary)' }}>
-        {formatHoverTime(hover.time, daily)}
+        {formatHoverTime(hover.time, daily, locale)}
       </span>
       {hover.open != null && hover.high != null && hover.low != null && (
         <>
           <span>
-            O <span style={{ color: 'var(--color-text-primary)' }}>{fmt2(hover.open)}</span>
+            O <span style={{ color: 'var(--color-text-primary)' }}>{fmt2(hover.open, locale)}</span>
           </span>
           <span>
-            H <span style={{ color: 'var(--color-text-primary)' }}>{fmt2(hover.high)}</span>
+            H <span style={{ color: 'var(--color-text-primary)' }}>{fmt2(hover.high, locale)}</span>
           </span>
           <span>
-            L <span style={{ color: 'var(--color-text-primary)' }}>{fmt2(hover.low)}</span>
+            L <span style={{ color: 'var(--color-text-primary)' }}>{fmt2(hover.low, locale)}</span>
           </span>
         </>
       )}
       <span>
-        C <span style={{ color: 'var(--color-text-primary)' }}>{fmt2(hover.close)}</span>
+        C <span style={{ color: 'var(--color-text-primary)' }}>{fmt2(hover.close, locale)}</span>
       </span>
       {hover.volume != null && hover.volume > 0 && (
         <span>
-          V <span style={{ color: 'var(--color-text-primary)' }}>{formatHoverVolume(hover.volume)}</span>
+          V <span style={{ color: 'var(--color-text-primary)' }}>{formatHoverVolume(hover.volume, locale)}</span>
         </span>
       )}
     </div>
@@ -197,6 +197,7 @@ function etDateOfBar(timeSec: number): string {
 
 function ChartWidget({ instance, updateConfig }: WidgetRenderProps<ChartConfig>) {
   const { t } = useTranslation();
+  const locale = useLocale();
   // Merge stored config onto the default, then sanitize the interval: if a
   // persisted dashboard pref has a legacy visible-range key (e.g. '3M') from
   // before the bar-interval refactor, silently fall back to the default so
@@ -1200,13 +1201,13 @@ function ChartWidget({ instance, updateConfig }: WidgetRenderProps<ChartConfig>)
                   className="text-sm tabular-nums"
                   style={{ color: 'var(--color-text-primary)' }}
                 >
-                  {currencySymbol(displayCurrency.code)}{fmt2(headerLast)}
+                  {currencySymbol(displayCurrency.code)}{fmt2(headerLast, locale)}
                 </span>
               )}
             </div>
           )}
           <div className="text-[0.6875rem] tabular-nums" style={{ color: changeColor }}>
-            {positive ? '+' : ''}{fmt2(change)} ({positive ? '+' : ''}{fmt2(pct)}%)
+            {positive ? '+' : ''}{fmt2(change, locale)} ({positive ? '+' : ''}{fmt2(pct, locale)}%)
           </div>
           {editingSymbol && symbolDraft.trim() && (
             <div

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useLocale } from '@/hooks/useLocale';
 import { AnimatePresence, motion } from '@/lib/framer';
 import { Wallet } from 'lucide-react';
 import { useDashboardContext } from '../framework/DashboardDataContext';
@@ -59,6 +60,7 @@ function PortfolioWatchlistWidget({
   updateConfig,
 }: WidgetRenderProps<PortfolioWatchlistConfig>) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const {
     portfolio,
     portfolioHandlers,
@@ -95,7 +97,7 @@ function PortfolioWatchlistWidget({
       }
       const rows = portfolio.rows.map(portfolioRowToQuote);
       const summary = portfolioSummary(portfolio.rows);
-      const navLine = formatPortfolioNavMarkdownLine(summary);
+      const navLine = formatPortfolioNavMarkdownLine(summary, locale);
       const lines: string[] = [];
       if (navLine) lines.push(navLine, '');
       lines.push(serializeQuoteRowsToMarkdown(rows));

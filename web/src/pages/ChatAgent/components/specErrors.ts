@@ -107,6 +107,6 @@ export function specErrorFromOutcome(change: ComputerSpecChange, t: Translate): 
 }
 
 /** One line per file: its path and why the backup could not take it. */
-export function specErrorFiles(files: SpecError['files'], t: Translate): string[] {
-  return (files ?? []).map((f) => `${shownPath(f.path)}: ${unsavedReasonLabel(t, f)}`);
+export function specErrorFiles(files: SpecError['files'], t: Translate, locale: string): string[] {
+  return (files ?? []).map((f) => `${shownPath(f.path)}: ${unsavedReasonLabel(t, f, locale)}`);
 }

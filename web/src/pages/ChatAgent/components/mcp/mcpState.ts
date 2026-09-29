@@ -292,13 +292,13 @@ export const PROBE_KICK_WINDOW_MS = 45_000;
  * with no verdict -- the copy that used to sit there said "checking" for the
  * life of the tab and never changed its mind.
  *
- * Read at render rather than off a timer: while the window is open the catalog
- * poll re-renders the list every few seconds, and it is the only span in which
- * this answer can change.
+ * `now` is the caller's clock (`useNow`): the answer changes when the window
+ * closes, and a poll that returns the same rows brings no new input to notice
+ * it by.
  */
 export function probeStillLanding(
   server: Pick<CatalogServer, 'enabled' | 'transport' | 'probe' | 'probe_kicked_at'>,
-  now: number = Date.now(),
+  now: number,
 ): boolean {
   // `http` is the whole probeable set (the host dials streamable HTTP, so
   // stdio and sse rows are never kicked), a disabled row is dialled by nothing

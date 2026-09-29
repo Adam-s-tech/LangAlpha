@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from '@/lib/framer';
 import { Newspaper, Clock, Search, X } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
+import { useNow } from '@/hooks/useNow';
 import { useDashboardContext } from '../framework/DashboardDataContext';
 import { registerWidget } from '../framework/WidgetRegistry';
 import { NewsFeedConfigSchema } from '../framework/configSchemas';
@@ -56,9 +57,8 @@ interface NewsItem {
   sentiments?: NewsSentimentItem[] | null;
 }
 
-function getDateRangeCutoff(key: DateRangeKey): number {
+function getDateRangeCutoff(key: DateRangeKey, now: number): number {
   if (key === 'all') return 0;
-  const now = Date.now();
   switch (key) {
     case '1h': return now - 3600 * 1000;
     case '6h': return now - 6 * 3600 * 1000;
@@ -181,6 +181,7 @@ function NewsFeedWidget({ instance, updateConfig }: WidgetRenderProps<NewsFeedCo
   const [tickerFilter, setTickerFilter] = useState('');
   const [dateRange, setDateRange] = useState<DateRangeKey>('all');
   const [sourceFilter, setSourceFilter] = useState('all');
+  const now = useNow();
 
   const sources: Record<NewsFeedSource, { items: NewsItem[]; loading: boolean }> = {
     top: { items: dashboard.curatedItems as NewsItem[], loading: dashboard.curatedLoading },
@@ -244,7 +245,7 @@ function NewsFeedWidget({ instance, updateConfig }: WidgetRenderProps<NewsFeedCo
       result = result.filter((item) => item.source === sourceFilter);
     }
     if (dateRange !== 'all') {
-      const cutoff = getDateRangeCutoff(dateRange);
+      const cutoff = getDateRangeCutoff(dateRange, now);
       result = result.filter((item) => {
         // Filter on the raw ISO timestamp — not the "24m ago" display string,
         // whose unit format ("24m" vs "24 min") and wording vary by source and
@@ -254,7 +255,7 @@ function NewsFeedWidget({ instance, updateConfig }: WidgetRenderProps<NewsFeedCo
       });
     }
     return result;
-  }, [items, tickerFilter, sourceFilter, dateRange]);
+  }, [items, tickerFilter, sourceFilter, dateRange, now]);
 
   // Snapshot exporter: full = visible filtered list, rows = single headline.
   useWidgetContextExport(instance.id, {

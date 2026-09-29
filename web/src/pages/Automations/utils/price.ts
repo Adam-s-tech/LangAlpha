@@ -1,5 +1,4 @@
 import type { TFunction } from 'i18next';
-import i18n from '@/i18n';
 import { fixed2 } from '@/lib/format';
 import type { PriceTriggerConfig } from '@/types/automation';
 
@@ -40,35 +39,35 @@ export function isPriceTriggerConfig(v: unknown): v is PriceTriggerConfig {
   );
 }
 
-export function formatPriceTrigger(triggerConfig: PriceTriggerConfig | null | undefined): string {
-  if (!triggerConfig || !isPriceTriggerConfig(triggerConfig)) return i18n.t('automation.price.alert');
+export function formatPriceTrigger(triggerConfig: PriceTriggerConfig | null | undefined, t: TFunction): string {
+  if (!triggerConfig || !isPriceTriggerConfig(triggerConfig)) return t('automation.price.alert');
   const symbol = triggerConfig.symbol || '???';
   const condition = triggerConfig.conditions?.[0];
-  if (!condition) return i18n.t('automation.price.symbolAlert', { symbol });
+  if (!condition) return t('automation.price.symbolAlert', { symbol });
   const value = Number(condition.value).toFixed(2);
   switch (condition.type) {
     case 'price_above':
-      return i18n.t('automation.price.above', { symbol, price: `$${value}` });
+      return t('automation.price.above', { symbol, price: `$${value}` });
     case 'price_below':
-      return i18n.t('automation.price.below', { symbol, price: `$${value}` });
+      return t('automation.price.below', { symbol, price: `$${value}` });
     case 'pct_change_above':
     case 'pct_change_below':
-      return i18n.t(condition.reference === 'day_open' ? 'automation.price.moveFromOpen' : 'automation.price.moveFromClose', {
+      return t(condition.reference === 'day_open' ? 'automation.price.moveFromOpen' : 'automation.price.moveFromClose', {
         symbol,
         arrow: condition.type === 'pct_change_above' ? '\u2191' : '\u2193',
         pct: value,
       });
     default:
-      return i18n.t('automation.price.symbolAlert', { symbol });
+      return t('automation.price.symbolAlert', { symbol });
   }
 }
 
-export function formatRetriggerMode(triggerConfig: PriceTriggerConfig | null | undefined): string {
+export function formatRetriggerMode(triggerConfig: PriceTriggerConfig | null | undefined, t: TFunction): string {
   const retrigger = triggerConfig?.retrigger;
-  if (retrigger?.mode !== 'recurring') return i18n.t('automation.retriggerOneShot');
-  if (!retrigger.cooldown_seconds) return i18n.t('automation.price.recurringDaily');
+  if (retrigger?.mode !== 'recurring') return t('automation.retriggerOneShot');
+  if (!retrigger.cooldown_seconds) return t('automation.price.recurringDaily');
   const hours = Math.round(retrigger.cooldown_seconds / 3600);
-  return hours > 0 ? i18n.t('automation.price.recurringEvery', { hours }) : i18n.t('automation.retriggerRecurring');
+  return hours > 0 ? t('automation.price.recurringEvery', { hours }) : t('automation.retriggerRecurring');
 }
 
 // ── Live distance to the trigger ───────────────────────────
@@ -191,11 +190,11 @@ export function meterReading(
 }
 
 /** The words for how far a watched value still has to go. */
-export function distanceLabel(reading: MeterReading | null, t: TFunction): string {
+export function distanceLabel(reading: MeterReading | null, t: TFunction, locale: string): string {
   if (!reading) return '';
   if (reading.remaining <= 0) return t('automation.conditionMet');
   if (reading.unit === 'price' && reading.remainingPct != null) {
-    return t('automation.awayPct', { value: fixed2(reading.remainingPct) });
+    return t('automation.awayPct', { value: fixed2(reading.remainingPct, locale) });
   }
-  return t('automation.awayPts', { value: fixed2(reading.remaining) });
+  return t('automation.awayPts', { value: fixed2(reading.remaining, locale) });
 }

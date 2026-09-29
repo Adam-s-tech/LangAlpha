@@ -24,6 +24,7 @@ import {
 import { provenanceDisplayKey, countDedupedSources, type ProvenanceRecord } from '@/types/chat';
 import type { ProvenanceSourceType } from '@/types/sse';
 import { formatBytes } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import { AnimatedTabs } from '@/components/ui/animated-tabs';
 import { workspaceRelativePath } from '@/pages/ChatAgent/utils/agentPaths';
 import { isTaskAgentId } from '@/pages/ChatAgent/utils/agentId';
@@ -925,6 +926,7 @@ function SourceDetailDialog({
  *  owned by the dialog header, so it isn't repeated here. */
 function FingerprintRows({ record }: { record: ProvenanceRecord }): React.ReactElement {
   const { t } = useTranslation();
+  const locale = useLocale();
   const meta: { label: string; value: string; mono?: boolean; icon?: React.ReactNode }[] = [];
   if (record.provider) meta.push({ label: t('chat.sources.fingerprint.provider'), value: record.provider });
   if (record.agent) meta.push({ label: t('chat.sources.fingerprint.agent'), value: record.agent, mono: true });
@@ -936,7 +938,7 @@ function FingerprintRows({ record }: { record: ProvenanceRecord }): React.ReactE
       mono: true,
       icon: <Fingerprint className="h-3 w-3 shrink-0" style={TERTIARY} />,
     });
-  if (record.result_size != null) meta.push({ label: t('chat.sources.fingerprint.size'), value: formatBytes(record.result_size), mono: true });
+  if (record.result_size != null) meta.push({ label: t('chat.sources.fingerprint.size'), value: formatBytes(record.result_size, locale), mono: true });
 
   const argEntries = record.args ? Object.entries(record.args) : [];
 

@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router';
 import { getExtendedHoursInfo } from '@/lib/marketUtils';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { createFormatter } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem } from '@/components/ui/context-menu';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import {
@@ -62,10 +63,11 @@ interface WatchlistItemProps {
 
 function WatchlistItem({ item, index, onDelete, marketStatus, isMobile }: WatchlistItemProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const navigate = useNavigate();
   const hasQuote = item.quoteAvailable !== false;
   const pos = hasQuote ? item.isPositive ?? true : true;
-  const pctStr = hasQuote ? (pos ? '+' : '') + fmt2(Number(item.changePercent)) + '%' : 'N/A';
+  const pctStr = hasQuote ? (pos ? '+' : '') + fmt2(Number(item.changePercent), locale) + '%' : 'N/A';
   const hasId = !!item.watchlist_item_id;
 
   // Extended hours: show when not regular session and data available
@@ -101,7 +103,7 @@ function WatchlistItem({ item, index, onDelete, marketStatus, isMobile }: Watchl
         <div className="text-right">
           <div className="text-sm font-medium dashboard-mono" style={{ color: 'var(--color-text-primary)' }}>
             {hasQuote
-              ? fmt2(Number(extType && item.previousClose != null ? item.previousClose : item.price))
+              ? fmt2(Number(extType && item.previousClose != null ? item.previousClose : item.price), locale)
               : 'N/A'}
           </div>
           <div
@@ -112,7 +114,7 @@ function WatchlistItem({ item, index, onDelete, marketStatus, isMobile }: Watchl
                 : 'var(--color-text-secondary)',
             }}
           >
-            {hasQuote ? (pos ? '+' : '') + fmt2(Number(item.change)) : 'N/A'}
+            {hasQuote ? (pos ? '+' : '') + fmt2(Number(item.change), locale) : 'N/A'}
           </div>
         </div>
 
@@ -133,7 +135,7 @@ function WatchlistItem({ item, index, onDelete, marketStatus, isMobile }: Watchl
           {hasQuote && extType && extPct != null && (
             <div className="text-[0.625rem] mt-0.5 text-center flex items-center justify-center gap-0.5" style={{ color: extColor }}>
               {extType === 'pre' ? <Sunrise size={10} /> : <Sunset size={10} />}
-              {fmt2(Number(item.price))} {extPct >= 0 ? '+' : ''}{fmt2(extPct)}%
+              {fmt2(Number(item.price), locale)} {extPct >= 0 ? '+' : ''}{fmt2(extPct, locale)}%
             </div>
           )}
         </div>
@@ -191,14 +193,15 @@ interface PortfolioItemProps {
 }
 
 function PortfolioItem({ item, index, onEdit, onDelete, valuesHidden, marketStatus, isMobile }: PortfolioItemProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
+  const locale = useLocale();
   const navigate = useNavigate();
   const hasQuote = item.quoteAvailable !== false;
   const pos = hasQuote ? item.isPositive ?? true : true;
   const currency = normalizePortfolioCurrency(item.currency);
   const plStr =
     hasQuote && item.unrealizedPlPercent != null
-      ? (pos ? '+' : '') + fmt2(Number(item.unrealizedPlPercent)) + '%'
+      ? (pos ? '+' : '') + fmt2(Number(item.unrealizedPlPercent), locale) + '%'
       : 'N/A';
   const hasId = !!item.user_portfolio_id;
 
@@ -207,14 +210,14 @@ function PortfolioItem({ item, index, onEdit, onDelete, valuesHidden, marketStat
   const extColor = extType === 'pre' ? '#fbbf24' : '#3b82f6';
   const displayMarketValue =
     hasQuote && item.marketValue != null
-      ? formatPortfolioMoney(item.marketValue, currency, i18n.language)
+      ? formatPortfolioMoney(item.marketValue, currency, locale)
       : 'N/A';
   const displayPrice =
     hasQuote
       ? formatPortfolioMoney(
           Number(extType && item.previousClose != null ? item.previousClose : item.price),
           currency,
-          i18n.language,
+          locale,
         )
       : 'N/A';
 
@@ -244,7 +247,7 @@ function PortfolioItem({ item, index, onEdit, onDelete, valuesHidden, marketStat
           {valuesHidden
             ? t('dashboard.portfolioWatchlistCard.sharesHidden')
             : item.quantity != null
-              ? t('dashboard.portfolioWatchlistCard.shares', { qty: fmtInt(Number(item.quantity)) })
+              ? t('dashboard.portfolioWatchlistCard.shares', { qty: fmtInt(Number(item.quantity), locale) })
               : ''}
         </div>
       </div>
@@ -280,7 +283,7 @@ function PortfolioItem({ item, index, onEdit, onDelete, valuesHidden, marketStat
           {hasQuote && extType && extPct != null && (
             <div className="text-[0.625rem] mt-0.5 text-center flex items-center justify-center gap-0.5" style={{ color: extColor }}>
               {extType === 'pre' ? <Sunrise size={10} /> : <Sunset size={10} />}
-              {formatPortfolioMoney(item.price, currency, i18n.language)} {extPct >= 0 ? '+' : ''}{fmt2(extPct)}%
+              {formatPortfolioMoney(item.price, currency, locale)} {extPct >= 0 ? '+' : ''}{fmt2(extPct, locale)}%
             </div>
           )}
         </div>
@@ -394,7 +397,8 @@ function PortfolioWatchlistCard({
   onPortfolioEdit,
   marketStatus,
 }: PortfolioWatchlistCardProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
+  const locale = useLocale();
   const isMobile = useIsMobile();
   const [activeTab, setActiveTabRaw] = useState<PWTabKey>(() => (localStorage.getItem('portfolio_active_tab') as PWTabKey) || 'watchlist');
   const [valuesHidden, setValuesHiddenRaw] = useState(() => localStorage.getItem('portfolio_values_hidden') === 'true');
@@ -540,7 +544,7 @@ function PortfolioWatchlistCard({
                       : visibleSummaries.length > 0
                         ? visibleSummaries.map((summary) => (
                             <div key={summary.currency}>
-                              {formatPortfolioMoney(summary.totalValue, summary.currency, i18n.language)}
+                              {formatPortfolioMoney(summary.totalValue, summary.currency, locale)}
                             </div>
                           ))
                         : '--'}
@@ -560,7 +564,7 @@ function PortfolioWatchlistCard({
                         >
                           {summary.isPlPositive ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
                           {summary.isPlPositive ? '+' : '-'}
-                          {formatPortfolioMoney(Math.abs(summary.totalPl), summary.currency, i18n.language)} ({fmt1(Math.abs(summary.totalPlPct))}%)
+                          {formatPortfolioMoney(Math.abs(summary.totalPl), summary.currency, locale)} ({fmt1(Math.abs(summary.totalPlPct), locale)}%)
                         </div>
                       ))}
                     </div>

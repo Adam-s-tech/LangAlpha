@@ -1,4 +1,4 @@
-import i18n from '@/i18n';
+import type { TFunction } from 'i18next';
 import { MORNING } from './timeOfDay';
 import { formatTimeOfDay, weekdayNames } from './time';
 
@@ -83,50 +83,49 @@ export function parseSchedule(expression: string): Schedule {
   return dayOfMonth !== null && dow === '*' ? { kind: 'monthly', hour, minute, dayOfMonth } : custom;
 }
 
-function dayList(days: boolean[]): string {
-  if (sameDays(days, MON_TO_FRI)) return i18n.t('automation.cron.weekdays');
-  if (sameDays(days, WEEKEND)) return i18n.t('automation.cron.weekends');
-  return weekdayNames()
+function dayList(days: boolean[], t: TFunction, locale: string): string {
+  if (sameDays(days, MON_TO_FRI)) return t('automation.cron.weekdays');
+  if (sameDays(days, WEEKEND)) return t('automation.cron.weekends');
+  return weekdayNames(locale)
     .filter((_, i) => days[i])
-    .join(i18n.t('automation.cron.daySeparator'));
+    .join(t('automation.cron.daySeparator'));
 }
 
-/** A schedule in words, in the reader's language and clock: a component that
- *  renders it must also call useTranslation() so a locale switch re-renders it. */
-export function describeSchedule(s: Schedule): string {
+/** A schedule in words, in the reader's language and clock. */
+export function describeSchedule(s: Schedule, t: TFunction, locale: string): string {
   switch (s.kind) {
     case 'minutes':
       return s.interval === 1
-        ? i18n.t('automation.cron.everyMinute')
-        : i18n.t('automation.cron.everyMinutes', { n: s.interval });
+        ? t('automation.cron.everyMinute')
+        : t('automation.cron.everyMinutes', { n: s.interval });
     case 'hours':
       return s.interval === 1
-        ? i18n.t('automation.cron.everyHour')
-        : i18n.t('automation.cron.everyHours', { n: s.interval });
+        ? t('automation.cron.everyHour')
+        : t('automation.cron.everyHours', { n: s.interval });
     case 'hourly':
       return s.minute === 0
-        ? i18n.t('automation.cron.everyHour')
-        : i18n.t('automation.cron.hourlyAt', { minute: String(s.minute).padStart(2, '0'), m: s.minute });
+        ? t('automation.cron.everyHour')
+        : t('automation.cron.hourlyAt', { minute: String(s.minute).padStart(2, '0'), m: s.minute });
     case 'days': {
-      const time = formatTimeOfDay(s.hour, s.minute);
+      const time = formatTimeOfDay(s.hour, s.minute, locale);
       return s.days.every(Boolean)
-        ? i18n.t('automation.cron.daily', { time })
-        : i18n.t('automation.cron.weekly', { time, days: dayList(s.days) });
+        ? t('automation.cron.daily', { time })
+        : t('automation.cron.weekly', { time, days: dayList(s.days, t, locale) });
     }
     // The same "At time, when" shape as a weekly schedule, short enough for a list line.
     case 'monthly': {
-      const time = formatTimeOfDay(s.hour, s.minute);
+      const time = formatTimeOfDay(s.hour, s.minute, locale);
       return s.dayOfMonth === 'L'
-        ? i18n.t('automation.cron.monthEnd', { time })
-        : i18n.t('automation.cron.monthly', { time, count: s.dayOfMonth, ordinal: true });
+        ? t('automation.cron.monthEnd', { time })
+        : t('automation.cron.monthly', { time, count: s.dayOfMonth, ordinal: true });
     }
     case 'custom':
       return s.raw;
   }
 }
 
-export function cronToHuman(expression: string): string {
-  return describeSchedule(parseSchedule(expression));
+export function cronToHuman(expression: string, t: TFunction, locale: string): string {
+  return describeSchedule(parseSchedule(expression), t, locale);
 }
 
 /** The days to light for a schedule: a sub-daily one runs every day, and a

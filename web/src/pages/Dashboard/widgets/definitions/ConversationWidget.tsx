@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import i18n from '@/i18n';
 import { relativeTime } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { MessageSquareText, MessagesSquare } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
@@ -21,8 +22,8 @@ import './ConversationWidget.css';
 
 type ConversationConfig = Record<string, never>;
 
-function greetingKey(): string {
-  const hour = new Date().getHours();
+function greetingKey(now: number): string {
+  const hour = new Date(now).getHours();
   if (hour < 5) return 'dashboard.widgets.conversation.greetingLate';
   if (hour < 12) return 'dashboard.widgets.conversation.greetingMorning';
   if (hour < 17) return 'dashboard.widgets.conversation.greetingAfternoon';
@@ -30,14 +31,14 @@ function greetingKey(): string {
   return 'dashboard.widgets.conversation.greetingStillAtIt';
 }
 
-function formatDateStrip(): string {
-  const now = new Date();
-  const date = now.toLocaleDateString(i18n.language, {
+function formatDateStrip(now: number, locale: string): string {
+  const d = new Date(now);
+  const date = d.toLocaleDateString(locale, {
     weekday: 'long',
     month: 'short',
     day: 'numeric',
   });
-  const time = now.toLocaleTimeString(i18n.language, {
+  const time = d.toLocaleTimeString(locale, {
     hour: 'numeric',
     minute: '2-digit',
   });
@@ -46,6 +47,8 @@ function formatDateStrip(): string {
 
 function ConversationWidget({ instance }: WidgetRenderProps<ConversationConfig>) {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   const navigate = useNavigate();
 
   const {
@@ -60,13 +63,11 @@ function ConversationWidget({ instance }: WidgetRenderProps<ConversationConfig>)
 
   const { user } = useUser();
   const greeting = useMemo(() => {
-    const tod = t(greetingKey());
+    const tod = t(greetingKey(now));
     const first = (user?.name || '').trim().split(/\s+/)[0];
     return first ? `${tod}, ${first}.` : `${tod}.`;
-  }, [user?.name, t]);
-  // Computed per render so the strip updates if the dashboard sits open
-  // across midnight. Empty-deps memo would freeze it at mount time.
-  const dateStrip = formatDateStrip();
+  }, [user?.name, t, now]);
+  const dateStrip = formatDateStrip(now, locale);
 
   // Recent threads for the Resume strip — peek at the first workspace.
   // Fetch 100 to match the shared React Query cache key used by useChatInput,
@@ -187,7 +188,7 @@ function ConversationWidget({ instance }: WidgetRenderProps<ConversationConfig>)
                     {thread.title || t('dashboard.widgets.conversation.untitledThread')}
                   </span>
                   <span className="conversation-widget__chip-age">
-                    {relativeTime(thread.updated_at)}
+                    {relativeTime(thread.updated_at, locale, now)}
                   </span>
                 </button>
               ))}

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import i18n from '@/i18n';
 import {
   automationToFormState,
   formStateToPayload,
@@ -12,6 +13,8 @@ import {
 import { applyTemplate, type TemplateId } from '../templates';
 import { timeIn } from '../moments';
 import type { Automation } from '@/types/automation';
+
+const en = i18n.getFixedT('en-US');
 
 function makeAutomation(overrides: Partial<Automation> = {}): Automation {
   return {
@@ -294,11 +297,11 @@ describe('validateForm', () => {
   it('refuses an instruction whose {symbol} nothing fills', () => {
     const unfilled = { messageKey: 'automation.instructionSymbolUnfilled', section: 'instruction' };
     // The earnings template runs once, and a one-time trigger has no symbol.
-    const earnings = { ...applyTemplate('earnings_watch'), workspace_id: 'ws-1', next_run_at: '2026-10-28T13:00:00Z' };
+    const earnings = { ...applyTemplate('earnings_watch', en), workspace_id: 'ws-1', next_run_at: '2026-10-28T13:00:00Z' };
     expect(validateForm(earnings, now)).toEqual(unfilled);
     expect(validateForm({ ...earnings, instruction: earnings.instruction.replace('{symbol}', 'NVDA') }, now)).toBeNull();
     // A price template moved onto a schedule keeps the placeholder too.
-    expect(validateForm({ ...applyTemplate('price_alert'), trigger_type: 'cron' }, now)).toEqual(unfilled);
+    expect(validateForm({ ...applyTemplate('price_alert', en), trigger_type: 'cron' }, now)).toEqual(unfilled);
     // A price trigger's symbol fills it.
     expect(validateForm(priceForm({ price_symbol: 'AAPL', price_value: '150', instruction: 'Why did {symbol} move?' }), now)).toBeNull();
   });
@@ -337,7 +340,7 @@ describe('isFormChanged', () => {
   });
 
   it('reads a blank schedule form as untouched, since the builder starts on its default', () => {
-    const blank = applyTemplate('custom', 'UTC');
+    const blank = applyTemplate('custom', en, 'UTC');
     expect(blank.cron_expression).toBe('0 9 * * *');
   });
 });
@@ -422,7 +425,7 @@ describe('formStateToUpdatePayload', () => {
 describe('an edit of each template', () => {
   // Each template filled in the way a reader would, saved, and reopened.
   const filled = (id: TemplateId): FormState => ({
-    ...applyTemplate(id, 'UTC'),
+    ...applyTemplate(id, en, 'UTC'),
     workspace_id: 'ws-1',
     price_symbol: 'NVDA',
     price_value: '180',

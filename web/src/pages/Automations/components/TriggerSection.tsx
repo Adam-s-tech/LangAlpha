@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import TimezonePicker from '@/components/TimezonePicker';
 import { Input } from '@/components/ui/input';
 import { useHomeTimezone } from '@/hooks/useHomeTimezone';
+import { useLocale } from '@/hooks/useLocale';
 import { fixed2, formatTimezoneName, signedFixed2 } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { TriggerType } from '@/types/automation';
@@ -132,18 +133,19 @@ function PriceFields({ form, patch }: { form: FormState; patch: FormPatch }) {
 /** What the trigger as set would do, in words: the schedule and its time
  *  zone, the moment of a one-time run, or how far a price has to travel. */
 function TriggerReadout({ form }: { form: FormState }) {
-  useTranslation();
+  const { t } = useTranslation();
+  const locale = useLocale();
   if (form.trigger_type === 'price') return <PriceReadout form={form} />;
   if (form.trigger_type === 'once') {
     // Until a moment is picked the field's own placeholder asks for one.
-    const when = formatDateTimeShort(form.next_run_at, form.timezone);
+    const when = formatDateTimeShort(form.next_run_at, locale, form.timezone);
     if (!when) return null;
-    return <p className="automation-form-readout">{[when, formatTimezoneName(form.timezone)].join(' · ')}</p>;
+    return <p className="automation-form-readout">{[when, formatTimezoneName(form.timezone, locale)].join(' · ')}</p>;
   }
   if (!form.cron_expression) return null;
   return (
     <p className="automation-form-readout">
-      {[cronToHuman(form.cron_expression), formatTimezoneName(form.timezone)].filter(Boolean).join(' · ')}
+      {[cronToHuman(form.cron_expression, t, locale), formatTimezoneName(form.timezone, locale)].filter(Boolean).join(' · ')}
     </p>
   );
 }
@@ -153,13 +155,14 @@ function TriggerReadout({ form }: { form: FormState }) {
  *  nothing for says so, which is the typo check the field otherwise lacks. */
 function PriceReadout({ form }: { form: FormState }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const cfg = useMemo(() => formToPriceConfig(form), [form]);
   const watch = usePriceWatch(cfg);
 
   if (watch.reading) {
     return (
       <div className="automation-form-meter">
-        <p className="automation-form-readout">{distanceLabel(watch.reading, t)}</p>
+        <p className="automation-form-readout">{distanceLabel(watch.reading, t, locale)}</p>
         <PriceMeter reading={watch.reading} symbol={cfg.symbol} />
       </div>
     );
@@ -170,14 +173,14 @@ function PriceReadout({ form }: { form: FormState }) {
     return (
       <p className="automation-form-readout automation-form-quote">
         <span className="automation-mono automation-form-quote-symbol">{watch.symbol}</span>
-        <span className="automation-mono automation-form-quote-price">{fixed2(watch.quote.price)}</span>
+        <span className="automation-mono automation-form-quote-price">{fixed2(watch.quote.price, locale)}</span>
         {move && (
           <span>
             <span
               className="automation-mono"
               style={{ color: move.pct >= 0 ? 'var(--color-profit)' : 'var(--color-loss)' }}
             >
-              {signedFixed2(move.pct)}%
+              {signedFixed2(move.pct, locale)}%
             </span>{' '}
             {t(move.from === 'day_open' ? 'automation.quoteSinceOpen' : 'automation.quoteToday')}
           </span>

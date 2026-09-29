@@ -2,6 +2,7 @@ import React from 'react';
 import { Trash2, Edit2, Link2, Archive, ArchiveRestore } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { useLocale } from '@/hooks/useLocale';
 import { useTitleFade } from '@/hooks/useTitleFade';
 import { createDateFormatter } from '@/lib/format';
 import { useThreadFlags } from '@/lib/threadLifecycle/store';
@@ -31,6 +32,7 @@ interface ThreadCardProps {
  */
 function ThreadCard({ thread, onClick, onDelete, onRename, onArchive, onUnarchive }: ThreadCardProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const isMobile = useIsMobile();
   // Lifecycle indicator: live store state first (updates in place via the
   // user feed), falling back to the row's own enrichment for threads the
@@ -105,7 +107,7 @@ function ThreadCard({ thread, onClick, onDelete, onRename, onArchive, onUnarchiv
         </h3>
         {!!thread.updated_at && (
           <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-tertiary)' }}>
-            {updatedOn(new Date(thread.updated_at as string))}
+            {updatedOn(new Date(thread.updated_at as string), locale)}
           </p>
         )}
       </div>

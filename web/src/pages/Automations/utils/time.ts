@@ -1,24 +1,24 @@
-import i18n from '@/i18n';
+import type { TFunction } from 'i18next';
 import { createDateFormatter } from '@/lib/format';
 import { formatTook } from '@/lib/elapsed';
 
-// Locale-keyed through lib/format: a component that renders these must also
-// call useTranslation() so a locale switch re-renders it.
+// The locale, and for `formatUpcoming` the time, come in as arguments rather
+// than being read here; lib/format says why.
 const dateTime = createDateFormatter({ month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 const clock = createDateFormatter({ hour: 'numeric', minute: '2-digit' });
 
 /** A formatter that reads the reader's own clock, or the clock of the zone
  *  it is given: a one-time run shows in the zone it was set in. */
 function zonedFormatter(opts: Intl.DateTimeFormatOptions) {
-  const byZone = new Map<string, (d: Date) => string>();
-  return (d: Date, timeZone?: string): string => {
+  const byZone = new Map<string, (d: Date, locale: string) => string>();
+  return (d: Date, locale: string, timeZone?: string): string => {
     const key = timeZone ?? '';
     let format = byZone.get(key);
     if (!format) {
       format = createDateFormatter(timeZone ? { ...opts, timeZone } : opts);
       byZone.set(key, format);
     }
-    return format(d);
+    return format(d, locale);
   };
 }
 
@@ -27,7 +27,8 @@ const weekdayShort = zonedFormatter({ weekday: 'short' });
 const zonedClock = zonedFormatter({ hour: 'numeric', minute: '2-digit' });
 // Composed, not one Intl pattern: with a weekday, Chinese switches to a
 // two-digit hour ("周五07:00") where every other time here reads "7:00".
-const weekdayClock = (d: Date, timeZone?: string) => `${weekdayShort(d, timeZone)} ${zonedClock(d, timeZone)}`;
+const weekdayClock = (d: Date, locale: string, timeZone?: string) =>
+  `${weekdayShort(d, locale, timeZone)} ${zonedClock(d, locale, timeZone)}`;
 const dayHeading = createDateFormatter({ weekday: 'long', month: 'short', day: 'numeric' });
 const weekdayInitial = createDateFormatter({ weekday: 'narrow' });
 const moment = zonedFormatter({ weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -42,56 +43,56 @@ export function toDate(d: DateInput): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-export function formatDateTime(date: DateInput): string {
+export function formatDateTime(date: DateInput, locale: string): string {
   const d = toDate(date);
-  return d ? dateTime(d) : '—';
+  return d ? dateTime(d, locale) : '—';
 }
 
 /** "Sep 24, 3:05 PM": the year is noise for anything this close to now. */
-export function formatDateTimeShort(date: DateInput, timeZone?: string): string {
+export function formatDateTimeShort(date: DateInput, locale: string, timeZone?: string): string {
   const d = toDate(date);
-  return d ? dateTimeShort(d, timeZone) : '';
+  return d ? dateTimeShort(d, locale, timeZone) : '';
 }
 
-export function formatClock(date: DateInput): string {
+export function formatClock(date: DateInput, locale: string): string {
   const d = toDate(date);
-  return d ? clock(d) : '';
+  return d ? clock(d, locale) : '';
 }
 
 /** A time within the coming week reads by weekday ("Fri 7:00 AM"); anything
  *  further out needs its date. */
-export function formatUpcoming(date: DateInput, timeZone?: string): string {
+export function formatUpcoming(date: DateInput, locale: string, now: number, timeZone?: string): string {
   const d = toDate(date);
   if (!d) return '';
-  return d.getTime() - Date.now() < 6 * 86_400_000 ? weekdayClock(d, timeZone) : dateTimeShort(d, timeZone);
+  return d.getTime() - now < 6 * 86_400_000 ? weekdayClock(d, locale, timeZone) : dateTimeShort(d, locale, timeZone);
 }
 
-export function formatDayHeading(date: Date): string {
-  return dayHeading(date);
+export function formatDayHeading(date: Date, locale: string): string {
+  return dayHeading(date, locale);
 }
 
 /** "Wed, Oct 28, 2:15 PM": one moment, with the weekday that makes it
  *  easy to place. */
-export function formatMoment(date: Date, timeZone?: string): string {
-  return moment(date, timeZone);
+export function formatMoment(date: Date, locale: string, timeZone?: string): string {
+  return moment(date, locale, timeZone);
 }
 
 // 2024-01-01 was a Monday.
 const WEEK = Array.from({ length: 7 }, (_, i) => new Date(2024, 0, 1 + i));
 
 /** The seven weekday initials, Monday first, in the reader's locale. */
-export function weekdayInitials(): string[] {
-  return WEEK.map((d) => weekdayInitial(d));
+export function weekdayInitials(locale: string): string[] {
+  return WEEK.map((d) => weekdayInitial(d, locale));
 }
 
 /** The seven short weekday names ("Mon"), Monday first, in the reader's locale. */
-export function weekdayNames(): string[] {
-  return WEEK.map((d) => weekdayShort(d));
+export function weekdayNames(locale: string): string[] {
+  return WEEK.map((d) => weekdayShort(d, locale));
 }
 
 /** A wall-clock time with no date attached, in the reader's clock format. */
-export function formatTimeOfDay(hour: number, minute: number): string {
-  return clock(new Date(2024, 0, 1, hour, minute));
+export function formatTimeOfDay(hour: number, minute: number, locale: string): string {
+  return clock(new Date(2024, 0, 1, hour, minute), locale);
 }
 
 /** Local calendar day, for grouping a feed by the day the reader lived it. */
@@ -110,7 +111,7 @@ export function durationMs(startDate: DateInput, endDate: DateInput): number | n
 
 /** How long a run took, worded the way the chat words a turn ("12m 17s",
  *  "12 分 17 秒"): whole seconds, and "<1s" for a run that took less. */
-export function formatDuration(startDate: DateInput, endDate: DateInput): string {
+export function formatDuration(startDate: DateInput, endDate: DateInput, t: TFunction): string {
   const ms = durationMs(startDate, endDate);
-  return ms == null ? '—' : formatTook(ms, (key, opts) => i18n.t(key, opts));
+  return ms == null ? '—' : formatTook(ms, (key, opts) => t(key, opts));
 }

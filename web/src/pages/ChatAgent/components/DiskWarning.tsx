@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next';
 import { AlertTriangle, HardDrive, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { useLocale } from '@/hooks/useLocale';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { createValueStore } from '@/lib/valueStore';
@@ -117,6 +118,7 @@ interface DiskWarningProps {
 
 export function DiskWarning({ computer, className }: DiskWarningProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const visible = useDiskWarningVisible(computer);
   const disk = computer.disk;
   const level = disk?.level;
@@ -133,12 +135,12 @@ export function DiskWarning({ computer, className }: DiskWarningProps) {
     ? t(
         'computer.disk.criticalBody',
         'Only {{free}} left. Saving files and running code will start to fail in every workspace on this computer.',
-        { free: formatBytes(disk.free_bytes) },
+        { free: formatBytes(disk.free_bytes, locale) },
       )
     : t(
         'computer.disk.warningBody',
         '{{free}} left, shared by every workspace on this computer. Free up space before it fills up.',
-        { free: formatBytes(disk.free_bytes) },
+        { free: formatBytes(disk.free_bytes, locale) },
       );
 
   // A change already running replaces the call to action with its progress:

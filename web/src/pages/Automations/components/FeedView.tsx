@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { HeaderButton, ListError, ListSkeleton } from '@/components/mcp/McpPrimitives';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { relativeTime } from '@/lib/format';
 import type { Automation, AutomationRun } from '@/types/automation';
 import { useAutomationMutations, type AutomationMutations } from '../hooks/useAutomationMutations';
@@ -34,6 +36,8 @@ interface FeedViewProps {
  */
 export default function FeedView({ automations, readings, onOpenAutomation, onOpenRun, onManage, onNew }: FeedViewProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   const { runs, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } = useRecentRuns();
   // Once for the feed, its entries and its rail: each would otherwise hold
   // its own observer for each verb.
@@ -42,9 +46,9 @@ export default function FeedView({ automations, readings, onOpenAutomation, onOp
 
   const days = useMemo(() => groupRunsByDay(runs), [runs]);
 
-  const near = nearDayKeys(new Date());
+  const near = nearDayKeys(new Date(now));
   const dayLabel = (key: string, date: Date) =>
-    key === near.today ? t('automation.today') : key === near.yesterday ? t('automation.yesterday') : formatDayHeading(date);
+    key === near.today ? t('automation.today') : key === near.yesterday ? t('automation.yesterday') : formatDayHeading(date, locale);
 
   return (
     <div className="automations-feed">
@@ -105,17 +109,20 @@ function RunEntry({
   onOpenRun: (automationId: string, runId: string) => void;
 }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const openThread = useOpenThread();
   const view = describeRun(run);
   const { ui } = view;
+  // Only a live run shows a time since, so only it needs the clock to move.
+  const now = useNow(60_000, !!ui.live);
 
   const meta: string[] = [];
   if (run.status !== 'completed') meta.push(t(ui.labelKey));
   meta.push(t(run.agent_mode === 'ptc' ? 'automation.ptc' : 'automation.flash'));
   if (ui.live) {
-    if (run.started_at) meta.push(t('automation.startedAgo', { when: relativeTime(run.started_at) }));
+    if (run.started_at) meta.push(t('automation.startedAgo', { when: relativeTime(run.started_at, locale, now) }));
   } else if (view.showDuration) {
-    meta.push(formatDuration(run.started_at, run.completed_at));
+    meta.push(formatDuration(run.started_at, run.completed_at, t));
   }
   for (const attempt of run.delivery_result ?? []) {
     meta.push(
@@ -131,7 +138,7 @@ function RunEntry({
 
   return (
     <article className="automation-run">
-      <div className="automation-mono automation-run-time">{formatClock(runTime(run))}</div>
+      <div className="automation-mono automation-run-time">{formatClock(runTime(run), locale)}</div>
       <div className="min-w-0 flex-1">
         <div className="automation-run-head">
           {ui.live || ui.Icon ? (

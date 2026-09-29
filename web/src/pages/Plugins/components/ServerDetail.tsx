@@ -17,6 +17,7 @@ import {
 import { brokerageArt, mcpServerArt } from '@/lib/brandArt';
 import { brokerageForUrl, settledGrant, type Brokerage } from '../brokerages';
 import { createDateFormatter } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import {
   formatApiErrorDetail,
   type BuiltinMcpServer,
@@ -95,6 +96,7 @@ export function ServerDetail({
   connecting?: boolean;
 }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const labelId = useId();
   const { origin } = data;
   const offer = data.origin === 'brokerage' ? data.brokerage : null;
@@ -380,7 +382,7 @@ export function ServerDetail({
                   style={{ color: 'var(--color-text-quaternary)' }}
                 >
                   {t('plugins.detail.discovered', {
-                    date: formatDate(new Date(toolsQuery.data.discovered_at)),
+                    date: formatDate(new Date(toolsQuery.data.discovered_at), locale),
                   })}
                 </span>
               )}
@@ -442,12 +444,12 @@ export function ServerDetail({
           <div className="flex flex-col gap-1.5">
             {catalog.created_at && (
               <DetailField label={t('plugins.detail.created')}>
-                {formatDate(new Date(catalog.created_at))}
+                {formatDate(new Date(catalog.created_at), locale)}
               </DetailField>
             )}
             {catalog.updated_at && (
               <DetailField label={t('plugins.detail.updated')}>
-                {formatDate(new Date(catalog.updated_at))}
+                {formatDate(new Date(catalog.updated_at), locale)}
               </DetailField>
             )}
           </div>

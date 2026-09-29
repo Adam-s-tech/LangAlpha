@@ -13,6 +13,7 @@ import { toast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
 import { formatBytes } from '@/lib/format';
 import { useCopyShareLink } from '@/hooks/useCopyShareLink';
+import { useLocale } from '@/hooks/useLocale';
 import { useShareLink, useShareLinkFiles, useShareLinkMutations } from '@/hooks/useShareLink';
 import type { ShareFileEntry } from '@/types/api';
 import { basename, dirname } from '../utils/fileRefResolver';
@@ -32,6 +33,7 @@ function FileRow({ entry, notShared, t }: {
   notShared: boolean;
   t: (key: string) => string;
 }) {
+  const locale = useLocale();
   const dir = dirname(entry.path);
   return (
     <li className="flex items-center gap-3 px-3 py-1.5 text-xs" data-selectable>
@@ -40,7 +42,7 @@ function FileRow({ entry, notShared, t }: {
         <span style={{ color: 'var(--color-text-primary)' }}>{basename(entry.path)}</span>
       </span>
       <span className="shrink-0 tabular-nums" style={{ color: 'var(--color-text-tertiary)' }}>
-        {formatBytes(entry.size)}
+        {formatBytes(entry.size, locale)}
       </span>
       <span
         className="shrink-0 w-20 text-right"
@@ -61,6 +63,7 @@ function FileRow({ entry, notShared, t }: {
  */
 function ShareLinkDialog({ open, workspaceId, filePath, onClose }: ShareLinkDialogProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const linkQuery = useShareLink(workspaceId, { kind: 'file', path: filePath }, { enabled: open });
   const link = linkQuery.data;
   const filesQuery = useShareLinkFiles(workspaceId, link?.code, { enabled: open });
@@ -198,7 +201,7 @@ function ShareLinkDialog({ open, workspaceId, filePath, onClose }: ShareLinkDial
           {cap !== null && (
             <p className="text-xs" role="status" style={{ color: 'var(--color-warning)' }}>
               {cap.code === 'too_many_bytes'
-                ? t('shareLink.tooManyBytes', { size: formatBytes(cap.limit) })
+                ? t('shareLink.tooManyBytes', { size: formatBytes(cap.limit, locale) })
                 : t('shareLink.tooManyFiles', { limit: cap.limit })}
             </p>
           )}

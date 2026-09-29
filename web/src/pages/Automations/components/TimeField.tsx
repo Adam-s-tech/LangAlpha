@@ -2,6 +2,7 @@ import React, { useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Popover } from '@/components/ui/aria-popover';
 import { Input } from '@/components/ui/input';
+import { useLocale } from '@/hooks/useLocale';
 import { cn } from '@/lib/utils';
 import { useScrollReveal } from '../hooks/useScrollReveal';
 import { DAY_SLOTS, MORNING, parseTime, sameTime, stepTime, type TimeOfDay } from '../utils/timeOfDay';
@@ -23,6 +24,7 @@ interface TimeSlotListProps {
  *  typed field beside it, so the options stay out of the tab order. */
 export function TimeSlotList({ value, min, onPick, className }: TimeSlotListProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const ref = useRef<HTMLDivElement>(null);
   const revealScroll = useScrollReveal();
   const floor = min ? minutes(min) : 0;
@@ -58,7 +60,7 @@ export function TimeSlotList({ value, min, onPick, className }: TimeSlotListProp
           className="automation-mono automation-time-slot"
           onClick={() => onPick(s)}
         >
-          {formatTimeOfDay(s.hour, s.minute)}
+          {formatTimeOfDay(s.hour, s.minute, locale)}
         </button>
       ))}
     </div>
@@ -78,6 +80,7 @@ interface TimeInputProps extends Omit<React.ComponentProps<'input'>, 'value' | '
  * step a quarter hour, in the direction the list beside it runs.
  */
 export function TimeInput({ value, onCommit, onEnter, onKeyDown, onBlur, className, ...rest }: TimeInputProps) {
+  const locale = useLocale();
   // A draft belongs to the time it was typed over. A slot picked from the
   // list moves the value while focus stays here, and the draft left behind
   // must not be committed over the pick when the field is left.
@@ -97,7 +100,7 @@ export function TimeInput({ value, onCommit, onEnter, onKeyDown, onBlur, classNa
       inputMode="text"
       autoComplete="off"
       spellCheck={false}
-      value={draft ?? (value ? formatTimeOfDay(value.hour, value.minute) : '')}
+      value={draft ?? (value ? formatTimeOfDay(value.hour, value.minute, locale) : '')}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={(e) => {
         commit();

@@ -6,7 +6,8 @@ import { useTranslation } from 'react-i18next';
 import TopicBadge from './TopicBadge';
 import { getTodayInsights, getInsightDetail, generatePersonalizedInsight } from '../utils/api';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import i18n from '@/i18n';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { relativeTime } from '@/lib/format';
 import { RowAttachButton } from './RowAttachButton';
 
@@ -56,11 +57,11 @@ const TYPE_CONFIG: Record<string, TypeConfigEntry> = {
   personalized: { labelKey: 'dashboard.brief.typeLabel.personalized', accent: '#f59e0b' },
 };
 
-function formatTime(timestamp: string | undefined): string {
+function formatTime(timestamp: string | undefined, locale: string): string {
   if (!timestamp) return '';
   try {
     const d = new Date(timestamp);
-    return d.toLocaleTimeString(i18n.language, { hour: 'numeric', minute: '2-digit' });
+    return d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
   } catch {
     return '';
   }
@@ -129,6 +130,8 @@ function MobileTopicRow({ topics }: { topics: InsightTopic[] }) {
 
 function AIDailyBriefCard({ onReadFull, instanceId }: AIDailyBriefCardProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   const [insights, setInsights] = useState<Insight[]>(insightsCache || []);
   const [loading, setLoading] = useState(!insightsCache);
   const [expanded, setExpanded] = useState(false);
@@ -272,7 +275,7 @@ function AIDailyBriefCard({ onReadFull, instanceId }: AIDailyBriefCardProps) {
     );
   }
 
-  const updatedAgo = relativeTime(latest.completed_at);
+  const updatedAgo = relativeTime(latest.completed_at, locale, now);
   const topics = latest.topics || [];
   const latestType = TYPE_CONFIG[latest.type] || TYPE_CONFIG.market_update;
   const isPersonalized = latest.type === 'personalized';
@@ -540,7 +543,7 @@ function AIDailyBriefCard({ onReadFull, instanceId }: AIDailyBriefCardProps) {
                             className="text-xs font-medium shrink-0 w-16 text-right tabular-nums"
                             style={{ color: 'var(--color-text-tertiary)' }}
                           >
-                            {formatTime(item.completed_at)}
+                            {formatTime(item.completed_at, locale)}
                           </span>
 
                           <span

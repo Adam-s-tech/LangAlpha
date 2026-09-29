@@ -1,6 +1,7 @@
 import React, { useContext } from 'react';
 import { useTranslation } from 'react-i18next';
 import { compactNumber } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import {
   WORKFLOW_TASK_TYPE,
   workflowRunCardKind,
@@ -53,6 +54,7 @@ function WorkflowRunCard({
   workflowRun: workflowRunProp,
 }: WorkflowRunCardProps): React.ReactElement | null {
   const { t } = useTranslation();
+  const locale = useLocale();
   // Raw context, not useWorkflowRun: the hook collapses "no provider mounted"
   // and "run not (yet) hydrated" into one undefined, but the card must tell
   // them apart — provider absence is a *surface* property (shared links mount
@@ -98,7 +100,7 @@ function WorkflowRunCard({
   }
   if (!isRunning && totalDuration) metaParts.push(totalDuration);
   if (run?.tokensSpent != null) {
-    metaParts.push(t('chat.workflowRun.tokens', { value: compactNumber(run.tokensSpent) }));
+    metaParts.push(t('chat.workflowRun.tokens', { value: compactNumber(run.tokensSpent, locale) }));
   }
 
   const handleOpen = (): void => {

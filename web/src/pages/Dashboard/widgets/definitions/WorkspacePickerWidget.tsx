@@ -1,5 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { relativeTime } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { LayoutGrid, Zap, ArrowUpRight, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
@@ -28,8 +30,10 @@ function WorkspaceTile({
   onOpen: () => void;
 }) {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   const isFlash = workspace.status === 'flash';
-  const relative = relativeTime(workspace.updated_at as string | undefined);
+  const relative = relativeTime(workspace.updated_at as string | undefined, locale, now);
   const idx = String(index + 1).padStart(2, '0');
 
   return (

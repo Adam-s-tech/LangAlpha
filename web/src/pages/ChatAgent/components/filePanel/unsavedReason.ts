@@ -19,8 +19,8 @@ export function shownPath(path: string): string {
   return `${path.slice(0, half)}…${path.slice(-half)}`;
 }
 
-export function unsavedReasonLabel(t: Translate, file: Pick<UnsavedFile, 'reason' | 'size'>): string {
+export function unsavedReasonLabel(t: Translate, file: Pick<UnsavedFile, 'reason' | 'size'>, locale: string): string {
   return file.reason === 'too_large' && file.size
-    ? t('filePanel.unsavedReason.too_large_sized', { size: formatBytes(file.size) })
+    ? t('filePanel.unsavedReason.too_large_sized', { size: formatBytes(file.size, locale) })
     : t(`filePanel.unsavedReason.${file.reason}`, { defaultValue: t('filePanel.unsavedReason.failed') });
 }

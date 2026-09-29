@@ -225,9 +225,9 @@ export default function Automations() {
     }
     return {
       key: `create:${form.template}:${form.nonce}`,
-      props: { ...handlers, initialValues: applyTemplate(form.template, homeZone), original: null },
+      props: { ...handlers, initialValues: applyTemplate(form.template, t, homeZone), original: null },
     };
-  }, [form, editing, handleSubmit, busy, homeZone]);
+  }, [form, editing, handleSubmit, busy, homeZone, t]);
 
   let body: React.ReactNode;
   if (error && automations.length === 0) {

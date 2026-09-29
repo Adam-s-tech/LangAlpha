@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { AlertTriangle } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { downloadLabel, type DownloadState } from '../../utils/downloadNotice';
@@ -19,6 +20,7 @@ interface DocumentErrorFallbackProps {
 }
 
 export function DocumentErrorFallback({ onDownload, downloadState = 'idle' }: DocumentErrorFallbackProps): React.ReactElement {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-12">
       <AlertTriangle className="h-6 w-6" style={{ color: 'var(--color-text-tertiary)' }} />
@@ -30,7 +32,7 @@ export function DocumentErrorFallback({ onDownload, downloadState = 'idle' }: Do
           onClick={onDownload}
           disabled={downloadState !== 'idle'}
         >
-          {downloadLabel(downloadState, 'Download instead')}
+          {downloadLabel(downloadState, 'Download instead', t)}
         </button>
       )}
     </div>

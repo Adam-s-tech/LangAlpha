@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { useLocale } from '@/hooks/useLocale';
 import type { Computer } from '@/types/api';
 
 import { ComputerStatusIndicator } from '../computerStatusUi';
@@ -64,7 +65,8 @@ interface WorkspaceCardProps {
 
 /** Workspace card for the normal gallery grid (no DnD). */
 export function WorkspaceCard({ workspace, computer, onSelect, onTogglePin, onRenameStart, onOpenComputer, onDuplicate, onDelete, prefetchThreads, index }: WorkspaceCardProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
+  const locale = useLocale();
   const isMobile = useIsMobile();
   const isFlash = workspace.status === 'flash';
 
@@ -161,7 +163,7 @@ export function WorkspaceCard({ workspace, computer, onSelect, onTogglePin, onRe
             )}
             <div className="text-xs mt-auto pt-3 flex items-center justify-between gap-2" style={{ color: 'var(--color-text-tertiary)' }}>
               <span className="truncate">
-                {t('workspace.updated', { time: workspace.updated_at ? new Date(workspace.updated_at).toLocaleDateString(i18n.language, { month: 'short', day: 'numeric' }) : t('workspace.recently') })}
+                {t('workspace.updated', { time: workspace.updated_at ? new Date(workspace.updated_at).toLocaleDateString(locale, { month: 'short', day: 'numeric' }) : t('workspace.recently') })}
               </span>
               {(showTierBadge || showAlwaysOn) && (
                 <div className="flex items-center gap-1.5 shrink-0">

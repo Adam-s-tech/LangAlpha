@@ -1,9 +1,12 @@
 import React from 'react';
+import type { TFunction } from 'i18next';
 import { relativeTime } from '@/lib/format';
 import { Clock, Timer, TrendingUp, CheckCircle2 } from 'lucide-react';
 import { cronToHuman } from '../../../Automations/utils/cron';
 import { formatPriceTrigger } from '../../../Automations/utils/price';
 import { useTranslation } from 'react-i18next';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { CARD_BG, CARD_BORDER } from './inlineCardsShared';
 
 // ─── Constants (matching InlineArtifactCards) ─────────────────────────
@@ -37,16 +40,16 @@ function statusColor(status: string): string {
   return STATUS_COLORS[status] || TEXT_COLOR;
 }
 
-function scheduleLabel(automation: Record<string, unknown> | null | undefined): string {
+function scheduleLabel(automation: Record<string, unknown> | null | undefined, t: TFunction, locale: string, now: number): string {
   if (!automation) return '';
   if (automation.trigger_type === 'price') {
-    return formatPriceTrigger(automation.trigger_config as any) || '';
+    return formatPriceTrigger(automation.trigger_config as any, t) || '';
   }
   if (automation.trigger_type === 'cron' && automation.schedule) {
-    return cronToHuman(automation.schedule as string);
+    return cronToHuman(automation.schedule as string, t, locale);
   }
   if (automation.next_run_at) {
-    return relativeTime(automation.next_run_at as string);
+    return relativeTime(automation.next_run_at as string, locale, now);
   }
   return (automation.schedule as string) || '';
 }
@@ -117,6 +120,8 @@ interface InlineAutomationListCardProps {
 
 function InlineAutomationListCard({ artifact, onClick }: InlineAutomationListCardProps): React.ReactElement | null {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   const { automations = [], total = 0 } = artifact as { automations?: Record<string, unknown>[]; total?: number };
   if ((automations as Record<string, unknown>[]).length === 0) return null;
 
@@ -164,7 +169,7 @@ function InlineAutomationListCard({ artifact, onClick }: InlineAutomationListCar
               {a.name as string}
             </span>
             <span style={{ color: TEXT_COLOR, flexShrink: 0, fontSize: '0.6875rem' }}>
-              {scheduleLabel(a)}
+              {scheduleLabel(a, t, locale, now)}
             </span>
           </div>
         ))}
@@ -189,6 +194,8 @@ interface InlineAutomationDetailCardProps {
 
 function InlineAutomationDetailCard({ artifact, onClick }: InlineAutomationDetailCardProps): React.ReactElement | null {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   const { automation, executions: _executions = [], total_executions = 0 } = artifact as {
     automation?: Record<string, unknown>;
     executions?: Record<string, unknown>[];
@@ -220,10 +227,10 @@ function InlineAutomationDetailCard({ artifact, onClick }: InlineAutomationDetai
 
       {/* Key-value rows */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 20px', fontSize: '0.75rem', color: TEXT_COLOR }}>
-        <QuoteRow label={t('toolArtifact.schedule')} value={scheduleLabel(automation)} />
-        <QuoteRow label={t('toolArtifact.nextRun')} value={automation.next_run_at ? relativeTime(automation.next_run_at as string) : '\u2014'} />
+        <QuoteRow label={t('toolArtifact.schedule')} value={scheduleLabel(automation, t, locale, now)} />
+        <QuoteRow label={t('toolArtifact.nextRun')} value={automation.next_run_at ? relativeTime(automation.next_run_at as string, locale, now) : '\u2014'} />
         {!!automation.last_run_at && (
-          <QuoteRow label={t('toolArtifact.lastRun')} value={relativeTime(automation.last_run_at as string)} />
+          <QuoteRow label={t('toolArtifact.lastRun')} value={relativeTime(automation.last_run_at as string, locale, now)} />
         )}
         {(total_executions as number) > 0 && (
           <QuoteRow label={t('toolArtifact.executions')} value={t('toolArtifact.nTotal', { count: total_executions as number })} />
@@ -242,6 +249,8 @@ interface InlineAutomationCreatedCardProps {
 
 function InlineAutomationCreatedCard({ artifact, onClick }: InlineAutomationCreatedCardProps): React.ReactElement | null {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   if (!artifact) return null;
 
   return (
@@ -267,9 +276,9 @@ function InlineAutomationCreatedCard({ artifact, onClick }: InlineAutomationCrea
 
       {/* Details */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 20px', fontSize: '0.75rem', color: TEXT_COLOR }}>
-        <QuoteRow label={t('toolArtifact.schedule')} value={scheduleLabel(artifact)} />
+        <QuoteRow label={t('toolArtifact.schedule')} value={scheduleLabel(artifact, t, locale, now)} />
         {!!artifact.next_run_at && (
-          <QuoteRow label={t('toolArtifact.nextRun')} value={relativeTime(artifact.next_run_at as string)} />
+          <QuoteRow label={t('toolArtifact.nextRun')} value={relativeTime(artifact.next_run_at as string, locale, now)} />
         )}
       </div>
     </div>

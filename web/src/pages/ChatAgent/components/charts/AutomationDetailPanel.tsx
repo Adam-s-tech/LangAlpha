@@ -1,9 +1,12 @@
 import React from 'react';
+import type { TFunction } from 'i18next';
 import { relativeTime } from '@/lib/format';
 import { useNavigate } from 'react-router';
 import { useRouteLeaveGuard } from '../../contexts/RouteLeaveGuardContext';
 import { Clock, Timer, TrendingUp, ExternalLink } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { cronToHuman } from '../../../Automations/utils/cron';
 import { isPriceTriggerConfig, formatPriceTrigger, formatRetriggerMode } from '../../../Automations/utils/price';
 import type { PriceTriggerConfig } from '@/types/automation';
@@ -137,11 +140,11 @@ function marketI18nKey(triggerConfig: PriceTriggerConfig | null | undefined): st
   return triggerConfig.market === 'index' ? 'automation.marketIndex' : null;
 }
 
-function scheduleLabel(auto: Record<string, unknown> | null | undefined): string {
+function scheduleLabel(auto: Record<string, unknown> | null | undefined, t: TFunction, locale: string, now: number): string {
   if (!auto) return '\u2014';
-  if (auto.trigger_type === 'price') return formatPriceTrigger(asPriceTrigger(auto.trigger_config)) || '\u2014';
-  if (auto.trigger_type === 'cron' && auto.schedule) return cronToHuman(auto.schedule as string);
-  if (auto.next_run_at) return relativeTime(auto.next_run_at as string);
+  if (auto.trigger_type === 'price') return formatPriceTrigger(asPriceTrigger(auto.trigger_config), t) || '\u2014';
+  if (auto.trigger_type === 'cron' && auto.schedule) return cronToHuman(auto.schedule as string, t, locale);
+  if (auto.next_run_at) return relativeTime(auto.next_run_at as string, locale, now);
   return (auto.schedule as string) || '\u2014';
 }
 
@@ -198,6 +201,8 @@ interface ListPanelProps {
 
 function ListPanel({ automations, total }: ListPanelProps): React.ReactElement {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   if (automations.length === 0) {
     return (
       <div style={{ padding: 16, color: TEXT_SECONDARY, fontSize: '0.875rem' }}>
@@ -235,9 +240,9 @@ function ListPanel({ automations, total }: ListPanelProps): React.ReactElement {
             </div>
             {/* Row 2: schedule + next run + agent mode */}
             <div style={{ display: 'flex', gap: 16, fontSize: '0.75rem', color: TEXT_SECONDARY, flexWrap: 'wrap' }}>
-              <span>{scheduleLabel(a)}</span>
+              <span>{scheduleLabel(a, t, locale, now)}</span>
               {!!a.next_run_at && (
-                <span>{t('toolArtifact.next', { time: relativeTime(a.next_run_at as string) })}</span>
+                <span>{t('toolArtifact.next', { time: relativeTime(a.next_run_at as string, locale, now) })}</span>
               )}
               {!!a.agent_mode && (
                 <span
@@ -274,6 +279,8 @@ interface DetailPanelProps {
 
 function DetailPanel({ automation, executions, totalExecutions }: DetailPanelProps): React.ReactElement | null {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   if (!automation) return null;
 
   const isCron = automation.trigger_type === 'cron';
@@ -296,36 +303,36 @@ function DetailPanel({ automation, executions, totalExecutions }: DetailPanelPro
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
           <StatCard
             label={t('toolArtifact.trigger')}
-            value={formatPriceTrigger(asPriceTrigger(automation.trigger_config)) || '\u2014'}
+            value={formatPriceTrigger(asPriceTrigger(automation.trigger_config), t) || '\u2014'}
             sub={asPriceTrigger(automation.trigger_config)?.symbol || null}
             badge={(() => { const k = marketI18nKey(asPriceTrigger(automation.trigger_config)); return k ? t(k) : null; })()}
           />
           <StatCard
             label={t('toolArtifact.retrigger')}
-            value={formatRetriggerMode(asPriceTrigger(automation.trigger_config))}
+            value={formatRetriggerMode(asPriceTrigger(automation.trigger_config), t)}
           />
           <StatCard
             label={t('toolArtifact.lastRun')}
-            value={automation.last_run_at ? relativeTime(automation.last_run_at as string) : '\u2014'}
-            sub={automation.last_run_at ? formatDateTime(automation.last_run_at as string) : null}
+            value={automation.last_run_at ? relativeTime(automation.last_run_at as string, locale, now) : '\u2014'}
+            sub={automation.last_run_at ? formatDateTime(automation.last_run_at as string, locale) : null}
           />
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
           <StatCard
             label={t('toolArtifact.schedule')}
-            value={isCron ? cronToHuman(automation.schedule as string) : t('toolArtifact.oneTime')}
+            value={isCron ? cronToHuman(automation.schedule as string, t, locale) : t('toolArtifact.oneTime')}
             sub={isCron ? (automation.schedule as string) : null}
           />
           <StatCard
             label={t('toolArtifact.nextRun')}
-            value={automation.next_run_at ? relativeTime(automation.next_run_at as string) : '\u2014'}
-            sub={automation.next_run_at ? formatDateTime(automation.next_run_at as string) : null}
+            value={automation.next_run_at ? relativeTime(automation.next_run_at as string, locale, now) : '\u2014'}
+            sub={automation.next_run_at ? formatDateTime(automation.next_run_at as string, locale) : null}
           />
           <StatCard
             label={t('toolArtifact.lastRun')}
-            value={automation.last_run_at ? relativeTime(automation.last_run_at as string) : '\u2014'}
-            sub={automation.last_run_at ? formatDateTime(automation.last_run_at as string) : null}
+            value={automation.last_run_at ? relativeTime(automation.last_run_at as string, locale, now) : '\u2014'}
+            sub={automation.last_run_at ? formatDateTime(automation.last_run_at as string, locale) : null}
           />
         </div>
       )}
@@ -396,11 +403,11 @@ function DetailPanel({ automation, executions, totalExecutions }: DetailPanelPro
                   }}
                 />
                 <span style={{ color: 'var(--color-text-primary)', fontWeight: 500, flex: 1 }}>
-                  {e.scheduled_at ? formatDateTime(e.scheduled_at as string) : t('toolArtifact.manualTrigger')}
+                  {e.scheduled_at ? formatDateTime(e.scheduled_at as string, locale) : t('toolArtifact.manualTrigger')}
                 </span>
                 {!!(e.started_at && e.completed_at) && (
                   <span style={{ color: TEXT_SECONDARY, fontSize: '0.6875rem' }}>
-                    {formatDuration(e.started_at as string, e.completed_at as string)}
+                    {formatDuration(e.started_at as string, e.completed_at as string, t)}
                   </span>
                 )}
                 {!!e.error_message && (
@@ -427,6 +434,8 @@ interface CreatedPanelProps {
 
 function CreatedPanel({ data }: CreatedPanelProps): React.ReactElement {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   const isCron = data.trigger_type === 'cron';
   const isPrice = data.trigger_type === 'price';
 
@@ -452,16 +461,16 @@ function CreatedPanel({ data }: CreatedPanelProps): React.ReactElement {
       {/* Details */}
       {isPrice ? (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <StatCard label={t('toolArtifact.trigger')} value={formatPriceTrigger(asPriceTrigger(data.trigger_config)) || '\u2014'} sub={asPriceTrigger(data.trigger_config)?.symbol || null} badge={(() => { const k = marketI18nKey(asPriceTrigger(data.trigger_config)); return k ? t(k) : null; })()} />
-          <StatCard label={t('toolArtifact.retrigger')} value={formatRetriggerMode(asPriceTrigger(data.trigger_config))} />
+          <StatCard label={t('toolArtifact.trigger')} value={formatPriceTrigger(asPriceTrigger(data.trigger_config), t) || '\u2014'} sub={asPriceTrigger(data.trigger_config)?.symbol || null} badge={(() => { const k = marketI18nKey(asPriceTrigger(data.trigger_config)); return k ? t(k) : null; })()} />
+          <StatCard label={t('toolArtifact.retrigger')} value={formatRetriggerMode(asPriceTrigger(data.trigger_config), t)} />
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <StatCard label={t('toolArtifact.schedule')} value={isCron ? cronToHuman(data.schedule as string) : t('toolArtifact.oneTime')} sub={isCron ? (data.schedule as string) : null} />
+          <StatCard label={t('toolArtifact.schedule')} value={isCron ? cronToHuman(data.schedule as string, t, locale) : t('toolArtifact.oneTime')} sub={isCron ? (data.schedule as string) : null} />
           <StatCard
             label={t('toolArtifact.nextRun')}
-            value={data.next_run_at ? relativeTime(data.next_run_at as string) : '\u2014'}
-            sub={data.next_run_at ? formatDateTime(data.next_run_at as string) : null}
+            value={data.next_run_at ? relativeTime(data.next_run_at as string, locale, now) : '\u2014'}
+            sub={data.next_run_at ? formatDateTime(data.next_run_at as string, locale) : null}
           />
         </div>
       )}

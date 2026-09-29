@@ -8,6 +8,7 @@ import Markdown from '../Markdown';
 import { announceAnchoredToggle } from '../../utils/anchoredToggle';
 import { extractLeadingBoldHeader, extractReasoningHeaders } from '../../utils/reasoningHeaders';
 import { formatThoughtFor } from '@/lib/elapsed';
+import { useNow } from '@/hooks/useNow';
 import { SPRING_FOLD } from './liveZoneTiming';
 import type { ReasoningActivityItem } from './activityTypes';
 
@@ -16,15 +17,11 @@ function capitalizeFirst(text: string): string {
 }
 
 function useThinkingClock(startedAt: number | undefined, active: boolean, t: (k: string, o?: Record<string, unknown>) => string): string | null {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (!active || !startedAt) return;
-    const id = setInterval(() => setTick((n) => n + 1), 1000);
-    return () => clearInterval(id);
-  }, [active, startedAt]);
+  const now = useNow(1000, active && !!startedAt);
   if (!active) return null;
+  // `now` is state, so for up to one tick after mount it can predate `startedAt`.
   const raw = startedAt
-    ? t('toolArtifact.thinkingFor', { duration: formatThoughtFor(Date.now() - startedAt, t) })
+    ? t('toolArtifact.thinkingFor', { duration: formatThoughtFor(Math.max(0, now - startedAt), t) })
     : t('toolArtifact.reasoningPending');
   return capitalizeFirst(raw);
 }

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useLocale } from '@/hooks/useLocale';
 import { AnimatePresence, motion } from '@/lib/framer';
 import { Briefcase } from 'lucide-react';
 import { useDashboardContext } from '../framework/DashboardDataContext';
@@ -39,13 +40,14 @@ function rowToQuote(r: PortfolioRow) {
 
 function PortfolioWidget({ instance, updateConfig }: WidgetRenderProps<PortfolioConfig>) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const { portfolio, portfolioHandlers, dashboard } = useDashboardContext();
 
   useWidgetContextExport(instance.id, {
     full: () => {
       const rows = portfolio.rows.map(rowToQuote);
       const summary = portfolioSummary(portfolio.rows);
-      const navLine = formatPortfolioNavMarkdownLine(summary);
+      const navLine = formatPortfolioNavMarkdownLine(summary, locale);
       const lines: string[] = [];
       if (navLine) lines.push(navLine, '');
       lines.push(serializeQuoteRowsToMarkdown(rows));

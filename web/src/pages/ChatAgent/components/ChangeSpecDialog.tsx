@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Loader } from '@/components/ui/loader';
 import { ErrorLink } from '@/components/ui/error-banner';
 import { PLAN_URL, SUPPORT_EMAIL } from '@/config/supportLinks';
+import { useLocale } from '@/hooks/useLocale';
 import type { Computer, ResourceTier, WorkspaceQuota } from '@/types/api';
 import { TIER_ORDER, TierRadioGroup, isTierBlocked, normalizeTier, tierCapacity, tierLabel } from './tierUi';
 import { DiskBar, diskUsageLabel, isDiskAlertLevel, nextTier } from './computerDiskUi';
@@ -39,6 +40,7 @@ interface ChangeSpecDialogProps {
  */
 function ChangeSpecDialog({ target, onClose, onSubmit, busy, quota, error }: ChangeSpecDialogProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const [tier, setTier] = useState<ResourceTier>('standard');
 
   // Seeded per opening, and only until the user picks: the row behind
@@ -69,7 +71,7 @@ function ChangeSpecDialog({ target, onClose, onSubmit, busy, quota, error }: Cha
   // The radio for a blocked tier is disabled, but a seed or a quota refetch
   // can still land the selection on one; the request would only earn a 403.
   const tierBlocked = tier !== currentTier && isTierBlocked(tierCapacity(quota, tier));
-  const errorFiles = specErrorFiles(error?.files, t);
+  const errorFiles = specErrorFiles(error?.files, t, locale);
   const change = activeSpecChange(target);
   // A bigger tier the plan keeps closed can't be picked here, so the dialog
   // points to where that is decided instead of leaving a dead end.
@@ -117,7 +119,7 @@ function ChangeSpecDialog({ target, onClose, onSubmit, busy, quota, error }: Cha
           <div className="flex flex-col gap-1.5">
             <DiskBar disk={target.disk} />
             <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-              {diskUsageLabel(t, target.disk)}
+              {diskUsageLabel(t, target.disk, locale)}
             </span>
           </div>
         )}

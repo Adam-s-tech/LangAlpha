@@ -1,10 +1,12 @@
 import { createElement } from 'react';
-import { afterAll, beforeAll, describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import i18n from '@/i18n';
 import CronScheduleBuilder from '../../components/CronScheduleBuilder';
-import { buildCron, cronToHuman, MINUTE_INTERVALS, scheduleDraft } from '../cron';
+import { buildCron, cronToHuman as cronToHumanIn, MINUTE_INTERVALS, scheduleDraft } from '../cron';
+
+const cronToHuman = (expression: string) => cronToHumanIn(expression, i18n.getFixedT('en-US'), 'en-US');
 
 describe('cronToHuman monthly', () => {
   it('writes the ordinal the day takes', () => {
@@ -21,14 +23,13 @@ describe('cronToHuman monthly', () => {
 });
 
 describe('cronToHuman in Chinese', () => {
-  beforeAll(() => i18n.changeLanguage('zh-CN'));
-  afterAll(() => i18n.changeLanguage('en-US'));
+  const zh = (expression: string) => cronToHumanIn(expression, i18n.getFixedT('zh-CN'), 'zh-CN');
 
   it('reads in the reader\'s language and clock', () => {
-    expect(cronToHuman('30 7 * * 1-5')).toBe('周一至周五 7:30');
-    expect(cronToHuman('0 9 * * 1,3,5')).toBe('周一、周三、周五 9:00');
-    expect(cronToHuman('0 18 * * *')).toBe('每天 18:00');
-    expect(cronToHuman('0 7 22 * *')).toBe('每月 22 日 7:00');
+    expect(zh('30 7 * * 1-5')).toBe('周一至周五 7:30');
+    expect(zh('0 9 * * 1,3,5')).toBe('周一、周三、周五 9:00');
+    expect(zh('0 18 * * *')).toBe('每天 18:00');
+    expect(zh('0 7 22 * *')).toBe('每月 22 日 7:00');
   });
 });
 

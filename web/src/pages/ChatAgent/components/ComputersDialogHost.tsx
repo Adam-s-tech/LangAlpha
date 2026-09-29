@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { toast } from '@/components/ui/use-toast';
+import { useLocale } from '@/hooks/useLocale';
 import type { Computer, ResourceTier } from '@/types/api';
 
 import {
@@ -32,6 +33,7 @@ import { normalizeTier, tierLabel } from './tierUi';
 
 function ComputersDialogHost() {
   const { t } = useTranslation();
+  const locale = useLocale();
   const queryClient = useQueryClient();
   const { panel, specComputerId } = useComputersPanel();
   // Always on: the fan-out at the same root reads this list anyway, and the
@@ -103,7 +105,7 @@ function ComputersDialogHost() {
         setSpecError(error);
         continue;
       }
-      const files = specErrorFiles(error.files, t);
+      const files = specErrorFiles(error.files, t, locale);
       toast({
         variant: 'destructive',
         title: t('computer.spec.failedTitle', 'Could not change the spec of {{name}}', { name: computer.name }),
@@ -112,7 +114,7 @@ function ComputersDialogHost() {
     }
     // Re-running on a dialog or locale change is harmless: settled ids have
     // already left the watch set.
-  }, [computers, specComputerId, queryClient, t]);
+  }, [computers, specComputerId, queryClient, t, locale]);
 
   const submitSpec = (tier: ResourceTier) => {
     if (!specComputerId) return;

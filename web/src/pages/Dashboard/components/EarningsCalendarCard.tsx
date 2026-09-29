@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import i18n from '@/i18n';
 import { createPortal } from 'react-dom';
 import { ChevronRight, X, Calendar } from 'lucide-react';
 import { motion, AnimatePresence } from '@/lib/framer';
 import { useBackdropDismiss } from '@/hooks/useDialogA11y';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { getEarningsCalendar } from '../utils/api';
 
 interface EarningsEntry {
@@ -55,13 +56,14 @@ function LogoFallback({ symbol }: LogoFallbackProps) {
   );
 }
 
-function formatDate(dateStr: string | undefined): string {
+function formatDate(dateStr: string | undefined, locale: string): string {
   if (!dateStr) return '';
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString(i18n.language, { month: 'short', day: 'numeric' });
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString(locale, { month: 'short', day: 'numeric' });
 }
 
 function EarningsItem({ item, index: _index, isPast }: EarningsItemProps) {
-  const dateStr = formatDate(item.date);
+  const locale = useLocale();
+  const dateStr = formatDate(item.date, locale);
 
   return (
     <div
@@ -116,19 +118,21 @@ function SectionLabel({ label }: SectionLabelProps) {
   );
 }
 
-function formatDateTab(dateStr: string | undefined): DateTabInfo {
+function formatDateTab(dateStr: string | undefined, locale: string): DateTabInfo {
   if (!dateStr) return { weekday: '', label: '' };
   const d = new Date(dateStr + 'T00:00:00');
-  const weekday = d.toLocaleDateString(i18n.language, { weekday: 'short' });
-  const month = d.toLocaleDateString(i18n.language, { month: 'short' });
+  const weekday = d.toLocaleDateString(locale, { weekday: 'short' });
+  const month = d.toLocaleDateString(locale, { month: 'short' });
   const day = d.getDate();
   return { weekday, label: `${month} ${day}` };
 }
 
 function EarningsModal({ earnings, onClose }: EarningsModalProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   const backdrop = useBackdropDismiss<HTMLDivElement>(onClose);
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = new Date(now).toISOString().split('T')[0];
 
   // Group by date, sorted chronologically
   const dateGroups = useMemo((): DateGroup[] => {
@@ -213,7 +217,7 @@ function EarningsModal({ earnings, onClose }: EarningsModalProps) {
             const isActive = group.date === activeDate;
             const isToday = group.date === todayStr;
             const isPast = group.date < todayStr;
-            const { weekday, label } = formatDateTab(group.date);
+            const { weekday, label } = formatDateTab(group.date, locale);
             return (
               <button
                 key={group.date}
@@ -346,7 +350,8 @@ function EarningsCalendarCard() {
     fetchEarnings();
   }, [fetchEarnings]);
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const now = useNow();
+  const todayStr = new Date(now).toISOString().split('T')[0];
 
   const { recent, upcoming } = useMemo(() => {
     const r = allEarnings.filter((e) => e.date < todayStr).sort((a, b) => b.date.localeCompare(a.date));

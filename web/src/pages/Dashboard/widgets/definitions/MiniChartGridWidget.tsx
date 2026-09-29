@@ -26,6 +26,7 @@ import { DEFAULT_BLUE_CHIPS } from '../framework/defaults';
 import { SymbolListField } from '../framework/settings/SymbolListField';
 import { SettingsDoneButton } from '../framework/settings/SettingsDoneButton';
 import { createFormatter } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import type { WidgetRenderProps, WidgetSettingsProps } from '../types';
 
 const fmt2 = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -138,6 +139,7 @@ function MiniSparkline({ cell }: { cell: CellData }) {
 
 function MiniChartGridWidget({ instance }: WidgetRenderProps<MiniChartGridConfig>) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const navigate = useNavigate();
   const { watchlist } = useDashboardContext();
   // Memoized so the query key stays reference-stable on unrelated re-renders
@@ -330,7 +332,7 @@ function MiniChartGridWidget({ instance }: WidgetRenderProps<MiniChartGridConfig
                       className="text-[0.6875rem] dashboard-mono"
                       style={{ color: up ? 'var(--color-profit)' : 'var(--color-loss)' }}
                     >
-                      {up ? '+' : ''}{fmt2(pct)}%
+                      {up ? '+' : ''}{fmt2(pct, locale)}%
                     </span>
                   </div>
                   <div className="flex items-end justify-between mt-1">
@@ -338,7 +340,7 @@ function MiniChartGridWidget({ instance }: WidgetRenderProps<MiniChartGridConfig
                       className="text-[0.6875rem] dashboard-mono"
                       style={{ color: 'var(--color-text-secondary)' }}
                     >
-                      {currencySymbol(cell.currency)}{fmt2(cell.last)}
+                      {currencySymbol(cell.currency)}{fmt2(cell.last, locale)}
                     </span>
                     <MiniSparkline cell={cell} />
                   </div>

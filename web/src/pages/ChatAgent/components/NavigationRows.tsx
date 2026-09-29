@@ -20,6 +20,8 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from '../../../componen
 import { createDateFormatter, relativeTime } from '@/lib/format';
 import { Loader } from '@/components/ui/loader';
 import { useTitleFade } from '@/hooks/useTitleFade';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { useThreadFlags } from '@/lib/threadLifecycle/store';
 import type { SidebarAgentRow } from '../session/subagents/subagentStatus';
 import { SubagentStatusIcon } from './taskStatusUi';
@@ -132,26 +134,34 @@ function ThreadMetaCard({ thread, title, t }: {
   title: string;
   t: (key: string) => string;
 }) {
-  const rows: Array<[string, string]> = [];
-  if (thread.updated_at) rows.push([t('nav.threadUpdated'), relativeTime(thread.updated_at)]);
-  if (thread.created_at) rows.push([t('nav.threadCreated'), threadMetaDate(new Date(thread.created_at))]);
-  if (typeof thread.turn_count === 'number') rows.push([t('nav.threadTurns'), String(thread.turn_count)]);
   return (
     <HoverCardContent side="right" align="start" sideOffset={12} className="w-60 p-3 pointer-events-none select-none">
       <div className="text-[0.8125rem] font-medium leading-snug" style={{ color: 'var(--color-text-primary)' }}>
         {title}
       </div>
-      {rows.length > 0 && (
-        <div className="mt-2 flex flex-col gap-1">
-          {rows.map(([label, value]) => (
-            <div key={label} className="flex items-baseline justify-between gap-3 text-xs">
-              <span style={{ color: 'var(--color-text-tertiary)' }}>{label}</span>
-              <span className="text-right" style={{ color: 'var(--color-text-secondary)' }}>{value}</span>
-            </div>
-          ))}
-        </div>
-      )}
+      <ThreadMetaRows thread={thread} t={t} />
     </HoverCardContent>
+  );
+}
+
+// Mounted only while the card is open, so a closed row holds no clock.
+function ThreadMetaRows({ thread, t }: { thread: ThreadEntry; t: (key: string) => string }) {
+  const locale = useLocale();
+  const now = useNow();
+  const rows: Array<[string, string]> = [];
+  if (thread.updated_at) rows.push([t('nav.threadUpdated'), relativeTime(thread.updated_at, locale, now)]);
+  if (thread.created_at) rows.push([t('nav.threadCreated'), threadMetaDate(new Date(thread.created_at), locale)]);
+  if (typeof thread.turn_count === 'number') rows.push([t('nav.threadTurns'), String(thread.turn_count)]);
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-col gap-1">
+      {rows.map(([label, value]) => (
+        <div key={label} className="flex items-baseline justify-between gap-3 text-xs">
+          <span style={{ color: 'var(--color-text-tertiary)' }}>{label}</span>
+          <span className="text-right" style={{ color: 'var(--color-text-secondary)' }}>{value}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 

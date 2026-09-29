@@ -305,11 +305,11 @@
         "is_reasoning": true,
         "description": "Claude Sonnet 5 model",
         "pricing": {
-          "input": 3.0,
-          "cached_input": 0.3,
-          "cache_5m": 3.75,
-          "cache_1h": 6.0,
-          "output": 15.0,
+          "input": 2.0,
+          "cached_input": 0.2,
+          "cache_5m": 2.5,
+          "cache_1h": 4.0,
+          "output": 10.0,
           "unit": "per_1m_tokens"
         }
       },

@@ -859,6 +859,19 @@ class TestFetchCompanyOverview:
             assert f"| {label} |" not in content
 
     @pytest.mark.asyncio
+    async def test_ratios_render_without_key_metrics(self, full_profile):
+        """Key metrics failing alone drops only EV/OCF, ROE and ROA."""
+        content = await self._overview_metrics(
+            full_profile,
+            [],
+            [{"priceToEarningsRatioTTM": 37.6, "debtToEquityRatioTTM": 0.78}],
+        )
+        assert "| P/E Ratio | 37.60x |" in content
+        assert "| Debt/Equity Ratio | 0.78 |" in content
+        for label in ("EV/OCF", "ROE (Return on Equity)", "ROA (Return on Assets)"):
+            assert f"| {label} |" not in content
+
+    @pytest.mark.asyncio
     async def test_zero_from_yfinance_fallback_reaches_the_table(self, full_profile):
         """A debt-free company's 0 debt/equity survives the percent conversion
         and renders, as do 0% returns and margins. A 0 PEG drops like FMP's.

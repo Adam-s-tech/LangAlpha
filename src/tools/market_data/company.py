@@ -778,8 +778,10 @@ No data found for symbol {symbol}"""
                 output_lines.append("")
 
         # === KEY FINANCIAL METRICS ===
-        if key_metrics_data:
-            metrics = key_metrics_data[0]
+        # Most rows come from ratios, so either endpoint is enough to render the
+        # table: one failing among the parallel fetches drops only its own rows.
+        if key_metrics_data or ratios_data:
+            metrics = key_metrics_data[0] if key_metrics_data else {}
             ratios = ratios_data[0] if ratios_data else {}
 
             output_lines.append("### Key Financial Metrics (TTM)")

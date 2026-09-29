@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { handleReasoningSignal, handleToolCalls } from '../mainEventHandlers';
+import { handleReasoningSignal, handleTextContent, handleToolCalls } from '../mainEventHandlers';
 import { dispatchWithReplayStamp } from '../processStreamEvent';
 import type { MessageRecord, SetMessages } from '../../../hooks/utils/types';
 import type { StreamRefs } from '../../streamRefs';
@@ -88,6 +88,18 @@ describe('reconnect stamps are read on arrival', () => {
     handleToolCalls({ assistantMessageId: 'a', toolCalls: [{ id: 't1', name: 'bash', args: {} }], finishReason: undefined, refs, setMessages });
     const [msg] = apply();
     expect((msg.toolCallProcesses as Record<string, Record<string, unknown>>).t1._createdAt as number).toBeGreaterThan(1);
+  });
+});
+
+describe('fallback orders are taken on arrival', () => {
+  it('a tool call without an event id sorts before text that arrived after it', () => {
+    const refs = { ...reconnectRefs(), isReconnect: false };
+    const { setMessages, apply } = deferredSetMessages([{ id: 'a', role: 'assistant', contentSegments: [] } as MessageRecord]);
+    handleToolCalls({ assistantMessageId: 'a', toolCalls: [{ id: 't1', name: 'bash', args: {} }], finishReason: undefined, refs, setMessages });
+    handleTextContent({ assistantMessageId: 'a', content: 'after', finishReason: undefined, refs, setMessages });
+    const [msg] = apply();
+    const order = (type: string) => (msg.contentSegments as { type: string; order: number }[]).find((s) => s.type === type)!.order;
+    expect(order('tool_call')).toBeLessThan(order('text'));
   });
 });
 

@@ -215,6 +215,13 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
     // Subagent steering_delivered events are handled in the isSubagent block below.
     if (eventType === 'steering_delivered' && !isSubagent) {
       const oldAssistantId = assistantMessageId;
+      // Use closure-local snapshot or fall back to the shared ref
+      // (steering_accepted only arrives on the secondary POST stream, so
+      // the closure-local steeringAtOrder is typically null — the shared
+      // ref is set by handleSendSteering on the secondary stream). Read
+      // here, not in the updater: both are nulled below, before React runs
+      // an updater it did not compute eagerly.
+      const effectiveSteeringAtOrder = steeringAtOrder ?? refs.steeringAtOrderRef?.current ?? null;
 
       // 1. Roll back old assistant message to the snapshot taken at steering_accepted
       //    time, removing any content that leaked due to stream-mode multiplexing.
@@ -224,12 +231,6 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
           if (msg.id !== oldAssistantId) return msg;
           if (msg.role !== 'assistant') return msg;
           const aMsg = msg as AssistantMessage;
-
-          // Use closure-local snapshot or fall back to the shared ref
-          // (steering_accepted only arrives on the secondary POST stream, so
-          // the closure-local steeringAtOrder is typically null — the shared
-          // ref is set by handleSendSteering on the secondary stream).
-          const effectiveSteeringAtOrder = steeringAtOrder ?? refs.steeringAtOrderRef?.current ?? null;
 
           // If no snapshot — or snapshot is non-positive / NaN (steering
           // arrived before any ordered content was emitted, or `_eventId`

@@ -36,7 +36,7 @@ arrival pattern.
 | `PERF_HEADED=1` | all three | Runs on the real display. Headless rAF caps near 110 fps with no vsync, and a headless tab never goes hidden, so the hidden-tab scenario only measures a real background tab here. |
 | `PERF_CPU=<n>` | smoothness | CPU throttling rate (default 4). |
 | `PERF_CHUNK_MS=<n>` / `PERF_CHUNK_CHARS=<n>` | smoothness | Token cadence: chars per SSE event and the gap between them (defaults 8 and 8). |
-| `PERF_PROFILE=1` | smoothness | Records a V8 CPU profile and prints self time per module and per function: what to fix next. |
+| `PERF_PROFILE=1` | smoothness | Records a V8 CPU profile and prints self time per module and per function: what to fix next. The raw profile is saved beside the run as `.cpuprofile`, for inclusive time per component or for DevTools. |
 | `PERF_TRACE=1` | smoothness | Records a Chrome trace and sums renderer time per event kind (Layout, Paint, ...), which is where the profiler's `(program)` time goes. |
 | `PERF_CAST=1` | return-glitch (reload) | Records compositor frames over the catch-up and counts the magenta band painted at the top of the transcript: the ground truth for whether a frame was ever shown away from the bottom. The band shifts layout and the encoder takes main-thread time, so a `PERF_CAST` run's layout and frame numbers are not comparable with a plain run's. |
 | `PERF_SHOT=<path>` | return-glitch (reload) | Screenshots the reconnecting state after the reload. |

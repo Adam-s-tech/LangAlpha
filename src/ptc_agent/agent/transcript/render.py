@@ -12,7 +12,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import zlib
 from dataclasses import dataclass, field
+from functools import cache, cached_property
 from typing import Any, Iterable
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
@@ -20,15 +22,7 @@ from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMes
 from ptc_agent.agent.transcript.classify import human_kind, is_run_boundary_message
 from src.llms.attachment_payload import FILE_BLOCK_TYPES, IMAGE_BLOCK_TYPES
 
-SCHEMA_VERSION = 1
-
-_TURN_ROW_KIND = "turn_opened"
-
-# The pointer LargeResultEvictionMiddleware leaves in place of a large result.
-_EVICTED_POINTER = re.compile(
-    r"^Tool result too large, the result of this tool call \S+ was saved in the "
-    r"filesystem at this path: (\S+)"
-)
+SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -41,24 +35,46 @@ class Segment:
     last_id: str | None = None
     at: str | None = None
 
-    @property
-    def content(self) -> str:
-        return "".join(line + "\n" for line in self.lines)
+    @cached_property
+    def data(self) -> bytes:
+        """The file's bytes, joined and encoded once: its size, its digest and
+        the stored copy all come from these."""
+        # A lone surrogate (text a model produced) becomes "?", as the
+        # checkpoint stores it, rather than failing the whole render.
+        return "".join(line + "\n" for line in self.lines).encode(errors="replace")
 
-    @property
-    def digest(self) -> str:
-        return hashlib.sha1(self.content.encode()).hexdigest()
+    @cached_property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.data).hexdigest()
+
+
+@cache
+def _evicted_pointer() -> re.Pattern[str]:
+    """The first line of the pointer LargeResultEvictionMiddleware leaves in
+    place of a large result, its path captured."""
+    # Imported here: the middleware package imports this one.
+    from ptc_agent.agent.middleware.large_result_eviction import TOO_LARGE_TOOL_MSG
+
+    line = re.escape(TOO_LARGE_TOOL_MSG.split("\n", 1)[0])
+    line = line.replace(re.escape("{tool_call_id}"), r"\S+")
+    return re.compile(line.replace(re.escape("{file_path}"), r"(\S+)"))
 
 
 def evicted_path(message: ToolMessage) -> str | None:
     text = message.content if isinstance(message.content, str) else _text(message.content)
-    match = _EVICTED_POINTER.match(text)
+    match = _evicted_pointer().match(text)
     return match.group(1) if match else None
 
 
 def _turn_opened_at(message: HumanMessage) -> str | None:
-    meta = (message.additional_kwargs or {}).get("runtime_update")
-    if isinstance(meta, dict) and meta.get("kind") == _TURN_ROW_KIND:
+    """The stamp a turn row carries, verbatim: ``runtime_update_from_message``
+    would parse it, and invent one when it is missing."""
+    # Imported here: the middleware package imports this one.
+    from ptc_agent.agent.middleware.runtime_context.durable import RUNTIME_UPDATE_KEY
+    from ptc_agent.agent.middleware.runtime_context.turn import TURN_ROW_KIND
+
+    meta = (message.additional_kwargs or {}).get(RUNTIME_UPDATE_KEY)
+    if isinstance(meta, dict) and meta.get("kind") == TURN_ROW_KIND:
         created = meta.get("created_at")
         return created if isinstance(created, str) else None
     return None
@@ -88,15 +104,19 @@ def _text(content: Any, *, attachments: bool = True) -> str:
 def split_runs(messages: Iterable[AnyMessage]) -> list[list[AnyMessage]]:
     """Group messages into turns, each opened by a real user message.
 
-    Anything before the first user message (a resumed task's leftovers, an
-    old thread's system rows) stays with the first turn.
+    Anything before the first user message (a ``system`` or ``assistant``
+    message a client opened the thread with) stays with the first turn, as
+    replay counts it.
     """
-    runs: list[list[AnyMessage]] = []
+    runs: list[list[AnyMessage]] = [[]]
+    opened = False
     for message in messages:
-        if is_run_boundary_message(message) or not runs:
-            runs.append([])
+        if is_run_boundary_message(message):
+            if opened:
+                runs.append([])
+            opened = True
         runs[-1].append(message)
-    return runs
+    return runs if runs[0] else []
 
 
 def render_segment(
@@ -173,13 +193,62 @@ def render_segment(
     return segment
 
 
-def render(messages: Iterable[AnyMessage], *, unit: str = "turn") -> list[Segment]:
-    """Every turn of a message list, numbered from 1."""
-    names: dict[str, str] = {}
-    segments = []
-    for number, run in enumerate(split_runs(messages), start=1):
-        segments.append(render_segment(number, run, unit=unit, tool_names=names))
-    return segments
+def segment_shape(
+    number: int,
+    messages: list[AnyMessage],
+    *,
+    unit: str,
+    previous: str,
+    tool_names: dict[str, str],
+) -> str:
+    """A key that changes whenever the segment's render would.
+
+    It covers every value the render reads: each message's text and tool-call
+    args by checksum, the rest as they are. A message replaced under its id
+    (the reducer's way) with text of the same length still changes it. A
+    checksum costs one pass over the text, a fraction of the JSON encoding a
+    render does. The key chains the previous segment's, so a rewritten
+    earlier turn (a regenerate, a truncation) changes every key after it.
+    Records each tool call's name on the way, the map a render of a later
+    segment needs.
+    """
+    parts = [f"{SCHEMA_VERSION}|{unit}|{number}|{previous}"]
+    for message in messages:
+        part = f"{type(message).__name__}|{message.id}"
+        if isinstance(message, AIMessage):
+            part += "|" + _checksum(_text(message.content, attachments=False))
+            for call in message.tool_calls or ():
+                tool_names[call["id"]] = call["name"]
+                part += f"|{call['id']}|{call['name']}|{_args_checksum(call.get('args', {}))}"
+        elif isinstance(message, ToolMessage):
+            part += f"|{_checksum(_text(message.content))}|{message.tool_call_id}"
+            part += f"|{message.status}|{message.name}"
+        elif isinstance(message, HumanMessage):
+            source = (message.additional_kwargs or {}).get("lc_source")
+            part += f"|{_checksum(_text(message.content))}|{source}|{_turn_opened_at(message)}"
+        parts.append(part)
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:32]
+
+
+def _checksum(text: str) -> str:
+    # CRC-32 beside the length: it catches any change a same-length edit
+    # makes short of a deliberate collision, at memory speed, and releases
+    # the GIL on a large buffer. surrogatepass: a digest must not raise on
+    # text a model produced.
+    return f"{len(text)}:{zlib.crc32(text.encode('utf-8', 'surrogatepass')):08x}"
+
+
+def _args_checksum(args: Any) -> str:
+    """Tool-call args in the order the render writes them. A string value,
+    usually code, is checksummed as is, which skips escaping it."""
+    if not isinstance(args, dict):
+        return "j" + _checksum(json.dumps(args, ensure_ascii=False, default=str))
+    return ",".join(
+        f"{key!r}=s{_checksum(value)}"
+        if isinstance(value, str)
+        else f"{key!r}=j{_checksum(json.dumps(value, ensure_ascii=False, default=str))}"
+        for key, value in args.items()
+    )
 
 
 def message_turns(messages: Iterable[AnyMessage]) -> dict[str, int]:

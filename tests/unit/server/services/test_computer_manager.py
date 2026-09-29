@@ -2313,6 +2313,75 @@ class TestJoiningARunningMachine(_Base):
 
 
 # ---------------------------------------------------------------------------
+# A warm session whose skills changed
+# ---------------------------------------------------------------------------
+
+
+class TestWarmSkillChange(_Base):
+    """The asset upload fills only the computer's shared skills directory.
+
+    A workspace reaches a shared skill through a link the reconciler lays, so a
+    warm turn after a skill is added or switched back on must reconcile too, or
+    the skill is listed that turn but cannot be read.
+    """
+
+    @staticmethod
+    async def _warm_sync(manager, session, *, mcp_changed):
+        session.sandbox.ensure_sandbox_ready = AsyncMock()
+        session.skills_signature = "before"
+        patches = (
+            ("_apply_session_platform_secret", AsyncMock()),
+            (
+                "_apply_session_mcp",
+                AsyncMock(return_value=MagicMock() if mcp_changed else None),
+            ),
+            ("_freeze_tool_view", MagicMock()),
+            ("tool_view", MagicMock()),
+            ("_servers_needing_discovery", MagicMock(return_value=[])),
+            ("_kick_mcp_discovery", MagicMock()),
+            ("_sync_sandbox_assets", AsyncMock()),
+            ("_reconcile_skills", AsyncMock()),
+        )
+        with ExitStack() as stack:
+            for name, new in patches:
+                stack.enter_context(patch.object(manager, name, new=new))
+            await manager._complete_phase2_sync(
+                _make_binding("ws-a"),
+                session,
+                workspace_user_id="user-1",
+                needs_sync=True,
+                needs_deferred_sync=False,
+                phase2_owner=True,
+                phase2_event=None,
+                mark=lambda _phase: None,
+                skills_signature="after" if not mcp_changed else "before",
+            )
+            return manager._sync_sandbox_assets, manager._reconcile_skills
+
+    @pytest.mark.asyncio
+    async def test_changed_skills_upload_then_relink(self):
+        manager = _make_manager()
+        session = _make_session()
+
+        upload, reconcile = await self._warm_sync(manager, session, mcp_changed=False)
+
+        upload.assert_awaited_once()
+        reconcile.assert_awaited_once()
+        assert reconcile.await_args.kwargs["source"] == "warm_skills_changed"
+        assert session.skills_signature == "after"
+
+    @pytest.mark.asyncio
+    async def test_an_mcp_only_change_does_not_reconcile_skills(self):
+        manager = _make_manager()
+        session = _make_session()
+
+        upload, reconcile = await self._warm_sync(manager, session, mcp_changed=True)
+
+        upload.assert_awaited_once()
+        reconcile.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
 # Folders on a shared machine
 # ---------------------------------------------------------------------------
 
@@ -2963,6 +3032,30 @@ async def test_an_unfinished_skill_pass_is_retried_before_attach_is_remembered()
         await manager.get_session_for_workspace("ws-joiner", user_id="user-1")
 
         assert manager._reconcile_skills.await_count == 2
+    assert manager._projects_attached
+
+@pytest.mark.asyncio
+async def test_a_workspace_the_bring_up_drops_during_its_attach_is_queued_again():
+    """The bring-up the restore queued runs at the attach's next await and may
+    drop the workspace (its folder began a move), discarding its key. The
+    attach must not put the key back, or no later acquisition queues it."""
+    manager = _make_manager()
+    manager._projects_attached.clear()
+    session = TestEveryProjectsToolOverlay._joining()
+    with _attaching(manager, session) as reached:
+        restore = manager._maybe_restore_files
+        synced = reached.sync.side_effect
+
+        async def dropped_meanwhile(*args, **kwargs):
+            manager._projects_attached.clear()
+            return await synced(*args, **kwargs)
+
+        reached.sync.side_effect = dropped_meanwhile
+        await manager.get_session_for_workspace("ws-joiner", user_id="user-1")
+        assert not manager._projects_attached
+        await manager.get_session_for_workspace("ws-joiner", user_id="user-1")
+
+    assert restore.await_count == 2
     assert manager._projects_attached
 
 @pytest.mark.asyncio

@@ -671,6 +671,7 @@ class DaytonaProvider(SandboxProvider):
                 "poppler-utils",
                 "pandoc",
                 "qpdf",
+                "fuse3",
                 "fonts-noto-cjk",
                 "fonts-dejavu-core",
                 "fonts-opensymbol",
@@ -727,7 +728,7 @@ class DaytonaProvider(SandboxProvider):
                 "apt-get update"
                 " && apt-get install -y --no-install-recommends"
                 " ca-certificates curl ripgrep jq git unzip gcc"
-                " poppler-utils pandoc qpdf"
+                " poppler-utils pandoc qpdf fuse3"
                 " libreoffice-writer libreoffice-calc libreoffice-impress"
                 " libreoffice-draw"
                 " fonts-noto-cjk fonts-dejavu-core fonts-opensymbol"

@@ -1,0 +1,248 @@
+"""What a tool result says about saves made through the mount.
+
+A program learns of a refused save only at close(), which most never check,
+so these lines are the agent's one report of it: failures only, short however
+many there were, named by the paths the agent used, and delivered even when
+the save came after its command returned.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from src.server.services.livefs import outcomes
+from tests.unit.redis_mock_pipeline import attach_pipeline
+
+ROOT = "/home/workspace"
+COMPUTER = "computer-1"
+CALL_A = "call-aaaa0001"
+CALL_B = "call-bbbb0002"
+HEADER = "NOT SAVED (the exit status does not show this):"
+LINKS = (
+    ("user", f"{ROOT}/.agents/user"),
+    ("workspaces/ws-1/memory", f"{ROOT}/research/.agents/memory"),
+    ("computer/threads.jsonl", f"{ROOT}/.agents/threads.jsonl"),
+)
+LATE = " (from an earlier command)"
+
+
+def _failed(path: str, error: str = "refused") -> dict[str, Any]:
+    return {"op": "write", "path": path, "ok": False, "error": error}
+
+
+def _saved(path: str) -> dict[str, Any]:
+    return {"op": "write", "path": path, "ok": True, "size": 1}
+
+
+def _lua(script: str):
+    """outcomes' Lua as Python. It is a straight line of redis.call()s under
+    one if, so the fake runs the shipped text rather than a copy of it."""
+    body, depth = [], 1
+    for line in (raw.strip() for raw in script.strip().splitlines()):
+        if line == "end":
+            depth -= 1
+            continue
+        line = line.replace("redis.call", "call").replace("tonumber", "int")
+        if line.startswith("if ") and line.endswith(" then"):
+            body.append("    " * depth + line[: -len(" then")] + ":")
+            depth += 1
+        else:
+            body.append("    " * depth + line)
+    namespace: dict[str, Any] = {}
+    exec("def script(call, KEYS, ARGV):\n" + "\n".join(body), namespace)
+    return namespace["script"]
+
+
+def _span(items: list, start: int, end: int) -> slice:
+    n = len(items)
+    start = max(n + start, 0) if start < 0 else start
+    end = n + end if end < 0 else end
+    return slice(start, end + 1)
+
+
+class _FakeRedis:
+    """Strings and lists in one dict, with TTLs recorded, never expired."""
+
+    def __init__(self) -> None:
+        self.data: dict[str, Any] = {}
+        self.ttl: dict[str, int] = {}
+        attach_pipeline(self)
+
+    def call(self, command: str, *args: Any, **kwargs: Any) -> Any:
+        return getattr(self, f"_{command.lower()}")(*args, **kwargs)
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        async def command(*args: Any, **kwargs: Any) -> Any:
+            return self.call(name, *args, **kwargs)
+
+        return command
+
+    async def eval(self, script: str, numkeys: int, *args: Any) -> Any:
+        keys = {i + 1: k for i, k in enumerate(args[:numkeys])}
+        argv = {i + 1: str(a) for i, a in enumerate(args[numkeys:])}
+        return _lua(script)(self.call, keys, argv)
+
+    def _exists(self, *keys: str) -> int:
+        return sum(k in self.data for k in keys)
+
+    def _set(self, key: str, value: Any, ex: int | None = None) -> bool:
+        self.data[key] = value
+        if ex:
+            self.ttl[key] = int(ex)
+        return True
+
+    def _expire(self, key: str, seconds: Any) -> bool:
+        if key in self.data:
+            self.ttl[key] = int(seconds)
+        return key in self.data
+
+    def _delete(self, *keys: str) -> int:
+        for key in keys:
+            self.ttl.pop(key, None)
+        return sum(self.data.pop(key, None) is not None for key in keys)
+
+    def _rpush(self, key: str, *values: Any) -> int:
+        self.data.setdefault(key, []).extend(values)
+        return len(self.data[key])
+
+    def _ltrim(self, key: str, start: Any, end: Any) -> bool:
+        items = self.data.get(key, [])
+        self.data[key] = items[_span(items, int(start), int(end))]
+        return True
+
+    def _lrange(self, key: str, start: int, end: int) -> list:
+        items = self.data.get(key, [])
+        return items[_span(items, int(start), int(end))]
+
+
+@pytest.fixture
+def redis(monkeypatch):
+    fake = _FakeRedis()
+    monkeypatch.setattr(
+        outcomes,
+        "get_cache_client",
+        lambda: SimpleNamespace(enabled=True, client=fake),
+    )
+    return fake
+
+
+# -- the report ----------------------------------------------------------------
+
+
+def test_only_failed_saves_are_reported():
+    text = outcomes.describe(
+        [_saved(f"{ROOT}/.agents/user/memory/a.md"), _failed("user/memory/b.md")],
+        LINKS,
+    )
+    assert text.splitlines() == [HEADER, f"- {ROOT}/.agents/user/memory/b.md: refused"]
+    assert outcomes.describe([_saved("user/memory/a.md")], LINKS) == ""
+
+
+def test_a_long_report_shows_ten_failures_and_counts_the_rest():
+    failed = [_failed(f"user/memory/{i:02d}.md") for i in range(13)]
+    lines = outcomes.describe(failed, LINKS).splitlines()
+    assert lines[0] == HEADER
+    assert len(lines) == 1 + 10 + 1
+    assert lines[10].startswith(f"- {ROOT}/.agents/user/memory/09.md")
+    assert lines[-1] == "- and 3 more"
+
+
+def test_each_failure_is_named_by_the_path_the_agent_used():
+    text = outcomes.describe(
+        [
+            _failed("workspaces/ws-1/memory/notes.md"),
+            _failed("computer/threads.jsonl"),
+            # Most refusals come back from the tree in sandbox form already.
+            _failed(f"{ROOT}/.agents/user/memo/brief.md"),
+        ],
+        LINKS,
+    )
+    assert text.splitlines()[1:] == [
+        f"- {ROOT}/research/.agents/memory/notes.md: refused",
+        f"- {ROOT}/.agents/threads.jsonl: refused",
+        f"- {ROOT}/.agents/user/memo/brief.md: refused",
+    ]
+
+
+# -- delivery by call id -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_commands_own_failures_are_reported_once(redis):
+    await outcomes.record(COMPUTER, CALL_A, _failed("user/memory/a.md"))
+    await outcomes.record(COMPUTER, CALL_A, _saved("user/memory/b.md"))
+
+    first = await outcomes.collect(COMPUTER, CALL_A)
+    assert [o["path"] for o in first] == ["user/memory/a.md", "user/memory/b.md"]
+    assert LATE not in outcomes.describe(first, LINKS)
+    assert await outcomes.collect(COMPUTER, CALL_A) == []
+
+
+@pytest.mark.asyncio
+async def test_a_save_after_its_command_returned_reaches_the_next_one_as_late(redis):
+    assert await outcomes.collect(COMPUTER, CALL_A) == []
+    await outcomes.record(COMPUTER, CALL_A, _failed("user/memory/a.md"))
+
+    text = outcomes.describe(await outcomes.collect(COMPUTER, CALL_B), LINKS)
+    assert text.splitlines()[1] == f"- {ROOT}/.agents/user/memory/a.md: refused{LATE}"
+
+
+@pytest.mark.asyncio
+async def test_a_save_with_no_call_id_reaches_the_next_command_as_late(redis):
+    # A background job outlives its call, so it runs with no id.
+    await outcomes.record(COMPUTER, None, _failed("user/memory/a.md"))
+
+    collected = await outcomes.collect(COMPUTER, CALL_B)
+    assert [(o["path"], o.get("late")) for o in collected] == [
+        ("user/memory/a.md", True)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_late_list_keeps_the_newest_fifty_for_a_day(redis):
+    await outcomes.collect(COMPUTER, CALL_A)
+    for i in range(60):
+        # Both ways onto the list: a closed call's id, and none.
+        await outcomes.record(COMPUTER, CALL_A if i % 2 else None, _failed(f"f-{i}"))
+    late_key = f"livefs:{{{COMPUTER}}}:late"
+    assert redis.ttl[late_key] == 86400
+
+    collected = await outcomes.collect(COMPUTER, CALL_B)
+    assert [o["path"] for o in collected] == [f"f-{i}" for i in range(10, 60)]
+
+
+@pytest.mark.asyncio
+async def test_one_computers_late_saves_never_reach_another(redis):
+    await outcomes.record(COMPUTER, None, _failed("user/memory/a.md"))
+    assert await outcomes.collect("computer-2", CALL_B) == []
+    assert len(await outcomes.collect(COMPUTER, CALL_B)) == 1
+
+
+def test_a_call_id_outside_the_key_safe_shape_is_dropped():
+    # It arrives in a header the agent's own code can set, and names a key.
+    for bad in (None, "", "short", "call:aaaa0001", "call aaaa0001", "x" * 65):
+        assert outcomes.valid_call_id(bad) is None
+    assert outcomes.valid_call_id(CALL_A) == CALL_A
+
+
+@pytest.mark.asyncio
+async def test_a_redis_failure_costs_the_report_never_the_command(monkeypatch):
+    down = SimpleNamespace(
+        eval=AsyncMock(side_effect=ConnectionError("down")),
+        pipeline=MagicMock(side_effect=ConnectionError("down")),
+    )
+    monkeypatch.setattr(
+        outcomes,
+        "get_cache_client",
+        lambda: SimpleNamespace(enabled=True, client=down),
+    )
+    await outcomes.record(COMPUTER, CALL_A, _failed("user/memory/a.md"))
+    await outcomes.record(COMPUTER, None, _failed("user/memory/a.md"))
+    assert await outcomes.collect(COMPUTER, CALL_A) == []

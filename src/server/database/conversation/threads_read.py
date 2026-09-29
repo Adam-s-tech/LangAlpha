@@ -459,20 +459,20 @@ async def get_workspace_thread_short_ids(workspace_id: str) -> set[str]:
 
 
 async def list_computer_threads(computer_id: str) -> List[Dict[str, Any]]:
-    """Threads of every live workspace on a computer, newest first.
-
-    What the transcript export needs to reconcile a workspace's thread dirs
-    and to write the computer's thread index, in one query.
-    """
+    """Threads of every live workspace on a computer, newest first, and
+    whether each has a stored transcript: the computer's thread index."""
     async with pool.get_db_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """
                 SELECT t.conversation_thread_id, t.title, t.latest_checkpoint_id,
                        t.created_at, t.updated_at, w.workspace_id,
-                       w.name AS workspace_name, w.dir_name
+                       w.name AS workspace_name, w.dir_name,
+                       s.conversation_thread_id IS NOT NULL AS has_transcript
                 FROM conversation_threads t
                 JOIN workspaces w ON w.workspace_id = t.workspace_id
+                LEFT JOIN thread_transcripts s
+                    ON s.conversation_thread_id = t.conversation_thread_id
                 WHERE w.computer_id = %s AND w.status <> 'deleted'
                 ORDER BY t.updated_at DESC
                 """,

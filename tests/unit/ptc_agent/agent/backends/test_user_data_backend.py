@@ -130,9 +130,11 @@ class TestRead:
 
 class TestWrite:
     @pytest.mark.asyncio
-    async def test_write_unknown_file_returns_false(self, backend):
-        result = await backend.awrite_text(f"{PREFIX}other.json", "{}")
-        assert result is False
+    async def test_write_unknown_file_names_the_writable_files(self, backend):
+        with pytest.raises(UserDataValidationError) as exc:
+            await backend.awrite_text(f"{PREFIX}other.json", "{}")
+        assert exc.value.error_type == "schema_error"
+        assert "portfolio.json" in exc.value.hint
 
     @pytest.mark.asyncio
     @patch("ptc_agent.agent.backends.user_data.io")

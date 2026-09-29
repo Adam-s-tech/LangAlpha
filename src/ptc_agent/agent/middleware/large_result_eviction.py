@@ -32,11 +32,11 @@ MAX_EVICTED_BYTES = 50 * 1024 * 1024
 
 # Tools excluded from eviction (PascalCase versions of the original snake_case tools)
 # These either have built-in truncation or are problematic to evict.
-# Glob is deliberately NOT excluded: it self-caps (GLOB_MATCH_LIMIT) for the common
-# case, but eviction is kept as a backstop so a pathological result can never reach
-# the model — the same protection Bash already relies on.
+# Glob and Grep are deliberately NOT excluded: Glob self-caps (GLOB_MATCH_LIMIT) and
+# Grep cuts each long line (GREP_LINE_CHARS), but neither bounds how many results
+# come back. Eviction stays as the backstop that keeps a pathological result from
+# reaching the model, the same protection Bash already relies on.
 TOOLS_EXCLUDED_FROM_EVICTION = (
-    "Grep",  # Has built-in truncation (ripgrep + head_limit)
     "Read",  # Problematic truncation behavior (single long lines)
     "Write",  # Returns minimal confirmation
     "Edit",  # Returns minimal confirmation

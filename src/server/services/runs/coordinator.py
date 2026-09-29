@@ -340,7 +340,7 @@ class RunCoordinator:
                         f"run={handle.run_id}",
                         exc_info=True,
                     )
-            self.post_finalize_tail(handle.thread_id)
+            self.post_finalize_tail(handle.thread_id, result.run)
         return result
 
     async def fail_open_run(
@@ -417,7 +417,7 @@ class RunCoordinator:
             checkpoint_id=checkpoint_id,
         )
         if result.applied:
-            self.post_finalize_tail(thread_id)
+            self.post_finalize_tail(thread_id, result.run)
         final_status = (result.run or {}).get("status")
         if final_status:
             from src.server.services.runs.executor import (
@@ -629,11 +629,17 @@ class RunCoordinator:
             )
             return None
 
-    def post_finalize_tail(self, thread_id: str) -> None:
+    def post_finalize_tail(
+        self, thread_id: str, run: Optional[Dict[str, Any]]
+    ) -> None:
         """The uniform after-a-won-CAS tail: every site that applies a
-        terminal transition schedules the projection refresh and nudges the
-        drainer, so the two never drift apart per call site."""
+        terminal transition schedules the projection refresh and the
+        transcript export and nudges the drainer, so they never drift apart
+        per call site. The export runs at every terminal status, since each
+        stamps the checkpoint and another thread may read this one's
+        transcript."""
         self._schedule_projection_refresh(thread_id)
+        self._schedule_transcript_export(thread_id, run)
         self._nudge_hook_drainer()
 
     def _nudge_hook_drainer(self) -> None:
@@ -656,6 +662,26 @@ class RunCoordinator:
         except Exception:
             logger.warning(
                 f"[RunCoordinator] projection refresh scheduling failed for "
+                f"{thread_id}",
+                exc_info=True,
+            )
+
+    def _schedule_transcript_export(
+        self, thread_id: str, run: Optional[Dict[str, Any]]
+    ) -> None:
+        # The mode comes from the row's START stamp, which a detached
+        # finalize has without the run's process. A Flash workspace has no
+        # computer to serve a transcript.
+        try:
+            meta = (run or {}).get("metadata") or {}
+            if meta.get("msg_type") != "ptc":
+                return
+            from src.server.services.transcripts import schedule_thread_export
+
+            schedule_thread_export(thread_id, meta.get("workspace_id"))
+        except Exception:
+            logger.warning(
+                f"[RunCoordinator] transcript export scheduling failed for "
                 f"{thread_id}",
                 exc_info=True,
             )

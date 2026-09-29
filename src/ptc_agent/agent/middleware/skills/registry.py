@@ -228,6 +228,27 @@ SKILL_REGISTRY: dict[str, SkillDefinition] = {
         exposure="ptc",
         system_gate=_run_workflow_enabled,
     ),
+    "langalpha-doc": SkillDefinition(
+        name="langalpha-doc",
+        # Keep in sync with the `description:` in
+        # plugins/langalpha_service/skills/langalpha-doc/SKILL.md
+        # frontmatter (locked by a unit test).
+        description=(
+            "How the platform under you works: the computer and its "
+            "workspaces, files and what survives a restart, conversation "
+            "transcripts, saved tool results, memory, and adding skills, "
+            "MCP servers, brokerages or plugins. Read it when the user "
+            "points back at an earlier conversation, when something is "
+            "missing or behaves unexpectedly, and before adding any of "
+            "those."
+        ),
+        tools=[],
+        # No `command`: the prompt points into its reference files, and a
+        # user has no reason to invoke it. PTC only, since Flash has no
+        # sandbox and LoadSkill cannot reach the references.
+        skill_md_path="skills/langalpha-doc/SKILL.md",
+        exposure="ptc",
+    ),
     "pdf": SkillDefinition(
         name="pdf",
         description="Read, fill and build PDFs: inspect structure and fonts, extract text and tables with pdfplumber and poppler, fill and flatten AcroForms with pypdf, create with reportlab, merge, split and encrypt with qpdf, and verify by rendering the page and looking at it",

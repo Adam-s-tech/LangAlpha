@@ -15,11 +15,18 @@ from src.server.database.blob_keys import REFERENCED_SQL
 
 _EXISTS_BLOB = "EXISTS (SELECT 1 FROM workspace_files f JOIN workspaces w ON w.workspace_id = f.workspace_id WHERE f.blob_sha256 = b.sha256 AND w.user_id = b.user_id)"
 _EXISTS_PACK = "EXISTS (SELECT 1 FROM workspace_files f JOIN workspaces w ON w.workspace_id = f.workspace_id WHERE f.pack_sha256 = b.sha256 AND w.user_id = b.user_id)"
+_EXISTS_TRANSCRIPT = "EXISTS (SELECT 1 FROM thread_transcript_files t WHERE t.sha256 = b.sha256 AND t.user_id = b.user_id)"
 
 
-def _evaluate(sql: str, *, blob_ref: bool, pack_ref: bool) -> bool:
-    """Read the predicate as a boolean expression over its two EXISTS clauses."""
-    expr = sql.replace(_EXISTS_BLOB, str(blob_ref)).replace(_EXISTS_PACK, str(pack_ref))
+def _evaluate(
+    sql: str, *, blob_ref: bool, pack_ref: bool, transcript_ref: bool = False
+) -> bool:
+    """Read the predicate as a boolean expression over its EXISTS clauses."""
+    expr = (
+        sql.replace(_EXISTS_BLOB, str(blob_ref))
+        .replace(_EXISTS_PACK, str(pack_ref))
+        .replace(_EXISTS_TRANSCRIPT, str(transcript_ref))
+    )
     assert "EXISTS" not in expr, f"unsubstituted subquery in {expr!r}"
     for sql_op, py_op in (("NOT", "not"), (" OR ", " or "), (" AND ", " and ")):
         expr = expr.replace(sql_op, py_op)
@@ -27,10 +34,11 @@ def _evaluate(sql: str, *, blob_ref: bool, pack_ref: bool) -> bool:
 
 
 def test_orphan_predicate_is_the_negation_of_referenced():
-    for blob_ref, pack_ref in itertools.product([True, False], repeat=2):
-        referenced = _evaluate(REFERENCED_SQL, blob_ref=blob_ref, pack_ref=pack_ref)
-        orphan = _evaluate(_ORPHAN_PREDICATE, blob_ref=blob_ref, pack_ref=pack_ref)
-        assert orphan is not referenced, (blob_ref, pack_ref)
+    for refs in itertools.product([True, False], repeat=3):
+        flags = dict(zip(("blob_ref", "pack_ref", "transcript_ref"), refs))
+        referenced = _evaluate(REFERENCED_SQL, **flags)
+        orphan = _evaluate(_ORPHAN_PREDICATE, **flags)
+        assert orphan is not referenced, refs
 
 
 def test_gc_backlog_counters_are_taken_over_orphans_only():
@@ -45,3 +53,11 @@ def test_referenced_predicate_covers_both_pointer_columns():
     the one a reader forgets, and forgetting it deletes live chunks."""
     assert _evaluate(REFERENCED_SQL, blob_ref=False, pack_ref=True)
     assert _evaluate(REFERENCED_SQL, blob_ref=True, pack_ref=False)
+
+
+def test_referenced_predicate_covers_stored_transcripts():
+    """A transcript file in the store has no manifest row; without its clause
+    the sweep condemns every stored transcript a week after it was written."""
+    assert _evaluate(
+        REFERENCED_SQL, blob_ref=False, pack_ref=False, transcript_ref=True
+    )

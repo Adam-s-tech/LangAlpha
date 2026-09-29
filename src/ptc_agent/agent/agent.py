@@ -164,6 +164,7 @@ class PTCAgent:
         direct_tool_summary: str = "",
         workspace: WorkspaceLayout | None = None,
         legacy_layout: bool = False,
+        files_mounted: bool = False,
     ) -> str:
         """Build the static system prompt (excludes time/profile for cacheability).
 
@@ -192,6 +193,7 @@ class PTCAgent:
             market_watch_enabled=self.config.feature_enabled("market_watch"),
             crawl_enabled=crawl_enabled,
             direct_tool_summary=direct_tool_summary,
+            files_mounted=files_mounted,
         )
 
     def _get_tool_summary(self, mcp_registry: MCPRegistry) -> str:
@@ -595,6 +597,7 @@ class PTCAgent:
             direct_tool_summary=direct_tool_summary(direct_tools),
             workspace=workspace_layout,
             legacy_layout=bool(project is not None and project.layout_origin == 3),
+            files_mounted=getattr(sandbox, "livefs", None) is not None,
         )
 
         logger.debug(

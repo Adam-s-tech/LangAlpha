@@ -491,6 +491,10 @@ class MachineLifecycleMixin:
 
     async def _settle_machine_stop(self, computer_id: str, status: str) -> None:
         """CAS from 'stopping' so a teardown's tail cannot stomp a peer's transition."""
+        if status == ComputerStatus.STOPPED:
+            # While the row still reads 'stopping', so no start can have minted
+            # a token this would end.
+            await self._revoke_livefs(computer_id)
         if (
             await update_computer_status(computer_id, status, expected="stopping")
             is None
@@ -560,25 +564,36 @@ class MachineLifecycleMixin:
         project's folder for the machine's life."""
         if sandbox is None:
             return
-        skill_dirs = (
-            self.config.skills.local_skill_dirs_with_sandbox()
-            if self.config.skills.enabled
-            else None
-        )
-        user_skill_params = await sandbox_skill_sync_params(
-            user_id, self.config.skills.sandbox_skills_base
-        )
-        result = await sandbox.sync_sandbox_assets(
-            skill_dirs=skill_dirs,
-            reusing_sandbox=reusing_sandbox,
-            user_id=user_id,
-            workspace_dir_names=await get_workspace_dir_names_for_computer(computer_id),
-            root_owner_dir_name=await self._root_owner_folder(
-                computer_id, origin_workspace_id
-            ),
-            **user_skill_params,
-        )
-        await self._stamp_layout_version(computer_id, result)
+        # The daemon's start makes no links, so it runs beside the sync; the
+        # links wait for the layout the sync may move.
+        starting = self._livefs_start(computer_id, user_id, sandbox)
+        start = asyncio.ensure_future(starting) if starting is not None else None
+        try:
+            skill_dirs = (
+                self.config.skills.local_skill_dirs_with_sandbox()
+                if self.config.skills.enabled
+                else None
+            )
+            user_skill_params = await sandbox_skill_sync_params(
+                user_id, self.config.skills.sandbox_skills_base
+            )
+            result = await sandbox.sync_sandbox_assets(
+                skill_dirs=skill_dirs,
+                reusing_sandbox=reusing_sandbox,
+                user_id=user_id,
+                workspace_dir_names=await get_workspace_dir_names_for_computer(computer_id),
+                root_owner_dir_name=await self._root_owner_folder(
+                    computer_id, origin_workspace_id
+                ),
+                **user_skill_params,
+            )
+            await self._stamp_layout_version(computer_id, result)
+        except BaseException:
+            if start is not None:
+                start.cancel()
+            raise
+        started = await start if start is not None else None
+        await self._ensure_livefs(computer_id, user_id, sandbox, started=started)
 
     async def _build_machine_session(
         self,
@@ -753,12 +768,20 @@ class MachineLifecycleMixin:
             # is the safe side; it is no reason to unwind a bound machine.
             for project_binding in restored_projects:
                 try:
-                    await self._maybe_restore_files(project_binding, session.sandbox)
+                    await self._maybe_restore_files(
+                        project_binding, session.sandbox, urgent=False
+                    )
                 except Exception as e:
                     logger.warning(
                         f"Could not settle the restore flag for "
                         f"{project_binding.workspace_id} after binding: {e}"
                     )
+            if reconnected:
+                # The disk outlived the stop, but it still holds the threads
+                # deleted or gone idle meanwhile, and no worker's attach will
+                # look again: projects stay attached across a stop on the
+                # same sandbox. The bring-up job reconciles each one.
+                await self._queue_reconnect_syncs(computer_id, session.sandbox)
             self._record_sync(computer_id)
             await update_computer_activity(computer_id)
             logger.info(
@@ -775,6 +798,14 @@ class MachineLifecycleMixin:
             else:
                 await self._clear_session(computer_id, evict_session=session)
             raise
+
+    async def _queue_reconnect_syncs(self, computer_id: str, sandbox: Any) -> None:
+        """Queue every project on a resumed sandbox; the restore step finds
+        nothing deferred on a warm disk, so each costs only its sync."""
+        for workspace_id in await get_live_workspace_ids_for_computer(computer_id):
+            self._queue_bring_up(
+                computer_id, workspace_id, sandbox, sandbox.working_dir, urgent=False
+            )
 
     async def _revert_machine_start(self, computer_id: str) -> None:
         """CAS only from starting so failure cannot stop a machine another worker moved."""

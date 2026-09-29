@@ -12,11 +12,13 @@ from ptc_agent.core.paths import (
     MEMORY_USER_DIR,
     WorkspaceLayout,
 )
+from ptc_agent.core.sandbox import livefs_mount
 
 logger = structlog.get_logger(__name__)
 
-# Same guard as bash — sandbox Python cannot reach the store-backed memory or
-# user-managed memo store. Memo paths are additionally read-only to the agent.
+# Same guard as bash: without the file mount, sandbox Python cannot reach the
+# store-backed memory or user-managed memo store. Memo paths are additionally
+# read-only to the agent.
 _MEMORY_PATH_MARKERS: tuple[str, ...] = (
     f"{MEMORY_USER_DIR}/",
     f"{WorkspaceLayout.MEMORY_DIR}/",
@@ -72,8 +74,8 @@ def create_execute_code_tool(
 
         Args:
             code: Python code to execute. Print a summary to stdout. It runs in
-                your workspace folder, so use RELATIVE paths (work/<task>/,
-                results/, data/); a leading slash is the real filesystem root,
+                your workspace folder, so use RELATIVE paths (<task>/,
+                data/); a leading slash is the real filesystem root,
                 where none of those exist.
             description: Brief description (5-10 words, active voice)
 
@@ -83,13 +85,25 @@ def create_execute_code_tool(
         if not backend:
             return "ERROR: Sandbox not initialized", {"mcp_trace": []}
 
-        if _code_touches_memory(code):
+        mount = getattr(getattr(backend, "sandbox", None), "livefs", None)
+        if mount is None and _code_touches_memory(code):
             logger.info(
                 "Blocked execute_code referencing memory path",
                 code_length=len(code),
             )
             return _MEMORY_ROUTE_ERROR, {"mcp_trace": []}
+        call_id = None
+        if mount is not None:
+            await mount.prepare()
+            call_id = livefs_mount.new_call_id()
+        text, artifact = await _run(code, call_id)
+        if call_id is not None:
+            report = await mount.report(call_id, text)
+            if report:
+                text = f"{text}\n\n{report}"
+        return text, artifact
 
+    async def _run(code: str, call_id: str | None) -> tuple[str, dict[str, Any]]:
         try:
             logger.info("Executing code in sandbox", code_length=len(code), thread_id=thread_id)
 
@@ -102,7 +116,9 @@ def create_execute_code_tool(
                 tier=getattr(session, "resource_tier", None),
                 max_execution_time=max_execution_time_of(backend),
             ):
-                result = await backend.aexecute_code(code, thread_id=thread_id or None)
+                result = await backend.aexecute_code(
+                    code, thread_id=thread_id or None, call_id=call_id
+                )
 
             mcp_trace = list(getattr(result, "mcp_trace", []) or [])
             artifact = {"mcp_trace": mcp_trace}

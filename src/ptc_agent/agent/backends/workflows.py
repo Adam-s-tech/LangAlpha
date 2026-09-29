@@ -20,6 +20,7 @@ from langgraph.store.memory import InMemoryStore
 from ptc_agent.agent.backends.langgraph_store import (
     MAX_CONTENT_BYTES,
     InvalidStoreKeyError,
+    ReadOnlyStoreError,
     StoreBackend,
     StoreContentTooLargeError,
 )
@@ -31,6 +32,11 @@ logger = structlog.get_logger(__name__)
 PREBUILT_READ_ONLY_ERROR = (
     "Pre-built workflows are read-only here. Sign in so writes can fork them "
     "into your own workflow tier."
+)
+
+PREBUILT_DELETE_ERROR = (
+    "Pre-built workflows ship with the product and cannot be deleted. Save a "
+    "script of the same name to replace it."
 )
 
 _WORKFLOW_TIER = "workflows"
@@ -162,6 +168,10 @@ class WorkflowsBackend:
     def root_prefix(self) -> str:
         return self._store.root_prefix
 
+    def is_writable(self, file_path: str) -> bool:
+        # A shipped script is writable too: the write forks it.
+        return True
+
     async def _saved_paths(self) -> set[str]:
         """Absolute paths the user tier owns — these shadow pre-builts.
 
@@ -261,6 +271,20 @@ class WorkflowsBackend:
             base_content=await self._prebuilt.aread_text(file_path),
             max_bytes=workflow_script_byte_cap(),
         )
+
+    async def adelete_text(self, file_path: str) -> bool:
+        # Deleting a saved script exposes the shipped one of the same name
+        # again; a shipped script alone has nothing of the user's to delete.
+        if await self._store.adelete_text(file_path):
+            return True
+        if await self._prebuilt.aread_text(file_path) is not None:
+            raise ReadOnlyStoreError(PREBUILT_DELETE_ERROR)
+        return False
+
+    async def aread_tree(self, path: str) -> dict[str, str]:
+        tree = await self._prebuilt.aread_tree(path)
+        tree.update(await self._store.aread_tree(path))
+        return tree
 
     async def aglob_paths(self, pattern: str, path: str = ".") -> list[str]:
         saved = await self._store.aglob_paths(pattern, path)

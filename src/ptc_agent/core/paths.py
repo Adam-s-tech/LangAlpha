@@ -8,6 +8,7 @@ these classes, preventing duplicate path definitions.
 from __future__ import annotations
 
 import posixpath
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import ClassVar
@@ -284,6 +285,8 @@ class WorkspaceLayout:
     # workspace takes it along instead of leaving it flat on the machine.
     THREADS_DIR: ClassVar[str] = ".agents/threads"
     LARGE_TOOL_RESULTS_DIR: ClassVar[str] = ".agents/large_tool_results"
+    # Rendered from each thread's checkpoint and served by the file mount.
+    TRANSCRIPTS_DIR: ClassVar[str] = ".agents/transcripts"
     AGENT_MD_FILE: ClassVar[str] = "agent.md"
     # Task directories sit directly in the folder; only the shared dataset
     # directory has a fixed name.
@@ -341,6 +344,10 @@ class WorkspaceLayout:
     @property
     def large_tool_results(self) -> str:
         return self.join(self.LARGE_TOOL_RESULTS_DIR)
+
+    @property
+    def transcripts(self) -> str:
+        return self.join(self.TRANSCRIPTS_DIR)
 
     @property
     def agent_md(self) -> str:
@@ -426,6 +433,20 @@ BACKUP_EXCLUDE_AGENT_SUBDIRS: tuple[str, ...] = (
     WorkspaceLayout.TOOLS_DIR,
     SandboxLayout.USER_DIR,
     SandboxLayout.WORKFLOWS_DIR,
+    WorkspaceLayout.MEMORY_DIR,
+    WorkspaceLayout.TRANSCRIPTS_DIR,
+)
+
+# Where the file mount links the user's server-held files in, workspace-
+# relative (a workspace that owns the computer root holds all of them). The
+# server is their only copy: a backup never reads them and a restore never
+# writes them, including rows an older manifest recorded before they were
+# mounted.
+MOUNTED_AGENT_SUBDIRS: tuple[str, ...] = (
+    SandboxLayout.USER_DIR,
+    SandboxLayout.WORKFLOWS_DIR,
+    WorkspaceLayout.MEMORY_DIR,
+    WorkspaceLayout.TRANSCRIPTS_DIR,
 )
 
 # Virtual paths route through CompositeFilesystemBackend to LangGraph BaseStore,
@@ -477,6 +498,10 @@ ALWAYS_HIDDEN_BASENAMES: tuple[str, ...] = (
 )
 ALWAYS_HIDDEN_SUFFIXES: tuple[str, ...] = (".pyc",)
 
+#: How a thread's scratch, results and transcript directories are named: the
+#: first 8 characters of its id.
+THREAD_DIR_NAME = re.compile(r"^[0-9a-f]{8}$")
+
 # What the harness wrote about past turns: per-thread scratch (evicted messages,
 # truncated args, offloaded results, scripts) and the thread-less fallback for
 # large results. The agent reaches each through a pointer that names its path,
@@ -485,6 +510,7 @@ ALWAYS_HIDDEN_SUFFIXES: tuple[str, ...] = (".pyc",)
 AGENT_HISTORY_DIRS: tuple[str, ...] = (
     WorkspaceLayout.THREADS_DIR,
     WorkspaceLayout.LARGE_TOOL_RESULTS_DIR,
+    WorkspaceLayout.TRANSCRIPTS_DIR,
 )
 
 

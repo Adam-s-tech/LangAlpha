@@ -111,6 +111,10 @@ class CompositeFilesystemBackend:
             raise AttributeError(name)
         return getattr(sandbox, name)
 
+    def route_for(self, path: str) -> FilesystemRoute | None:
+        """The mounted route that owns ``path``, or None where the sandbox does."""
+        return self._route_for(self.normalize_path(path))
+
     def _route_for(self, normalized_path: str) -> FilesystemRoute | None:
         for route in self._routes:
             prefix = route.root_prefix

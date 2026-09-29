@@ -161,10 +161,17 @@ class DockerRuntime(SandboxRuntime):
     # -- Execution --
 
     async def exec(self, command: str, timeout: int = 60) -> ExecResult:
+        return await self._exec(command, timeout)
+
+    async def exec_as_root(self, command: str, timeout: int = 60) -> ExecResult:
+        return await self._exec(command, timeout, user="root")
+
+    async def _exec(self, command: str, timeout: int, user: str = "") -> ExecResult:
         try:
             exec_obj = await self._container.exec(
                 cmd=["bash", "-c", command],
                 workdir=self._working_dir,
+                user=user,
             )
             # Read all output from the multiplexed stream
             stdout_parts: list[str] = []
@@ -823,6 +830,22 @@ class DockerProvider(SandboxProvider):
             "NetworkMode": self._config.network_mode,
             "AutoRemove": False,  # We manage removal ourselves
             "Init": True,  # tini as PID 1 for zombie reaping
+            # The file mount (livefs) is FUSE, mounted by root through a
+            # root-only exec. The capabilities reach root processes only; the
+            # sandbox's own user runs without them. SYS_PTRACE lets that root
+            # daemon read a command's environment, which names the command a
+            # save belongs to; without it every save runs for no conversation.
+            # Docker's default AppArmor profile refuses every mount, so the
+            # container runs unconfined, and that applies to its user too.
+            "Devices": [
+                {
+                    "PathOnHost": "/dev/fuse",
+                    "PathInContainer": "/dev/fuse",
+                    "CgroupPermissions": "rwm",
+                }
+            ],
+            "CapAdd": ["SYS_ADMIN", "SYS_PTRACE"],
+            "SecurityOpt": ["apparmor=unconfined"],
         }
         self._apply_disk_quota(host_config, sizing)
 

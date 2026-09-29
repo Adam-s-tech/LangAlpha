@@ -317,6 +317,11 @@ class SessionCacheMixin:
         this call meant to evict."""
         # Cancel discovery before teardown to avoid dead-sandbox probes and orphan schemas.
         self._cancel_mcp_discovery(computer_id)
+        machine = self._machine_if_known(computer_id)
+        if machine is not None:
+            machine.cancel_bring_up(
+                self._session_sandbox_id(evict_session or machine.session)
+            )
         try:
             await SessionManager.cleanup_session(computer_id)
         except Exception as e:

@@ -11,13 +11,15 @@ from ptc_agent.core.paths import (
     MEMORY_USER_DIR,
     WorkspaceLayout,
 )
+from ptc_agent.core.sandbox import livefs_mount
 
 logger = structlog.get_logger(__name__)
 
-# Bash runs in the sandbox FS; memory and memo live in the store. Refuse those
-# paths so the agent routes them through the file tools instead of silently
-# dropping writes on the sandbox (which would also let the agent fabricate
-# fake memos invisible to the UI).
+# Memory and memo live in the store, which the sandbox sees only while the
+# file mount serves it. Without the mount, refuse those paths so the agent
+# routes them through the file tools instead of silently dropping writes on
+# the sandbox (which would also let the agent fabricate fake memos invisible
+# to the UI).
 _MEMORY_PATH_MARKERS: tuple[str, ...] = (
     f"{MEMORY_USER_DIR}/",
     f"{WorkspaceLayout.MEMORY_DIR}/",
@@ -58,7 +60,7 @@ def create_execute_bash_tool(backend: SandboxBackend, thread_id: str = "") -> Ba
         run_in_background: bool | None = False,
         working_dir: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Execute bash commands in a persistent shell session.
+        """Execute bash commands in a fresh shell in your workspace folder.
 
         Use for: git, npm, docker, system commands, directory operations,
         and running Python scripts written to files.
@@ -80,14 +82,34 @@ def create_execute_bash_tool(backend: SandboxBackend, thread_id: str = "") -> Ba
         With run_in_background=True it returns a command_id instead of output; read
         that with BashOutput.
         """
-        # Bash cannot reach the store-backed memory tier.
-        if _command_touches_memory(command):
+        mount = getattr(getattr(backend, "sandbox", None), "livefs", None)
+        if mount is None and _command_touches_memory(command):
             logger.info(
                 "Blocked bash command touching memory path",
                 command=command[:100],
             )
             return _MEMORY_ROUTE_ERROR, {"mcp_trace": []}
+        # A background command outlives this call; its failed saves reach the
+        # next command's result instead.
+        call_id = None
+        if mount is not None:
+            await mount.prepare()
+            if not run_in_background:
+                call_id = livefs_mount.new_call_id()
+        text, artifact = await _run(command, working_dir, timeout, run_in_background, call_id)
+        if call_id is not None:
+            report = await mount.report(call_id, text)
+            if report:
+                text = f"{text}\n\n{report}"
+        return text, artifact
 
+    async def _run(
+        command: str,
+        working_dir: str | None,
+        timeout: int | None,
+        run_in_background: bool | None,
+        call_id: str | None,
+    ) -> tuple[str, dict[str, Any]]:
         try:
             logger.debug(
                 "Executing bash command",
@@ -106,8 +128,9 @@ def create_execute_bash_tool(backend: SandboxBackend, thread_id: str = "") -> Ba
                 command,
                 working_dir=working_dir,
                 timeout=timeout_seconds,
-                background=run_in_background,
+                background=bool(run_in_background),
                 thread_id=thread_id or None,
+                call_id=call_id,
             )
 
             # Provenance for any MCP calls a script run here made (foreground

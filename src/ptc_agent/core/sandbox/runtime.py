@@ -204,6 +204,12 @@ class SandboxRuntime(ABC):
         turn, not the machine, decides which of them is its."""
         ...
 
+    async def exec_as_root(self, command: str, timeout: int = 60) -> ExecResult:
+        """``exec`` as root, for work the sandbox's own user must not be able
+        to do, such as mounting. A runtime whose commands already run as root
+        keeps this default."""
+        return await self.exec(command, timeout)
+
     @abstractmethod
     async def code_run(
         self,

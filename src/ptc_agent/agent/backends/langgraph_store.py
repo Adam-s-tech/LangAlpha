@@ -94,6 +94,35 @@ def validate_store_key(key: str) -> None:
             )
 
 
+def grep_texts(
+    texts: list[tuple[str, str]],
+    compiled: re.Pattern[str],
+    output_mode: str,
+    *,
+    show_line_numbers: bool,
+    head_limit: int | None,
+    offset: int,
+) -> list[Any]:
+    """Grep over files held in memory as (path, content), answered in the
+    sandbox grep's output modes."""
+    files: list[str] = []
+    lines: list[str] = []
+    counts: list[tuple[str, int]] = []
+    for path, content in texts:
+        found = [
+            f"{path}:{number}:{line}" if show_line_numbers else f"{path}:{line}"
+            for number, line in enumerate(content.splitlines(), start=1)
+            if compiled.search(line)
+        ]
+        if found:
+            files.append(path)
+            lines.extend(found)
+            counts.append((path, len(found)))
+    selected: list[Any] = {"content": lines, "count": counts}.get(output_mode, files)
+    start = max(0, offset)
+    return selected[start : None if head_limit is None else start + head_limit]
+
+
 class StoreBackend:
     """`BaseStore`-backed filesystem surface for a single store-backed tier."""
 
@@ -138,6 +167,9 @@ class StoreBackend:
     @property
     def root_prefix(self) -> str:
         return self._root_prefix
+
+    def is_writable(self, file_path: str) -> bool:
+        return not self._read_only
 
     def _namespace(self) -> tuple[str, ...]:
         return self._namespace_factory()
@@ -394,19 +426,17 @@ class StoreBackend:
     async def _all_items(self, *, strict: bool = False) -> list[Any]:
         """Page through every Item under the backend's namespace.
 
-        Pages are fetched in fan-out batches of ``fanout`` so that a 300-key
-        namespace pays roughly ``ceil(N / page_size / fanout)`` round-trips
-        instead of ``ceil(N / page_size)``. Termination: as soon as any page
-        in a batch returns short, we know there are no more rows past that
-        offset and stop. Tiny namespaces (≤ page_size) issue exactly one
-        round-trip in either implementation, so there's no overhead in the
-        common case.
+        Most namespaces fit one page, so the first round trip asks for one
+        page alone rather than ``fanout`` of them; a full one means more,
+        fetched in batches of ``fanout`` concurrent pages. The walk stops at
+        the first short page.
 
-        A timed-out page ends the walk with what it has, which reads as a
-        short listing and not as a failure — right for search and grep, where
-        partial beats nothing. ``strict`` is for the callers that infer
-        absence from a miss, and for whom a truncated listing and an empty
-        namespace must not look alike.
+        The timeout bounds each round trip, not the walk, so a large namespace
+        takes more of them rather than failing. A timed-out one ends the walk
+        with what it has, which reads as a short listing and not as a failure,
+        right for search and grep, where partial beats nothing. ``strict`` is
+        for the callers that infer absence from a miss, and for whom a
+        truncated listing and an empty namespace must not look alike.
         """
         namespace = self._namespace()
         page_size = 100
@@ -415,8 +445,9 @@ class StoreBackend:
         fanout = 3
         items: list[Any] = []
         offset = 0
+        width = 1
         while True:
-            offsets = [offset + i * page_size for i in range(fanout)]
+            offsets = [offset + i * page_size for i in range(width)]
             try:
                 pages = await asyncio.wait_for(
                     asyncio.gather(
@@ -452,11 +483,56 @@ class StoreBackend:
                     break
             if stop:
                 break
-            offset += fanout * page_size
+            offset += width * page_size
+            width = fanout
         return items
 
     def _absolute(self, key: str) -> str:
         return f"{self._root_prefix}{key}"
+
+    async def adelete_text(self, file_path: str) -> bool:
+        """Delete a stored file; False when there was none. Raises on timeout."""
+        if self._read_only:
+            raise ReadOnlyStoreError(self._read_only_error)
+        key = self._path_to_key(file_path)
+        namespace = self._namespace()
+        async with _lock_for_namespace(namespace):
+            item = await asyncio.wait_for(
+                self._store.aget(namespace, key), timeout=_STORE_OP_TIMEOUT_S
+            )
+            if item is None:
+                return False
+            await asyncio.wait_for(
+                self._store.adelete(namespace, key), timeout=_STORE_OP_TIMEOUT_S
+            )
+            if self._cache is not None:
+                self._cache.invalidate(namespace, key)
+        return True
+
+    async def aread_tree(self, path: str) -> dict[str, str]:
+        """Every file at or under ``path`` with its content, from one listing.
+
+        The tier is one namespace whose keys hold the path, and the store
+        searches by namespace only, so the subtree is kept from a walk of
+        the tier. Strict, because callers read a missing path as a file that
+        does not exist: a walk a timeout cut short raises instead.
+        """
+        normalized = self.normalize_path(path)
+        if normalized.startswith(self._root_prefix):
+            subtree = normalized[len(self._root_prefix):].rstrip("/")
+        elif normalized.rstrip("/") == self._root_prefix.rstrip("/"):
+            subtree = ""
+        else:
+            return {}
+        out: dict[str, str] = {}
+        for item in await self._all_items(strict=True):
+            key = str(item.key)
+            if subtree and key != subtree and not key.startswith(subtree + "/"):
+                continue
+            content = self._content_from_value(item.value)
+            if content is not None:
+                out[self._absolute(key)] = content
+        return out
 
     async def aglob_paths(
         self, pattern: str, path: str = ".", *, strict: bool = False
@@ -519,10 +595,7 @@ class StoreBackend:
         elif normalized_path.rstrip("/") != self._root_prefix.rstrip("/"):
             return []
 
-        files_with_matches: list[str] = []
-        content_lines: list[str] = []
-        counts: list[tuple[str, int]] = []
-
+        texts: list[tuple[str, str]] = []
         for item in items:
             key = str(item.key)
             if subtree and not key.startswith(subtree.rstrip("/") + "/") and key != subtree:
@@ -532,32 +605,8 @@ class StoreBackend:
             ):
                 continue
             content = self._content_from_value(item.value)
-            if content is None:
-                continue
-            abs_path = self._absolute(key)
-            file_count = 0
-            matches_here: list[str] = []
-            for line_no, line in enumerate(content.splitlines(), start=1):
-                if compiled.search(line):
-                    file_count += 1
-                    if show_line_numbers:
-                        matches_here.append(f"{abs_path}:{line_no}:{line}")
-                    else:
-                        matches_here.append(f"{abs_path}:{line}")
-            if file_count == 0:
-                continue
-            files_with_matches.append(abs_path)
-            content_lines.extend(matches_here)
-            counts.append((abs_path, file_count))
-
-        def _slice(seq: list[Any]) -> list[Any]:
-            start = max(0, offset)
-            if head_limit is not None:
-                return seq[start : start + head_limit]
-            return seq[start:]
-
-        if output_mode == "content":
-            return _slice(content_lines)
-        if output_mode == "count":
-            return _slice(counts)
-        return _slice(files_with_matches)
+            if content is not None:
+                texts.append((self._absolute(key), content))
+        return grep_texts(
+            texts, compiled, output_mode, show_line_numbers=show_line_numbers, head_limit=head_limit, offset=offset
+        )

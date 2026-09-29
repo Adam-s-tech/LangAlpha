@@ -23,7 +23,10 @@ from typing import Any
 
 import structlog
 
-from ptc_agent.agent.backends.langgraph_store import lock_for_namespace
+from ptc_agent.agent.backends.langgraph_store import (
+    ReadOnlyStoreError,
+    lock_for_namespace,
+)
 from ptc_agent.agent.backends.results import EditTextResult
 from ptc_agent.agent.backends.sandbox import SandboxBackend
 from src.server.services import user_data_io as io
@@ -213,6 +216,9 @@ class UserDataBackend:
     def root_prefix(self) -> str:
         return self._root_prefix
 
+    def is_writable(self, file_path: str) -> bool:
+        return self._filename(file_path) in _DATA_FILES
+
     def normalize_path(self, path: str) -> str:
         return self._sandbox.normalize_path(path)
 
@@ -313,10 +319,16 @@ class UserDataBackend:
         """Validate + apply JSON write. Raises UserDataValidationError on bad input."""
         filename = self._filename(file_path)
         if filename is None:
-            # Don't claim writes for unknown paths; let composite surface
-            # "not in route" by returning False so caller can decide. But
-            # composite already routed to us — the only honest answer is False.
-            return False
+            raise io.UserDataValidationError(
+                error_type="schema_error",
+                file=file_path.rsplit("/", 1)[-1],
+                field_path="",
+                hint=(
+                    f"{self._root_prefix} holds only portfolio.json, "
+                    "watchlist.json and preference.json; other files cannot "
+                    "be created there."
+                ),
+            )
         if filename == README_FILE:
             raise io.UserDataValidationError(
                 error_type="schema_error",
@@ -476,6 +488,23 @@ class UserDataBackend:
             return
 
         raise ValueError(f"Unknown user-data file: {filename}")
+
+    async def adelete_text(self, file_path: str) -> bool:
+        if self._filename(file_path) is None:
+            return False
+        raise ReadOnlyStoreError(
+            f"{file_path} is a view of your saved data and cannot be deleted. "
+            "Write it back with the entries removed to clear it."
+        )
+
+    async def aread_tree(self, path: str) -> dict[str, str]:
+        normalized = self.normalize_path(path)
+        if normalized.rstrip("/") == self._root_prefix.rstrip("/"):
+            names = sorted(_KNOWN_FILES)
+        else:
+            filename = self._filename(normalized)
+            names = [filename] if filename else []
+        return {self._absolute(n): await self._read_serialized(n) for n in names}
 
     # --- glob / grep ---
 

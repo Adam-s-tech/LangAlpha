@@ -348,7 +348,16 @@ class TestDockerRuntimeExec:
         container.exec.assert_called_once_with(
             cmd=["bash", "-c", "ls"],
             workdir="/home/workspace",
+            user="",
         )
+
+    @pytest.mark.asyncio
+    async def test_exec_as_root_overrides_the_image_user(self, runtime, container):
+        exec_mock = _make_exec_mock("", exit_code=0)
+        container.exec = AsyncMock(return_value=exec_mock)
+
+        await runtime.exec_as_root("id -u")
+        assert container.exec.call_args.kwargs["user"] == "root"
 
     @pytest.mark.asyncio
     async def test_exec_nonzero_exit_code(self, runtime, container):

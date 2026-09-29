@@ -5,13 +5,16 @@ Functions take the owning ``PTCSandbox`` as their explicit first argument;
 semantics are unchanged.
 """
 
+import asyncio
 import base64
+import functools
 import hashlib
+import json
 import posixpath
 import shlex
-import textwrap
 from collections.abc import AsyncIterator, Iterable
 from contextlib import AbstractAsyncContextManager
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -24,6 +27,8 @@ from src.observability import (
 
 from ptc_agent.core.paths import AGENT_HISTORY_DIRS, ALWAYS_HIDDEN_DIR_NAMES
 from ptc_agent.core.sandbox import path_locks as _path_locks
+from ptc_agent.core.sandbox.grep_render import render_grep_json
+from ptc_agent.core.sandbox.livefs_runtime.protocol import MOUNT
 from ptc_agent.core.sandbox.retry import RetryPolicy
 from ptc_agent.core.sandbox.runtime import (
     RuntimeState,
@@ -45,6 +50,14 @@ logger = structlog.get_logger(__name__)
 
 _INLINE_TEXT_WRITE_LIMIT = 256 * 1024
 _INLINE_TEXT_MARKER = "__LANGALPHA_TEXT_PAYLOAD__"
+# Grep output past this renders off the event loop. Rendering costs about
+# 9 ms per MB, so 128 KiB holds the loop near 1 ms, while smaller outputs, the
+# common case, skip the thread hop.
+_GREP_RENDER_INLINE_CHARS = 128 * 1024
+
+_GLOB_SCRIPT_B64 = base64.b64encode(
+    Path(__file__).with_name("glob_runtime.py").read_bytes()
+).decode("ascii")
 
 # States a sandbox can still come back from. ``reconnect`` knows how to start a
 # stopped or archived sandbox, so reporting those as Gone would answer a merely
@@ -83,18 +96,13 @@ def _lock_scope(sandbox: "PTCSandbox") -> str:
 def path_write_lock(
     sandbox: "PTCSandbox", normalized_path: str
 ) -> AbstractAsyncContextManager[None]:
-    """Public handle on the per-path write lock, for mutators outside this module.
+    """The per-path write lock every writer of one sandbox path takes.
 
-    A server route that deletes or replaces a file through a shell command
-    bypasses the write path entirely, so it has to take the same lock the
-    upload path takes or it can land between another writer's read and write.
+    Public because a server route that deletes or replaces a file through a
+    shell command bypasses the write path entirely, so it has to take the same
+    lock the upload path takes or it can land between another writer's read
+    and write.
     """
-    return _path_locks.path_write_lock(_lock_scope(sandbox), normalized_path)
-
-
-def _path_write_lock(
-    sandbox: "PTCSandbox", normalized_path: str
-) -> AbstractAsyncContextManager[None]:
     return _path_locks.path_write_lock(_lock_scope(sandbox), normalized_path)
 
 
@@ -357,7 +365,7 @@ async def aupload_file_bytes(
         logger.error(f"Access denied: {filepath} is not in allowed directories")
         return False
 
-    async with _path_write_lock(sandbox, normalized_path):
+    async with path_write_lock(sandbox, normalized_path):
         for attempt in (1, 2):
             written = await _upload_once(sandbox, filepath, normalized_path, content)
             if not written or not verify:
@@ -496,7 +504,7 @@ async def awrite_file_text(sandbox: "PTCSandbox", filepath: str, content: str) -
         logger.error(f"Access denied: {filepath} is not in allowed directories")
         return False
 
-    async with _path_write_lock(sandbox, normalized_path):
+    async with path_write_lock(sandbox, normalized_path):
         for attempt in (1, 2):
             written, landed_size = await _exec_text_write_once(
                 sandbox, filepath, normalized_path, encoded
@@ -720,7 +728,7 @@ async def aedit_file_text(
         }
 
     try:
-        async with _path_write_lock(sandbox, sandbox.normalize_path(filepath)):
+        async with path_write_lock(sandbox, sandbox.normalize_path(filepath)):
             content = await sandbox.aread_file_text(filepath)
             if content is None:
                 return {"success": False, "error": "File not found"}
@@ -823,87 +831,17 @@ async def aglob_files(
                 parent, name = posixpath.split(history_dir)
                 history_children.setdefault(posixpath.basename(parent), []).append(name)
 
-        glob_code = textwrap.dedent(f"""\
-                import fnmatch
-                import glob
-                import os
-
-                pattern = {pattern!r}
-                search_path = {search_path!r}
-                excluded_dirs = set({excluded_dirs!r})
-                history_children = {{
-                    parent: set(names) for parent, names in {history_children!r}.items()
-                }}
-
-                def history_hidden(parent, name):
-                    return name in history_children.get(parent, ())
-
-                # Fast path: '**/<tail>' with a basename-only tail — the recursive
-                # patterns ('**/*', '**/*.py', …) that would otherwise walk the whole
-                # tree. Prune excluded dirs *during* the walk so we never descend into
-                # node_modules/.git/etc. instead of enumerating them and filtering
-                # afterward. For these patterns this is equivalent to glob's recursive
-                # match: a case-sensitive basename match at any non-excluded depth.
-                tail = pattern[3:] if pattern.startswith("**/") else None
-                if tail is not None and "/" not in tail and "**" not in tail:
-                    files = []
-                    for dirpath, dirnames, filenames in os.walk(search_path):
-                        parent = os.path.basename(dirpath)
-                        dirnames[:] = [
-                            d for d in dirnames
-                            if d not in excluded_dirs and not history_hidden(parent, d)
-                        ]
-                        for fn in filenames:
-                            if fnmatch.fnmatchcase(fn, tail):
-                                full = os.path.join(dirpath, fn)
-                                if os.path.isfile(full):
-                                    files.append(full)
-                else:
-                    # General path: exact glob semantics, then drop matches whose
-                    # *intermediate* dir components intersect the excluded set — never
-                    # the search-root prefix (so globbing directly into an excluded dir
-                    # still works) and never the basename (so a regular file that shares
-                    # a noise-dir name is not dropped). The root is escaped because a
-                    # workspace folder is its name, which may hold '[', '*' or '?'.
-                    full_pattern = os.path.join(glob.escape(search_path), pattern)
-                    # A history dir the pattern spells out literally was asked
-                    # for, so history is judged below the pattern's literal
-                    # prefix rather than below the search root. The root is
-                    # literal whatever its name holds.
-                    literal = [] if os.path.isabs(pattern) else [search_path.rstrip("/")]
-                    for seg in pattern.split("/")[:-1]:
-                        if any(c in seg for c in "*?["):
-                            break
-                        literal.append(seg)
-                    history_root = "/".join(literal) or "/"
-                    matches = glob.glob(full_pattern, recursive=True, include_hidden=True)
-                    files = []
-                    for f in matches:
-                        if not os.path.isfile(f):
-                            continue
-                        inner_dirs = os.path.relpath(f, search_path).split(os.sep)[:-1]
-                        if set(inner_dirs) & excluded_dirs:
-                            continue
-                        if history_children:
-                            rel_dir = os.path.relpath(os.path.dirname(f), history_root)
-                            below = [] if rel_dir == "." else rel_dir.split(os.sep)
-                            parents = [os.path.basename(history_root), *below[:-1]]
-                            if any(history_hidden(p, d) for p, d in zip(parents, below)):
-                                continue
-                        files.append(f)
-
-                try:
-                    files_with_mtime = [(f, os.path.getmtime(f)) for f in files]
-                    sorted_files = sorted(files_with_mtime, key=lambda x: x[1], reverse=True)
-                    for f, _ in sorted_files:
-                        print(f)  # noqa: T201
-                except OSError:
-                    for f in files:
-                        print(f)  # noqa: T201
-            """)
-
-        encoded_code = base64.b64encode(glob_code.encode()).decode()
-        cmd = f"python3 -I -c \"import base64; exec(base64.b64decode('{encoded_code}').decode())\""
+        spec = {
+            "pattern": pattern,
+            "search_path": search_path,
+            "excluded_dirs": excluded_dirs,
+            "history_children": history_children,
+            "mount": MOUNT,
+        }
+        cmd = (
+            f"python3 -I -c \"import base64; exec(base64.b64decode('{_GLOB_SCRIPT_B64}').decode())\" "
+            f"{shlex.quote(json.dumps(spec))}"
+        )
 
         assert sandbox.runtime is not None
         result = await sandbox._runtime_call(
@@ -959,12 +897,13 @@ async def agrep_content(
             cmd.append("-l")
         elif output_mode == "count":
             cmd.append("-c")
+        elif output_mode == "content":
+            # Match offsets come from rg itself, so cutting a long line never
+            # re-runs the pattern in Python, whose backtracking rg does not share.
+            cmd.append("--json")
 
         if case_insensitive:
             cmd.append("-i")
-
-        if output_mode == "content" and show_line_numbers:
-            cmd.append("-n")
 
         if lines_before:
             cmd.extend(["-B", str(lines_before)])
@@ -986,6 +925,18 @@ async def agrep_content(
         cmd.append(search_path)
 
         cmd_str = " ".join(shlex.quote(c) for c in cmd)
+        # Cut in the sandbox what the slice below would drop, so it never
+        # crosses the wire. Every match or context event renders as one line
+        # or more, and rendering keeps its order, so the first ``bound`` events
+        # carry the first ``bound`` lines.
+        bound = max(offset, 0) + head_limit if head_limit and head_limit > 0 else None
+        if output_mode == "content":
+            # Only those events are rendered. A JSON string escapes its quotes,
+            # so these keys cannot match inside a line's text.
+            limit = f"-m {bound} " if bound else ""
+            cmd_str += f" | grep {limit}-F -e '\"type\":\"match\"' -e '\"type\":\"context\"'"
+        elif bound:
+            cmd_str += f" | head -n {bound}"
         assert sandbox.runtime is not None
         result = await sandbox._runtime_call(
             sandbox.runtime.exec,
@@ -1017,7 +968,22 @@ async def agrep_content(
                 count_results = count_results[:head_limit]
             return count_results
 
-        results_strs = output.split("\n")
+        if output_mode == "content":
+            render = functools.partial(
+                render_grep_json,
+                output,
+                search_path,
+                line_numbers=show_line_numbers,
+                grouped=bool(lines_before or lines_after or lines_context),
+            )
+            # A few MB of events take a CPU-bound while to parse, which the
+            # event loop serving every other turn should not wait out.
+            if len(output) > _GREP_RENDER_INLINE_CHARS:
+                results_strs = await asyncio.to_thread(render)
+            else:
+                results_strs = render()
+        else:
+            results_strs = output.split("\n")
         if offset > 0:
             results_strs = results_strs[offset:]
         if head_limit:

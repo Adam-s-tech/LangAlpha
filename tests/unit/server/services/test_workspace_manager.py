@@ -47,6 +47,7 @@ _STUB_COMPUTER_ID = "11111111-1111-1111-1111-111111111111"
 _LIFECYCLE = "src.server.services.computer_manager._lifecycle"
 _MACHINES = "src.server.services.computer_manager._machines"
 _PROVISIONING = "src.server.services.computer_manager._provisioning"
+_LAYOUT = "src.server.services.workspace_layout"
 _MACHINE_BACKUP = "src.server.services.computer_manager._machine_backup"
 _ENTITLEMENTS = "src.server.services.workspace_entitlements"
 _SPEC = "src.server.services.computer_manager._spec"
@@ -107,9 +108,10 @@ def _stub_project_folder():
     Every file, restore and layout call resolves it, and these tests run with
     no pool, where the read raises rather than answering "the whole machine".
     """
-    with patch(
-        f"{_PROVISIONING}.db_get_workspace_dir_name",
-        new=AsyncMock(return_value="test-ab12"),
+    folder = AsyncMock(return_value="test-ab12")
+    with (
+        patch(f"{_PROVISIONING}.db_get_workspace_dir_name", new=folder),
+        patch(f"{_LAYOUT}.get_workspace_dir_name", new=folder),
     ):
         yield
 
@@ -1241,8 +1243,8 @@ class TestBackupFilesStrict:
 
         mock_file_svc.sync_to_db = AsyncMock(side_effect=sync)
         with (
-            patch(f"{_PROVISIONING}.workspace_folder_in_use", hold),
-            patch(f"{_PROVISIONING}.db_get_workspace_dir_name", read_folder),
+            patch(f"{_LAYOUT}.workspace_folder_in_use", hold),
+            patch(f"{_LAYOUT}.get_workspace_dir_name", read_folder),
         ):
             assert await self._backup(
                 wm, ws_id, expected_sandbox_id="sandbox-abc",
@@ -1273,12 +1275,12 @@ class TestBackupFilesStrict:
         with ExitStack() as stack:
             if moving == "staged":
                 stack.enter_context(patch(
-                    f"{_PROVISIONING}.db_get_workspace_dir_name",
+                    f"{_LAYOUT}.get_workspace_dir_name",
                     AsyncMock(return_value=f"_internal/moving/{ws_id}"),
                 ))
             else:
                 stack.enter_context(
-                    patch(f"{_PROVISIONING}.workspace_folder_in_use", held_by_a_settle)
+                    patch(f"{_LAYOUT}.workspace_folder_in_use", held_by_a_settle)
                 )
             assert not await self._backup(wm, ws_id, expected_sandbox_id="sandbox-abc")
             with pytest.raises(BackupIncomplete, match="moving"):
@@ -6267,8 +6269,8 @@ class TestRestoreGuard:
             events.append(f"restore {layout.dir_name}")
 
         with (
-            patch(f"{_PROVISIONING}.workspace_folder_in_use", hold),
-            patch(f"{_PROVISIONING}.db_get_workspace_dir_name", read_folder),
+            patch(f"{_LAYOUT}.workspace_folder_in_use", hold),
+            patch(f"{_LAYOUT}.get_workspace_dir_name", read_folder),
             patch(f"{_PROVISIONING}.FilePersistenceService.maybe_restore", maybe_restore),
         ):
             assert await manager._maybe_restore_files(
@@ -6296,12 +6298,12 @@ class TestRestoreGuard:
             )
             if moving == "staged":
                 stack.enter_context(patch(
-                    f"{_PROVISIONING}.db_get_workspace_dir_name",
+                    f"{_LAYOUT}.get_workspace_dir_name",
                     AsyncMock(return_value="_internal/moving/ws-1"),
                 ))
             else:
                 stack.enter_context(
-                    patch(f"{_PROVISIONING}.workspace_folder_in_use", held_by_a_settle)
+                    patch(f"{_LAYOUT}.workspace_folder_in_use", held_by_a_settle)
                 )
             assert not await manager._maybe_restore_files(
                 _binding("ws-1", dir_name="Research"), MagicMock()
@@ -6325,9 +6327,9 @@ class TestRestoreGuard:
             yield
 
         with (
-            patch(f"{_PROVISIONING}.workspace_folder_in_use", hold),
+            patch(f"{_LAYOUT}.workspace_folder_in_use", hold),
             patch(
-                f"{_PROVISIONING}.db_get_workspace_dir_name",
+                f"{_LAYOUT}.get_workspace_dir_name",
                 AsyncMock(return_value="Research"),
             ),
             patch(
@@ -6517,9 +6519,9 @@ class TestGeneratedContentGoesToTheHeldFolder:
         hold = TestGeneratedContentGoesToTheHeldFolder._hold(
             events, held_by_a_settle=held_by_a_settle
         )
-        stack.enter_context(patch(f"{_PROVISIONING}.workspace_folder_in_use", hold))
+        stack.enter_context(patch(f"{_LAYOUT}.workspace_folder_in_use", hold))
         stack.enter_context(patch(
-            f"{_PROVISIONING}.db_get_workspace_dir_name",
+            f"{_LAYOUT}.get_workspace_dir_name",
             TestGeneratedContentGoesToTheHeldFolder._read(events, folder),
         ))
 
@@ -6724,9 +6726,9 @@ class TestGeneratedContentGoesToTheHeldFolder:
 
         with ExitStack() as stack:
             self._asset_sync_reads(stack)
-            for module in (_PROVISIONING, "src.server.services.workspace_manager"):
+            for module in (_LAYOUT, "src.server.services.workspace_manager"):
                 stack.enter_context(patch(f"{module}.workspace_folder_in_use", hold))
-            stack.enter_context(patch(f"{_PROVISIONING}.db_get_workspace_dir_name", read))
+            stack.enter_context(patch(f"{_LAYOUT}.get_workspace_dir_name", read))
             stack.enter_context(
                 patch(f"{_PROVISIONING}.FilePersistenceService.maybe_restore", restore)
             )
@@ -6761,8 +6763,8 @@ class TestGeneratedContentGoesToTheHeldFolder:
 
         with ExitStack() as stack:
             self._asset_sync_reads(stack)
-            stack.enter_context(patch(f"{_PROVISIONING}.workspace_folder_in_use", hold))
-            stack.enter_context(patch(f"{_PROVISIONING}.db_get_workspace_dir_name", read))
+            stack.enter_context(patch(f"{_LAYOUT}.workspace_folder_in_use", hold))
+            stack.enter_context(patch(f"{_LAYOUT}.get_workspace_dir_name", read))
             stack.enter_context(
                 patch(f"{_PROVISIONING}.FilePersistenceService.maybe_restore", restore)
             )

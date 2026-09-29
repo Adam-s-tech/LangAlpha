@@ -7,15 +7,27 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Any, Dict, Mapping, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Set, Tuple
 
 from ptc_agent.core.session import Session
+
+if TYPE_CHECKING:
+    from src.server.services.computer_manager._bringup import BringUp
 
 
 # This cache stores which projects this process has already materialised on a
 # sandbox, not authority over any of it: every step behind it is guarded by its
 # own on-disk marker.
 _PROJECTS_ATTACHED_CAP = 4096
+# A failed file mount is retried after this long rather than every turn: its
+# usual causes (an image without FUSE, a server the sandbox cannot reach) do
+# not change between turns.
+_LIVEFS_RETRY_S = 600
+# A sandbox built before its image carried libfuse installs it on the first
+# attempt, which takes seconds; look again soon after.
+_LIVEFS_INSTALL_RETRY_S = 20
+# A folder settle holding the computer ends in seconds.
+_LIVEFS_BUSY_RETRY_S = 20
 _WORKSPACE_TOOL_VIEWS_CAP = 64
 
 # The decision key is shared with egress grant sync and platform-secret sweeps,
@@ -149,6 +161,19 @@ class SessionMetadata:
         self.request_count += 1
 
 
+@dataclass(frozen=True)
+class LivefsSeen:
+    """What this worker last saw of a machine's file mount, so a warm turn
+    asks the sandbox again only when something is due: another sandbox, a
+    workspace not yet bound, a token running low, or a failure's backoff over."""
+
+    sandbox_id: Optional[str]
+    mounted: bool
+    expires_at: Optional[datetime] = None
+    workspace_ids: frozenset[str] = frozenset()
+    retry_after: float = 0.0
+
+
 @dataclass
 class MachineState:
     """This worker's execution context for one machine, never authority over it.
@@ -190,6 +215,9 @@ class MachineState:
     # Each project's frozen tool configuration, keyed by workspace; see
     # WorkspaceToolView. Execution context, dropped with the session.
     tool_views: OrderedDict[str, WorkspaceToolView] = field(default_factory=OrderedDict)
+    livefs: Optional[LivefsSeen] = None
+    # The background restore and transcript sync of the sandbox in the slot.
+    bring_up: Optional["BringUp"] = None
 
     def forget_session(self) -> None:
         """Drop everything the session owned, keeping the lock its caller may hold.
@@ -205,3 +233,15 @@ class MachineState:
         self.phase2_event = None
         self.last_sync_at = None
         self.tool_views.clear()
+        self.livefs = None
+        if self.bring_up is not None:
+            self.cancel_bring_up(self.bring_up.sandbox_id)
+
+    def cancel_bring_up(self, sandbox_id: Optional[str]) -> None:
+        """Stop the bring-up running against ``sandbox_id``, before that sandbox goes.
+
+        A job for another sandbox belongs to a replacement installed meanwhile."""
+        job = self.bring_up
+        if job is not None and job.sandbox_id == sandbox_id:
+            self.bring_up = None
+            job.cancel()

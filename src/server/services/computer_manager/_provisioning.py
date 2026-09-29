@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
-import shlex
+import math
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -38,11 +38,7 @@ from src.server.database.workspace import (
     SandboxIdentityLostError,
     update_workspace_activity,
 )
-from src.server.database.workspace_folders import (
-    WorkspaceFolderMoving,
-    is_top_level,
-    workspace_folder_in_use,
-)
+from src.server.database.workspace_folders import WorkspaceFolderMoving
 from src.server.models.computer import ComputerStatus
 from src.server.services.persistence.file import (
     FilePersistenceService,
@@ -51,6 +47,7 @@ from src.server.services.persistence.file import (
 )
 from src.server.services.persistence.sync_result import BackupIncomplete
 from src.server.services.workspace_layout import (
+    held_workspace_layout,
     layout_from_binding,
     WorkspaceLayoutUnavailable,
 )
@@ -58,12 +55,15 @@ from src.server.services.user_skills import sandbox_skill_sync_params
 
 from src.server.services.computer_manager._types import (
     ComputerBinding,
+    LivefsSeen,
+    _LIVEFS_BUSY_RETRY_S,
+    _LIVEFS_INSTALL_RETRY_S,
+    _LIVEFS_RETRY_S,
     _PROJECTS_ATTACHED_CAP,
     _SEEDED_AGENT_MD,
 )
 
 logger = logging.getLogger(__name__)
-
 
 class ProvisioningMixin:
     async def _teardown_machine(self, binding: ComputerBinding) -> None:
@@ -75,6 +75,7 @@ class ProvisioningMixin:
         # may name someone else's sandbox. NULL means nothing to destroy.
         computer_id = binding.computer_id
         durable_sandbox_id = binding.provider_ref
+        await self._revoke_livefs(computer_id)
 
         session = self._cached_session(computer_id)
         attached_sandbox_id = self._session_sandbox_id(session)
@@ -106,73 +107,6 @@ class ProvisioningMixin:
                 durable_sandbox_id, delete=True, binding=binding
             )
 
-    _thread_dir_removals: set[asyncio.Task] = set()
-
-    @classmethod
-    def schedule_thread_dirs_removal(cls, workspace_id: str, thread_id: str) -> None:
-        try:
-            manager = cls.get_instance()
-        except Exception:
-            return
-
-        async def _run() -> None:
-            try:
-                await manager.remove_thread_dirs_if_running(workspace_id, thread_id)
-            except Exception as e:
-                logger.warning(
-                    f"Could not remove sandbox dirs of deleted thread {thread_id}: {e}"
-                )
-
-        task = asyncio.create_task(_run())
-        cls._thread_dir_removals.add(task)
-        task.add_done_callback(cls._thread_dir_removals.discard)
-
-    async def remove_thread_dirs_if_running(
-        self, workspace_id: str, thread_id: str
-    ) -> None:
-        """A deleted thread's history leaves the machine now, if it is up.
-
-        Never wakes a stopped machine: the transcript reconcile removes what this
-        misses on the next turn end or restore. Dirs are keyed by the id's first
-        8 characters, so a prefix a live sibling thread still uses is kept.
-        """
-        from src.server.database.computer import get_computer_for_workspace
-        from src.server.database.conversation import get_workspace_thread_short_ids
-        from src.server.services.transcripts import held_layout
-
-        short_id = thread_id[:8]
-        if short_id in await get_workspace_thread_short_ids(workspace_id):
-            return
-        computer = await get_computer_for_workspace(workspace_id)
-        provider_ref = computer.get("provider_ref") if computer else None
-        if not provider_ref or computer.get("status") != "running":
-            return
-        async with held_layout(
-            computer.get("root_dir") or DEFAULT_ROOT_DIR, workspace_id
-        ) as layout:
-            if layout is None:
-                return
-            command = "rm -rf " + " ".join(
-                shlex.quote(path)
-                for path in (
-                    layout.thread_dir(short_id),
-                    layout.join(WorkspaceLayout.large_results_subdir(short_id)),
-                )
-            )
-            session = self.get_session_if_ready(
-                workspace_id, expected_sandbox_id=str(provider_ref)
-            )
-            if session is not None and session.sandbox.runtime is not None:
-                result = await session.sandbox.runtime.exec(command)
-            else:
-                binding = self._binding_from_computer(workspace_id, computer)
-                async with self._detached_runtime(
-                    str(provider_ref), binding=binding
-                ) as runtime:
-                    result = await runtime.exec(command)
-        if result.exit_code != 0:
-            raise RuntimeError(f"thread dir removal exited {result.exit_code}")
-
     def _forget_project(self, workspace_id: str) -> None:
         """The computer owns the session, metadata and lock; they outlive a project."""
         self._projects_attached = {
@@ -193,6 +127,91 @@ class ProvisioningMixin:
                 f"Computer {computer.get('computer_id')} {transition} left "
                 f"workspace {workspace_id} unshadowed (moved {sorted(shadowed)})"
             )
+
+    async def _ensure_livefs(
+        self,
+        computer_id: Any,
+        user_id: str | None,
+        sandbox: Any,
+    ) -> Any:
+        """Bring the machine's file mount to its wanted state, remember it, and
+        hand the file tools the mount (``sandbox.livefs``) while it serves.
+
+        Never raises: without the mount the file tools still reach these files
+        through the store, so a mount failure costs code access, not a turn.
+        """
+        from src.server.services.livefs import mount as livefs
+
+        provider = getattr(getattr(sandbox, "config", None), "sandbox", None)
+        state = await livefs.ensure(
+            sandbox,
+            computer_id=str(computer_id),
+            user_id=user_id,
+            provider=getattr(provider, "provider", None) or self.config.sandbox.provider,
+        )
+        if state.error == "busy":
+            # A settle kept the computer's folders past the wait; whatever
+            # this worker last saw of the mount stands until the retry.
+            seen = self._machine(str(computer_id)).livefs
+            if seen is not None:
+                self._machine(str(computer_id)).livefs = replace(
+                    seen, retry_after=time.monotonic() + _LIVEFS_BUSY_RETRY_S
+                )
+            return state
+        if state.mounted:
+            retry_after = 0.0
+        elif state.error == "unsupported":
+            # No /dev/fuse or no root: fixed for this sandbox's life.
+            retry_after = math.inf
+        elif state.error == "installing":
+            retry_after = time.monotonic() + _LIVEFS_INSTALL_RETRY_S
+        else:
+            retry_after = time.monotonic() + _LIVEFS_RETRY_S
+        self._machine(str(computer_id)).livefs = LivefsSeen(
+            sandbox_id=str(getattr(sandbox, "sandbox_id", "") or "") or None,
+            mounted=state.mounted,
+            expires_at=state.expires_at,
+            workspace_ids=state.workspace_ids,
+            retry_after=retry_after,
+        )
+        if sandbox is not None:
+            sandbox.livefs = (
+                livefs.Handle(
+                    str(computer_id),
+                    state,
+                    lambda: self._ensure_livefs(computer_id, user_id, sandbox),
+                )
+                if state.mounted
+                else None
+            )
+        return state
+
+    async def _revoke_livefs(self, computer_id: Any) -> None:
+        """A machine leaving service stops serving its files at once, rather
+        than when the token it holds would have run out."""
+        from src.server.services.livefs import mount as livefs
+
+        await livefs.revoke(computer_id)
+        machine = self._machine_if_known(str(computer_id))
+        if machine is not None:
+            machine.livefs = None
+
+    def _livefs_due(self, computer_id: Any, workspace_id: str, sandbox: Any) -> bool:
+        from src.server.services.livefs.mount import runs_low
+
+        seen = self._machine(str(computer_id)).livefs
+        sandbox_id = str(getattr(sandbox, "sandbox_id", "") or "") or None
+        if seen is None or seen.sandbox_id != sandbox_id:
+            return True
+        if time.monotonic() < seen.retry_after:
+            return False
+        if not seen.mounted:
+            return True
+        if getattr(sandbox, "livefs", None) is None:
+            # Mounted, but this sandbox handle (a reconnect's new one) was
+            # never handed the mount.
+            return True
+        return str(workspace_id) not in seen.workspace_ids or runs_low(seen.expires_at)
 
     async def _sync_sandbox_assets(
         self,
@@ -300,6 +319,14 @@ class ProvisioningMixin:
             elif isinstance(result, Exception):
                 logger.warning(f"Asset sync failed for {workspace_id}: {result}")
 
+        # After the layout has settled: a migration moving files under a
+        # bind target would otherwise move them through the mount. A warm
+        # sync of changed tools finds it serving and leaves it be.
+        if self._livefs_due(binding.computer_id, workspace_id, sandbox):
+            await _timed(
+                "livefs", self._ensure_livefs(binding.computer_id, user_id, sandbox)
+            )
+
         total = (time.time() - _sync_t0) * 1000
         parts = " ".join(f"{k}={v:.0f}ms" for k, v in _sync_times.items())
         logger.info(
@@ -343,16 +370,9 @@ class ProvisioningMixin:
 
     @asynccontextmanager
     async def _held_workspace_folder(self, workspace_id: str) -> AsyncIterator[Optional[str]]:
-        """The folder to write generated content into, which no settle moves until exit.
-
-        Raises ``WorkspaceFolderMoving`` while a settle holds it or left it
-        staged: a file written to the staged path makes a folder the next
-        settle cannot tell from the one being moved."""
-        async with workspace_folder_in_use(workspace_id):
-            dir_name = await self._workspace_folder(workspace_id)
-            if dir_name and not is_top_level(dir_name):
-                raise WorkspaceFolderMoving(workspace_id)
-            yield dir_name
+        """The folder to write generated content into, which no settle moves until exit."""
+        async with held_workspace_layout(workspace_id, DEFAULT_ROOT_DIR) as layout:
+            yield layout.dir_name if layout is not None else None
 
     async def _project_layout(
         self,
@@ -734,13 +754,10 @@ class ProvisioningMixin:
         try:
             # A settle moves only a folder it can hold, so the folder read under
             # this hold is the one the scan walks. Moved mid-scan, it would read
-            # as missing, which counts as mirrored.
-            async with workspace_folder_in_use(workspace_id):
-                dir_name = await self._workspace_folder(workspace_id)
-                if dir_name and not is_top_level(dir_name):
-                    # A move a settle could not finish: until the next one, the
-                    # content may be in any of three folders.
-                    raise WorkspaceFolderMoving(workspace_id)
+            # as missing, which counts as mirrored. A move a settle could not
+            # finish raises: until the next one, the content may be in any of
+            # three folders.
+            async with self._held_workspace_folder(workspace_id) as dir_name:
                 result = await FilePersistenceService.sync_to_db(
                     workspace_id,
                     session.sandbox,
@@ -881,6 +898,8 @@ class ProvisioningMixin:
         self,
         binding: ComputerBinding,
         sandbox: Any,
+        *,
+        urgent: bool = True,
     ) -> bool:
         """Completeness-guard failures must propagate to prevent destructive backups.
 
@@ -889,11 +908,7 @@ class ProvisioningMixin:
         marks itself complete there, and a backup of the new one then prunes."""
         workspace_id = binding.workspace_id
         try:
-            async with workspace_folder_in_use(workspace_id):
-                dir_name = await self._workspace_folder(workspace_id)
-                if dir_name and not is_top_level(dir_name):
-                    # Mid-move: the next acquisition restores once it lands.
-                    return False
+            async with self._held_workspace_folder(workspace_id) as dir_name:
                 await FilePersistenceService.maybe_restore(
                     workspace_id,
                     sandbox,
@@ -904,71 +919,18 @@ class ProvisioningMixin:
                         root=binding.root_dir,
                     ),
                 )
+        except WorkspaceFolderMoving:
+            # The next acquisition restores once it lands.
+            return False
         except RestoreGuardUnavailable:
             raise
         except Exception as e:
             logger.warning(f"File restore check failed for {workspace_id}: {e}")
             return False
-        self._schedule_after_restore(workspace_id, sandbox, binding.root_dir)
+        self._queue_bring_up(
+            binding.computer_id, workspace_id, sandbox, binding.root_dir, urgent=urgent
+        )
         return True
-
-    _after_restore: dict[tuple[str, str | None], asyncio.Task] = {}
-
-    @classmethod
-    def _schedule_after_restore(
-        cls, workspace_id: str, sandbox: Any, root: Optional[str]
-    ) -> None:
-        """What a usable folder can wait for, in the background.
-
-        Evicted results come back first, then transcripts are rebuilt (they
-        are not backed up) and deleted threads' dirs are cleared. A bring-up
-        checks the restore more than once; a job still running for
-        the same sandbox is left to finish rather than doubled. A replaced
-        sandbox gets its own job, since the old one's work stayed behind.
-        The folder is read when the job runs, under the folder hold: a settle
-        may have renamed it since the restore, and a sibling may hold the old
-        name.
-        """
-        key = (workspace_id, getattr(sandbox, "sandbox_id", None))
-        running = cls._after_restore.get(key)
-        if running is not None and not running.done():
-            return
-        runtime = getattr(sandbox, "runtime", None)
-        if runtime is None:
-            return
-
-        async def _run() -> None:
-            from src.server.services.transcripts import held_layout, sync_workspace
-
-            try:
-                async with held_layout(root or DEFAULT_ROOT_DIR, workspace_id) as layout:
-                    if layout is None:
-                        return
-                    try:
-                        outcome = await FilePersistenceService.restore_deferred(
-                            workspace_id, sandbox, layout=layout
-                        )
-                        if outcome["restored"] or outcome["errors"]:
-                            logger.info(
-                                f"Deferred restore for workspace {workspace_id}: {outcome}"
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            f"Deferred restore failed for workspace {workspace_id}: {e}"
-                        )
-                    outcome = await sync_workspace(runtime, layout, workspace_id)
-                    if any(outcome.values()):
-                        logger.info(
-                            f"Transcript sync for workspace {workspace_id}: {outcome}"
-                        )
-            except Exception as e:
-                logger.warning(
-                    f"Transcript sync failed for workspace {workspace_id}: {e}"
-                )
-            finally:
-                cls._after_restore.pop(key, None)
-
-        cls._after_restore[key] = asyncio.create_task(_run())
 
     async def _ensure_workspace_dirs(
         self, workspace_id: str, sandbox: Any, dir_name: Optional[str]
@@ -996,34 +958,41 @@ class ProvisioningMixin:
             return
         workspace_id = binding.workspace_id
         key = (workspace_id, self._session_sandbox_id(session))
-        first = key not in self._projects_attached
-        ready = True
-        if first:
+        recorded = False
+        if key not in self._projects_attached:
             # Restore files before rebuilding the generated tool configuration.
             await self._ensure_workspace_dirs(workspace_id, sandbox, binding.dir_name)
-            ready = await self._maybe_restore_files(binding, sandbox)
+            # Unrestored, the next acquisition retries before trusting this
+            # workspace. Restored, the key goes in before the next await: the
+            # bring-up just queued may drop the workspace and discard its key,
+            # which a later add would undo.
+            if await self._maybe_restore_files(binding, sandbox):
+                if len(self._projects_attached) >= _PROJECTS_ATTACHED_CAP:
+                    self._projects_attached.clear()
+                self._projects_attached.add(key)
+                recorded = True
         if not await self._ensure_project_tool_overlay(
             binding, session, user_id=user_id
         ):
             # Retry on the next acquire; MCP calls refuse an absent config.
+            if recorded:
+                self._projects_attached.discard(key)
             return
-        if first and ready:
+        if recorded and not await self._reconcile_skills(
+            workspace_id, user_id, sandbox, source="attach_project"
+        ):
             # A folder reaches the shared skills only through links, and a
             # machine start or a sibling's lifecycle links no folder but its
             # own. After the overlay, whose asset refresh can deliver skills
-            # the pass has to link. A full pass, once per sandbox per process.
-            ready = await self._reconcile_skills(
-                workspace_id, user_id, sandbox, source="attach_project"
-            )
-        if not ready:
-            # The tool config can be healthy while the project's durable files
-            # or its skill links are still absent. Leave the attachment
-            # unrecorded so the next acquisition retries both before trusting
-            # this project.
-            return
-        if len(self._projects_attached) >= _PROJECTS_ATTACHED_CAP:
-            self._projects_attached.clear()
-        self._projects_attached.add(key)
+            # the pass has to link. A full pass, once per sandbox per process:
+            # one that did not finish leaves the attachment unrecorded, so the
+            # next acquisition retries it before trusting this project.
+            self._projects_attached.discard(key)
+        if self._livefs_due(binding.computer_id, workspace_id, sandbox):
+            if not user_id:
+                workspace = await db_get_workspace(workspace_id)
+                user_id = (workspace or {}).get("user_id")
+            await self._ensure_livefs(binding.computer_id, user_id, sandbox)
 
     async def _ensure_project_tool_overlay(
         self,

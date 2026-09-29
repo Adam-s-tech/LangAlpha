@@ -1,18 +1,87 @@
-"""Backend filesystem offloading for truncated args and inline attachments."""
+"""Offloading: the view that re-applies recorded offloads to each model call,
+and the backend files that keep what truncated args and inline attachments cut."""
 
 import base64
 import logging
 import uuid
 from typing import Any
 
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
 from langgraph.config import get_config
 
 from ptc_agent.core.paths import WorkspaceLayout
 from src.llms.attachment_payload import FILE_BLOCK_TYPES
-from ptc_agent.agent.middleware.compaction.utils import strip_base64_from_messages
+from ptc_agent.agent.middleware.compaction.types import TRUNCATABLE_TOOLS
+from ptc_agent.agent.middleware.compaction.utils import (
+    read_offload_marker,
+    strip_base64_from_messages,
+    truncate_tool_call,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def tool_call_ids(messages: list[AnyMessage]) -> set[str]:
+    return {
+        tc["id"]
+        for msg in messages
+        if isinstance(msg, AIMessage)
+        for tc in msg.tool_calls or ()
+        if tc.get("id")
+    }
+
+
+def apply_recorded_offloads(
+    messages: list[AnyMessage],
+    arg_ids: set[str],
+    read_ids: set[str],
+    max_length: int,
+    truncation_text: str,
+    thread_dir: str | None = None,
+) -> list[AnyMessage]:
+    """Re-apply every recorded Tier 1 offload to one model call's messages.
+
+    An offload is a view over the checkpoint, not a rewrite of it: the id sets
+    are the record, and every call re-truncates them. The batch gate only
+    decides when new ids join; without this, a call truncated at one batch
+    came back in full on the next, busting the prompt cache each time. Each id
+    is checked against its tool, so an arg id never blanks a result and a read
+    id only replaces a Read result.
+    """
+    if not arg_ids and not read_ids:
+        return messages
+
+    read_paths: dict[str, str] = {}
+    out: list[AnyMessage] = []
+    changed = False
+    for msg in messages:
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            calls = []
+            msg_changed = False
+            for tc in msg.tool_calls:
+                if tc["name"] == "Read" and tc["id"] in read_ids:
+                    read_paths[tc["id"]] = tc.get("args", {}).get("file_path", "")
+                if tc["id"] in arg_ids and tc["name"] in TRUNCATABLE_TOOLS:
+                    new_tc = truncate_tool_call(
+                        tc, max_length, truncation_text, thread_dir
+                    )
+                    msg_changed = msg_changed or new_tc is not tc
+                    calls.append(new_tc)
+                else:
+                    calls.append(tc)
+            if msg_changed:
+                msg = msg.model_copy()
+                msg.tool_calls = calls
+                changed = True
+        elif isinstance(msg, ToolMessage) and msg.tool_call_id in read_paths:
+            marker = read_offload_marker(read_paths[msg.tool_call_id])
+            if msg.content != marker:
+                msg = msg.model_copy()
+                msg.content = marker
+                changed = True
+        out.append(msg)
+
+    return out if changed else messages
 
 
 def get_thread_id(thread_id: str | None = None) -> str:
@@ -39,7 +108,7 @@ async def aoffload_truncated_args(
     originals: dict[str, dict[str, Any]],
     *,
     thread_id: str | None = None,
-) -> None:
+) -> set[str]:
     """Persist original tool call args to sandbox before truncation discards them.
 
     Each truncated tool call gets its own file at
@@ -51,11 +120,18 @@ async def aoffload_truncated_args(
         backend: The Daytona backend for filesystem operations.
         originals: Mapping of tool_call_id -> {"name": str, "args": dict}
                    as returned by truncate_message_args.
+
+    Returns:
+        The ids safe to record: those written, or all of them with no
+        backend, since the marker then names no file. A failed write stays
+        out, so its marker never names a missing file and a later pass
+        retries it.
     """
-    if backend is None or not originals:
-        return
+    if backend is None:
+        return set(originals)
 
     short_id = get_thread_id(thread_id)
+    saved: set[str] = set()
 
     for tool_call_id, original in originals.items():
         path = WorkspaceLayout.thread_subdir(
@@ -83,6 +159,7 @@ async def aoffload_truncated_args(
                     error_msg,
                 )
             else:
+                saved.add(tool_call_id)
                 logger.debug(
                     "Offloaded truncated args for %s (%s) to %s",
                     tool_call_id,
@@ -96,6 +173,8 @@ async def aoffload_truncated_args(
                 tool_name,
                 e,
             )
+
+    return saved
 
 
 # =============================================================================

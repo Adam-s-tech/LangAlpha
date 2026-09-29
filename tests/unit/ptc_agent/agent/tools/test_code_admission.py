@@ -283,13 +283,14 @@ class TestExecuteCodeTool:
         seen: list = []
 
         class _Backend:
+            livefs = None
             sandbox = SimpleNamespace(
                 config=SimpleNamespace(
                     security=SimpleNamespace(max_execution_time=300)
                 )
             )
 
-            async def aexecute_code(self, code, thread_id=None):
+            async def aexecute_code(self, code, thread_id=None, call_id=None):
                 seen.append(dict(_holders(redis)))
                 return SimpleNamespace(
                     success=True, stdout="ok", stderr="", mcp_trace=[]
@@ -309,9 +310,10 @@ class TestExecuteCodeTool:
         from ptc_agent.agent.tools.code_execution import create_execute_code_tool
 
         class _Backend:
+            livefs = None
             sandbox = None
 
-            async def aexecute_code(self, code, thread_id=None):
+            async def aexecute_code(self, code, thread_id=None, call_id=None):
                 return SimpleNamespace(
                     success=True, stdout="ok", stderr="", mcp_trace=[]
                 )

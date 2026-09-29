@@ -275,6 +275,26 @@ async def get_workspace(
         raise
 
 
+async def get_workspace_placement(workspace_id: str) -> Optional[Dict[str, Any]]:
+    """A live workspace's owner, computer and folder: what the file mount
+    checks on every request under a workspace, without the full row."""
+    workspace_id = normalize_uuid(workspace_id)
+    if workspace_id is None:
+        return None
+
+    async with _ws_cursor() as cur:
+        await cur.execute(
+            """
+            SELECT workspace_id, user_id, computer_id, dir_name
+            FROM workspaces
+            WHERE workspace_id = %s AND status != 'deleted'
+            """,
+            (workspace_id,),
+        )
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
 async def get_workspace_identity(workspace_id: str) -> Optional[Dict[str, Any]]:
     """Avoid large JSONB reads on every cached-session validation.
 

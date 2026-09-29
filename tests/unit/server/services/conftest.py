@@ -33,7 +33,7 @@ def _folder_hold_is_free():
     lock these pool-less tests cannot take. A test of the hold patches it inside this one."""
     with ExitStack() as stack:
         for module in (
-            "src.server.services.computer_manager._provisioning",
+            "src.server.services.workspace_layout",
             "src.server.services.workspace_manager",
         ):
             stack.enter_context(

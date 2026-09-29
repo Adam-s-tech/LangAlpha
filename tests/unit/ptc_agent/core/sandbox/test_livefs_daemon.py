@@ -1,0 +1,1047 @@
+"""What the file mount's daemon promises, pinned without FUSE, root or a server.
+
+The daemon runs as root in the sandbox, so its link handling decides what
+happens to files the agent already had there, and its save rules decide
+which refusals reach the tool result. A dict-backed server stands in for the
+endpoint and a fake kernel for the FUSE context and ``/proc``; ``up`` runs
+against ``tmp_path`` with the checks that need root or a mount table
+answering as a healthy sandbox would.
+"""
+
+from __future__ import annotations
+
+import errno
+import hashlib
+import http.server
+import json
+import os
+import shutil
+import stat
+import threading
+import time
+from types import SimpleNamespace
+
+import pytest
+
+# The sandbox runs this package as ``livefs``; its siblings are relative
+# imports, so the host path loads the same code.
+from ptc_agent.core.sandbox.livefs_runtime import boot, daemon, lifecycle, ops, remote
+from ptc_agent.core.sandbox.livefs_runtime.protocol import (
+    CALL_ENV,
+    MAX_FILE_BYTES,
+    PROVISIONAL_HEADER,
+    MountError,
+)
+
+NOTES = "user/memory/notes.md"
+PREFS = "user/profile/prefs.json"
+
+
+def _error(code: str) -> bytes:
+    return json.dumps({"code": code, "message": code}).encode()
+
+
+def _version(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+def _json_only(path: str, body: bytes) -> bool:
+    try:
+        json.loads(body)
+    except ValueError:
+        return False
+    return True
+
+
+class _Server:
+    """The livefs endpoint over a dict of mount-relative paths to bytes.
+    ``store`` is what a save keeps of the bytes sent, ``version`` what names
+    a file's bytes, ``structural`` the directories it makes up, and
+    ``inline`` whether a listing carries each file's text."""
+
+    def __init__(
+        self,
+        files,
+        *,
+        sealed=(),
+        accept=lambda path, body: True,
+        store=lambda path, body: body,
+        version=_version,
+        structural=(),
+        inline=False,
+    ) -> None:
+        self.files = dict(files)
+        self.sealed = set(sealed)
+        self.accept = accept
+        self.store = store
+        self.version = version
+        self.structural = set(structural)
+        self.inline = inline
+        self.writes: list[tuple[str, bytes, dict]] = []
+        self.reads: list[str] = []
+        self.lists: list[str] = []
+
+    def request(self, method, action, params, *, body=None, headers=None, call=None, attempts=2):
+        return getattr(self, f"_{action}")(params.get("path", ""), params, body, headers or {})
+
+    def _list(self, path, params, body, headers):
+        self.lists.append(path)
+        prefix = f"{path}/" if path else ""
+        entries = {}
+        for key, data in self.files.items():
+            if key.startswith(prefix):
+                name, nested, _ = key[len(prefix):].partition("/")
+                entries[name] = {"name": name, "type": "dir"} if nested else {
+                    "name": name,
+                    "type": "file",
+                    "size": len(data),
+                    "version": self.version(data),
+                    "writable": True,
+                    **({"content": data.decode()} if self.inline else {}),
+                }
+        if path and not entries:
+            return 404, None, _error("not_found")
+        listing = {
+            "entries": list(entries.values()),
+            "writable": path not in self.sealed,
+            "structural": path in self.structural,
+        }
+        return 200, None, json.dumps(listing).encode()
+
+    def _read(self, path, params, body, headers):
+        self.reads.append(path)
+        data = self.files[path]
+        etag = f'"{self.version(data)}"'
+        return 200, SimpleNamespace(getheader=lambda name, default=None: etag), data
+
+    def _write(self, path, params, body, headers):
+        self.writes.append((path, body, headers))
+        if not self.accept(path, body):
+            return 422, None, _error("invalid")
+        stored = self.files[path] = self.store(path, body)
+        saved = {"version": self.version(stored), "size": len(stored), "as_sent": stored == body}
+        return 200, None, json.dumps(saved).encode()
+
+    def _delete(self, path, params, body, headers):
+        self.files.pop(path)
+        return 204, None, b""
+
+    def _rename(self, path, params, body, headers):
+        if any(key.startswith(f"{path}/") for key in self.files):
+            return 409, None, _error("is_directory")
+        self.files[params["to"]] = self.files.pop(path)
+        return 204, None, b""
+
+
+class _Kernel:
+    """The pid FUSE names as a request's caller, and the call each pid
+    started under."""
+
+    def __init__(self) -> None:
+        self.pid = 1
+        self.calls: dict[int, str] = {}
+
+    def run(self, pid: int, call: str) -> None:
+        self.calls[pid] = call
+        self.pid = pid
+
+
+@pytest.fixture
+def kernel():
+    return _Kernel()
+
+
+def _ops(server: _Server, kernel: _Kernel, **options) -> ops.LiveFS:
+    return ops.LiveFS(
+        server,
+        os.getuid(),
+        os.getgid(),
+        caller=lambda: kernel.pid,
+        call_of=kernel.calls.get,
+        **options,
+    )
+
+
+def _walk(fs: ops.LiveFS, path: str) -> dict:
+    """The lookups the kernel sends for a path, one per component."""
+    parts = path.strip("/").split("/")
+    for depth in range(1, len(parts)):
+        fs.getattr("/" + "/".join(parts[:depth]))
+    return fs.getattr(path)
+
+
+def _read(fs: ops.LiveFS, path: str) -> bytes:
+    fh = fs.open(path, os.O_RDONLY)
+    try:
+        return fs.read(path, 1 << 20, 0, fh)
+    finally:
+        fs.release(path, fh)
+
+
+def _sent(server: _Server) -> list[tuple[bytes, bool]]:
+    return [(body, PROVISIONAL_HEADER in headers) for _, body, headers in server.writes]
+
+
+@pytest.fixture
+def box(tmp_path, monkeypatch):
+    """A sandbox in ``tmp_path`` whose daemon is already serving, holding a
+    token from an earlier ``up``."""
+    paths = lifecycle.Paths(
+        mount=str(tmp_path / "mnt" / "livefs"),
+        generations=str(tmp_path / "mnt" / ".livefs"),
+        private=str(tmp_path / "var" / "lib" / "livefs"),
+    )
+    private = tmp_path / "var" / "lib" / "livefs"
+    private.mkdir(parents=True)
+    old = {"base_url": "http://server", "token": "lfs1.old"}
+    (private / "config.json").write_text(json.dumps(old))
+    mount = tmp_path / "mnt" / "livefs"
+    mount.parent.mkdir()
+    root = tmp_path / "home" / "workspace"
+    root.mkdir(parents=True)
+    monkeypatch.setattr(daemon, "unsupported", lambda: None)
+    monkeypatch.setattr(daemon, "has_libfuse", lambda: True)
+    monkeypatch.setattr(daemon, "healthy", lambda path: True)
+    monkeypatch.setattr(daemon, "_probe", lambda paths: None)
+    monkeypatch.setattr(daemon, "start", lambda args, state, paths, gate=None: (False, None))
+    return SimpleNamespace(tmp=tmp_path, private=private, mount=mount, root=root, paths=paths)
+
+
+def _up(box, *links, replace=(), stage=None, base_url=None, probe=False) -> dict:
+    return daemon.up(
+        SimpleNamespace(
+            root=str(box.root),
+            stage=stage,
+            base_url=base_url,
+            probe=probe,
+            link=[f"{source}:{box.root / target}" for source, target in links],
+            replace=[str(box.root / target) for target in replace],
+        ),
+        box.paths,
+    )
+
+
+def _installed_token(box) -> str:
+    return json.loads((box.private / "config.json").read_text())["token"]
+
+
+# -- staged token --------------------------------------------------------------
+
+
+def test_a_staged_token_is_taken_privately_and_the_staged_copy_deleted(box):
+    stage = box.root / ".livefs.abc.stage"
+    stage.write_text(json.dumps({"base_url": "http://server", "token": "lfs1.new"}))
+
+    assert _up(box, stage=str(stage))["ok"]
+
+    assert not os.path.lexists(stage)
+    assert _installed_token(box) == "lfs1.new"
+    assert stat.S_IMODE((box.private / "config.json").stat().st_mode) == 0o600
+
+
+def test_a_moved_server_is_written_into_the_config_and_the_token_kept(box, monkeypatch):
+    probes = []
+    monkeypatch.setattr(daemon, "_probe", lambda paths: probes.append(1))
+    config = box.private / "config.json"
+    before = json.loads(config.read_text())
+
+    assert _up(box, base_url="http://moved")["ok"]
+    assert json.loads(config.read_text()) == {**before, "base_url": "http://moved"}
+    assert probes == [1]
+
+    assert _up(box, base_url="http://moved")["ok"]
+    assert probes == [1]
+
+
+def test_a_server_last_found_unreachable_is_asked_though_nothing_changed(box, monkeypatch):
+    """A serving daemon whose server stopped answering has nothing changed
+    about it, so only the caller knows to ask again."""
+    monkeypatch.setattr(daemon, "_probe", lambda paths: "no answer from http://server")
+
+    assert _up(box)["ok"]
+    assert _up(box, probe=True)["error"] == "unreachable"
+
+
+def _link_to_a_valid_config(stage, tmp) -> None:
+    planted = tmp / "planted.json"
+    planted.write_text(json.dumps({"base_url": "http://elsewhere", "token": "lfs1.planted"}))
+    stage.symlink_to(planted)
+
+
+def _config_without_a_token(stage, tmp) -> None:
+    stage.write_text(json.dumps({"base_url": "http://server"}))
+
+
+@pytest.mark.parametrize(
+    "plant", [_link_to_a_valid_config, _config_without_a_token], ids=["symlink", "no-token"]
+)
+def test_a_staged_token_that_is_a_link_or_not_a_mount_config_answers_bad_config(box, plant):
+    stage = box.root / ".livefs.abc.stage"
+    plant(stage, box.tmp)
+
+    assert _up(box, stage=str(stage))["error"] == "bad_config"
+    assert _installed_token(box) == "lfs1.old"
+
+
+# -- the start a bring-up runs beside its asset sync ---------------------------
+
+
+def _start(box, *, stage=None) -> dict:
+    return daemon.start_mount(
+        SimpleNamespace(root=str(box.root), stage=stage, base_url=None, probe=False), box.paths
+    )
+
+
+def test_start_serves_and_leaves_every_link_alone(box):
+    _up(box, ("user", ".agents/user"))
+    link = box.root / ".agents" / "user"
+    before = os.readlink(link)
+
+    assert _start(box) == {
+        "ok": True,
+        "error": None,
+        "started": None,
+    }
+    assert os.readlink(link) == before
+    assert _up(box, ("user", ".agents/user"))["ok"]
+
+
+def _shipped(tmp_path):
+    """A shipped package as the asset sync leaves it, and the host's manifest."""
+    shipped = tmp_path / "src" / "livefs"
+    shutil.copytree(lifecycle._PACKAGE_DIR, shipped, ignore=shutil.ignore_patterns("__pycache__"))
+    return shipped, lifecycle.code_manifest()
+
+
+def test_root_runs_a_private_copy_of_the_code_the_host_ships(tmp_path):
+    shipped, manifest = _shipped(tmp_path)
+    private = tmp_path / "private"
+    code = lifecycle.code_version()
+
+    home = boot.home(str(private), str(shipped), code, manifest)
+
+    assert home == str(private / "code" / code)
+    assert sorted(os.listdir(os.path.join(home, "livefs"))) == sorted(manifest)
+    assert stat.S_IMODE(os.stat(private / "code").st_mode) == 0o700
+    assert boot.home(str(private), str(shipped), code, manifest) == home
+
+
+@pytest.mark.parametrize("change", ["rewrite", "link"])
+def test_shipped_code_the_host_did_not_ship_is_never_run(tmp_path, change):
+    """The sandbox's user can rewrite the shipped package, and a sync
+    rewrites it file by file, so root runs nothing that reads otherwise."""
+    shipped, manifest = _shipped(tmp_path)
+    ops = shipped / "ops.py"
+    if change == "rewrite":
+        ops.write_text("import os\n")
+    else:
+        (tmp_path / "ops.py").write_bytes(ops.read_bytes())
+        ops.unlink()
+        ops.symlink_to(tmp_path / "ops.py")
+    private = tmp_path / "private"
+
+    assert boot.home(str(private), str(shipped), lifecycle.code_version(), manifest) is None
+    assert not (private / "code" / lifecycle.code_version()).exists()
+
+
+def test_boot_answers_stale_code_as_the_daemon_names_it():
+    source = open(boot.__file__).read()
+
+    assert f'"error": "{MountError.STALE_CODE}"' in source
+
+
+def test_installing_libfuse_waits_out_the_users_apt_and_keeps_their_lists(
+    tmp_path, monkeypatch
+):
+    """The install runs on the user's machine at any time, maybe beside an
+    apt-get of their own, so it waits for the lock and wipes nothing."""
+    launched: list[str] = []
+    monkeypatch.setattr(
+        lifecycle.subprocess, "Popen", lambda argv, **kwargs: launched.append(argv[-1])
+    )
+    paths = lifecycle.Paths(private=str(tmp_path))
+
+    lifecycle.install_libfuse(paths)
+    lifecycle.install_libfuse(paths)
+
+    [script] = launched
+    calls = script.split("&&")
+    assert len(calls) == 2
+    assert all("apt-get -o DPkg::Lock::Timeout=120 " in call for call in calls)
+    assert "rm " not in script and "/var/lib/apt/lists" not in script
+
+
+# -- links ---------------------------------------------------------------------
+
+
+def test_a_restart_repoints_the_mount_path_and_leaves_every_link_alone(box):
+    generations = box.tmp / "mnt" / ".livefs"
+    for name, text in (("1", "old daemon"), ("2", "new daemon")):
+        (generations / name / "user").mkdir(parents=True)
+        (generations / name / "user" / "notes.md").write_text(text)
+    lifecycle.point(str(generations / "1"), box.paths)
+    _up(box, ("user", ".agents/user"))
+    link = box.root / ".agents" / "user"
+    assert (link / "notes.md").read_text() == "old daemon"
+
+    lifecycle.point(str(generations / "2"), box.paths)
+
+    assert os.readlink(link) == f"{box.mount}/user"
+    assert (link / "notes.md").read_text() == "new daemon"
+    assert sorted(os.listdir(box.tmp / "mnt")) == [".livefs", "livefs"]
+
+
+def test_up_removes_its_links_no_longer_asked_for_but_not_what_replaced_one(box):
+    _up(
+        box,
+        ("user", ".agents/user"),
+        ("workspaces/a/memory", "research/.agents/memory"),
+        ("workspaces/b/memory", "archive/.agents/memory"),
+    )
+    # The agent repointed one link at a folder of its own.
+    mine = box.root / "my-notes"
+    mine.mkdir()
+    repointed = box.root / "archive" / ".agents" / "memory"
+    repointed.unlink()
+    repointed.symlink_to(mine)
+
+    assert _up(box, ("user", ".agents/user"))["ok"]
+
+    assert os.path.islink(box.root / ".agents" / "user")
+    assert not os.path.lexists(box.root / "research" / ".agents" / "memory")
+    assert os.readlink(repointed) == str(mine)
+
+
+def test_anything_already_at_a_link_path_is_set_aside_under_a_free_name(box):
+    memory = box.root / "research" / ".agents" / "memory"
+    memory.mkdir(parents=True)
+    (memory / "notes.md").write_text("kept")
+    (memory.parent / "memory.local").mkdir()  # an earlier set-aside
+    index = box.root / ".agents" / "threads.jsonl"
+    index.parent.mkdir()
+    index.write_text("{}\n")
+
+    answer = _up(
+        box,
+        ("workspaces/a/memory", "research/.agents/memory"),
+        ("computer/threads.jsonl", ".agents/threads.jsonl"),
+    )
+
+    assert answer["ok"]
+    assert answer["set_aside"] == {
+        str(memory): f"{memory}.local.1",
+        str(index): f"{index}.local",
+    }
+    assert (memory.parent / "memory.local.1" / "notes.md").read_text() == "kept"
+    assert os.readlink(memory) == f"{box.mount}/workspaces/a/memory"
+
+
+def test_an_empty_directory_at_a_link_path_is_replaced_not_set_aside(box):
+    memory = box.root / "research" / ".agents" / "memory"
+    memory.mkdir(parents=True)
+
+    answer = _up(box, ("workspaces/a/memory", "research/.agents/memory"))
+
+    assert answer["set_aside"] is None
+    assert os.readlink(memory) == f"{box.mount}/workspaces/a/memory"
+    assert not os.path.lexists(f"{memory}.local")
+
+
+def test_replace_removes_an_older_written_copy_instead_of_setting_it_aside(box):
+    index = box.root / ".agents" / "threads.jsonl"
+    index.parent.mkdir()
+    index.write_text('{"thread": "written by an older build"}\n')
+
+    answer = _up(
+        box,
+        ("computer/threads.jsonl", ".agents/threads.jsonl"),
+        replace=[".agents/threads.jsonl"],
+    )
+
+    assert answer["set_aside"] is None
+    assert os.readlink(index) == f"{box.mount}/computer/threads.jsonl"
+    assert not os.path.lexists(f"{index}.local")
+
+
+# -- server answers ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "expected"),
+    [
+        (404, _error("not_found"), errno.ENOENT),
+        (409, _error("is_directory"), errno.EISDIR),
+        (409, _error("not_directory"), errno.ENOTDIR),
+        (412, _error("exists"), errno.EEXIST),
+        (412, _error("changed"), errno.ESTALE),
+        (428, _error("precondition_required"), errno.EINVAL),
+        (403, _error("read_only"), errno.EACCES),
+        (422, _error("invalid"), errno.EINVAL),
+        (413, _error("too_large"), errno.EFBIG),
+        (503, _error("unavailable"), errno.EIO),
+        (502, b"<html>bad gateway</html>", errno.EIO),
+    ],
+)
+def test_a_server_error_reaches_the_caller_as_its_errno(status, body, expected):
+    assert remote.error_for(status, body).errno == expected
+
+
+def test_renaming_a_directory_answers_exdev_so_mv_copies_it_file_by_file(kernel):
+    server = _Server({"user/memory/notes/a.md": b"a"})
+
+    with pytest.raises(OSError) as exc:
+        _ops(server, kernel).rename("/user/memory/notes", "/user/memory/archive")
+
+    assert exc.value.errno == errno.EXDEV
+    assert server.files == {"user/memory/notes/a.md": b"a"}
+
+
+@pytest.mark.parametrize(
+    "make",
+    [lambda fs, path: fs.create(path, 0o644), lambda fs, path: fs.mkdir(path, 0o755)],
+    ids=["create", "mkdir"],
+)
+def test_a_directory_that_takes_no_new_files_refuses_create_and_mkdir_up_front(kernel, make):
+    server = _Server({"user/memos/q3.md": b"memo", NOTES: b"n"}, sealed={"user/memos"})
+    fs = _ops(server, kernel)
+    make(fs, "/user/memory/fresh")
+
+    with pytest.raises(OSError) as exc:
+        make(fs, "/user/memos/fresh")
+
+    assert exc.value.errno == errno.EACCES
+    assert server.writes == []
+
+
+def test_a_delete_leaves_the_directories_above_it_under_the_servers_rules(kernel):
+    # Regression: every ancestor of a deleted file used to be kept as a local
+    # directory, which lifted the create refusal and made renaming one a
+    # silent local no-op.
+    server = _Server(
+        {"user/memory/notes/a.md": b"a", "user/memory/notes/b.md": b"b"},
+        sealed={"user"},
+    )
+    fs = _ops(server, kernel)
+    fs.unlink("/user/memory/notes/a.md")
+
+    with pytest.raises(OSError) as create:
+        fs.create("/user/new.md", 0o644)
+    with pytest.raises(OSError) as rename:
+        fs.rename("/user/memory/notes", "/user/memory/archive")
+
+    assert create.value.errno == errno.EACCES
+    assert rename.value.errno == errno.EXDEV
+    assert server.files == {"user/memory/notes/b.md": b"b"}
+
+
+def test_a_directory_its_last_delete_emptied_stays_for_the_rmdir_after_it(kernel):
+    server = _Server({"user/memory/notes/a.md": b"a", NOTES: b"n"})
+    fs = _ops(server, kernel)
+    fs.unlink("/user/memory/notes/a.md")
+
+    assert fs.getattr("/user/memory/notes")["st_mode"] & stat.S_IFDIR
+    fs.rmdir("/user/memory/notes")
+    with pytest.raises(OSError) as gone:
+        fs.getattr("/user/memory/notes")
+    assert gone.value.errno == errno.ENOENT
+
+
+def test_a_directory_made_here_moves_with_the_ones_made_inside_it(kernel):
+    fs = _ops(_Server({NOTES: b"n"}), kernel)
+    fs.mkdir("/user/memory/draft", 0o755)
+    fs.mkdir("/user/memory/draft/q3", 0o755)
+
+    fs.rename("/user/memory/draft", "/user/memory/final")
+
+    assert fs.getattr("/user/memory/final/q3")["st_mode"] & stat.S_IFDIR
+    with pytest.raises(OSError) as gone:
+        fs.getattr("/user/memory/draft")
+    assert gone.value.errno == errno.ENOENT
+
+
+def test_a_command_keeps_the_view_its_call_id_first_saw(kernel):
+    server = _Server({NOTES: b"v1"})
+    fs = _ops(server, kernel)
+    kernel.run(101, "call-a")
+    assert _read(fs, f"/{NOTES}") == b"v1"
+    server.files[NOTES] = b"v2 from the app"
+
+    kernel.run(102, "call-a")  # another process of the same command
+    assert _read(fs, f"/{NOTES}") == b"v1"
+    kernel.run(201, "call-b")
+    assert _read(fs, f"/{NOTES}") == b"v2 from the app"
+
+
+def test_a_directory_its_last_delete_emptied_is_gone_for_the_next_command(kernel):
+    server = _Server({"user/memory/notes/a.md": b"a", NOTES: b"n"})
+    fs = _ops(server, kernel)
+    kernel.run(101, "call-a")
+    fs.unlink("/user/memory/notes/a.md")
+
+    kernel.run(201, "call-b")
+    with pytest.raises(OSError) as gone:
+        fs.getattr("/user/memory/notes")
+
+    assert gone.value.errno == errno.ENOENT
+
+
+def test_the_call_is_read_from_the_environment_the_process_started_with(tmp_path):
+    for pid, environ in {
+        7: b"PATH=/usr/bin\0" + f"{CALL_ENV}=call-a".encode() + b"\0",
+        8: b"PATH=/usr/bin\0" + f"{CALL_ENV}=".encode() + b"\0",
+        9: b"PATH=/usr/bin\0",
+    }.items():
+        (tmp_path / str(pid)).mkdir()
+        (tmp_path / str(pid) / "environ").write_bytes(environ)
+
+    calls = [ops.call_in_environ(pid, str(tmp_path)) for pid in (7, 8, 9, 10)]
+
+    assert calls == ["call-a", None, None, None]
+
+
+# -- saves ---------------------------------------------------------------------
+
+
+def test_a_redirect_makes_one_save_of_the_bytes_its_command_wrote(kernel):
+    # Regression: the shell's close of its own copy of the fd, before the
+    # command writes, used to send an empty save ahead of the real one.
+    server = _Server({PREFS: b'{"theme": "dark"}'}, accept=_json_only)
+    fs = _ops(server, kernel)
+    fh = fs.open(f"/{PREFS}", os.O_WRONLY | os.O_TRUNC)
+    fs.flush(f"/{PREFS}", fh)
+    assert fs.getattr(f"/{PREFS}")["st_size"] == 0
+
+    fs.write(f"/{PREFS}", b'{"theme": "light"}', 0, fh)
+    fs.flush(f"/{PREFS}", fh)
+    fs.release(f"/{PREFS}", fh)
+
+    assert _sent(server) == [(b'{"theme": "light"}', False)]
+    assert server.files[PREFS] == b'{"theme": "light"}'
+
+
+def test_a_redirect_nothing_followed_empties_the_file_at_release_as_a_real_save(kernel):
+    server = _Server({PREFS: b'{"theme": "dark"}'}, accept=_json_only)
+    fs = _ops(server, kernel)
+    fh = fs.open(f"/{PREFS}", os.O_WRONLY | os.O_TRUNC)
+    fs.flush(f"/{PREFS}", fh)
+    fs.flush(f"/{PREFS}", fh)
+
+    with pytest.raises(OSError):
+        fs.release(f"/{PREFS}", fh)
+
+    assert _sent(server) == [(b"", False)]
+
+
+def test_a_file_made_and_removed_before_its_release_stays_removed(kernel):
+    # The release that makes an unwritten file comes after close returns, so
+    # a removal can reach the daemon first.
+    server = _Server({NOTES: b"n"})
+    fs = _ops(server, kernel)
+    fh = fs.create("/user/memory/lock.md", 0o644)
+    fs.flush("/user/memory/lock.md", fh)
+
+    fs.unlink("/user/memory/lock.md")
+    fs.release("/user/memory/lock.md", fh)
+
+    assert "user/memory/lock.md" not in server.files
+
+
+def test_a_refused_save_of_written_bytes_fails_the_close_and_is_not_retried(kernel):
+    server = _Server({PREFS: b'{"theme": "dark"}'}, accept=_json_only)
+    fs = _ops(server, kernel)
+    fh = fs.open(f"/{PREFS}", os.O_WRONLY | os.O_TRUNC)
+    fs.write(f"/{PREFS}", b"{not json", 0, fh)
+
+    with pytest.raises(OSError) as exc:
+        fs.flush(f"/{PREFS}", fh)
+    fs.release(f"/{PREFS}", fh)
+
+    assert exc.value.errno == errno.EINVAL
+    assert _sent(server) == [(b"{not json", False)]
+
+
+@pytest.mark.parametrize("grow", ["write", "truncate"])
+def test_a_file_grown_past_the_size_limit_saves_nothing_its_handle_wrote(kernel, grow):
+    # Regression: the bytes written before the refused write were saved at
+    # close, so a file too large to save replaced the old one, cut short.
+    server = _Server({NOTES: b"old"})
+    fs = _ops(server, kernel)
+    fh = fs.open(f"/{NOTES}", os.O_WRONLY | os.O_TRUNC)
+    fs.write(f"/{NOTES}", b"x" * MAX_FILE_BYTES, 0, fh)
+
+    with pytest.raises(OSError) as refused:
+        if grow == "write":
+            fs.write(f"/{NOTES}", b"x", MAX_FILE_BYTES, fh)
+        else:
+            fs.truncate(f"/{NOTES}", MAX_FILE_BYTES + 1, fh)
+    with pytest.raises(OSError) as closed:
+        fs.flush(f"/{NOTES}", fh)
+    fs.release(f"/{NOTES}", fh)
+
+    assert refused.value.errno == closed.value.errno == errno.EFBIG
+    assert server.writes == []
+    assert server.files[NOTES] == b"old"
+
+
+def test_a_save_stored_as_sent_is_read_back_without_asking_the_server(kernel):
+    server = _Server({NOTES: b"v1"})
+    fs = _ops(server, kernel)
+    fh = fs.open(f"/{NOTES}", os.O_WRONLY | os.O_TRUNC)
+    fs.write(f"/{NOTES}", b"v2", 0, fh)
+    fs.release(f"/{NOTES}", fh)
+
+    assert _read(fs, f"/{NOTES}") == b"v2"
+    assert server.reads == []
+
+
+def test_a_save_the_server_stored_otherwise_is_read_back_as_stored(kernel):
+    server = _Server({PREFS: b"{}"}, store=lambda path, body: body + b"\n")
+    fs = _ops(server, kernel)
+    fh = fs.open(f"/{PREFS}", os.O_WRONLY | os.O_TRUNC)
+    fs.write(f"/{PREFS}", b'{"theme": "light"}', 0, fh)
+    fs.release(f"/{PREFS}", fh)
+
+    assert _read(fs, f"/{PREFS}") == b'{"theme": "light"}\n'
+    assert server.reads == [PREFS]
+
+
+def test_a_save_whose_answer_was_lost_is_found_landed_and_not_sent_again(kernel):
+    # Regression: sent again, a save that had landed met its own precondition
+    # and reported a conflict for bytes the server held.
+    server = _Server({NOTES: b"v1"})
+    answered = server._write
+
+    def lost(*args):
+        answered(*args)
+        raise OSError(errno.EIO, "no answer")
+
+    server._write = lost
+    fs = _ops(server, kernel)
+    fh = fs.open(f"/{NOTES}", os.O_WRONLY | os.O_TRUNC)
+    fs.write(f"/{NOTES}", b"v2", 0, fh)
+    with pytest.raises(OSError):
+        fs.flush(f"/{NOTES}", fh)
+
+    server._write = answered
+    fs.release(f"/{NOTES}", fh)
+
+    assert _sent(server) == [(b"v2", False)]
+    assert server.files[NOTES] == b"v2"
+
+
+def test_bytes_written_while_an_earlier_save_is_out_are_saved_too(kernel):
+    # Regression: another writer's open sent this handle's emptied file, the
+    # command wrote while that save was out, and its answer marked the handle
+    # clean, so the written bytes were never sent.
+    server = _Server({NOTES: b"v1"})
+    answered = server._write
+
+    def meanwhile(path, params, body, headers):
+        if PROVISIONAL_HEADER in headers:
+            fs.write(f"/{NOTES}", b"v2", 0, fh)
+        return answered(path, params, body, headers)
+
+    server._write = meanwhile
+    fs = _ops(server, kernel)
+    fh = fs.open(f"/{NOTES}", os.O_WRONLY | os.O_TRUNC)
+    other = fs.open(f"/{NOTES}", os.O_WRONLY)
+    fs.release(f"/{NOTES}", other)
+    fs.release(f"/{NOTES}", fh)
+
+    assert _sent(server) == [(b"", True), (b"v2", False)]
+    assert server.files[NOTES] == b"v2"
+
+
+def test_a_file_saved_in_a_directory_its_command_made_is_found_there(kernel):
+    # Regression: the listing above, taken before the mkdir, went on lacking
+    # the directory once the save made the server hold it.
+    fs = _ops(_Server({NOTES: b"n"}), kernel)
+    with pytest.raises(OSError):
+        fs.getattr("/user/memory/archive")
+    fs.mkdir("/user/memory/archive", 0o755)
+    fh = fs.create("/user/memory/archive/a.md", 0o644)
+    fs.write("/user/memory/archive/a.md", b"x", 0, fh)
+    fs.release("/user/memory/archive/a.md", fh)
+
+    assert fs.getattr("/user/memory/archive")["st_mode"] & stat.S_IFDIR
+    assert "archive" in fs.readdir("/user/memory", 0)
+    assert fs.getattr("/user/memory/archive/a.md")["st_size"] == 1
+
+
+# -- what outlives a command ---------------------------------------------------
+
+
+def test_bytes_named_by_their_digest_are_fetched_once_for_every_command(kernel):
+    server = _Server({NOTES: b"notes"})
+    fs = _ops(server, kernel)
+    for pid, call in ((101, "call-a"), (201, "call-b")):
+        kernel.run(pid, call)
+        assert _read(fs, f"/{NOTES}") == b"notes"
+
+    assert server.reads == [NOTES]
+
+
+def test_bytes_whose_version_is_not_their_digest_are_not_shown_to_another_command(kernel):
+    # The automations file keeps its version while its run state moves.
+    server = _Server({PREFS: b"{}"}, version=lambda data: "rev-1")
+    fs = _ops(server, kernel)
+    kernel.run(101, "call-a")
+    assert _read(fs, f"/{PREFS}") == b"{}"
+    server.files[PREFS] = b'{"ran": 1}'
+
+    kernel.run(201, "call-b")
+    assert _read(fs, f"/{PREFS}") == b'{"ran": 1}'
+
+
+def test_a_command_keeps_its_bytes_of_a_file_whose_version_is_not_their_digest(kernel):
+    # Regression: another command's read of the same version replaced them,
+    # and its open handle then stood in for them.
+    server = _Server({PREFS: b"{}"}, version=lambda data: "rev-1")
+    fs = _ops(server, kernel)
+    kernel.run(101, "call-a")
+    assert _read(fs, f"/{PREFS}") == b"{}"
+    server.files[PREFS] = b'{"ran": 1}'
+    kernel.run(201, "call-b")
+    fh = fs.open(f"/{PREFS}", os.O_RDONLY)
+    assert fs.read(f"/{PREFS}", 100, 0, fh) == b'{"ran": 1}'
+
+    kernel.run(102, "call-a")
+    assert _read(fs, f"/{PREFS}") == b"{}"
+    fs.release(f"/{PREFS}", fh)
+
+
+def test_a_save_stored_otherwise_is_read_back_as_stored_under_a_version_kept_before(
+    kernel,
+):
+    # Regression: the automations file keeps its version across a save it
+    # rewrites, and the bytes read before the save were shown again.
+    server = _Server(
+        {PREFS: b"{}"}, version=lambda data: "rev-1", store=lambda path, body: body + b"\n"
+    )
+    fs = _ops(server, kernel)
+    assert _read(fs, f"/{PREFS}") == b"{}"
+    fh = fs.open(f"/{PREFS}", os.O_WRONLY | os.O_TRUNC)
+    fs.write(f"/{PREFS}", b'{"theme": "light"}', 0, fh)
+    fs.release(f"/{PREFS}", fh)
+
+    assert _read(fs, f"/{PREFS}") == b'{"theme": "light"}\n'
+
+
+def test_a_file_its_listing_carries_is_read_with_no_request_of_its_own(kernel):
+    server = _Server({NOTES: b"notes"}, inline=True)
+    fs = _ops(server, kernel)
+
+    assert _read(fs, f"/{NOTES}") == b"notes"
+    assert server.reads == []
+
+
+def test_the_made_up_directories_answer_every_command_but_never_hide_a_new_one(kernel):
+    server = _Server(
+        {NOTES: b"n", "workspaces/w1/memory/a.md": b"a"},
+        structural={"", "user", "workspaces"},
+    )
+    fs = _ops(server, kernel)
+    kernel.run(101, "call-a")
+    _walk(fs, f"/{NOTES}")
+    _walk(fs, "/workspaces/w1/memory/a.md")
+
+    kernel.run(201, "call-b")
+    server.lists.clear()
+    _walk(fs, f"/{NOTES}")
+    assert server.lists == ["user/memory"]
+
+    server.files["workspaces/w2/memory/b.md"] = b"b"
+    kernel.run(301, "call-c")
+    assert _walk(fs, "/workspaces/w2/memory/b.md")["st_size"] == 1
+
+
+def test_a_name_the_made_up_directories_lack_is_asked_for_once(kernel):
+    # rg looks for its ignore files in every directory above the one it
+    # searches, so each search would list every made-up one again.
+    server = _Server({"workspaces/w1/memory/a.md": b"a"}, structural={"", "workspaces"})
+    fs = _ops(server, kernel)
+    kernel.run(101, "call-a")
+    _walk(fs, "/workspaces/w1/memory/a.md")
+    with pytest.raises(OSError):
+        fs.getattr("/workspaces/.gitignore")
+
+    kernel.run(201, "call-b")
+    server.lists.clear()
+    with pytest.raises(OSError):
+        fs.getattr("/workspaces/.gitignore")
+    assert server.lists == []
+
+
+def test_the_made_up_directories_are_listed_again_once_up_links_another_layout(
+    kernel, tmp_path
+):
+    state = tmp_path / "state.json"
+
+    def up_wrote(state_data: dict) -> None:
+        (tmp_path / "state.tmp").write_text(json.dumps(state_data))
+        os.replace(tmp_path / "state.tmp", state)
+
+    up_wrote({"sources": ["workspaces/w1/memory", "workspaces/w2/memory"]})
+    server = _Server(
+        {"workspaces/w1/memory/a.md": b"a", "workspaces/w2/memory/b.md": b"b"},
+        structural={"", "workspaces"},
+    )
+    fs = _ops(server, kernel, layout=str(state))
+    kernel.run(101, "call-a")
+    assert fs.readdir("/workspaces", 0) == [".", "..", "w1", "w2"]
+
+    up_wrote({"sources": ["workspaces/w1/memory", "workspaces/w2/memory"], "token": 2})
+    kernel.run(201, "call-b")
+    fs.readdir("/workspaces", 0)
+    assert server.lists.count("workspaces") == 1
+
+    del server.files["workspaces/w2/memory/b.md"]
+    up_wrote({"sources": ["workspaces/w1/memory"]})
+    kernel.run(301, "call-c")
+    assert fs.readdir("/workspaces", 0) == [".", "..", "w1"]
+
+
+# -- the connection to the server ----------------------------------------------
+
+
+class _Endpoint(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def _answer(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(length)
+        self.server.seen.append((self.command, self.client_address[1]))
+        status, headers, delay = self.server.answer(self.command, len(self.server.seen))
+        time.sleep(delay)
+        if status is None:  # taken, and the connection lost before the answer
+            self.close_connection = True
+            return
+        self.send_response(status)
+        for name, value in headers.items():
+            self.send_header(name, value)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"{}")
+        # Closed with no word to the client, as a server going away does.
+        self.close_connection = self.server.hang_up
+
+    do_GET = do_PUT = do_POST = _answer
+
+    def log_message(self, *args) -> None:
+        pass
+
+
+class _Loopback(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    block_on_close = False
+
+    def handle_error(self, request, client_address) -> None:
+        pass  # the client gave up on an answer it timed out waiting for
+
+
+@pytest.fixture
+def endpoint(tmp_path):
+    """A server on loopback: ``answer(method, nth)`` gives each request's
+    status (None: no answer), headers and delay, and ``seen`` each one's
+    method and client port."""
+    server = _Loopback(("127.0.0.1", 0), _Endpoint)
+    server.seen = []
+    server.answer = lambda method, nth: (200, {}, 0)
+    server.hang_up = False
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps({"base_url": f"http://127.0.0.1:{server.server_port}", "token": "t"})
+    )
+    yield SimpleNamespace(server=server, config=str(config))
+    server.shutdown()
+    server.server_close()
+
+
+@pytest.mark.enable_socket
+@pytest.mark.parametrize("method", ["PUT", "GET"])
+def test_a_request_that_timed_out_is_not_sent_again(endpoint, method):
+    # Regression: a save sent again after a timeout landed twice, and the
+    # second met the first's precondition as a conflict.
+    endpoint.server.answer = lambda method, nth: (200, {}, 1.0)
+    with pytest.raises(OSError) as exc:
+        remote.Remote(endpoint.config, timeout=0.2).request(
+            method, "write", {"path": NOTES}, body=b"v2" if method == "PUT" else None
+        )
+
+    assert exc.value.errno == errno.EIO
+    assert [seen for seen, _ in endpoint.server.seen] == [method]
+
+
+@pytest.mark.enable_socket
+def test_a_read_on_a_connection_the_server_had_closed_is_sent_again_on_a_new_one(
+    endpoint, monkeypatch
+):
+    # A close the idle check did not see yet is met by the next request.
+    monkeypatch.setattr(remote._Conn, "dropped", lambda self: False)
+    endpoint.server.hang_up = True
+    server = remote.Remote(endpoint.config)
+    server.request("GET", "list", {"path": ""})
+
+    status, _, _ = server.request("GET", "list", {"path": ""})
+
+    assert status == 200
+    assert [seen for seen, _ in endpoint.server.seen] == ["GET", "GET"]
+    assert len({port for _, port in endpoint.server.seen}) == 2
+
+
+@pytest.mark.enable_socket
+def test_a_save_the_server_took_but_never_answered_is_not_sent_again(endpoint):
+    # Regression: a kept-alive connection reset after the server took the
+    # save sent it again, and the copy met the first's precondition.
+    endpoint.server.answer = lambda method, nth: (None if method == "PUT" else 200, {}, 0)
+    server = remote.Remote(endpoint.config)
+    server.request("GET", "list", {"path": ""})
+
+    with pytest.raises(OSError) as exc:
+        server.request("PUT", "write", {"path": NOTES}, body=b"v2")
+
+    assert exc.value.errno == errno.EIO
+    assert [seen for seen, _ in endpoint.server.seen] == ["GET", "PUT"]
+
+
+@pytest.mark.enable_socket
+def test_a_save_takes_a_kept_alive_connection_only_when_it_answered_moments_ago(
+    endpoint, monkeypatch
+):
+    server = remote.Remote(endpoint.config)
+    server.request("GET", "list", {"path": ""})
+    server.request("PUT", "write", {"path": NOTES}, body=b"v2")
+    monkeypatch.setattr(remote, "WRITE_REUSE_S", -1.0)  # every connection too old
+    server.request("PUT", "write", {"path": NOTES}, body=b"v3")
+
+    ports = [port for _, port in endpoint.server.seen]
+    assert ports[0] == ports[1] != ports[2]
+
+
+@pytest.mark.enable_socket
+def test_requests_from_threads_that_each_make_one_share_a_connection(endpoint):
+    # Regression: connections were kept per thread, and libfuse calls in on a
+    # new Python thread state each time, so every request opened its own.
+    server = remote.Remote(endpoint.config)
+    for _ in range(5):
+        thread = threading.Thread(target=server.request, args=("GET", "list", {"path": ""}))
+        thread.start()
+        thread.join()
+
+    assert len(endpoint.server.seen) == 5
+    assert len({port for _, port in endpoint.server.seen}) == 1
+
+
+@pytest.mark.enable_socket
+def test_a_throttled_save_waits_as_told_and_is_sent_again(endpoint):
+    endpoint.server.answer = lambda method, nth: (
+        (429, {"Retry-After": "0"}, 0) if nth == 1 else (200, {}, 0)
+    )
+    status, _, _ = remote.Remote(endpoint.config).request(
+        "PUT", "write", {"path": NOTES}, body=b"v2"
+    )
+
+    assert status == 200
+    assert [seen for seen, _ in endpoint.server.seen] == ["PUT", "PUT"]

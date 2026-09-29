@@ -34,7 +34,7 @@ def create_glob_tool(backend: FilesystemBackend) -> BaseTool:
         Use for: Finding files by name. For content search, use Grep.
 
         Args:
-            pattern: Glob pattern (e.g., "**/*.py", "work/*/*.{csv,json}")
+            pattern: Glob pattern (e.g., "**/*.py", "<task>/*.csv")
             path: Search directory (default: your workspace folder)
 
         Returns:

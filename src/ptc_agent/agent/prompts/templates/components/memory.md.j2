@@ -118,7 +118,9 @@ Read memory:
 - **Remove memories that turn out wrong.** Delete the detail file and remove its line from `memory.md`.
 - **Keep `memory.md` under ~200 lines.** If it's growing past that, consolidate related pointers or promote subsections into their own detail files.
 {% endif %}
+{% if not files_mounted | default(false) %}
 
 ## Limitations
 
-- **Workspace Python code cannot open memory files directly.** `open(".agents/user/memory/foo.md")` inside `execute_code` will fail — memory lives outside the workspace filesystem. If your code needs a memory file's content, read it with `Read` first and pass it as a string into your script.
+- **Workspace Python code cannot open memory files directly.** `open(".agents/user/memory/foo.md")` inside ExecuteCode will fail: memory lives outside the workspace filesystem. If your code needs a memory file's content, read it with `Read` first and pass it as a string into your script.
+{% endif %}

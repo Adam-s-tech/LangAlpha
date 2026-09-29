@@ -1173,6 +1173,7 @@ from src.server.app.memo import router as memo_router
 from src.server.app.memory import router as memory_router
 from src.server.app.workflows import include_workflow_router
 from src.server.app.egress_relay import router as egress_relay_router
+from src.server.app.livefs import router as livefs_router
 from src.server.app.mcp_catalog import router as mcp_catalog_router
 from src.server.app.mcp_brokerages import router as mcp_brokerages_router
 from src.server.app.mcp_builtin import router as mcp_builtin_router
@@ -1291,6 +1292,9 @@ app.include_router(
 app.include_router(
     egress_relay_router
 )  # /v1/egress/{grant_id} - Sandbox egress relay (relay-JWT auth, not user auth)
+app.include_router(
+    livefs_router
+)  # /api/v1/livefs/* - Sandbox file mount (mount-token auth, not user auth)
 app.include_router(
     mcp_servers_router
 )  # /api/v1/workspaces/{id}/mcp/servers - Per-workspace MCP server config

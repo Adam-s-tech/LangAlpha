@@ -51,6 +51,9 @@ def workspace_path_vars(
     layout = layout if layout is not None else WorkspaceLayout(root)
     return {
         "working_directory": layout.workspace,
+        # Transcripts and the computer's thread index exist only for a
+        # workspace with its own folder beside its siblings.
+        "workspace_folder": bool(layout.dir_name),
         "legacy_layout": legacy_layout,
         "legacy_root": root,
         "legacy_tools_docs": LEGACY_ROOT_TOOLS_DIR + "/docs",

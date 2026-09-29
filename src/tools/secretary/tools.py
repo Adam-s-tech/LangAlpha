@@ -987,12 +987,19 @@ async def _threads_delete(
         )
 
     try:
+        from src.server.database.conversation.threads_read import get_thread_by_id
         from src.server.database.conversation.threads_write import delete_thread
         from src.server.services.thread_mutation import (
             MutationConflict,
             MutationUnavailable,
             ThreadMutationRunner,
         )
+
+        # The row is gone after the delete, and the prune needs its workspace.
+        try:
+            thread_row = await get_thread_by_id(thread_id)
+        except Exception:
+            thread_row = None
 
         # Guarded delete, same fence as the HTTP endpoint (v4 2.4a): an
         # unfenced delete here would cascade away a live run's ledger rows
@@ -1025,6 +1032,15 @@ async def _threads_delete(
                 await cache.client.delete(thread_exists_key(thread_id))
         except Exception:
             pass
+
+        # As the HTTP endpoint does: a bring-up skips a workspace whose live
+        # threads look unchanged, so it would not prune this one's dirs.
+        if thread_row:
+            from src.server.services.workspace_manager import WorkspaceManager
+
+            manager = WorkspaceManager.current()
+            if manager is not None:
+                manager.prune_thread_dirs_soon(str(thread_row["workspace_id"]))
 
         return _success_command(
             {"success": True, "thread_id": thread_id},

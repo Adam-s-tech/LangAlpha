@@ -15,12 +15,11 @@ from ptc_agent.agent.middleware.compaction.utils import (
     _LEGACY_FILE_NOTE,
     build_summary_message,
     parse_summary_message,
-    summary_resumes_at,
-    transcript_note,
 )
 from ptc_agent.agent.transcript import TranscriptTarget
+from ptc_agent.agent.transcript.pointer import summary_resumes_at, transcript_note
 
-TRANSCRIPT = TranscriptTarget(".agents/threads/abcd1234/transcript")
+TRANSCRIPT = TranscriptTarget("abcd1234-0000-0000-0000-000000000000")
 
 
 def test_round_trip_with_transcript():
@@ -51,13 +50,13 @@ def test_legacy_message_without_length_stamp_falls_back():
     assert parse_summary_message(legacy) == summary
 
 
-def test_task_note_names_runs_and_meta():
+def test_task_note_names_the_task_runs():
     task = TranscriptTarget.for_agent(
         "abcd1234-0000-0000-0000-000000000000", "task:t/1|model:x"
     )
-    assert task.directory == ".agents/threads/abcd1234/transcript/tasks/t_1"
+    assert task.directory == ".agents/transcripts/abcd1234/tasks/t_1"
     note = transcript_note(task, (3, False))
-    assert "`meta.json`" in note and "`run-NNNN.jsonl`" in note
+    assert f"`{task.directory}/`" in note and "`run-NNNN.jsonl` per run" in note
     assert note.endswith("Runs before 3 did not fit in this summary and are only there.")
     assert transcript_note(task, (1, True)).endswith(
         "This summary starts partway through run 1; everything before that is only there."

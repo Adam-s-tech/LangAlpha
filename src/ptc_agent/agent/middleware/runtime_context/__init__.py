@@ -65,6 +65,7 @@ from .envelope import (
     render_call_updates,
 )
 from .epoch import BaselineEpoch, Observations, advance_epoch
+from .frozen_prompt import FrozenPromptMiddleware
 from .state import STATE_BASELINE
 from .surface import (
     KNOWN_SURFACES,
@@ -112,6 +113,7 @@ __all__ = [
     "CarrierShape",
     "ComposedRequest",
     "DurableUpdate",
+    "FrozenPromptMiddleware",
     "MemoSource",
     "MemoryTierSource",
     "Observations",

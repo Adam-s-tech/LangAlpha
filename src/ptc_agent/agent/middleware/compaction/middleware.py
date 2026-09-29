@@ -19,7 +19,6 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
 
 from langchain_core.messages import AIMessage, AnyMessage
-from langchain_core.messages.human import HumanMessage
 from langchain_core.messages.utils import trim_messages
 from langchain_core.exceptions import ContextOverflowError
 from langgraph.config import get_config, get_stream_writer
@@ -54,53 +53,29 @@ from ptc_agent.agent.middleware.compaction.types import (
 )
 from ptc_agent.agent.middleware.compaction.utils import (
     DEFAULT_SUMMARY_PROMPT,
-    apply_recorded_offloads,
-    build_compaction_event,
-    build_summary_message,
+    build_summary_event,
     count_tokens_tiktoken,
     find_group_safe_cutoff,
     get_effective_messages,
     strip_base64_from_messages,
     partition_at_cutoff,
-    SummaryStart,
-    summary_resumes_at,
-    tool_call_ids,
     truncate_message_args,
     truncate_read_results,
 )
 from ptc_agent.agent.middleware.compaction.offloading import (
     aoffload_base64_content,
     aoffload_truncated_args,
+    apply_recorded_offloads,
     get_thread_id,
+    tool_call_ids,
 )
-from ptc_agent.agent.transcript import BackendIO, TranscriptTarget, export_live
+from ptc_agent.agent.transcript import TranscriptTarget
+from ptc_agent.agent.transcript.pointer import aexport_transcript, transcript_target
 
 logger = logging.getLogger(__name__)
 
 
 _COMPACTION_USER_NUDGE = "Generate the summary now."
-
-# The export shares the summary call's wall clock and is usually far shorter;
-# this only caps a sandbox that stopped answering.
-_TRANSCRIPT_EXPORT_TIMEOUT = 30.0
-
-
-async def aexport_transcript(
-    backend: Any, transcript: TranscriptTarget | None, messages: list[AnyMessage]
-) -> None:
-    """Bring the transcript a summary points at up to date; never raises."""
-    if backend is None or transcript is None:
-        return
-    try:
-        await asyncio.wait_for(
-            export_live(BackendIO(backend), transcript, messages),
-            timeout=_TRANSCRIPT_EXPORT_TIMEOUT,
-        )
-    except Exception as e:
-        # The pointer stays: the server's turn-end export fills it in.
-        logger.warning(
-            "[Compaction] transcript export to %s failed: %s", transcript.directory, e
-        )
 
 
 def _build_summary_request(
@@ -360,21 +335,28 @@ class CompactionMiddleware(AgentMiddleware):
             }
             skipped_count = len(originals) - len(new_originals)
             if new_originals:
-                await aoffload_truncated_args(self._backend, new_originals)
-                offloaded_tool_call_ids.update(new_originals)
-                state_changed = True
-                self._emit_context_signal(
-                    "offload",
-                    "complete",
-                    kind="args",
-                    offloaded_args=len(new_originals),
-                )
-                if skipped_count:
-                    logger.info(
-                        "[Compaction] Offloaded %d new tool args, skipped %d already-offloaded",
-                        len(new_originals),
-                        skipped_count,
+                saved = await aoffload_truncated_args(self._backend, new_originals)
+                if len(saved) < len(new_originals):
+                    # A call whose write failed stays in full on this call too;
+                    # left unrecorded, the next pass retries its write.
+                    truncated_messages = self._apply_recorded_offloads(
+                        effective_messages, saved, set()
                     )
+                if saved:
+                    offloaded_tool_call_ids.update(saved)
+                    state_changed = True
+                    self._emit_context_signal(
+                        "offload",
+                        "complete",
+                        kind="args",
+                        offloaded_args=len(saved),
+                    )
+                    if skipped_count:
+                        logger.info(
+                            "[Compaction] Offloaded %d new tool args, skipped %d already-offloaded",
+                            len(saved),
+                            skipped_count,
+                        )
             elif skipped_count:
                 logger.debug(
                     "[Compaction] Tier 1 args: %d truncated in-memory, all already offloaded",
@@ -469,34 +451,31 @@ class CompactionMiddleware(AgentMiddleware):
         cached_output_tokens = 0
 
         # Summarize (emits SSE start/complete/error signals) while the
-        # transcript the summary points at catches up with this turn.
+        # transcript catches up with this turn; the summary points at it only
+        # if that save lands.
         summarized = self._trim_messages_for_summary(messages_to_summarize)
-        transcript = self._transcript_target()
-        summary, _ = await asyncio.gather(
+        summary, transcript = await asyncio.gather(
             self._acreate_summary(
                 messages_to_summarize,
                 original_count=len(truncated_messages),
                 trimmed=summarized,
             ),
-            aexport_transcript(self._backend, transcript, request.messages),
-        )
-
-        summary_message = self._build_summary_message(
-            summary,
-            transcript,
-            original_message_count=len(truncated_messages),
-            resumes_at=summary_resumes_at(
-                request.messages, messages_to_summarize, summarized
+            aexport_transcript(
+                self._backend, self._transcript_target(), request.messages
             ),
         )
 
         # Create summarization event with an id anchor (cutoff grounded in raw list)
-        new_event = build_compaction_event(
+        new_event = build_summary_event(
+            summary,
+            transcript,
             raw_messages=request.messages,
+            to_summarize=messages_to_summarize,
+            summarized=summarized,
             preserved_messages=preserved_messages,
-            summary_message=summary_message,
-            file_path=transcript.directory if transcript else None,
+            original_message_count=len(truncated_messages),
         )
+        summary_message = new_event["summary_message"]
 
         # Call handler with summarized messages
         modified_messages = [summary_message, *preserved_messages]
@@ -662,16 +641,14 @@ class CompactionMiddleware(AgentMiddleware):
         summary = self._create_summary(
             messages_to_summarize, original_count=len(truncated_messages)
         )
-        summary_message = self._build_summary_message(
-            summary, None, original_message_count=len(truncated_messages)
-        )
-
-        new_event = build_compaction_event(
+        new_event = build_summary_event(
+            summary,
+            None,
             raw_messages=request.messages,
             preserved_messages=preserved_messages,
-            summary_message=summary_message,
-            file_path=None,
+            original_message_count=len(truncated_messages),
         )
+        summary_message = new_event["summary_message"]
 
         modified_messages = [summary_message, *preserved_messages]
         response = handler(request.override(messages=modified_messages))
@@ -846,18 +823,15 @@ class CompactionMiddleware(AgentMiddleware):
         return len(messages)
 
     def _transcript_target(self) -> TranscriptTarget | None:
-        """This agent's transcript, or None where there is no sandbox to hold one."""
-        if self._backend is None:
-            return None
+        """This agent's transcript, or None where no mount serves one."""
         try:
             configurable = get_config().get("configurable", {})
         except RuntimeError:
             return None
-        thread_id = configurable.get("thread_id")
-        if not thread_id:
-            return None
-        return TranscriptTarget.for_agent(
-            str(thread_id), str(configurable.get("checkpoint_ns") or "")
+        return transcript_target(
+            self._backend,
+            configurable.get("thread_id"),
+            str(configurable.get("checkpoint_ns") or ""),
         )
 
     def _offload_thread_dir(self) -> str | None:
@@ -972,23 +946,6 @@ class CompactionMiddleware(AgentMiddleware):
             return messages, False, set()
 
         return truncate_read_results(messages, cutoff_index)
-
-    # =========================================================================
-    # Summary message construction
-    # =========================================================================
-
-    def _build_summary_message(
-        self,
-        summary: str,
-        transcript: TranscriptTarget | None = None,
-        original_message_count: int = 0,
-        *,
-        resumes_at: SummaryStart | None = None,
-    ) -> HumanMessage:
-        """Delegate to shared utility."""
-        return build_summary_message(
-            summary, transcript, original_message_count, resumes_at=resumes_at
-        )
 
     # =========================================================================
     # Summarization trigger and cutoff logic

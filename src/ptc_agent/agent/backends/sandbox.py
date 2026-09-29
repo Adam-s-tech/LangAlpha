@@ -48,6 +48,7 @@ from deepagents.backends.protocol import (
 from ptc_agent.agent.backends.results import EditTextResult
 from ptc_agent.core.paths import resolve_agent_path
 from ptc_agent.core.sandbox import ExecutionResult, PTCSandbox
+from ptc_agent.core.sandbox.livefs_mount import MountHandle
 from ptc_agent.core.sandbox.runtime import PreviewInfo
 
 logger = structlog.get_logger(__name__)
@@ -98,6 +99,11 @@ class SandboxBackend(SandboxBackendProtocol):
     def id(self) -> str:
         """Return a stable identifier for this backend instance."""
         return self.sandbox.sandbox_id or "unknown"
+
+    @property
+    def livefs(self) -> MountHandle | None:
+        """The file mount serving the sandbox, or None while none does."""
+        return self.sandbox.livefs
 
     @property
     def workspace_dir(self) -> str:
@@ -604,6 +610,7 @@ class SandboxBackend(SandboxBackendProtocol):
         *,
         background: bool = False,
         thread_id: str | None = None,
+        call_id: str | None = None,
     ) -> dict[str, Any]:
         """Run a bash command with full PTCSandbox options (working_dir, background, thread_id).
 
@@ -615,6 +622,7 @@ class SandboxBackend(SandboxBackendProtocol):
             timeout=timeout,
             background=background,
             thread_id=thread_id,
+            call_id=call_id,
         )
 
     async def astop_background_command(self, command_id: str) -> bool:
@@ -630,13 +638,14 @@ class SandboxBackend(SandboxBackendProtocol):
         code: str,
         *,
         thread_id: str | None = None,
+        call_id: str | None = None,
     ) -> ExecutionResult:
         """Execute Python code in the sandbox (Jupyter-style).
 
         Distinct from `aexecute` (shell) — returns rich `ExecutionResult`
         with stdout/charts/mcp_trace.
         """
-        return await self.sandbox.execute(code, thread_id=thread_id)
+        return await self.sandbox.execute(code, thread_id=thread_id, call_id=call_id)
 
     # --- File transfer (single-file helpers used by ShowWidget) ---
 

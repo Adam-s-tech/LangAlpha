@@ -20,7 +20,7 @@ Everything below is relative to it, and so is every path you write.
 | `{{ workspace_paths.tools_docs }}/<server>/` | One `.md` per MCP tool (read only) |
 | `{{ workspace_paths.skills }}/<name>/` | Skills available here (read only unless you are installing one) |
 | `{{ workspace_paths.memory }}/` | This workspace's long-term memory |
-| `{{ workspace_paths.user }}/` | User profile, memory and memos; follows the user everywhere (read only) |
+| `{{ workspace_paths.user }}/` | User profile, memory and memos; follows the user everywhere (memos read only) |
 
 Always organize data and charts into their subdirectories, never scatter loose files. The working directory itself holds only `{{ workspace_paths.agent_md }}`, `{{ workspace_paths.data }}/` and the task directories; a task file never sits loose here.
 

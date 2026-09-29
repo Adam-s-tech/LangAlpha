@@ -20,7 +20,12 @@ from langchain_core.messages.human import HumanMessage
 from langchain_core.messages.utils import convert_to_messages
 
 from ptc_agent.agent.middleware._message_utils import message_id
-from ptc_agent.agent.transcript import TranscriptTarget, message_turns
+from ptc_agent.agent.transcript import TranscriptTarget
+from ptc_agent.agent.transcript.pointer import (
+    SummaryStart,
+    summary_resumes_at,
+    transcript_note,
+)
 from src.llms.attachment_payload import FILE_BLOCK_TYPES, IMAGE_BLOCK_TYPES
 from ptc_agent.agent.middleware.compaction.types import (
     CONTEXT_SUMMARY_PREFIX,
@@ -476,7 +481,7 @@ def truncate_read_results(
             # Compute the marker we'd insert
             marker: str | None = None
             if is_duplicate or is_non_critical:
-                marker = _read_offload_marker(file_path)
+                marker = read_offload_marker(file_path)
 
             # Skip if content already equals the marker (idempotent)
             if marker is not None and messages[msg_idx].content != marker:
@@ -505,71 +510,8 @@ def truncate_read_results(
     return new_messages, True, offloaded_ids
 
 
-def tool_call_ids(messages: list[AnyMessage]) -> set[str]:
-    return {
-        tc["id"]
-        for msg in messages
-        if isinstance(msg, AIMessage)
-        for tc in msg.tool_calls or ()
-        if tc.get("id")
-    }
-
-
-def _read_offload_marker(file_path: str) -> str:
+def read_offload_marker(file_path: str) -> str:
     return f"... [this tool call's read result was offloaded from {file_path} — use Read to access when needed]"
-
-
-def apply_recorded_offloads(
-    messages: list[AnyMessage],
-    arg_ids: set[str],
-    read_ids: set[str],
-    max_length: int,
-    truncation_text: str,
-    thread_dir: str | None = None,
-) -> list[AnyMessage]:
-    """Re-apply every recorded Tier 1 offload to one model call's messages.
-
-    An offload is a view over the checkpoint, not a rewrite of it: the id sets
-    are the record, and every call re-truncates them. The batch gate only
-    decides when new ids join; without this, a call truncated at one batch
-    came back in full on the next, busting the prompt cache each time. Each id
-    is checked against its tool, so an arg id never blanks a result and a read
-    id only replaces a Read result.
-    """
-    if not arg_ids and not read_ids:
-        return messages
-
-    read_paths: dict[str, str] = {}
-    out: list[AnyMessage] = []
-    changed = False
-    for msg in messages:
-        if isinstance(msg, AIMessage) and msg.tool_calls:
-            calls = []
-            msg_changed = False
-            for tc in msg.tool_calls:
-                if tc["name"] == "Read" and tc["id"] in read_ids:
-                    read_paths[tc["id"]] = tc.get("args", {}).get("file_path", "")
-                if tc["id"] in arg_ids and tc["name"] in TRUNCATABLE_TOOLS:
-                    new_tc = truncate_tool_call(
-                        tc, max_length, truncation_text, thread_dir
-                    )
-                    msg_changed = msg_changed or new_tc is not tc
-                    calls.append(new_tc)
-                else:
-                    calls.append(tc)
-            if msg_changed:
-                msg = msg.model_copy()
-                msg.tool_calls = calls
-                changed = True
-        elif isinstance(msg, ToolMessage) and msg.tool_call_id in read_paths:
-            marker = _read_offload_marker(read_paths[msg.tool_call_id])
-            if msg.content != marker:
-                msg = msg.model_copy()
-                msg.content = marker
-                changed = True
-        out.append(msg)
-
-    return out if changed else messages
 
 
 # =============================================================================
@@ -908,78 +850,9 @@ def resolve_cutoff_index(messages: Sequence[AnyMessage], event: Mapping[str, Any
     return cutoff
 
 
-# Appended after the summary so the model knows the transcript is there and how
-# to search it; a summary alone reads as all that survived.
-_TRANSCRIPT_NOTE = (
-    "\n\nThe full history before this point is saved in `{directory}/`. "
-    "`{manifest}` lists every {unit} with its time, and each `{unit}-NNNN.jsonl` "
-    "holds one JSON event per line: user, assistant, tool_call (with full args) "
-    "and tool_result. If you need exact details the summary leaves out, such as "
-    "figures, tool output or the user's wording, search it with Grep passing that "
-    "directory as `path`, then Read the matching {unit} file. A search from the "
-    "workspace root skips it."
-)
-_RESUMES_NOTE = " {units} before {number} did not fit in this summary and are only there."
-_RESUMES_PARTWAY_NOTE = (
-    " This summary starts partway through {unit} {number}; everything before that "
-    "is only there."
-)
-
 # The note older checkpoints carry, which parse_summary_message still splits on
 # when a message predates the summary_length stamp.
 _LEGACY_FILE_NOTE = "\n\nFull conversation history saved to `"
-
-
-def transcript_note(
-    transcript: TranscriptTarget, resumes_at: SummaryStart | None = None
-) -> str:
-    note = _TRANSCRIPT_NOTE.format(
-        directory=transcript.directory,
-        manifest=transcript.manifest,
-        unit=transcript.unit,
-    )
-    if resumes_at is None:
-        return note
-    number, partway = resumes_at
-    if partway:
-        note += _RESUMES_PARTWAY_NOTE.format(unit=transcript.unit, number=number)
-    elif number > 1:
-        note += _RESUMES_NOTE.format(
-            units=f"{transcript.unit.capitalize()}s", number=number
-        )
-    return note
-
-
-# (turn number, whether trimming cut into that turn's first kept message)
-SummaryStart = tuple[int, bool]
-
-
-def summary_resumes_at(
-    raw_messages: Sequence[AnyMessage],
-    to_summarize: Sequence[AnyMessage],
-    summarized: Sequence[AnyMessage],
-) -> SummaryStart | None:
-    """Where the summary starts when trimming dropped the head, else None.
-
-    Trimming keeps the newest tokens, so a long stretch loses its oldest turns,
-    or the front of one huge message, without a trace; this names the turn the
-    summary picks up in.
-    """
-    if not summarized or not to_summarize:
-        return None
-    first = summarized[0]
-    original = next(
-        (m for m in to_summarize if message_id(m) == message_id(first)), None
-    )
-    partway = original is not None and original.content != first.content
-    if original is to_summarize[0] and not partway:
-        return None
-    turns = message_turns(raw_messages)
-    for message in summarized:
-        number = turns.get(message_id(message) or "")
-        if number is not None:
-            return number, partway and message is first
-    return None
 
 
 def build_summary_message(
@@ -1010,6 +883,37 @@ def build_summary_message(
                 "original_message_count": original_message_count,
             },
         },
+    )
+
+
+def build_summary_event(
+    summary: str,
+    transcript: TranscriptTarget | None,
+    *,
+    raw_messages: list[AnyMessage],
+    preserved_messages: list[AnyMessage],
+    original_message_count: int,
+    to_summarize: Sequence[AnyMessage] = (),
+    summarized: Sequence[AnyMessage] = (),
+) -> CompactionEvent:
+    """The event putting ``summary`` in place of ``to_summarize``, pointing
+    at the transcript when there is one. ``summarized`` is what the model was
+    sent of them after trimming, which says where the summary starts."""
+    summary_message = build_summary_message(
+        summary,
+        transcript,
+        original_message_count,
+        resumes_at=(
+            summary_resumes_at(raw_messages, to_summarize, summarized)
+            if transcript is not None
+            else None
+        ),
+    )
+    return build_compaction_event(
+        raw_messages=raw_messages,
+        preserved_messages=preserved_messages,
+        summary_message=summary_message,
+        file_path=transcript.directory if transcript else None,
     )
 
 

@@ -56,6 +56,7 @@ def build_context_middleware(
     sources: BaselineSources | None = None,
     blocks: dict[str, BlockReader] | None = None,
     user_data_counts: dict[str, Any] | None = None,
+    files_mounted: bool | None = None,
 ) -> ContextMiddleware:
     """Wire the turn row, the per-thread baseline and the tail envelope.
 
@@ -103,6 +104,7 @@ def build_context_middleware(
             timezone=turn.timezone,
             guidance=guidance,
             model_name=model_name,
+            files_mounted=files_mounted,
         ),
         tail=TailEnvelopeMiddleware(
             now=now,

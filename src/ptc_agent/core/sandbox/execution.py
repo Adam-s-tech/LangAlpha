@@ -22,6 +22,7 @@ from src.observability import (
 )
 from src.observability.tracing import tracer as _otel_tracer
 
+from ptc_agent.core.sandbox.livefs_runtime import protocol as livefs_protocol
 from ptc_agent.core.sandbox.retry import RetryPolicy
 
 from ..paths import SandboxLayout, WorkspaceLayout
@@ -135,6 +136,7 @@ async def execute(
     auto_install: bool = True,
     max_retries: int = 2,
     thread_id: str | None = None,
+    call_id: str | None = None,
     _carry_mcp_trace: list[dict] | None = None,
 ) -> ExecutionResult:
     """Execute Python code in the sandbox with optional auto-install for missing dependencies.
@@ -145,6 +147,8 @@ async def execute(
             auto_install: Whether to automatically install missing packages on ImportError (default: True)
             max_retries: Maximum number of retries after auto-installing packages (default: 2)
             thread_id: Optional thread ID (first 8 chars) for thread-scoped code storage
+            call_id: The tool call's id for the file mount, which files what
+                this code saves through it under the call
             _carry_mcp_trace: MCP trace accumulated from prior auto-install
                 attempts, prepended to this attempt's trace so provenance from
                 a failed-then-retried run isn't lost (internal).
@@ -237,6 +241,8 @@ async def execute(
             f"{layout.system_trace}/{execution_id}_{uuid.uuid4().hex}.jsonl"
         )
         exec_env["MCP_TRACE_FILE"] = trace_path
+        if call_id:
+            exec_env[livefs_protocol.CALL_ENV] = call_id
 
         # Use code_run() for native artifact support (captures matplotlib charts)
         result = await sandbox._runtime_call(
@@ -296,20 +302,24 @@ async def execute(
                     retries_remaining=max_retries,
                 )
 
-                # Install missing packages
-                for package in missing_packages:
+                # A retry re-runs everything before the failing import, so it
+                # is only worth its side effects once an install succeeded.
+                installed = [
                     await sandbox._install_package(package)
-
-                # Retry execution with decremented retry count, carrying this
-                # attempt's trace forward so its provenance survives the retry.
-                return await sandbox.execute(
-                    code=code,
-                    timeout=timeout,
-                    auto_install=auto_install,
-                    max_retries=max_retries - 1,
-                    thread_id=thread_id,
-                    _carry_mcp_trace=mcp_trace,
-                )
+                    for package in missing_packages
+                ]
+                if any(installed):
+                    # Retry with a decremented retry count, carrying this
+                    # attempt's trace forward so its provenance survives.
+                    return await sandbox.execute(
+                        code=code,
+                        timeout=timeout,
+                        auto_install=auto_install,
+                        max_retries=max_retries - 1,
+                        thread_id=thread_id,
+                        call_id=call_id,
+                        _carry_mcp_trace=mcp_trace,
+                    )
 
         logger.info(
             "Code execution completed",
@@ -412,6 +422,7 @@ async def execute_bash_command(
     *,
     background: bool = False,
     thread_id: str | None = None,
+    call_id: str | None = None,
 ) -> dict[str, Any]:
     """Execute a bash command in the sandbox.
 
@@ -422,6 +433,7 @@ async def execute_bash_command(
             timeout: Maximum execution time in seconds (default: 60)
             background: Run command in background
             thread_id: Optional thread ID (first 8 chars) for thread-scoped script storage
+            call_id: The tool call's id for the file mount (foreground only)
 
         Returns:
             Dictionary with success, stdout, stderr, exit_code, bash_id, command_hash
@@ -571,6 +583,14 @@ async def execute_bash_command(
         trace_path, exec_command = sandbox._build_trace_env_command(
             bash_id, full_command
         )
+        if call_id:
+            # In the environment the shell starts with, not exported inside
+            # it: the file mount reads a process's starting environment, and
+            # the shell's own redirections are requests of the shell's pid.
+            exec_command = (
+                f"env {livefs_protocol.CALL_ENV}={shlex.quote(call_id)} "
+                f"bash -c {shlex.quote(exec_command)}"
+            )
         exec_result = await sandbox._runtime_call(
             sandbox.runtime.exec,
             exec_command,

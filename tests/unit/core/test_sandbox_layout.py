@@ -134,6 +134,7 @@ EXPECTED_WORKSPACE_RELATIVE = {
     "MCP_CLIENT_CONFIG_FILE": ".agents/tools/mcp_client_config.json",
     "THREADS_DIR": ".agents/threads",
     "LARGE_TOOL_RESULTS_DIR": ".agents/large_tool_results",
+    "TRANSCRIPTS_DIR": ".agents/transcripts",
     "AGENT_MD_FILE": "agent.md",
     "DATA_DIR": "data",
 }
@@ -152,6 +153,7 @@ EXPECTED_WORKSPACE_ABSOLUTE = {
     "large_tool_results": (
         "/home/workspace/acme-ab12/.agents/large_tool_results"
     ),
+    "transcripts": "/home/workspace/acme-ab12/.agents/transcripts",
     "agent_md": "/home/workspace/acme-ab12/agent.md",
 }
 

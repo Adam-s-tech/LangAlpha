@@ -22,28 +22,23 @@ from ptc_agent.agent.middleware.compaction.types import (
 )
 from ptc_agent.agent.middleware.compaction.utils import (
     DEFAULT_SUMMARY_PROMPT,
-    apply_recorded_offloads,
-    build_compaction_event,
-    build_summary_message,
+    build_summary_event,
     count_tokens_tiktoken,
     find_group_safe_cutoff,
     get_effective_messages,
     partition_at_cutoff,
-    summary_resumes_at,
     truncate_message_args,
     truncate_read_results,
 )
-from ptc_agent.agent.middleware.compaction.middleware import (
-    _build_summary_request,
-    aexport_transcript,
-)
+from ptc_agent.agent.middleware.compaction.middleware import _build_summary_request
 from src.llms import maybe_disable_streaming
 from ptc_agent.agent.middleware.compaction.offloading import (
     aoffload_base64_content,
     aoffload_truncated_args,
+    apply_recorded_offloads,
     get_thread_id,
 )
-from ptc_agent.agent.transcript import TranscriptTarget
+from ptc_agent.agent.transcript.pointer import aexport_transcript, transcript_target
 
 logger = logging.getLogger(__name__)
 
@@ -134,8 +129,9 @@ async def compact_messages(
 
         # Offload original args before they're lost
         if truncated and originals and backend is not None:
-            await aoffload_truncated_args(backend, originals, thread_id=thread_id)
-            offloaded_arg_ids = set(originals.keys())
+            offloaded_arg_ids = await aoffload_truncated_args(
+                backend, originals, thread_id=thread_id
+            )
 
         # Truncate duplicate/non-critical Read results (same cutoff)
         effective, _read_truncated, offloaded_read_ids = truncate_read_results(
@@ -156,12 +152,8 @@ async def compact_messages(
 
     messages_to_summarize, preserved = partition_at_cutoff(effective, cutoff_index)
 
-    # ---- Tier 2: Summarize, pointing at the transcript ----
-    transcript = (
-        TranscriptTarget.for_agent(thread_id)
-        if backend is not None and thread_id
-        else None
-    )
+    # ---- Tier 2: Summarize, pointing at the transcript once its save lands ----
+    transcript = transcript_target(backend, thread_id)
     to_summarize = messages_to_summarize
 
     if llm_client is not None:
@@ -194,10 +186,8 @@ async def compact_messages(
                 -_DEFAULT_FALLBACK_MESSAGE_COUNT:
             ]
 
-    resumes_at = summary_resumes_at(messages, to_summarize, messages_to_summarize)
-
     # Strip base64 blobs before sending to LLM
-    messages_to_summarize = await aoffload_base64_content(
+    request_messages = await aoffload_base64_content(
         backend, messages_to_summarize, thread_id=thread_id
     )
 
@@ -211,10 +201,10 @@ async def compact_messages(
     # except below re-raises -> HTTP 500. The timeout lives on the call, not on
     # a flat admission-side 409 clock.
     try:
-        response, _ = await asyncio.gather(
+        response, transcript = await asyncio.gather(
             asyncio.wait_for(
                 compaction_model.ainvoke(
-                    _build_summary_request(DEFAULT_SUMMARY_PROMPT, messages_to_summarize)
+                    _build_summary_request(DEFAULT_SUMMARY_PROMPT, request_messages)
                 ),
                 timeout=get_compaction_timeout(),
             ),
@@ -232,19 +222,15 @@ async def compact_messages(
     if not summary_text:
         raise RuntimeError("Compaction LLM returned empty summary")
 
-    summary_message = build_summary_message(
+    # Build the event with an id anchor (cutoff grounded in the raw list)
+    event = build_summary_event(
         summary_text,
         transcript,
-        original_message_count=len(effective),
-        resumes_at=resumes_at,
-    )
-
-    # Build the event with an id anchor (cutoff grounded in the raw list)
-    event = build_compaction_event(
         raw_messages=messages,
+        to_summarize=to_summarize,
+        summarized=messages_to_summarize,
         preserved_messages=preserved,
-        summary_message=summary_message,
-        file_path=transcript.directory if transcript else None,
+        original_message_count=len(effective),
     )
 
     return {
@@ -274,12 +260,13 @@ async def offload_tool_args(
     the cutoff and batch count match what the middleware sees.
 
     Returns:
-        Dict with "offloaded_arg_ids" and "offloaded_read_ids" (new ids only),
-        their counts as "offloaded_args" / "offloaded_reads", and
-        "original_count".
+        Dict with "offloaded_arg_ids" and "offloaded_read_ids" (new ids only,
+        without args whose write failed), and their counts as
+        "offloaded_args" / "offloaded_reads".
 
     Raises:
         ValueError: If no messages are provided or nothing new can be offloaded.
+        RuntimeError: If every arg write failed and no Read result was left.
     """
     if not messages:
         raise ValueError("No messages to offload")
@@ -320,13 +307,15 @@ async def offload_tool_args(
         raise ValueError("Nothing to offload at the current threshold")
 
     # Persist original args before the view hides them
-    if originals and backend is not None:
-        await aoffload_truncated_args(backend, originals, thread_id=thread_id)
+    arg_ids = await aoffload_truncated_args(backend, originals, thread_id=thread_id)
+    if originals and not arg_ids and not read_ids:
+        # A failure to retry, not "nothing to offload": the caller turns this
+        # into a 500 and records nothing.
+        raise RuntimeError("Could not save any tool arguments to the sandbox")
 
     return {
-        "offloaded_arg_ids": set(originals),
+        "offloaded_arg_ids": arg_ids,
         "offloaded_read_ids": read_ids,
-        "offloaded_args": len(originals),
+        "offloaded_args": len(arg_ids),
         "offloaded_reads": len(read_ids),
-        "original_count": len(messages),
     }

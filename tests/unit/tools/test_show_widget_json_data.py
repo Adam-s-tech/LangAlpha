@@ -148,3 +148,68 @@ def test_multi_mb_single_string_uses_bounded_memory(body):
     # Over the inline cap: dropped, exactly as before the sanitizer changed.
     assert result == {}
     assert peak < 64 * 1024 * 1024, f"sanitizer peak {peak / 1e6:.0f} MB"
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        pytest.param('""', id="empty-strings"),
+        pytest.param('"a"', id="short-strings"),
+        pytest.param('{"k":"v","n":1}', id="records"),
+    ],
+)
+def test_over_cap_dense_json_is_dropped_without_scanning(item):
+    """Many short strings make the sanitizer allocate one match string per
+    token (~15-21 bytes per input character). The entry is dropped by the
+    inline cap afterwards anyway, so text that cannot fit even after
+    sanitizing must not be scanned. Measured with tracemalloc; the old path
+    peaked around 170 MB here, the bound sits well above the linear cost of
+    holding the input itself."""
+    payload = "[" + ",".join([item] * (8_000_000 // (len(item) + 1))) + "]"
+    backend = AsyncMock()
+    backend.aread_text.return_value = payload
+
+    tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        result = asyncio.run(_resolve_data_files(backend, ["/work/dense.json"]))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert result == {}
+    assert peak < 48 * 1024 * 1024, f"sanitizer peak {peak / 1e6:.0f} MB"
+
+
+def test_json_over_cap_raw_but_within_cap_sanitized_is_kept():
+    """The pre-scan skip must not drop text that only fits because sanitizing
+    shortens it: `-Infinity` (9 bytes) becomes `null` (4), the largest
+    possible shrink. The entry here is ~1.9x the cap raw, ~0.9x sanitized."""
+    payload = "[" + ",".join(["-Infinity"] * 100_000) + "]"
+    expected = "[" + ",".join(["null"] * 100_000) + "]"
+    assert len(payload.encode()) > 900_000
+    assert len(expected.encode()) < 500 * 1024
+    backend = AsyncMock()
+    backend.aread_text.return_value = payload
+
+    result = asyncio.run(_resolve_data_files(backend, ["/work/shrinks.json"]))
+
+    assert result == {"shrinks.json": expected}
+
+
+def test_remaining_budget_bounds_the_scan_for_later_files():
+    """Budget used by earlier files still drops a later oversized file and
+    keeps a small one sanitized (the skip threshold follows the remaining
+    budget, not the full cap)."""
+    first = '{"label":"' + "A" * 300_000 + '"}'
+    second = '{"v":NaN,"label":"' + "B" * 250_000 + '"}'
+    third = '{"v":NaN}'
+    contents = {"/work/a.json": first, "/work/b.json": second, "/work/c.json": third}
+    backend = AsyncMock()
+    backend.aread_text.side_effect = lambda path: contents[path]
+
+    result = asyncio.run(_resolve_data_files(backend, list(contents)))
+
+    # b.json (250 KB) exceeds the ~200 KB left after a.json and is dropped;
+    # c.json still fits and is sanitized.
+    assert result == {"a.json": first, "c.json": '{"v":null}'}

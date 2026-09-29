@@ -221,7 +221,12 @@ async def _resolve_data_files(
             # Sanitize non-standard JSON tokens (NaN/Infinity) that Python's
             # json.dumps emits by default — these break browser JSON.parse.
             _, ext = os.path.splitext(path)
-            if ext.lower() in ('.json', '.geojson', '.topojson'):
+            # Sanitizing shrinks text by at most 5/9 (`-Infinity` -> `null`), so
+            # text longer than 9/4 of the remaining budget is over the cap
+            # either way; skip the scan, whose per-token cost is ~20 bytes of
+            # memory per input character on dense short-string JSON.
+            fits_budget = len(value) * 4 <= (_INLINE_DATA_CAP - inline_total) * 9
+            if fits_budget and ext.lower() in ('.json', '.geojson', '.topojson'):
                 # Match quoted strings first so names and labels stay intact.
                 # Avoid a parse/dump round trip that could alter numeric precision.
                 # The closing quote is optional and a backslash escapes any

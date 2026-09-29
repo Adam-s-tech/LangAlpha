@@ -31,6 +31,7 @@ arrival pattern.
 |---|---|---|
 | `PERF=1` | all three | Required. Without it every benchmark skips. |
 | `PERF_BUILD=1` | web server | Serves a production build instead of the dev server, so the numbers are the shipped bundle's. Adds a few minutes for the build; ignored unless `PERF` is set. |
+| `PERF_UNMINIFIED=1` | web server | With `PERF_BUILD`, builds without minifying, so `PERF_PROFILE` names functions by their source names (`ChatView`, not `nc`). For finding what to fix, not for numbers: the unminified bundle parses slower. |
 | `PERF_LABEL=<name>` | smoothness, typewriter | Column the run is filed under. Defaults to the git short sha. |
 | `PERF_HEADED=1` | all three | Runs on the real display. Headless rAF caps near 110 fps with no vsync, and a headless tab never goes hidden, so the hidden-tab scenario only measures a real background tab here. |
 | `PERF_CPU=<n>` | smoothness | CPU throttling rate (default 4). |

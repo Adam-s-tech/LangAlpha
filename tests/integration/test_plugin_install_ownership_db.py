@@ -522,12 +522,14 @@ async def test_an_update_that_adds_a_server_bumps_with_the_row(
 
 @pytest.mark.parametrize("arm", ["in-place", "delete"])
 async def test_an_update_that_rewrites_or_drops_a_server_bumps_with_the_row(
-    arm, seed_workspace, patched_get_db_connection, test_user_id
+    arm, seed_workspace, patched_get_db_connection, test_user_id, monkeypatch
 ):
     """The update's other two server arms, which write through the catalog
     helpers that bump inside their own transaction."""
     from src.server.database.mcp_servers import get_catalog_server
 
+    # Both arms read the server's OAuth connection, which is encrypted at rest.
+    monkeypatch.setenv("BYOK_ENCRYPTION_KEY", "test-ownership-key")
     workspace_id = str(seed_workspace["workspace_id"])
     incoming = (
         _package(FIRST, server=STDIO_NEXT) if arm == "in-place" else _package(FIRST)

@@ -35,6 +35,7 @@ const STREAMING_ROWS = [
   ['nodesRemoved', 'DOM nodes removed', 'lower'],
   ['charDataChanges', 'text node edits', 'lower'],
   ['attrChanges', 'attribute changes', 'lower'],
+  ['commits', 'React commits', 'lower'],
 ];
 
 const TYPEWRITER_ROWS = [

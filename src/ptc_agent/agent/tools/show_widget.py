@@ -227,9 +227,13 @@ async def _resolve_data_files(
                 # The closing quote is optional and a backslash escapes any
                 # character, so the string branch can never backtrack after it
                 # starts: a truncated string (malformed JSON) stays linear and
-                # is left byte-for-byte intact.
+                # is left byte-for-byte intact. The possessive `*+` states
+                # that to the engine, which then keeps no per-iteration
+                # backtrack state; a plain `*` costs ~120 bytes of memory per
+                # character of the longest string, and this runs on the whole
+                # file before the inline cap is applied.
                 value = re.sub(
-                    r'"(?:\\[\s\S]|[^"\\])*"?|(?P<constant>(?<!\w)(?:NaN|-?Infinity)\b)',
+                    r'"(?:\\[\s\S]|[^"\\])*+"?|(?P<constant>(?<!\w)(?:NaN|-?Infinity)\b)',
                     lambda token: "null" if token.group("constant") else token.group(0),
                     value,
                 )

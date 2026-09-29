@@ -3,6 +3,7 @@
 import asyncio
 import json
 import time
+import tracemalloc
 from unittest.mock import AsyncMock
 
 import pytest
@@ -115,3 +116,35 @@ def test_large_single_string_is_preserved_while_bare_nan_becomes_null():
     assert parsed["label"] == "NaN Infinity -Infinity"
     assert parsed["v"] is None
     assert parsed["scale"] == 123
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param("A" * 4_000_000, id="plain-text"),
+        pytest.param('\\"' * 2_000_000, id="escaped-quote-pairs"),
+    ],
+)
+def test_multi_mb_single_string_uses_bounded_memory(body):
+    """The sanitizer runs before the 500 KB inline cap, so a multi-MB file
+    holding one huge string must not cost more than a few copies of itself.
+    A repeated group in a regex keeps per-iteration backtrack state (about
+    120 bytes per character), so the peak here was ~480 MB for 4 MB of input
+    before the string branch became possessive. The peak is measured with
+    tracemalloc rather than wall-clock time, and the bound sits an order of
+    magnitude under the old behaviour and well above the linear cost."""
+    payload = f'{{"blob":"{body}","v":NaN}}'
+    backend = AsyncMock()
+    backend.aread_text.return_value = payload
+
+    tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        result = asyncio.run(_resolve_data_files(backend, ["/work/huge.json"]))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    # Over the inline cap: dropped, exactly as before the sanitizer changed.
+    assert result == {}
+    assert peak < 64 * 1024 * 1024, f"sanitizer peak {peak / 1e6:.0f} MB"

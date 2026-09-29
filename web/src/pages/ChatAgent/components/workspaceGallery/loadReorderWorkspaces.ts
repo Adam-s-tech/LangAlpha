@@ -1,4 +1,4 @@
-import { getAllWorkspaces } from '@/hooks/useWorkspaces';
+import { getAllWorkspaces } from '@/hooks/useAllWorkspaces';
 import type { WorkspaceRecord } from './types';
 
 export function getAllReorderWorkspaces(): Promise<WorkspaceRecord[]> {

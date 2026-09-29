@@ -89,6 +89,8 @@ vi.mock('@/hooks/useMcpServers', () => ({
 // holds only its new-workspaces setting.
 vi.mock('@/hooks/useWorkspaces', () => ({
   useWorkspaces: () => ({ data: { workspaces: [] }, isLoading: false, error: null }),
+}));
+vi.mock('@/hooks/useAllWorkspaces', () => ({
   useAllWorkspaces: () => ({ data: { workspaces: [] }, isLoading: false, error: null }),
 }));
 

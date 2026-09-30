@@ -14,6 +14,13 @@ interface EditDraft {
   modelPath: string | null;
 }
 
+/** Whether a draft differs from the text its edit started from. The one
+ * baseline for every tab: the viewer's copy is a different read (the paged one
+ * drops a final newline and turns CRLF into LF) and refetches while the editor
+ * is open, so measured against it an untouched file read as edited. */
+const isDirty = (d: Pick<EditDraft, 'isEditing' | 'editContent' | 'originalContent'>) =>
+  d.isEditing && d.editContent !== null && d.editContent !== d.originalContent;
+
 /** Edit-mode state for FilePanel: full-content load, Monaco editor wiring,
  * diff view, save/cancel, and the unsaved-changes guards. The read/write fns
  * are the component's adapter-resolved versions — never direct api imports.
@@ -22,12 +29,11 @@ interface EditDraft {
  * editor and switching back hands it straight back. Without that a tab strip
  * would silently throw away an edit for the price of looking at another file,
  * which is worse than the single-file panel it replaced. */
-export function useFileEdit({ tabId, workspaceId, selectedFile, fileContent, setFileContent, readFileFullFn, writeFileFn }: {
+export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, readFileFullFn, writeFileFn }: {
   /** Which tab the editor currently belongs to. */
   tabId: string;
   workspaceId: string;
   selectedFile: string | null;
-  fileContent: string | null;
   setFileContent: Dispatch<SetStateAction<string | null>>;
   readFileFullFn: (workspaceId: string, path: string) => Promise<{ content?: string }>;
   writeFileFn: (workspaceId: string, path: string, content: string) => Promise<unknown>;
@@ -104,20 +110,18 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, fileContent, set
   }, []);
 
   const isSaving = savingFile !== null && savingFile === selectedFile;
-  const hasUnsavedChanges = isEditing && editContent !== null && editContent !== fileContent;
-
-  const draftIsDirty = (d: EditDraft) => d.isEditing && d.editContent !== null && d.editContent !== d.originalContent;
+  const hasUnsavedChanges = isDirty({ isEditing, editContent, originalContent });
 
   /** Whether a tab, this one or a parked one, would lose an edit if closed. */
   const tabHasUnsavedChanges = useCallback((id: string) => {
     if (id === tabId) return hasUnsavedChanges;
     const parked = drafts.current.get(id);
-    return !!parked && draftIsDirty(parked);
+    return !!parked && isDirty(parked);
   }, [tabId, hasUnsavedChanges]);
 
   // What leaving the page would lose: the active tab's edit or any parked one.
   // `hasUnsavedChanges` stays the active tab's, which is what the header shows.
-  const hasAnyUnsavedChanges = hasUnsavedChanges || [...drafts.current.values()].some(draftIsDirty);
+  const hasAnyUnsavedChanges = hasUnsavedChanges || [...drafts.current.values()].some(isDirty);
 
   const forgetTab = useCallback((id: string) => {
     drafts.current.delete(id);
@@ -218,14 +222,12 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, fileContent, set
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault();
-        if (editContent !== null && editContent !== fileContent) {
-          handleSave();
-        }
+        if (hasUnsavedChanges) handleSave();
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [isEditing, editContent, fileContent, handleSave]);
+  }, [isEditing, hasUnsavedChanges, handleSave]);
 
   useEffect(() => {
     if (!hasAnyUnsavedChanges) return;

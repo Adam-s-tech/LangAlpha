@@ -257,7 +257,7 @@ function FilePanel({
   }, [cache, selectedFile, fileContent]);
 
   const edit = useFileEdit({
-    tabId: activeTab.id, workspaceId, selectedFile, fileContent, setFileContent, readFileFullFn, writeFileFn,
+    tabId: activeTab.id, workspaceId, selectedFile, setFileContent, readFileFullFn, writeFileFn,
   });
 
   // Every draft, parked or on screen, lives in this mount and dies with it. A

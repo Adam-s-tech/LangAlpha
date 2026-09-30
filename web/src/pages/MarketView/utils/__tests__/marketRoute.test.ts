@@ -43,6 +43,29 @@ describe('marketRoute', () => {
     expect(readMarketViewRoute(new URLSearchParams('symbol=AAPL&mode=fast')).mode).toBe('fast');
   });
 
+  it('keeps a returnTo that stays inside the app', () => {
+    const read = (value: string) => readMarketViewRoute(new URLSearchParams({ symbol: 'AAPL', returnTo: value })).returnTo;
+    expect(read('/chat/t/thread-1')).toBe('/chat/t/thread-1');
+    expect(read('/chat/t/thread-1?panel=file#top')).toBe('/chat/t/thread-1?panel=file#top');
+  });
+
+  it.each([
+    ['protocol-relative', '//evil.example/x'],
+    ['backslash host', '/\\evil.example'],
+    ['double backslash', '\\\\evil.example'],
+    ['absolute URL', 'https://evil.example/chat'],
+    ['script scheme', 'javascript:alert(1)'],
+    ['tab inside the slashes', '/\t/evil.example'],
+    ['encoded slashes', '/%2F%2Fevil.example'],
+    ['encoded backslash', '/%5Cevil.example'],
+    ['dot segment before the slashes', '/..//evil.example'],
+    ['encoded dot segment', '/%2e%2e//evil.example'],
+    ['relative path', 'chat/t/thread-1'],
+    ['malformed escape', '/chat/%E0%A4%A'],
+  ])('drops a returnTo that leaves the app: %s', (_label, value) => {
+    expect(readMarketViewRoute(new URLSearchParams({ symbol: 'AAPL', returnTo: value })).returnTo).toBeNull();
+  });
+
   it('lists the params the writer sets, so a reader can clear exactly those', () => {
     const url = buildMarketViewUrl({ symbol: 'AAPL', timeframe: '1day', workspaceId: 'ws', threadId: 't', returnTo: '/x' });
     expect([...paramsOf(url).keys()].sort()).toEqual([...MARKET_VIEW_ROUTE_PARAMS].sort());

@@ -123,7 +123,6 @@ describe('FilePanel chart tabs', () => {
   });
 
   it('asks before leaving for MarketView with an unsaved edit parked on another tab', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
     const onOpenInMarketView = vi.fn();
     const { rerender } = renderWithProviders(panel({ target: { kind: 'file', path: 'notes.md', seq: 1 }, onOpenInMarketView }));
     fireEvent.click(await screen.findByTitle('Edit file'));
@@ -133,12 +132,13 @@ describe('FilePanel chart tabs', () => {
     await screen.findByTestId('chart-surface');
 
     fireEvent.click(screen.getByTitle('Open in MarketView'));
-    expect(window.confirm).toHaveBeenCalledTimes(1);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('You have unsaved changes. Discard them?')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(onOpenInMarketView).not.toHaveBeenCalled();
   });
 
   it('forgets a parked draft once its tab took the editor back and cancelled it', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const { rerender } = renderWithProviders(panel({ target: { kind: 'file', path: 'notes.md', seq: 1 } }));
     fireEvent.click(await screen.findByTitle('Edit file'));
     fireEvent.change(await screen.findByTestId('editor'), { target: { value: '# Notes, edited' } });
@@ -147,7 +147,9 @@ describe('FilePanel chart tabs', () => {
     await screen.findByTestId('chart-surface');
     fireEvent.click(within(screen.getByRole('tablist')).getByText('notes.md'));
     fireEvent.click(await screen.findByTitle('Cancel editing'));
-    expect(confirm).toHaveBeenCalledTimes(1);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Discard unsaved changes?')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
 
     // Still on the tab that cancelled: a copy left parked under its id would
     // keep the page guarding an edit that no longer exists.

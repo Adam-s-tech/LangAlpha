@@ -4,7 +4,7 @@
  * away: on mobile the panel covers the chat, and a hidden close was a dead end.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { screen, fireEvent, act } from '@testing-library/react';
+import { screen, fireEvent, act, within } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 
 vi.mock('@/pages/ChatAgent/utils/api', async (importOriginal) => {
@@ -46,6 +46,13 @@ const panel = (onClose: () => void) => (
 
 const closeButton = () => screen.getByRole('button', { name: 'Close' });
 
+/** Answers the discard question the close asked. */
+async function answer(choice: 'Discard' | 'Cancel'): Promise<void> {
+  const dialog = await screen.findByRole('dialog');
+  expect(within(dialog).getByText('You have unsaved changes. Discard them?')).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole('button', { name: choice }));
+}
+
 /** Opens the file, enters edit mode and changes a line. */
 async function dirtyTheDraft(): Promise<void> {
   await screen.findByText('notes.md', { selector: '.file-panel-tab-name' });
@@ -59,38 +66,37 @@ afterEach(() => { vi.resetAllMocks(); vi.restoreAllMocks(); });
 
 describe('FilePanel close under an unsaved edit', () => {
   it('still offers the close, and keeps the panel when the edit is not discarded', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const onClose = vi.fn();
     renderWithProviders(panel(onClose));
     await dirtyTheDraft();
 
     fireEvent.click(closeButton());
+    await answer('Cancel');
 
-    expect(confirmSpy).toHaveBeenCalledWith('You have unsaved changes. Discard them?');
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByTestId('editor')).toBeTruthy();
   });
 
   it('closes once the edit is discarded', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const onClose = vi.fn();
     renderWithProviders(panel(onClose));
     await dirtyTheDraft();
 
     fireEvent.click(closeButton());
+    expect(onClose).not.toHaveBeenCalled();
+    await answer('Discard');
 
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('closes without asking when nothing is unsaved', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const onClose = vi.fn();
     renderWithProviders(panel(onClose));
     await screen.findByText('notes.md', { selector: '.file-panel-tab-name' });
 
     fireEvent.click(closeButton());
 
-    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

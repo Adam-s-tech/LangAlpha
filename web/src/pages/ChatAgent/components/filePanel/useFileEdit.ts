@@ -5,6 +5,7 @@ import type { editor } from 'monaco-editor';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/components/ui/use-toast';
 import { disposeEditorModel, newEditorModelPath } from '../viewers/editorModels';
+import type { AskConfirm } from './usePanelConfirm';
 
 /** One tab's editor, parked while another tab is on screen. */
 interface EditDraft {
@@ -29,7 +30,7 @@ const isDirty = (d: Pick<EditDraft, 'isEditing' | 'editContent' | 'originalConte
  * editor and switching back hands it straight back. Without that a tab strip
  * would silently throw away an edit for the price of looking at another file,
  * which is worse than the single-file panel it replaced. */
-export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, readFileFullFn, writeFileFn }: {
+export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, readFileFullFn, writeFileFn, ask, onSaveSettled }: {
   /** Which tab the editor currently belongs to. */
   tabId: string;
   workspaceId: string;
@@ -37,6 +38,10 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, 
   setFileContent: Dispatch<SetStateAction<string | null>>;
   readFileFullFn: (workspaceId: string, path: string) => Promise<{ content?: string }>;
   writeFileFn: (workspaceId: string, path: string, content: string) => Promise<unknown>;
+  /** The panel's confirmation, asked before a save or a discard. */
+  ask: AskConfirm;
+  /** A write to `path` has answered, landed or not. */
+  onSaveSettled: (path: string) => void;
 }) {
   const { t } = useTranslation();
   // Edit mode state
@@ -164,22 +169,19 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, 
     setEditContent(value);
   }, []);
 
-  const handleSave = useCallback(async () => {
-    if (!selectedFile || !workspaceId || editContent === null) return;
-    // The button carries the only other re-entry guard and the key handler
-    // below does not read it, so this one belongs where every caller passes.
-    if (savingFile === selectedFile) return;
-    if (!window.confirm(t('filePanel.confirmSave'))) return;
+  // Takes the file and text as they were when the question was asked: the
+  // answer arrives on a later render.
+  const save = useCallback(async (file: string, content: string) => {
     const seq = ++saveSeqRef.current;
-    setSavingFile(selectedFile);
+    setSavingFile(file);
     setSaveError(null);
     try {
-      await writeFileFn(workspaceId, selectedFile, editContent);
+      await writeFileFn(workspaceId, file, content);
       // Another file opened while the write was in flight, the same guard the
       // full read takes above. Without it this file's text lands in the panel
       // under the other one's name, and feeds its line and heading lookup.
-      if (selectedFileRef.current !== selectedFile) return;
-      setFileContent(editContent);
+      if (selectedFileRef.current !== file) return;
+      setFileContent(content);
       setIsEditing(false);
       setEditContent(null);
       setShowDiff(false);
@@ -187,13 +189,13 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, 
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string } }; message?: string };
       console.error('[FilePanel] Save failed:', err);
-      if (selectedFileRef.current !== selectedFile) {
+      if (selectedFileRef.current !== file) {
         // The panel has moved on, so there is no header left to hang an inline
         // error under. Staying silent here is what let a reader answer "discard
         // unsaved changes" believing the save had landed and lose the edit with
         // nothing on screen to say otherwise, so the toast names the file.
         toast({
-          description: t('filePanel.saveFailedFile', { name: selectedFile.split('/').pop() }),
+          description: t('filePanel.saveFailedFile', { name: file.split('/').pop() }),
           variant: 'destructive',
         });
         return;
@@ -203,19 +205,42 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, 
       // A save that is no longer the current one must not report the panel idle:
       // it would re-enable Save under a newer write and let an older body land last.
       if (seq === saveSeqRef.current) setSavingFile(null);
+      onSaveSettled(file);
     }
-  }, [selectedFile, savingFile, workspaceId, editContent, writeFileFn, setFileContent, t]);
+  }, [workspaceId, writeFileFn, setFileContent, onSaveSettled, t]);
 
-  const handleCancelEdit = useCallback(() => {
-    if (hasUnsavedChanges) {
-      if (!window.confirm(t('filePanel.discardChanges'))) return;
-    }
+  const handleSave = useCallback(() => {
+    if (!selectedFile || !workspaceId || editContent === null) return;
+    // The button carries the only other re-entry guard and the key handler
+    // below does not read it, so this one belongs where every caller passes.
+    if (savingFile === selectedFile) return;
+    ask(
+      { title: t('filePanel.saveTitle'), message: t('filePanel.confirmSave'), confirmLabel: t('common.save') },
+      () => { void save(selectedFile, editContent); },
+    );
+  }, [selectedFile, savingFile, workspaceId, editContent, ask, save, t]);
+
+  const discardEdit = useCallback(() => {
     setIsEditing(false);
     setEditContent(null);
     setShowDiff(false);
     setOriginalContent(null);
     setSaveError(null);
-  }, [hasUnsavedChanges, t]);
+  }, []);
+
+  const handleCancelEdit = useCallback(() => {
+    if (!hasUnsavedChanges) {
+      discardEdit();
+      return;
+    }
+    const file = selectedFile;
+    ask(
+      { title: t('filePanel.discardTitle'), message: t('filePanel.discardChanges'), confirmLabel: t('filePanel.discard') },
+      // The editor state is the tab in front's, so a panel that has moved on
+      // since the question would discard a draft nobody asked about.
+      () => { if (selectedFileRef.current === file) discardEdit(); },
+    );
+  }, [hasUnsavedChanges, selectedFile, discardEdit, ask, t]);
 
   useEffect(() => {
     if (!isEditing) return;

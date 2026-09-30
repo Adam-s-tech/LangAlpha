@@ -5,8 +5,8 @@
  */
 import { configureSSE, resetMockServer, mockAPI, test, expect } from '../fixtures.js';
 import { sseEvents } from '../helpers/mockResponses.js';
-import { TH, chatViewOverrides } from '../helpers/chatScenario.js';
-import { buildReply, buildEvents, END_MARKER } from './streamFixture.js';
+import { TH, WS, chatViewOverrides } from '../helpers/chatScenario.js';
+import { buildReply, buildEvents, buildCodeFile, END_MARKER, TAB_CALL_OUTPUT } from './streamFixture.js';
 import { installSmoothProbe } from './metrics.js';
 import { label, writeRun } from './run.js';
 
@@ -15,6 +15,16 @@ const CHUNK_DELAY_MS = Number(process.env.PERF_CHUNK_MS || 8);
 const CHUNK_CHARS = Number(process.env.PERF_CHUNK_CHARS || 8);
 const PROFILE = !!process.env.PERF_PROFILE;
 const TRACE = !!process.env.PERF_TRACE;
+// What the file panel beside the stream shows, if it is open: `code` is a
+// Python file with the tree docked, `tool` is the tab of one of the turn's
+// calls, whose record is replaced once the reply is done. Empty leaves the
+// panel shut.
+const PANEL = process.env.PERF_PANEL || '';
+const RENDERS = !!process.env.PERF_RENDERS;
+const CODE_FILE = 'analysis.py';
+const PANEL_FILES = [CODE_FILE, 'notes.md', 'data/prices.csv', 'data/volumes.csv', 'reports/q2.md', 'reports/q3.md', 'scripts/backtest.py'];
+// Long enough to open a call's tab before the reply starts.
+const TOOL_TAB_PAUSE_MS = 3000;
 // Paths worth naming in the log: the rest are the page-load fetches.
 const TOP_REQUEST_PATHS = 12;
 
@@ -95,6 +105,19 @@ function summarizeTrace(events) {
   return [...byName].map(([k, us]) => [k, Math.round(us / 1000), count.get(k)]).sort((a, b) => b[1] - a[1]).slice(0, 25);
 }
 
+/** REST routes the panel reads: the listing and one Python file. */
+function panelOverrides() {
+  const content = buildCodeFile(300);
+  return {
+    [`GET /workspaces/${WS}/files`]: { files: PANEL_FILES },
+    [`GET /workspaces/${WS}/files/read`]: (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ workspace_id: WS, path: CODE_FILE, content, mime: 'text/x-python', truncated: false }),
+    }),
+  };
+}
+
 // PERF_HEADED=1 runs on the real display: headless rAF caps near 110 fps.
 test.use({ headless: !process.env.PERF_HEADED });
 
@@ -107,8 +130,11 @@ test.describe('streaming smoothness', () => {
   });
 
   test('long reply at token cadence', async ({ page }, testInfo) => {
+    test.skip(!['', 'code', 'tool'].includes(PANEL), `PERF_PANEL=${PANEL} is not a scenario`);
     await page.addInitScript(installSmoothProbe);
-    await mockAPI(page, chatViewOverrides());
+    await mockAPI(page, { ...chatViewOverrides(), ...(PANEL ? panelOverrides() : {}) });
+    // Wide enough for the tree to dock beside the file rather than float over it.
+    if (PANEL) await page.setViewportSize({ width: 1600, height: 900 });
     await configureSSE({
       method: 'GET',
       path: `/api/v1/threads/${TH}/messages/replay`,
@@ -116,7 +142,7 @@ test.describe('streaming smoothness', () => {
       delay: 10,
     });
     const reply = buildReply();
-    const events = buildEvents(CHUNK_CHARS);
+    const events = buildEvents(CHUNK_CHARS, { toolTabPause: PANEL === 'tool' ? TOOL_TAB_PAUSE_MS : 0 });
     await configureSSE({
       method: 'POST',
       path: `/api/v1/threads/${TH}/messages`,
@@ -124,8 +150,12 @@ test.describe('streaming smoothness', () => {
       delay: CHUNK_DELAY_MS,
     });
 
-    await page.goto(`/chat/t/${TH}`);
+    await page.goto(PANEL === 'code' ? `/chat/t/${TH}?file=${CODE_FILE}` : `/chat/t/${TH}`);
     await page.waitForSelector('textarea', { timeout: 10000 });
+    if (PANEL === 'code') {
+      await expect(page.locator('.file-panel [data-line="300"]')).toBeAttached({ timeout: 10000 });
+      await expect(page.getByRole('treeitem', { name: CODE_FILE })).toBeVisible();
+    }
 
     const cdp = await page.context().newCDPSession(page);
     if (CPU_RATE > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU_RATE });
@@ -148,10 +178,21 @@ test.describe('streaming smoothness', () => {
     const reqs = new Map();
     page.on('request', (r) => { const k = `${r.method()} ${new URL(r.url()).pathname}`; reqs.set(k, (reqs.get(k) || 0) + 1); });
     await page.locator('textarea').fill('Give me an earnings deep dive on NVDA');
-    await page.evaluate(() => window.__smooth.start(document.querySelector('main') || document.body));
+    const probe = { scope: PANEL ? '.file-panel' : null, renders: RENDERS };
+    await page.evaluate((opts) => window.__smooth.start(document.querySelector('main') || document.body, opts), probe);
     await page.locator('button[aria-label="Send message"]').click();
+    if (PANEL === 'tool') {
+      // Opened from its settled row in the pause before the reply; the count
+      // restarts once the tab is up, so the run measures the reply beside it.
+      await page.locator('[id^="activity-summary-"]').click();
+      await page.locator('.titem .titem-title-button').last().click();
+      await expect(page.locator('.file-panel [role="tab"][aria-selected="true"]')).toBeVisible({ timeout: 10000 });
+      await page.evaluate((opts) => window.__smooth.start(document.querySelector('main') || document.body, opts), probe);
+    }
 
     await expect(page.getByText(END_MARKER)).toBeVisible({ timeout: 150_000 });
+    // The open tab follows its call's record: the replaced result shows.
+    if (PANEL === 'tool') await expect(page.locator('.file-panel').getByText(TAB_CALL_OUTPUT)).toBeVisible({ timeout: 10000 });
     // The typewriter and the last fold animations run past the final chunk.
     await page.waitForTimeout(1500);
     const m = await page.evaluate(() => window.__smooth.stop());
@@ -177,7 +218,7 @@ test.describe('streaming smoothness', () => {
     const run = {
       label: label(),
       at: new Date().toISOString(),
-      config: { cpuRate: CPU_RATE, chunkDelayMs: CHUNK_DELAY_MS, chunkChars: CHUNK_CHARS, events: events.length, replyChars: reply.length },
+      config: { cpuRate: CPU_RATE, chunkDelayMs: CHUNK_DELAY_MS, chunkChars: CHUNK_CHARS, events: events.length, replyChars: reply.length, panel: PANEL || null, renders: RENDERS },
       metrics: m,
       requests,
       profile,
@@ -189,6 +230,17 @@ test.describe('streaming smoothness', () => {
     console.log(`[perf ${run.label}] ${durationMs}ms fps=${fps} p95=${gapP95}ms max=${gapMax}ms >50ms=${framesOver50} frozen=${frozenMs}ms loaf=${loafCount}/${loafMaxMs}ms mutations=${mutations}`);
     console.log(`[perf ${run.label}] requests during the stream:`);
     for (const [k, n] of requests.slice(0, TOP_REQUEST_PATHS)) console.log(`    ${String(n).padStart(6)}  ${k}`);
+    if (m.region) {
+      const r = m.region;
+      console.log(`[perf ${run.label}] ${r.scope}: mutations=${r.mutations} added=${r.nodesAdded} removed=${r.nodesRemoved} text=${r.charDataChanges} attrs=${r.attrChanges}`);
+    }
+    if (m.renders) {
+      const byCount = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]);
+      console.log(`[perf ${run.label}] renders under ${m.region?.scope ?? '(no scope)'}:`);
+      for (const [name, n] of byCount(m.scopeRenders).slice(0, 25)) console.log(`    ${String(n).padStart(6)}  ${name}`);
+      console.log(`[perf ${run.label}] renders, whole page:`);
+      for (const [name, n] of byCount(m.renders).slice(0, 25)) console.log(`    ${String(n).padStart(6)}  ${name}`);
+    }
     if (profile) {
       console.log(`[perf ${run.label}] self time by module (ms):`);
       for (const [mod, ms] of profile.byModule.slice(0, 18)) console.log(`    ${String(ms).padStart(6)}  ${mod}`);

@@ -1,6 +1,6 @@
 import i18n from '@/i18n';
 import { toast } from '@/components/ui/use-toast';
-import { ToastAction } from '@/components/ui/toast';
+import { StaleBuildReloadAction, StaleBuildToastText } from '@/components/StaleBuildToastCopy';
 
 /**
  * Detection and reporting for "this tab is running a build the server no longer
@@ -202,8 +202,9 @@ export function reportStaleBuild(reason: string, options?: { silent?: boolean })
     pendingToast = null;
     activeToast =
       toast({
-        title: i18n.t('common.staleBuild.title'),
-        description: i18n.t('common.staleBuild.description'),
+        // Components, not strings: the toast can outlive a language switch.
+        title: <StaleBuildToastText part="title" />,
+        description: <StaleBuildToastText part="description" />,
         // Overrides the Toaster's 3s default (spread onto the Radix Toast). A
         // notice that disappears before the user looks up is not a notice.
         duration: Infinity,
@@ -212,14 +213,7 @@ export function reportStaleBuild(reason: string, options?: { silent?: boolean })
         // later notices of any kind took the app's only Reload control with
         // them, and the latch above guarantees nothing raises it a second time.
         pinned: true,
-        action: (
-          <ToastAction
-            altText={i18n.t('common.staleBuild.reload')}
-            onClick={() => window.location.reload()}
-          >
-            {i18n.t('common.staleBuild.reload')}
-          </ToastAction>
-        ),
+        action: <StaleBuildReloadAction />,
       }) ?? null;
   }, BOUNDARY_CLAIM_MS);
 }

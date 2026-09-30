@@ -13,6 +13,7 @@ const mode = vi.hoisted(() => ({ whole: false }));
 vi.mock('../../utils/markdownBlocks', async () => {
   const actual = await vi.importActual<typeof import('../../utils/markdownBlocks')>('../../utils/markdownBlocks');
   return {
+    ...actual,
     splitMarkdownBlocks: (text: string) => (mode.whole ? [text] : actual.splitMarkdownBlocks(text)),
   };
 });

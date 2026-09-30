@@ -16,7 +16,7 @@ import { parseAgentPath } from '../utils/agentPaths';
 import { normalizeFileRefs } from '../utils/normalizeFileRefs';
 import { splitFileLocation, type OpenFileHandler } from '../utils/fileLocation';
 import { mapOutsideCode, mapOutsideMultilineCode } from '../utils/markdownSegments';
-import { splitMarkdownBlocks } from '../utils/markdownBlocks';
+import { splitMarkdownBlocks, streamingLineKey } from '../utils/markdownBlocks';
 import CitationBubble from './CitationBubble';
 
 // Sanitize schema: extends GitHub-style defaults to allow KaTeX output,
@@ -663,14 +663,12 @@ interface MarkdownBlockProps {
 // count so the block being streamed remounts on each newline, which clears a
 // stale inline-emphasis node React otherwise leaves behind mid-stream.
 //
-// The key is not scoped to prose blocks: a fence needs no such clearing, but a
-// block can hold both (an intro line with the fence opened right under it, no
-// blank line between), so there is no reliable per-block test. A fence still
-// arriving therefore re-highlights on each newline. The cost is bounded to the
-// one block receiving text, and the blocks already settled above it are
-// untouched, which is the whole point of splitting.
+// A fence needs no such clearing, so lines added to a fence still open at the
+// block's end do not count (`streamingLineKey`): a long fence would otherwise
+// rebuild every highlighted token on each new line. Closing the fence counts
+// its lines at once, one remount per fence.
 const MarkdownBlock = React.memo(function MarkdownBlock({ source, components }: MarkdownBlockProps) {
-  const lineKey = useMemo(() => (source.match(/\n/g) || []).length, [source]);
+  const lineKey = useMemo(() => streamingLineKey(source), [source]);
   return (
     <ReactMarkdown key={lineKey} remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={components}>
       {source}

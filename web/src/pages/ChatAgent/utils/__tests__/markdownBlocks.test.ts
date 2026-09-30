@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitMarkdownBlocks } from '../markdownBlocks';
+import { splitMarkdownBlocks, streamingLineKey } from '../markdownBlocks';
 
 describe('splitMarkdownBlocks', () => {
   it('reproduces the input when joined and cuts at paragraph breaks', () => {
@@ -65,5 +65,28 @@ describe('splitMarkdownBlocks', () => {
     expect(splitMarkdownBlocks('')).toEqual(['']);
     expect(splitMarkdownBlocks('\n\n')).toEqual(['\n\n']);
     expect(splitMarkdownBlocks('a\n\n\n\nb')).toEqual(['a\n\n\n\n', 'b']);
+  });
+});
+
+describe('streamingLineKey', () => {
+  it('holds still while lines land in a fence open at the end, and moves when it closes', () => {
+    expect(streamingLineKey('a\nb\nc')).toBe(2);
+    expect(streamingLineKey('Intro\n```py')).toBe(1);
+    expect(streamingLineKey('Intro\n```py\nx = 1\ny = 2\n')).toBe(1);
+    expect(streamingLineKey('Intro\n```py\nx = 1\n```')).toBe(3);
+    expect(streamingLineKey('Intro\n```py\nx = 1\n```\nafter *em')).toBe(4);
+    expect(streamingLineKey('~~~\n```\nstill code\n')).toBe(0);
+  });
+
+  // Holding still on prose the parser reads as prose would let a stale inline
+  // node outlive the stream, so every doubtful case counts its lines.
+  it('counts every line when the parser would not read an open fence', () => {
+    expect(streamingLineKey('``` inline ` code ```\nmore\n')).toBe(2);
+    expect(streamingLineKey('- item\n  ```py\n  code\nnext para\n')).toBe(4);
+    expect(streamingLineKey('> ```\n> code\n')).toBe(2);
+  });
+
+  it('holds still inside a fence in a list item while its lines stay indented', () => {
+    expect(streamingLineKey('- item\n  ```py\n  code\n\n  more\n')).toBe(1);
   });
 });

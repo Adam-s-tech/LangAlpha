@@ -98,3 +98,33 @@ export function splitMarkdownBlocks(content: string): string[] {
   if (current) blocks.push(current);
   return blocks.length ? blocks : [content];
 }
+
+/**
+ * The line count a streaming block remounts on (see `MarkdownBlock`), not
+ * counting lines added to a fence still open at the block's end: code has no
+ * inline nodes to go stale, and remounting it per line rebuilt every
+ * highlighted token of a long fence on each new line.
+ *
+ * Reading a fence as open when the parser has closed it would stop the prose
+ * after it from remounting, so this errs toward closed: a backtick info string
+ * holding a backtick is inline code, and a line indented less than the opener
+ * ends a fence that sat in a list item. A fence the scan misses (a block quote,
+ * a deeper list) just keeps remounting per line.
+ */
+export function streamingLineKey(block: string): number {
+  let lines = 0;
+  let fence: { opener: string; indent: number; linesBefore: number } | null = null;
+  for (const line of block.split(/(?<=\n)/)) {
+    const body = line.replace(/\r?\n$/, '');
+    if (fence === null) {
+      const open = FENCE_OPEN_RE.exec(line);
+      if (open && !(open[1][0] === '`' && line.slice(open[0].length).includes('`'))) {
+        fence = { opener: open[1], indent: open[0].length - open[1].length, linesBefore: lines };
+      }
+    } else if (closesFence(line, fence.opener) || (!BLANK_RE.test(body) && body.length - body.trimStart().length < fence.indent)) {
+      fence = null;
+    }
+    if (line.endsWith('\n')) lines++;
+  }
+  return fence === null ? lines : fence.linesBefore;
+}

@@ -2035,6 +2035,7 @@
       "accessDeniedHint": "This file is outside the allowed directories.",
       "unknown": "Failed to load file",
       "unknownHint": "An unexpected error occurred while loading the file.",
+      "previewFailed": "Unable to preview this file",
       "retry": "Try again",
       "download": "Download instead"
     }

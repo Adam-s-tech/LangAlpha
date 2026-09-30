@@ -2026,6 +2026,7 @@
       "accessDeniedHint": "此文件位于允许的目录之外。",
       "unknown": "文件加载失败",
       "unknownHint": "加载文件时发生意外错误。",
+      "previewFailed": "无法预览此文件",
       "retry": "重试",
       "download": "改为下载"
     }

@@ -1,4 +1,4 @@
-import React, { memo, useRef } from 'react';
+import React, { memo, useState } from 'react';
 import { Wrench } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -10,11 +10,12 @@ import { classifyAgentPath } from '../../utils/agentPaths';
 import { RunningTitle, RunningIcon, SettledLine, FailedIconBadge } from './ActivityRowParts';
 import type { ToolActivityItem, PreparingToolCallData } from './activityTypes';
 
-/** Remembers that a row ran, so its settled line knows to fade in. */
+/** Remembers that a row ran, so its settled line knows to fade in. State set
+ *  during render, not a ref, so the compiler sees the memory as an input. */
 function useWasRunning(running: boolean): boolean {
-  const ref = useRef(false);
-  if (running) ref.current = true;
-  return ref.current;
+  const [ran, setRan] = useState(running);
+  if (running && !ran) setRan(true);
+  return ran || running;
 }
 
 const RUNNING_VERB_KEY: Record<string, string> = { Read: 'read', Edit: 'edit', Write: 'write' };

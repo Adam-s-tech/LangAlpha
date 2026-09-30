@@ -1328,14 +1328,17 @@ export function useChatMessages(
     releaseStreamOwnership();
     currentMessageRef.current = null;
 
-    // An ADMITTED stop (run id latched) is persisted server-side as a
-    // user-cancelled "Stopped" turn (_mark_cancelled folds the partial events
-    // into sse_events), so its bubbles are replay-reproducible — mark them
-    // isHistory and release the recently-sent dedup, same as a success
-    // finalize. Otherwise a later corrective reload appends a replayed twin of
-    // the answer under a dedup-eaten user message, ordered after newer turns.
-    // A PRE-ADMISSION stop has no turn row: replay can't reproduce those
-    // bubbles, so they must stay unmarked to survive reloads.
+    // An ADMITTED stop (run id latched) finalizes server-side as a cancelled
+    // turn. The finalize archives the partial events on the response row,
+    // closed with a synthetic finish_reason "stopped", and replay rebuilds the
+    // committed steps from the checkpoint and restores the in-flight partial
+    // the checkpoint never committed from that archive. So once the finalize
+    // lands its bubbles are replay-reproducible: mark them isHistory and
+    // release the recently-sent dedup, same as a success finalize. Otherwise
+    // a later corrective reload appends a replayed twin of the answer under a
+    // dedup-eaten user message, ordered after newer turns. A PRE-ADMISSION
+    // stop has no turn row: replay can't reproduce those bubbles, so they must
+    // stay unmarked to survive reloads.
     if (stoppedRunId) {
       markTranscriptPersisted();
     }

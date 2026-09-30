@@ -536,14 +536,17 @@ export async function loadConversationHistory(
           return;
         }
 
-        // Handle finish_reason (end of assistant message)
+        // A content-less close, a stopped turn's synthetic one included, goes
+        // through the text handler, which owns what a close stamps.
         if (event.finish_reason) {
-          rt.setMessages((prev) =>
-            updateMessage(prev,currentAssistantMessageId, (msg) => ({
-              ...msg,
-              isStreaming: false,
-            }))
-          );
+          handleHistoryTextContent({
+            assistantMessageId: currentAssistantMessageId,
+            content: '',
+            finishReason: event.finish_reason,
+            pairState,
+            setMessages: setMessagesForHandlers,
+            eventId: event._eventId as number | undefined,
+          });
           return;
         }
       }

@@ -234,13 +234,16 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
               return;
             }
 
+            // A content-less close, a stopped turn's synthetic one included,
+            // goes through the text handler, which owns what a close stamps.
             if (event.finish_reason) {
-              setMessages((prev) =>
-                updateMessage(prev, currentAssistantMessageId, (msg) => ({
-                  ...msg,
-                  isStreaming: false,
-                }))
-              );
+              handleHistoryTextContent({
+                assistantMessageId: currentAssistantMessageId,
+                content: '',
+                finishReason: event.finish_reason as string,
+                pairState,
+                setMessages: setMessagesCompat,
+              });
               return;
             }
           }

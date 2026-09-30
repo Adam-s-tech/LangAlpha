@@ -115,7 +115,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
     a.cps += (inst - a.cps) * k;
   }, []);
 
-  const startChain = useCallback(() => {
+  const startChain = useCallback(function startChain() {
     // Resume from where the reveal reached, not from what the hold let on
     // screen. Every update restarts the chain, so restarting at the held
     // cursor threw away the progress into the word being held: once text
@@ -261,8 +261,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
     return () => {
       stopChain();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text, enabled]);
+  }, [text, enabled, stopChain, startChain, noteArrival]);
 
   // Decided during render, not in the effect: the render that turns `enabled`
   // off runs before the effect, and returning the full text there would flash

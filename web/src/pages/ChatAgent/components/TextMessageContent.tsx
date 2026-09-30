@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import Markdown from './Markdown';
@@ -39,12 +39,12 @@ function TextMessageContent({ content, isStreaming, hasError, structuredError, o
   // floor on what to show, never a reason to take words back: switching the
   // delivery preference mid-reply used to drop the text between the last
   // blank line and the caret, and a reply with no blank line yet vanished
-  // whole. The mark is per stream, so a regenerate starts from nothing.
-  const shownLenRef = useRef(0);
-  if (!isStreaming) shownLenRef.current = 0;
+  // whole. The mark is per stream, so a regenerate starts from nothing. It is
+  // state set during render, not a ref, so the compiler sees it as an input.
+  const [shownLen, setShownLen] = useState(() => (isStreaming ? 0 : text.length));
   const target = gated ? visibleParagraphPrefix(text) : text;
-  const visibleLen = Math.max(target.length, Math.min(shownLenRef.current, text.length));
-  shownLenRef.current = visibleLen;
+  const visibleLen = Math.max(target.length, isStreaming ? Math.min(shownLen, text.length) : 0);
+  if (visibleLen !== shownLen) setShownLen(visibleLen);
   const visible = text.slice(0, visibleLen);
   const displayText = useAnimatedText(visible, { enabled: isStreaming && !gated });
   // Measured against everything that has ARRIVED, not against what the gate

@@ -3,6 +3,7 @@ import { isNearBottom } from '../../utils/scrollHelpers';
 import { findMessageElement, resolveScrollContent, resolveScrollViewport } from '../../utils/scrollDom';
 import { scrollMemory } from '@/lib/scrollMemory';
 import { ANCHORED_TOGGLE_EVENT } from '../../utils/anchoredToggle';
+import { useLatestRef } from '@/hooks/useLatestRef';
 
 // Scroll/pin tuning. Distance from the bottom (px) still counted as "at bottom";
 // settle window the pin re-applies through as async media expands; fallback for
@@ -120,26 +121,28 @@ export function useChatScroll({
   threadId: string;
 }) {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
-  const isStreamingRef = useRef(isStreaming);
-  isStreamingRef.current = isStreaming;
-  const isLoadingHistoryRef = useRef(isLoadingHistory);
-  isLoadingHistoryRef.current = isLoadingHistory;
+  // These latest-value refs are read by the observer, listeners, callbacks and
+  // effects below, never by render. Each holds the last committed value,
+  // written in a layout effect that runs ahead of this hook's own.
+  const isStreamingRef = useLatestRef(isStreaming);
+  const isLoadingHistoryRef = useLatestRef(isLoadingHistory);
   const subagentScrollAreaRef = useRef<HTMLDivElement>(null);
 
   // Resolved thread id for the cross-unmount scroll store (scrollMemory) — a
   // ref so the scroll listener always stamps the current thread without
   // re-binding. '__default__' (unresolved new thread) is never stored.
-  const memoryTidRef = useRef<string | null>(null);
   const resolvedTid = currentThreadId || threadId;
-  memoryTidRef.current = resolvedTid && resolvedTid !== '__default__' ? resolvedTid : null;
+  const memoryTidRef = useLatestRef(resolvedTid && resolvedTid !== '__default__' ? resolvedTid : null);
 
   // --- Scroll position memory for tab switching ---
   // Stores scrollTop per agentId so switching tabs preserves position
   const scrollPositionsRef = useRef<Record<string, number>>({});
-  const activeAgentIdRef = useRef(activeAgentId);
-  activeAgentIdRef.current = activeAgentId;
+  const activeAgentIdRef = useLatestRef(activeAgentId);
   // Flag to skip subagent auto-scroll when restoring a saved position
   const skipSubagentAutoScrollRef = useRef(false);
+  // Set while a scroll this controller made is in flight (see
+  // withProgrammaticScroll), so the listeners can tell it from the user's.
+  const programmaticScrollRef = useRef(false);
 
   // Helper: get the scrollable container from a ScrollArea ref
   const getScrollContainer = useCallback(
@@ -155,7 +158,7 @@ export function useChatScroll({
     if (container) {
       scrollPositionsRef.current[currentId] = container.scrollTop;
     }
-  }, [getScrollContainer]);
+  }, [getScrollContainer, activeAgentIdRef]);
 
   // Restore scroll position after the new tab mounts
   useEffect(() => {
@@ -192,7 +195,6 @@ export function useChatScroll({
   const isSubagentNearBottomRef = useRef(true);
 
   const pinTargetRef = useRef<PinTarget | null>(null);
-  const programmaticScrollRef = useRef(false);
   // Detaches the pending release of the current programmatic scroll (see
   // withProgrammaticScroll); null when no release is pending.
   const programmaticReleaseRef = useRef<(() => void) | null>(null);
@@ -219,19 +221,18 @@ export function useChatScroll({
   /** The entry restore for this thread has landed, so an automatic scroll may move the view. */
   const entryRestoreSettled = useCallback(
     () => !memoryTidRef.current || restoredForThreadRef.current === memoryTidRef.current,
-    [],
+    [memoryTidRef],
   );
   /** A turn is streaming, nothing else owns the scroll and the reader is
    *  riding the end. Growth in a settled transcript is the reader's own doing
    *  (a block opened, a panel rewrapping the text) and is left where it is. */
   const isFollowing = useCallback(
     () => isStreamingRef.current && !pinTargetRef.current && isNearBottomRef.current && entryRestoreSettled(),
-    [entryRestoreSettled],
+    [entryRestoreSettled, isStreamingRef],
   );
 
   // Jump-to-latest pill.
-  const messagesLenRef = useRef(0);
-  messagesLenRef.current = messages.length;
+  const messagesLenRef = useLatestRef(messages.length);
   const pillBaselineLenRef = useRef(0);
   const [jumpPill, setJumpPill] = useState<{ visible: boolean; hasNew: boolean; newCount: number }>({
     visible: false,
@@ -353,7 +354,7 @@ export function useChatScroll({
       withProgrammaticScroll(() => c.scrollTo({ top: c.scrollHeight, behavior }), behavior);
       armSettleTimers();
     },
-    [getScrollContainer, withProgrammaticScroll, armSettleTimers, setPillState],
+    [getScrollContainer, withProgrammaticScroll, armSettleTimers, setPillState, messagesLenRef],
   );
 
   // Re-apply the pin target; called by the ResizeObserver each time content
@@ -404,7 +405,7 @@ export function useChatScroll({
       withProgrammaticScroll(() => c.scrollTo({ top, behavior }), behavior);
       armSettleTimers();
     },
-    [getScrollContainer, withProgrammaticScroll, armSettleTimers, setPillState],
+    [getScrollContainer, withProgrammaticScroll, armSettleTimers, setPillState, messagesLenRef],
   );
 
   // Bring a turn's deliverables deck into view as it unfolds. The deck cannot
@@ -624,7 +625,7 @@ export function useChatScroll({
       }
       ro?.disconnect();
     };
-  }, [activeAgentId, getScrollContainer, getScrollContent, reapplyPin, clearSettleTimers, withProgrammaticScroll, isFollowing]);
+  }, [activeAgentId, getScrollContainer, getScrollContent, reapplyPin, clearSettleTimers, withProgrammaticScroll, isFollowing, isLoadingHistoryRef, memoryTidRef, messagesLenRef]);
 
   // New messages for a reader who is not following: the ResizeObserver above
   // keeps a following reader at the bottom, so all that is left here is the
@@ -638,7 +639,7 @@ export function useChatScroll({
     if (delta > 0) {
       setJumpPill((prev) => (prev.visible ? { visible: true, hasNew: true, newCount: delta } : prev));
     }
-  }, [messages, entryRestoreSettled]);
+  }, [messages, entryRestoreSettled, messagesLenRef]);
 
   // Thread-entry restore — the core fix. Fires on the real "history is present"
   // signal (isLoadingHistory flips false), not on an empty/partial list. A
@@ -732,7 +733,7 @@ export function useChatScroll({
         if (pinTargetRef.current?.mode === 'offset') pinTargetRef.current = null;
       }
     };
-  }, [isActive, isLoadingHistory, historyLoadFailed, currentThreadId, threadId, pinToBottom, reapplyPin, isActiveRef, getScrollContainer, withProgrammaticScroll, armSettleTimers, setPillState]);
+  }, [isActive, isLoadingHistory, historyLoadFailed, currentThreadId, threadId, pinToBottom, reapplyPin, isActiveRef, getScrollContainer, withProgrammaticScroll, armSettleTimers, setPillState, messagesLenRef]);
 
   // Cleanup pending scroll timers/rAF on unmount.
   useEffect(() => {

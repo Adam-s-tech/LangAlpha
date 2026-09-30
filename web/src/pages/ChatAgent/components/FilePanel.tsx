@@ -481,10 +481,11 @@ function FilePanel({
     discard,
   ), [ask, t]);
 
+  const { anyUnsavedNow } = edit;
   const guardLeave = useCallback<RouteLeaveGuard>((go) => {
-    if (edit.hasAnyUnsavedChanges) askDiscard(go);
+    if (anyUnsavedNow()) askDiscard(go);
     else go();
-  }, [edit.hasAnyUnsavedChanges, askDiscard]);
+  }, [anyUnsavedNow, askDiscard]);
 
   const leaveForMarketView = useCallback((spec: ChartTabSpec) => {
     guardLeave(() => onOpenInMarketView?.(spec));

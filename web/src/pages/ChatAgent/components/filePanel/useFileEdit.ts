@@ -4,6 +4,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { editor } from 'monaco-editor';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/components/ui/use-toast';
+import { useLatestRef } from '@/hooks/useLatestRef';
 import { disposeEditorModel, newEditorModelPath } from '../viewers/editorModels';
 import type { AskConfirm } from './usePanelConfirm';
 
@@ -117,16 +118,40 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, 
   const isSaving = savingFile !== null && savingFile === selectedFile;
   const hasUnsavedChanges = isDirty({ isEditing, editContent, originalContent });
 
+  // Monaco reports a change outside any discrete event (Chromium's
+  // EditContext), so `editContent` can trail the model by a render: a Cmd+S in
+  // that gap saw nothing to save and was swallowed, and a save or a discard
+  // check could miss the last keystrokes. The change listener records the text
+  // here, stamped with its edit session, and every check a keypress or a click
+  // makes reads it; renders keep `editContent`.
+  const typedRef = useRef<{ session: string | null; text: string } | null>(null);
+  const sessionRef = useLatestRef(modelPath);
+
+  /** The active tab's draft as typed, ahead of the render that will show it. */
+  const typedDraft = useCallback(() => {
+    const typed = typedRef.current;
+    return typed && typed.session === modelPath ? typed.text : editContent;
+  }, [modelPath, editContent]);
+
+  const unsavedNow = useCallback(
+    () => isDirty({ isEditing, editContent: typedDraft(), originalContent }),
+    [isEditing, typedDraft, originalContent],
+  );
+
   /** Whether a tab, this one or a parked one, would lose an edit if closed. */
   const tabHasUnsavedChanges = useCallback((id: string) => {
-    if (id === tabId) return hasUnsavedChanges;
+    if (id === tabId) return unsavedNow();
     const parked = drafts.current.get(id);
     return !!parked && isDirty(parked);
-  }, [tabId, hasUnsavedChanges]);
+  }, [tabId, unsavedNow]);
 
   // What leaving the page would lose: the active tab's edit or any parked one.
   // `hasUnsavedChanges` stays the active tab's, which is what the header shows.
   const hasAnyUnsavedChanges = hasUnsavedChanges || [...drafts.current.values()].some(isDirty);
+  const anyUnsavedNow = useCallback(
+    () => unsavedNow() || [...drafts.current.values()].some(isDirty),
+    [unsavedNow],
+  );
 
   const forgetTab = useCallback((id: string) => {
     drafts.current.delete(id);
@@ -166,8 +191,9 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, 
   }, [selectedFile, workspaceId, readFileFullFn, setFileContent, t]);
 
   const handleEditorChange = useCallback((value: string) => {
+    typedRef.current = { session: sessionRef.current, text: value };
     setEditContent(value);
-  }, []);
+  }, [sessionRef]);
 
   // Takes the file and text as they were when the question was asked: the
   // answer arrives on a later render.
@@ -210,15 +236,16 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, 
   }, [workspaceId, writeFileFn, setFileContent, onSaveSettled, t]);
 
   const handleSave = useCallback(() => {
-    if (!selectedFile || !workspaceId || editContent === null) return;
+    const draft = typedDraft();
+    if (!selectedFile || !workspaceId || draft === null) return;
     // The button carries the only other re-entry guard and the key handler
     // below does not read it, so this one belongs where every caller passes.
     if (savingFile === selectedFile) return;
     ask(
       { title: t('filePanel.saveTitle'), message: t('filePanel.confirmSave'), confirmLabel: t('common.save') },
-      () => { void save(selectedFile, editContent); },
+      () => { void save(selectedFile, draft); },
     );
-  }, [selectedFile, savingFile, workspaceId, editContent, ask, save, t]);
+  }, [selectedFile, savingFile, workspaceId, typedDraft, ask, save, t]);
 
   const discardEdit = useCallback(() => {
     setIsEditing(false);
@@ -229,7 +256,7 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, 
   }, []);
 
   const handleCancelEdit = useCallback(() => {
-    if (!hasUnsavedChanges) {
+    if (!unsavedNow()) {
       discardEdit();
       return;
     }
@@ -240,29 +267,30 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, 
       // since the question would discard a draft nobody asked about.
       () => { if (selectedFileRef.current === file) discardEdit(); },
     );
-  }, [hasUnsavedChanges, selectedFile, discardEdit, ask, t]);
+  }, [unsavedNow, selectedFile, discardEdit, ask, t]);
 
   useEffect(() => {
     if (!isEditing) return;
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault();
-        if (hasUnsavedChanges) handleSave();
+        if (unsavedNow()) handleSave();
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [isEditing, hasUnsavedChanges, handleSave]);
+  }, [isEditing, unsavedNow, handleSave]);
 
   useEffect(() => {
-    if (!hasAnyUnsavedChanges) return;
+    if (!isEditing && !hasAnyUnsavedChanges) return;
     const handler = (e: BeforeUnloadEvent) => {
+      if (!anyUnsavedNow()) return;
       e.preventDefault();
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, [hasAnyUnsavedChanges]);
+  }, [isEditing, hasAnyUnsavedChanges, anyUnsavedNow]);
 
   return {
     isEditing,
@@ -285,6 +313,7 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, 
     handleUndoRedoChange,
     hasUnsavedChanges,
     hasAnyUnsavedChanges,
+    anyUnsavedNow,
     tabHasUnsavedChanges,
     forgetTab,
     handleStartEdit,

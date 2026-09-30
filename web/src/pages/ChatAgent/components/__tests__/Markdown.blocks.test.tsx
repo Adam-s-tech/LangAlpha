@@ -75,3 +75,13 @@ describe('Markdown block rendering parity', () => {
     });
   }
 });
+
+describe('Markdown empty fence', () => {
+  // Every fence streams through this state, between its opener and its first
+  // character of code, and an empty fence stays in it.
+  it('draws a fence with no code yet as empty, not as its element stringified', () => {
+    for (const doc of ['```py', '```py\n', '```\n```\n', 'Intro\n```json\n']) {
+      expect(render(doc, false)).not.toContain('[object Object]');
+    }
+  });
+});

@@ -166,7 +166,9 @@ function extractCodeFromPre(children: React.ReactNode): { language: string | nul
   const codeEl = (children as any)?.props ? (children as any) : null;
   const className = (codeEl?.props?.className || '') as string;
   const match = /language-(\w+)/.exec(className);
-  const raw = String(codeEl?.props?.children ?? children ?? '').replace(/\n$/, '');
+  // An empty fence's <code> has no children; falling back to `children` there
+  // would stringify the element itself.
+  const raw = String((codeEl ? codeEl.props.children : children) ?? '').replace(/\n$/, '');
   const json = !match ? tryFormatJson(raw) : null;
   const language = match?.[1] || json?.language || null;
   const code = json?.formatted || raw;

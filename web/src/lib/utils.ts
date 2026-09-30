@@ -35,6 +35,11 @@ function wallClockFmt(tz: string): Intl.DateTimeFormat {
 export const dateStrInTz = (d: number | Date, tz: string): string =>
   new Date(d).toLocaleDateString('en-CA', { timeZone: tz });
 
+/** YYYY-MM-DD on the reader's own calendar. `toISOString()` gives the UTC date,
+ *  which is already tomorrow (or still yesterday) for part of every day outside
+ *  UTC, so "today" comparisons built on it put today's rows on the wrong side. */
+export const localDateStr = (d: number | Date): string => new Date(d).toLocaleDateString('en-CA');
+
 /** Convert UTC Unix ms to ET date string (YYYY-MM-DD). */
 export const utcMsToETDate = (ms: number): string => dateStrInTz(ms, 'America/New_York');
 

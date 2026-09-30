@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from '@/lib/framer';
 import { useBackdropDismiss } from '@/hooks/useDialogA11y';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
+import { localDateStr } from '@/lib/utils';
 import { getEarningsCalendar } from '../utils/api';
 
 interface EarningsEntry {
@@ -132,7 +133,7 @@ function EarningsModal({ earnings, onClose }: EarningsModalProps) {
   const locale = useLocale();
   const now = useNow();
   const backdrop = useBackdropDismiss<HTMLDivElement>(onClose);
-  const todayStr = new Date(now).toISOString().split('T')[0];
+  const todayStr = localDateStr(now);
 
   // Group by date, sorted chronologically
   const dateGroups = useMemo((): DateGroup[] => {
@@ -331,9 +332,9 @@ function EarningsCalendarCard() {
   const fetchEarnings = useCallback(async () => {
     setLoading(true);
     try {
-      const today = new Date();
-      const from = new Date(today.getTime() - 5 * 86400000).toISOString().split('T')[0];
-      const to = new Date(today.getTime() + 5 * 86400000).toISOString().split('T')[0];
+      const today = Date.now();
+      const from = localDateStr(today - 5 * 86400000);
+      const to = localDateStr(today + 5 * 86400000);
       const result = await getEarningsCalendar({ from, to });
       // Filter to US-market symbols only (no dot-suffix like .BK, .TW, .L, .TO, etc.)
       const usOnly = ((result?.data || []) as EarningsEntry[]).filter((e) => e.symbol && !e.symbol.includes('.'));
@@ -351,7 +352,7 @@ function EarningsCalendarCard() {
   }, [fetchEarnings]);
 
   const now = useNow();
-  const todayStr = new Date(now).toISOString().split('T')[0];
+  const todayStr = localDateStr(now);
 
   const { recent, upcoming } = useMemo(() => {
     const r = allEarnings.filter((e) => e.date < todayStr).sort((a, b) => b.date.localeCompare(a.date));

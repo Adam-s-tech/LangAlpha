@@ -75,6 +75,40 @@ function emitVersionManifest() {
   }
 }
 
+// Keeps the entry chunk out of every lazy import's preload list. The `$initial`
+// group below lives in the entry, so most route chunks import from it and Vite
+// lists it among their deps. Its preload helper skips a dep that already has a
+// <link>, but the entry arrived by <script>, so the helper appends a
+// modulepreload for a module that is already running. Firefox 146 fires `error`
+// on that link, and index.html's stale-build listener reads it as a dead build.
+/** @returns {import('vite').Plugin} */
+function skipEntryPreload() {
+  /** @type {Set<string>} */
+  const entries = new Set()
+  return {
+    name: 'la-skip-entry-preload',
+    apply: 'build',
+    config: () => ({
+      build: {
+        modulePreload: {
+          resolveDependencies: (_file, deps) => deps.filter((dep) => !entries.has(dep)),
+        },
+      },
+    }),
+    // Ahead of vite:build-import-analysis, whose generateBundle is what calls
+    // resolveDependencies.
+    generateBundle: {
+      order: 'pre',
+      handler(_options, bundle) {
+        entries.clear()
+        for (const chunk of Object.values(bundle)) {
+          if (chunk.type === 'chunk' && chunk.isEntry) entries.add(chunk.fileName)
+        }
+      },
+    },
+  }
+}
+
 // Serves pdf.js's image decoders (JBIG2 and CCITT since pdf.js 6, JPEG 2000) at
 // assets/pdfjs-wasm/<version>/, the `wasmUrl` PdfViewer passes. pdf.js fetches
 // them by bare filename from one directory, so they cannot take hashed names;
@@ -128,7 +162,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: env.VITE_CDN_BASE || '/',
-    plugins: [...reactPlugins(), emitVersionManifest(), pdfjsWasm(), localePreload(path.resolve(import.meta.dirname, 'src/locales'))],
+    plugins: [...reactPlugins(), emitVersionManifest(), skipEntryPreload(), pdfjsWasm(), localePreload(path.resolve(import.meta.dirname, 'src/locales'))],
     resolve: {
       // `@/` and the tests' `@e2e/` come from the tsconfig projects' `paths`,
       // each file resolving through the project that owns it.

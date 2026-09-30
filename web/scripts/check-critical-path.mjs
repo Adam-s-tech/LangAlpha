@@ -14,7 +14,7 @@
 //
 // Update either constant deliberately, never to make a red build go green.
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 
@@ -171,6 +171,27 @@ if (version.build !== entryFile) {
   console.error(`  index.html entry:   ${entryFile}`)
   console.error('  The client compares these two. A mismatch prompts every user to')
   console.error('  reload, forever, and the reload does not clear it.\n')
+  process.exit(1)
+}
+
+// No lazy import may list the entry among the chunks to preload: it is already
+// running, Firefox 146 fails a modulepreload for it, and index.html reads that
+// failure as a dead build, so every route chunk that imports shared code raised
+// the "new version" toast. skipEntryPreload (vite.config.js) filters it through
+// `resolveDependencies`, which Vite marks experimental, so an upgrade could
+// quietly turn the filter into a no-op; this is where that shows.
+const entryAsDep = ['"', "'", '`'].map((q) => `${q}assets/${entryFile}${q}`)
+const preloadingEntry = readdirSync(join(outDir, 'assets')).filter((f) => {
+  if (!f.endsWith('.js')) return false
+  const code = readFileSync(join(outDir, 'assets', f), 'utf8')
+  return entryAsDep.some((dep) => code.includes(dep))
+})
+if (preloadingEntry.length) {
+  console.error(`\n✗ ${preloadingEntry.length} chunk(s) list the entry ${entryFile} as a preload dep`)
+  console.error(`  e.g. ${preloadingEntry.slice(0, 3).join(', ')}`)
+  console.error('  Firefox 146 fails that modulepreload and the stale-build listener in')
+  console.error('  index.html turns it into a false "new version" toast. Check that')
+  console.error('  skipEntryPreload in vite.config.js still runs.\n')
   process.exit(1)
 }
 

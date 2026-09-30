@@ -154,6 +154,16 @@ function MarketViewInner() {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(
     () => openingRoute.workspaceId || loadPref<string | null>('selectedWorkspaceId', null),
   );
+  // An id restored from storage can name a workspace this account cannot open
+  // (deleted since, or saved by someone else on this browser), and every
+  // workspace-scoped request made with it comes back 403. So it reaches nothing
+  // until the reconcile below has checked it against the list; a link-named id
+  // is trusted outright, as the reconcile trusts it.
+  const [unverifiedWorkspaceId, setUnverifiedWorkspaceId] = useState<string | null>(
+    () => (openingRoute.workspaceId ? null : selectedWorkspaceId),
+  );
+  const workspacePending = selectedWorkspaceId !== null && selectedWorkspaceId === unverifiedWorkspaceId;
+  const scopedWorkspaceId = workspacePending ? null : selectedWorkspaceId;
 
   useEffect(() => {
     savePref('mode', mode);
@@ -227,7 +237,7 @@ function MarketViewInner() {
   // panel is using — flash workspace in Fast mode, the selected one in PTC.
   // Annotations are keyed by (workspace_id, chart_id), so this single id scopes
   // both the persistence sync and the live chart selection.
-  const activeWorkspaceId = mode === 'fast' ? flashWorkspaceId : selectedWorkspaceId;
+  const activeWorkspaceId = mode === 'fast' ? flashWorkspaceId : scopedWorkspaceId;
   useChartAnnotationSync(activeWorkspaceId, selectedStock);
 
   // Switch the chart to a given instance — used by the live-add auto-focus
@@ -395,9 +405,14 @@ function MarketViewInner() {
   // that link from a workspace that was open seconds earlier, and one older
   // than the page's fifty is exactly the case this check would misread as
   // deleted, dropping the thread the link carried.
+  //
+  // A failed load releases the restored id without judging it: its requests
+  // may 403, but a list outage must not leave PTC mode unusable.
   const reconciledRef = useRef(false);
   useEffect(() => {
-    if (reconciledRef.current || !isFetchedAfterMount || !isSuccess) return;
+    if (reconciledRef.current || !isFetchedAfterMount) return;
+    setUnverifiedWorkspaceId(null);
+    if (!isSuccess) return;
     reconciledRef.current = true;
     if (selectedWorkspaceId && selectedWorkspaceId === openingRoute.workspaceId) return;
     if (selectedWorkspaceId && workspaces.some((ws) => ws.workspace_id === selectedWorkspaceId)) return;
@@ -532,7 +547,7 @@ function MarketViewInner() {
     } else {
       // PTC mode: use selected workspace or fall back to default
       try {
-        let workspaceId = selectedWorkspaceId;
+        let workspaceId = scopedWorkspaceId;
         if (!workspaceId) {
           toast({
             variant: 'destructive',
@@ -569,7 +584,7 @@ function MarketViewInner() {
     }
     setChartImage(null);
     setChartImageDesc(null);
-  }, [handleFastModeSend, navigate, toast, chartImage, chartImageDesc, mode, selectedWorkspaceId, selectedStock, selectedInterval]);
+  }, [handleFastModeSend, navigate, toast, chartImage, chartImageDesc, mode, scopedWorkspaceId, selectedStock, selectedInterval]);
 
   const handleSidebarSymbolClick = useCallback((symbol: string) => {
     setSelectedStock(symbol);
@@ -679,7 +694,7 @@ function MarketViewInner() {
               mode={mode}
               onModeChange={setMode as any}
               workspaces={workspaces}
-              selectedWorkspaceId={selectedWorkspaceId}
+              selectedWorkspaceId={scopedWorkspaceId}
               onWorkspaceChange={setSelectedWorkspaceId}
               onCaptureChart={handleCaptureChartForContext}
               chartImage={chartImage}
@@ -808,7 +823,8 @@ function MarketViewInner() {
                   mode={mode}
                   onModeChange={setMode}
                   workspaces={workspaces}
-                  selectedWorkspaceId={selectedWorkspaceId}
+                  selectedWorkspaceId={scopedWorkspaceId}
+                  workspacePending={workspacePending}
                   onWorkspaceChange={setSelectedWorkspaceId}
                   chartImage={chartImage}
                   chartImageDesc={chartImageDesc}

@@ -1,4 +1,4 @@
-import React, { useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
+import React, { memo, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
 import { SPRING_FOLD } from './liveZoneTiming';
 import { animate, useReducedMotion, type AnimationPlaybackControls } from '@/lib/framer';
 
@@ -31,6 +31,17 @@ type Phase = 'closed' | 'opening' | 'open' | 'closing';
  * proportion to how far the panel is closed, so the last frame of a close and
  * the first of an open move nothing.
  */
+// A close tweens down what was there. The same commit that closes the panel
+// re-renders its blocks for the folded turn (an accordion told to shut), and a
+// body collapsing under a shrinking clip reads as two motions. While `held`,
+// the children of the last open render stay on screen.
+const HeldChildren = memo(
+  function HeldChildren({ children }: { held: boolean; children: React.ReactNode }) {
+    return <>{children}</>;
+  },
+  (_prev, next) => next.held,
+);
+
 function gapBelow(outer: HTMLElement): number {
   const next = outer.nextElementSibling;
   if (!(next instanceof HTMLElement)) return 0;
@@ -46,12 +57,6 @@ export function FoldPanel({ open, children }: FoldPanelProps): React.ReactElemen
   const controlsRef = useRef<AnimationPlaybackControls | null>(null);
   const reduceMotion = useReducedMotion();
   const readReduceMotion = useEffectEvent(() => reduceMotion);
-  // A close tweens down what was there. The same commit that closes the
-  // panel re-renders its blocks for the folded turn (an accordion told to
-  // shut), and a body collapsing under a shrinking clip reads as two motions.
-  // The children of the last open render are kept until the panel is gone.
-  const shownRef = useRef(children);
-  if (open) shownRef.current = children;
 
   useLayoutEffect(() => {
     const outer = outerRef.current;
@@ -59,7 +64,13 @@ export function FoldPanel({ open, children }: FoldPanelProps): React.ReactElemen
     const phase = phaseRef.current;
 
     if (open) {
-      if (!mounted) { setMounted(true); return; }
+      if (!mounted) {
+        // Height and opacity are this effect's alone, so render never reads
+        // the phase. Shut the box before the children mount into it.
+        outer.style.height = '0px';
+        setMounted(true);
+        return;
+      }
       if (phase === 'open' || phase === 'opening') return;
       const inner = innerRef.current;
       if (!inner) return;
@@ -168,16 +179,14 @@ export function FoldPanel({ open, children }: FoldPanelProps): React.ReactElemen
     <div
       ref={outerRef}
       hidden={settledClosed}
-      style={{
-        overflow: 'hidden',
-        height: settledClosed ? 0 : phaseRef.current === 'open' ? 'auto' : `${heightRef.current}px`,
-        opacity: phaseRef.current === 'open' ? 1 : undefined,
-      }}
+      style={{ overflow: 'hidden', height: settledClosed ? 0 : undefined }}
     >
       {/* flow-root: the spring's target is this box, and it has to contain a
           child's margin rather than let it collapse through, or the box hands
           back to `auto` a few px taller than the spring ever reached. */}
-      <div ref={innerRef} style={{ display: 'flow-root' }}>{mounted ? shownRef.current : null}</div>
+      <div ref={innerRef} style={{ display: 'flow-root' }}>
+        {mounted ? <HeldChildren held={!open}>{children}</HeldChildren> : null}
+      </div>
     </div>
   );
 }

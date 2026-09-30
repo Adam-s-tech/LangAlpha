@@ -340,7 +340,9 @@ async def _build_and_backfill(
             )
         else:
             turn_items = stored_merge._merge_stored_payloads(
-                turn_items, stored_events, lane.turn_lossy_lanes
+                turn_items,
+                stored_events,
+                stored_merge._resurrect_lanes(response, lane.turn_lossy_lanes),
             )
 
         _fill_token_thresholds(turn_items)
@@ -371,7 +373,8 @@ async def _build_and_backfill(
         # archive — caching before it lands would freeze the loss for the
         # cache TTL. A stored transcript-class row clears the debt: those
         # classes are written only by the atomic archive writers (collector,
-        # stop drain), never by the live root path.
+        # stop drain), never by the live root path. A lossy main lane owes
+        # nothing: its rows land in the finalize CAS that sets the status.
         awaiting_archive = set(lane.turn_lossy_lanes)
         for i in turn_items:
             d = i.get("data") or {}

@@ -7,6 +7,7 @@ from typing import Any
 
 from src.server.database.runs import lifecycle as tl_db
 from src.server.database.provenance import provenance_row_to_event
+from src.server.services.history.replay import stored_merge
 from src.server.services.runs.sse_producer import build_credit_usage_data
 from src.server.utils.error_sanitization import (
     sanitize_error_text as _sanitize_error_text,
@@ -240,18 +241,30 @@ def _stub_turn_items(
 ) -> list[dict[str, Any]]:
     """A persisted turn with no committed boundary: the in-flight active turn
     (frontend attaches to the live run via /status + run_id) or a run that
-    never checkpointed. The user_message stub — plus the terminal error for an
-    errored run — is the whole replay. Never cached."""
+    never checkpointed. The user_message stub, plus the terminal error for an
+    errored run, is the whole replay. Never cached.
+
+    A stopped or failed turn replays its stored rows as a lane that projected
+    nothing, since nothing the user watched stream is on the committed
+    branch. A stop during bring-up has no such rows; a turn that streamed
+    lands here when the finalize's tip read failed and left the commit
+    pointer behind its boundary.
+    """
     response = responses_by_turn.get(turn_index)
+    response_id = str(response.get("conversation_response_id")) if response else None
     items = [
         _user_message_item(thread_id, q, response)
         for q in queries_by_turn.get(turn_index, [])
     ]
+    resurrect_lanes = stored_merge._resurrect_lanes(response, frozenset())
+    if resurrect_lanes:
+        for item in stored_merge._merge_stored_payloads(
+            [], stored_merge._stored_events(response), resurrect_lanes
+        ):
+            _enrich(item, thread_id, turn_index, response_id)
+            items.append(item)
     error_item = _error_item(thread_id, response)
     if error_item:
-        response_id = (
-            str(response.get("conversation_response_id")) if response else None
-        )
         _enrich(error_item, thread_id, turn_index, response_id)
         items.append(error_item)
     return items

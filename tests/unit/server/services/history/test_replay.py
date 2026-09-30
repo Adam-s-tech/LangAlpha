@@ -1463,6 +1463,299 @@ async def test_errored_run_committed_copy_is_not_resurrected(monkeypatch):
     assert chunks == ["the full final text", "and then it died"]
 
 
+_MAIN_AGENT = "model:t1"
+
+
+def _main_chunk(message_id, content_type, content, **extra):
+    return {
+        "event": "message_chunk",
+        "data": {
+            "agent": _MAIN_AGENT,
+            "id": message_id,
+            "role": "assistant",
+            "content_type": content_type,
+            "content": content,
+            **extra,
+        },
+    }
+
+
+def _stop_close(message_id):
+    """The close finalize_stopped_events writes for the message open at stop."""
+    return {
+        "event": "message_chunk",
+        "data": {
+            "agent": _MAIN_AGENT,
+            "id": message_id,
+            "role": "assistant",
+            "finish_reason": "stopped",
+        },
+    }
+
+
+def _main_step(message_id, text, tool_call_id, result):
+    return [
+        _main_chunk(message_id, "text", text),
+        {
+            "event": "tool_calls",
+            "data": {
+                "agent": _MAIN_AGENT,
+                "id": message_id,
+                "role": "assistant",
+                "tool_calls": [{"name": "bash", "args": {}, "id": tool_call_id}],
+            },
+        },
+        {
+            "event": "tool_call_result",
+            "data": {
+                "agent": "tools:t1",
+                "role": "assistant",
+                "tool_call_id": tool_call_id,
+                "content": result,
+            },
+        },
+    ]
+
+
+def _partial_answer(message_id="lc-1"):
+    """Rows of a model call cut off mid-answer, as the live stream wrote them."""
+    return [
+        _main_chunk(message_id, "reasoning_signal", "start"),
+        _main_chunk(message_id, "reasoning", "Reading the filing"),
+        _main_chunk(message_id, "reasoning_signal", "complete", elapsed_ms=900),
+        _main_chunk(message_id, "text", "The answer"),
+        _main_chunk(message_id, "text", " is"),
+    ]
+
+
+def _replayed(items, turn_index=0):
+    """One turn's rows after its user_message, reduced to what renders."""
+    rows = []
+    for item in items:
+        data = item["data"]
+        if data.get("turn_index") != turn_index or item["event"] == "user_message":
+            continue
+        if item["event"] == "message_chunk":
+            rows.append((data.get("id"), data.get("content") or data.get("finish_reason")))
+        elif item["event"] == "tool_calls":
+            rows.append(("tool_calls", data["tool_calls"][0]["id"]))
+        elif item["event"] == "tool_call_result":
+            rows.append(("tool_call_result", data["tool_call_id"]))
+        else:
+            rows.append((item["event"], data.get("error")))
+    return rows
+
+
+async def test_stopped_flash_turn_replays_its_partial_answer(monkeypatch):
+    """A stop inside the only model call commits nothing past the input, so
+    the checkpoint slice is the HumanMessage alone. The partial the user
+    watched stream, and the close that marks it stopped, replay from the
+    finalize's archive in their live order."""
+    _mock_reader(monkeypatch, ThreadHistory(thread_id=THREAD, turns=[_turn(0, [])]))
+    stored = [*_partial_answer(), _stop_close("lc-1")]
+
+    items = await build_checkpoint_replay_items(
+        THREAD, [_query(0)], {0: _response(0, stored, status="cancelled")}
+    )
+
+    assert items[0]["event"] == "user_message"
+    assert [i["data"] for i in items[1:]] == [
+        {**row["data"], "thread_id": THREAD, "turn_index": 0, "response_id": "resp-0"}
+        for row in stored
+    ]
+
+
+async def test_stopped_ptc_turn_replays_steps_once_and_the_partial(monkeypatch):
+    """Steps that finished before the stop are committed and project from the
+    checkpoint; their stored copies only anchor. The in-flight answer exists
+    only in the archive and replays once, after the last step."""
+    turn_msgs = [
+        AIMessage(
+            content="Pulling the filings.",
+            id="ai-1",
+            tool_calls=[{"name": "bash", "args": {}, "id": "tc-1"}],
+        ),
+        ToolMessage(content="filings", tool_call_id="tc-1", name="bash", id="tm-1"),
+        AIMessage(
+            content="Now the margins.",
+            id="ai-2",
+            tool_calls=[{"name": "bash", "args": {}, "id": "tc-2"}],
+        ),
+        ToolMessage(content="margins", tool_call_id="tc-2", name="bash", id="tm-2"),
+    ]
+    _mock_reader(
+        monkeypatch, ThreadHistory(thread_id=THREAD, turns=[_turn(0, turn_msgs)])
+    )
+    stored = [
+        *_main_step("lc-1", "Pulling the filings.", "tc-1", "filings"),
+        *_main_step("lc-2", "Now the margins.", "tc-2", "margins"),
+        _main_chunk("lc-3", "text", "The revenue"),
+        _main_chunk("lc-3", "text", " grew"),
+        _stop_close("lc-3"),
+    ]
+
+    items = await build_checkpoint_replay_items(
+        THREAD, [_query(0)], {0: _response(0, stored, status="cancelled")}
+    )
+
+    assert _replayed(items) == [
+        ("ai-1", "Pulling the filings."),
+        ("tool_calls", "tc-1"),
+        ("tool_call_result", "tc-1"),
+        ("ai-2", "Now the margins."),
+        ("tool_calls", "tc-2"),
+        ("tool_call_result", "tc-2"),
+        ("lc-3", "The revenue"),
+        ("lc-3", " grew"),
+        ("lc-3", "stopped"),
+    ]
+
+
+async def test_stopped_turn_replays_a_parallel_round_once(monkeypatch):
+    """The checkpoint holds a parallel round as one tool_calls row, the live
+    archive as one row per call. Every call's row anchors on the projected
+    round, so none of them replays a second time as lost output."""
+    turn_msgs = [
+        AIMessage(
+            content="Pulling both filings.",
+            id="ai-1",
+            tool_calls=[
+                {"name": "bash", "args": {}, "id": "tc-1"},
+                {"name": "bash", "args": {}, "id": "tc-2"},
+            ],
+        ),
+        ToolMessage(content="10-K", tool_call_id="tc-1", name="bash", id="tm-1"),
+        ToolMessage(content="10-Q", tool_call_id="tc-2", name="bash", id="tm-2"),
+    ]
+    _mock_reader(
+        monkeypatch, ThreadHistory(thread_id=THREAD, turns=[_turn(0, turn_msgs)])
+    )
+    text, calls_1, result_1 = _main_step("lc-1", "Pulling both filings.", "tc-1", "10-K")
+    _, calls_2, result_2 = _main_step("lc-1", "", "tc-2", "10-Q")
+    stored = [text, calls_1, calls_2, result_1, result_2, _main_chunk("lc-2", "text", "Revenue")]
+
+    items = await build_checkpoint_replay_items(
+        THREAD, [_query(0)], {0: _response(0, stored, status="cancelled")}
+    )
+
+    assert [
+        [tc["id"] for tc in i["data"]["tool_calls"]]
+        for i in items
+        if i["event"] == "tool_calls"
+    ] == [["tc-1", "tc-2"]]
+    assert _replayed(items) == [
+        ("ai-1", "Pulling both filings."),
+        ("tool_calls", "tc-1"),
+        ("tool_call_result", "tc-1"),
+        ("tool_call_result", "tc-2"),
+        ("lc-2", "Revenue"),
+    ]
+
+
+async def test_stopped_tool_round_replays_the_result_that_streamed(monkeypatch):
+    """A stop while parallel tools run commits the call but none of the
+    results; one that finished before the stop streamed live and replays."""
+    turn_msgs = [
+        AIMessage(
+            content="Checking both.",
+            id="ai-1",
+            tool_calls=[
+                {"name": "bash", "args": {}, "id": "tc-1"},
+                {"name": "bash", "args": {}, "id": "tc-2"},
+            ],
+        ),
+    ]
+    _mock_reader(
+        monkeypatch, ThreadHistory(thread_id=THREAD, turns=[_turn(0, turn_msgs)])
+    )
+    stored = _main_step("lc-1", "Checking both.", "tc-1", "first done")
+    stored[1]["data"]["tool_calls"].append({"name": "bash", "args": {}, "id": "tc-2"})
+
+    items = await build_checkpoint_replay_items(
+        THREAD, [_query(0)], {0: _response(0, stored, status="cancelled")}
+    )
+
+    assert _replayed(items) == [
+        ("ai-1", "Checking both."),
+        ("tool_calls", "tc-1"),
+        ("tool_call_result", "tc-1"),
+    ]
+    result = next(i for i in items if i["event"] == "tool_call_result")
+    assert result["data"]["content"] == "first done"
+
+
+@pytest.mark.parametrize("status", ["completed", "interrupted"])
+async def test_settled_main_lane_keeps_its_phantom_partial_dropped(
+    monkeypatch, status
+):
+    """A turn that ended on a committed boundary replays the checkpoint alone.
+    Its archive can still hold a partial from a model attempt an in-run retry
+    replaced; resurrecting it would double-render the answer."""
+    _mock_reader(
+        monkeypatch,
+        ThreadHistory(
+            thread_id=THREAD,
+            turns=[_turn(0, [AIMessage(content="The answer is 42.", id="ai-1")])],
+        ),
+    )
+    stored = [
+        _main_chunk("lc-phantom", "text", "The ans"),
+        _main_chunk("lc-1", "text", "The answer is 42."),
+    ]
+
+    items = await build_checkpoint_replay_items(
+        THREAD, [_query(0)], {0: _response(0, stored, status=status)}
+    )
+
+    assert _replayed(items) == [("ai-1", "The answer is 42.")]
+
+
+async def test_errored_turn_replays_its_partial_before_the_error(monkeypatch):
+    """A model call that raises commits nothing, but the error finalize
+    archives what streamed in the same write that records the failure. The
+    partial replays, then the terminal error. No stop close exists here."""
+    _mock_reader(monkeypatch, ThreadHistory(thread_id=THREAD, turns=[_turn(0, [])]))
+    response = _response(0, _partial_answer(), status="error")
+    response["errors"] = ["provider exploded"]
+
+    items = await build_checkpoint_replay_items(THREAD, [_query(0)], {0: response})
+
+    assert _replayed(items) == [
+        ("lc-1", "start"),
+        ("lc-1", "Reading the filing"),
+        ("lc-1", "complete"),
+        ("lc-1", "The answer"),
+        ("lc-1", " is"),
+        ("error", "provider exploded"),
+    ]
+
+
+async def test_stopped_turn_without_a_boundary_replays_its_partial(monkeypatch):
+    """A stopped turn whose finalize could not advance the commit pointer has
+    no slice and replays as a stub. What it streamed still replays."""
+    _mock_reader(
+        monkeypatch,
+        ThreadHistory(
+            thread_id=THREAD,
+            turns=[_turn(0, [AIMessage(content="a0", id="ai-0")], turn_index=0)],
+        ),
+    )
+    stored = [*_partial_answer(), _stop_close("lc-1")]
+
+    items = await build_checkpoint_replay_items(
+        THREAD,
+        [_query(0), _query(1)],
+        {0: _response(0), 1: _response(1, stored, status="cancelled")},
+    )
+
+    turn1 = [i for i in items if i["data"].get("turn_index") == 1]
+    assert turn1[0]["event"] == "user_message"
+    assert [i["data"] for i in turn1[1:]] == [
+        {**row["data"], "thread_id": THREAD, "turn_index": 1, "response_id": "resp-1"}
+        for row in stored
+    ]
+
+
 def _cache_probe(monkeypatch):
     """Absorb cache writes; return the list of cached tail checkpoint ids."""
     from src.server.services.history import replay as replay_module
@@ -1519,6 +1812,35 @@ async def test_lossy_lane_awaiting_collector_stays_uncacheable(monkeypatch):
         THREAD, [_query(0)], {0: _response(0, stored)}
     )
     assert cached == ["tail-0"]
+
+
+async def test_stopped_main_lane_caches_with_its_partial(monkeypatch):
+    """A stopped turn's partial lands in the same finalize write as its
+    status, so the turn owes no archive and caches, partial included."""
+    _cache_probe(monkeypatch)
+    segments: list[list[dict]] = []
+
+    async def capture(thread_id, tail_checkpoint_id, fingerprint, items):
+        segments.append(items)
+
+    from src.server.services.history import replay as replay_module
+
+    monkeypatch.setattr(replay_module.projection_cache, "store_turn", capture)
+    turn = _turn(0, [])
+    turn.tail_checkpoint_id = "tail-0"
+    _mock_reader(monkeypatch, ThreadHistory(thread_id=THREAD, turns=[turn]))
+    stored = [*_partial_answer(), _stop_close("lc-1")]
+
+    await build_checkpoint_replay_items(
+        THREAD, [_query(0)], {0: _response(0, stored, status="cancelled")}
+    )
+
+    assert len(segments) == 1
+    assert _replayed(segments[0])[-3:] == [
+        ("lc-1", "The answer"),
+        ("lc-1", " is"),
+        ("lc-1", "stopped"),
+    ]
 
 
 async def test_evicted_pointer_awaiting_collector_stays_uncacheable(monkeypatch):

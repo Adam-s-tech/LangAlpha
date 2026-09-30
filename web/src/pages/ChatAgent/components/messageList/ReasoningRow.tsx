@@ -72,7 +72,11 @@ export const ReasoningRow = memo(function ReasoningRow({ item, defaultExpanded =
   // one at a time so the reader sees the phases pass; on a row that was never
   // live (history) it opens on the last one. Only ever one header on screen.
   const wasLiveRef = useRef(isStreaming);
-  if (isStreaming) wasLiveRef.current = true;
+  // Marked from an effect, not render, and declared first so the walk below
+  // reads it in the same commit.
+  useEffect(() => {
+    if (isStreaming) wasLiveRef.current = true;
+  }, [isStreaming]);
   const [shownHeader, setShownHeader] = useState(() => Math.max(0, headers.length - 1));
   useEffect(() => {
     const last = headers.length - 1;

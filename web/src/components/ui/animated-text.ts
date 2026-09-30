@@ -133,6 +133,11 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
 
     animatingRef.current = true;
     const chain = ++chainRef.current;
+    // A finished chain writes nothing more. With its animations skipped (a
+    // hidden tab, see lib/framer) framer completes at once but applies the
+    // final value on its next frame, after the completion: that late update
+    // cut a reply that ended while hidden back to its last word's start.
+    let done = false;
 
     const segment = target.slice(from, to);
     const wordCount = segment.split(/\s+/).filter(Boolean).length || 1;
@@ -152,7 +157,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
       duration,
       ease: 'linear',
       onUpdate(latest) {
-        if (chain !== chainRef.current) return;
+        if (done || chain !== chainRef.current) return;
         posRef.current = latest;
         // Never behind what is shown: a cursor that already sits inside a
         // word (mounted mid-stream) holds there rather than retracting the stub.
@@ -165,6 +170,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
       },
       onComplete() {
         if (chain !== chainRef.current) return;
+        done = true;
         cursorRef.current = to;
         posRef.current = to;
         setDisplayText(target.slice(0, to));

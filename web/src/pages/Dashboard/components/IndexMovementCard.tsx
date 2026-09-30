@@ -6,7 +6,7 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
 import { createFormatter } from '@/lib/format';
-import { utcMsToETDate } from '@/lib/utils';
+import { cn, utcMsToETDate } from '@/lib/utils';
 import type { IndexData } from '@/types/market';
 
 const fmt2 = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -31,9 +31,18 @@ interface IndexMovementCardProps {
    * fit the 5-column tile layout comfortably.
    */
   forceMobile?: boolean;
+  /** One row of equal cards whatever the viewport: the widget's cell is one
+   *  row tall and as wide as its own grid span, not the page. */
+  singleRow?: boolean;
 }
 
 /* ── Shared card content (no animation wrapper) ── */
+
+// Side by side from 14rem of header width (a card of about 258px), where the
+// widest quote block still leaves room for the longest single word of a name.
+const INDEX_HEADER_ROW =
+  'flex flex-col gap-1 @min-[14rem]:flex-row @min-[14rem]:items-start @min-[14rem]:justify-between @min-[14rem]:gap-3';
+const INDEX_HEADER_QUOTE = 'shrink-0 @min-[14rem]:text-right';
 
 function IndexCardContent({ index }: { index: IndexData }) {
   const locale = useLocale();
@@ -64,11 +73,12 @@ function IndexCardContent({ index }: { index: IndexData }) {
 
   return (
     <>
-      {/* Header: name+date | price, symbol | change */}
-      <div className="p-4 pb-0">
-        <div className="flex justify-between items-start">
-          <div>
-            <div className="flex items-baseline gap-2">
+      {/* Name, date and symbol beside the price and change, or above them on
+          a card too narrow to hold both sides of the row. */}
+      <div className="@container p-4 pb-0">
+        <div className={INDEX_HEADER_ROW}>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-baseline gap-x-2">
               <h3
                 className="text-base font-bold tracking-tight"
                 style={{ color: 'var(--color-text-primary)' }}
@@ -83,7 +93,7 @@ function IndexCardContent({ index }: { index: IndexData }) {
               ^{index.symbol}
             </div>
           </div>
-          <div className="text-right">
+          <div className={INDEX_HEADER_QUOTE}>
             <div
               className="text-lg font-bold tracking-tight dashboard-mono"
               style={{ color: 'var(--color-text-primary)' }}
@@ -338,8 +348,8 @@ function IndexSkeleton({ count }: { count: number }) {
             borderColor: 'var(--color-border-muted)',
           }}
         >
-          <div className="p-4 pb-0">
-            <div className="flex justify-between">
+          <div className="@container p-4 pb-0">
+            <div className={INDEX_HEADER_ROW}>
               <div>
                 <div
                   className="h-4 rounded mb-1"
@@ -350,7 +360,7 @@ function IndexSkeleton({ count }: { count: number }) {
                   style={{ backgroundColor: 'var(--color-border-default)', width: 40 }}
                 />
               </div>
-              <div className="text-right">
+              <div className={cn(INDEX_HEADER_QUOTE, 'flex flex-col items-start @min-[14rem]:items-end')}>
                 <div
                   className="h-5 rounded mb-1"
                   style={{ backgroundColor: 'var(--color-border-default)', width: 80 }}
@@ -380,6 +390,7 @@ function IndexMovementCard({
   indices = [],
   loading = false,
   forceMobile = false,
+  singleRow = false,
 }: IndexMovementCardProps) {
   const isMobileViewport = useIsMobile();
   const isMobile = forceMobile || isMobileViewport;
@@ -393,7 +404,12 @@ function IndexMovementCard({
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+    <div
+      className={cn(
+        'grid gap-4',
+        singleRow ? 'grid-flow-col auto-cols-fr' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5',
+      )}
+    >
       {loading ? (
         <IndexSkeleton count={5} />
       ) : (

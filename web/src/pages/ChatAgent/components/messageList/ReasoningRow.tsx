@@ -42,6 +42,7 @@ export function AnimatedReasoningContent({ content, isStreaming }: AnimatedReaso
       content={displayText}
       className="text-xs"
       style={REASONING_STYLE}
+      streaming={isStreaming || displayText !== content}
     />
   );
 }

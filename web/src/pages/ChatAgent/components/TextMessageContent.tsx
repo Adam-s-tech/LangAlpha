@@ -73,7 +73,8 @@ function TextMessageContent({ content, isStreaming, hasError, structuredError, o
   }
 
   return (
-    <Markdown variant="chat" content={displayText} className="text-base" onOpenFile={onOpenFile} />
+    // The typewriter still writes after the stream ends, until it catches up.
+    <Markdown variant="chat" content={displayText} className="text-base" onOpenFile={onOpenFile} streaming={isStreaming || displayText !== text} />
   );
 }
 

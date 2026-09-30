@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitMarkdownBlocks, streamingLineKey } from '../markdownBlocks';
+import { splitMarkdownBlocks, scanStreamingBlock } from '../markdownBlocks';
 
 describe('splitMarkdownBlocks', () => {
   it('reproduces the input when joined and cuts at paragraph breaks', () => {
@@ -68,7 +68,9 @@ describe('splitMarkdownBlocks', () => {
   });
 });
 
-describe('streamingLineKey', () => {
+describe('scanStreamingBlock', () => {
+  const streamingLineKey = (block: string) => scanStreamingBlock(block).lineKey;
+
   it('holds still while lines land in a fence open at the end, and moves when it closes', () => {
     expect(streamingLineKey('a\nb\nc')).toBe(2);
     expect(streamingLineKey('Intro\n```py')).toBe(1);
@@ -88,5 +90,13 @@ describe('streamingLineKey', () => {
 
   it('holds still inside a fence in a list item while its lines stay indented', () => {
     expect(streamingLineKey('- item\n  ```py\n  code\n\n  more\n')).toBe(1);
+  });
+
+  it('points at the opening line of the fence still open, and nowhere once it closes', () => {
+    expect(scanStreamingBlock('a\nb\nc').openFence).toBe(-1);
+    expect(scanStreamingBlock('Intro\n```py\nx = 1\n').openFence).toBe(6);
+    expect(scanStreamingBlock('Intro\n```py\nx = 1\n```').openFence).toBe(-1);
+    expect(scanStreamingBlock('```a\n```\n```b\nopen').openFence).toBe(9);
+    expect(scanStreamingBlock('- item\n  ```py\n  code\nnext para\n').openFence).toBe(-1);
   });
 });

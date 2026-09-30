@@ -219,7 +219,7 @@ case $llm in
         sub=$(prompt_choice "Sub-choice" "a")
         case $sub in
             b)
-                set_llm_field "name" "gpt-5.6-sol-oauth"
+                set_llm_field "name" "gpt-6.1-sol-oauth"
                 set_llm_field "flash" "gpt-5.6-terra-oauth"
                 # compaction/fetch left blank → inherit the flash model
                 set_llm_field "compaction" ""

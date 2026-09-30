@@ -984,115 +984,12 @@
       "write": "parameters.reasoning.effort"
     }
   },
-  "gpt-5.5-oauth": {
-    "prompt_guidance": "lean",
-    "model_id": "gpt-5.5",
-    "provider": "codex-oauth",
-    "visible": true,
-    "speed": 4,
-    "intelligence": 3,
-    "context": 400000,
-    "input_modalities": [
-      "text",
-      "image",
-      "pdf"
-    ],
-    "parameters": {
-      "reasoning": {
-        "summary": "auto"
-      },
-      "include": [
-        "reasoning.encrypted_content"
-      ],
-      "store": false
-    },
-    "reasoning": {
-      "efforts": [
-        "none",
-        "low",
-        "medium",
-        "high",
-        "xhigh"
-      ],
-      "default": "medium",
-      "write": "parameters.reasoning.effort"
-    }
-  },
-  "gpt-5.6-sol-oauth": {
-    "prompt_guidance": "lean",
-    "model_id": "gpt-5.6-sol",
-    "provider": "codex-oauth",
-    "visible": true,
-    "speed": 3,
-    "intelligence": 4,
-    "context": 1050000,
-    "input_modalities": [
-      "text",
-      "image",
-      "pdf"
-    ],
-    "parameters": {
-      "reasoning": {
-        "summary": "auto"
-      },
-      "include": [
-        "reasoning.encrypted_content"
-      ],
-      "store": false
-    },
-    "reasoning": {
-      "efforts": [
-        "none",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max"
-      ],
-      "default": "medium",
-      "write": "parameters.reasoning.effort"
-    }
-  },
   "gpt-5.6-terra-oauth": {
     "prompt_guidance": "lean",
     "model_id": "gpt-5.6-terra",
     "provider": "codex-oauth",
     "visible": true,
     "speed": 3,
-    "intelligence": 3,
-    "context": 1050000,
-    "input_modalities": [
-      "text",
-      "image",
-      "pdf"
-    ],
-    "parameters": {
-      "reasoning": {
-        "summary": "auto"
-      },
-      "include": [
-        "reasoning.encrypted_content"
-      ],
-      "store": false
-    },
-    "reasoning": {
-      "efforts": [
-        "none",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max"
-      ],
-      "default": "medium",
-      "write": "parameters.reasoning.effort"
-    }
-  },
-  "gpt-5.6-luna-oauth": {
-    "model_id": "gpt-5.6-luna",
-    "provider": "codex-oauth",
-    "visible": true,
-    "speed": 4,
     "intelligence": 3,
     "context": 1050000,
     "input_modalities": [
@@ -1146,41 +1043,6 @@
     },
     "reasoning": {
       "efforts": [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max"
-      ],
-      "default": "medium",
-      "write": "parameters.reasoning.effort"
-    }
-  },
-  "gpt-6-sol-oauth": {
-    "prompt_guidance": "lean",
-    "model_id": "gpt-6-sol",
-    "provider": "codex-oauth",
-    "visible": true,
-    "speed": 4,
-    "intelligence": 4,
-    "context": 1050000,
-    "input_modalities": [
-      "text",
-      "image",
-      "pdf"
-    ],
-    "parameters": {
-      "reasoning": {
-        "summary": "auto"
-      },
-      "include": [
-        "reasoning.encrypted_content"
-      ],
-      "store": false
-    },
-    "reasoning": {
-      "efforts": [
-        "none",
         "low",
         "medium",
         "high",

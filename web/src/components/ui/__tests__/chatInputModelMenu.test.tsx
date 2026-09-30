@@ -68,7 +68,7 @@ function renderMenu(overrides: Record<string, unknown> = {}) {
     isCodexModel: false,
     reasoningEfforts: ['none', 'low', 'medium', 'high'],
     dropdownDirection: 'up' as const,
-    containerRef: { current: null },
+    container: null,
     ...overrides,
   };
   return render(

@@ -303,6 +303,14 @@ function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  // The composer box as state too: the mobile menus portal into it, and render
+  // may only read it from state. The callback ref keeps the ref filled for the
+  // effects and hooks that read it after commit.
+  const [chatContainer, setChatContainer] = useState<HTMLDivElement | null>(null);
+  const attachChatContainer = useCallback((el: HTMLDivElement | null) => {
+    chatContainerRef.current = el;
+    setChatContainer(el);
+  }, []);
 
   // @file mentions and /slash commands — trigger detection, filtering,
   // selection and menu keyboard navigation live in these two machines. Both
@@ -692,7 +700,7 @@ function ChatInput({
     >
       {/* Main Container */}
       <div
-        ref={chatContainerRef}
+        ref={attachChatContainer}
         className={`chat-input-container owns-its-edge flex flex-col items-stretch transition-all duration-200 relative z-10 rounded-2xl cursor-text border border-(--color-border-input) bg-(--color-bg-card) ${isListening ? 'recording' : ''}`}
         onClick={() => textareaRef.current?.focus()}
       >
@@ -928,7 +936,7 @@ function ChatInput({
                     align="start"
                     side={dropdownDirection === 'down' ? 'bottom' : 'top'}
                     className="w-52"
-                    container={isMobile ? chatContainerRef.current : undefined}
+                    container={isMobile ? chatContainer : undefined}
                   >
                     {foldedItems.map((item, idx) => (
                       <React.Fragment key={item.id}>
@@ -975,7 +983,7 @@ function ChatInput({
                 isCodexModel={isCodexModel}
                 reasoningEfforts={reasoningEfforts}
                 dropdownDirection={dropdownDirection}
-                containerRef={chatContainerRef}
+                container={chatContainer}
                 disabled={modelsLoading}
               />
               {/* Voice Input Button (Show only if enabled in user settings) */}

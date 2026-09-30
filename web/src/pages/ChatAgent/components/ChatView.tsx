@@ -798,10 +798,10 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     handleClosePreview,
     handleRefreshPreview,
     handleToggleFilePanel,
-    handleFilesDirtyChange,
+    handleFilesLeaveGuardChange,
     handleActiveTabKindChange,
     activeTabKind,
-    confirmLeaveFiles,
+    leaveFiles,
     handleOpenPreview,
     handleOpenChart,
     handleOpenInMarketView,
@@ -1754,9 +1754,10 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
             dragElastic={{ left: 0, right: 0.5 }}
             onDragEnd={(_: unknown, info: PanInfo) => {
               if (info.velocity.x > 300 || info.offset.x > 120) {
-                if (!confirmLeaveFiles()) return;
-                setRightPanelType(null);
-                popPanelHistory();
+                leaveFiles(() => {
+                  setRightPanelType(null);
+                  popPanelHistory();
+                });
               }
             }}
             className="flex overflow-hidden mobile-panel-overlay"
@@ -1770,7 +1771,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                   threadId={panelThreadId}
                   isActive={isActive}
                   onClose={() => { setRightPanelType(null); popPanelHistory(); }}
-                  onDirtyChange={handleFilesDirtyChange}
+                  onLeaveGuardChange={handleFilesLeaveGuardChange}
                   onActiveTabKindChange={handleActiveTabKindChange}
                   target={panelTarget}
                   onTargetHandled={handleTargetHandled}
@@ -1837,7 +1838,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                       threadId={panelThreadId}
                       isActive={isActive}
                       onClose={() => { setRightPanelType(null); popPanelHistory(); }}
-                      onDirtyChange={handleFilesDirtyChange}
+                      onLeaveGuardChange={handleFilesLeaveGuardChange}
                       onActiveTabKindChange={handleActiveTabKindChange}
                       target={panelTarget}
                       onTargetHandled={handleTargetHandled}

@@ -20,6 +20,7 @@ import { linkCandidates } from '../utils/fileRefResolver';
 import type { WriteEvent } from '../utils/fileRefResolver';
 import { classifyAgentPath, parseAgentPath } from '../utils/agentPaths';
 import { useStableHandler } from '@/hooks/useStableHandler';
+import { useLatestRef } from '@/hooks/useLatestRef';
 import { parseFragment, type FileLocation, type OpenFileHandler } from '../utils/fileLocation';
 import FileHeaderActions from './FileHeaderActions';
 import { useDownloadState, workspaceDownloadKey } from '../utils/downloadNotice';
@@ -118,9 +119,10 @@ interface FilePanelProps {
   onAddContext?: ((ctx: ContextPayload) => void) | null;
   showSystemFiles?: boolean;
   onToggleSystemFiles?: (() => void) | null;
-  /** Whether any open tab holds an unsaved edit. Whoever can unmount the
-   *  panel reads this to ask before doing so. */
-  onDirtyChange?: ((dirty: boolean) => void) | null;
+  /** The guard the panel's own close runs, for whoever else can unmount the
+   *  panel: it asks about unsaved edits, then leaves. Null once the panel is
+   *  gone. */
+  onLeaveGuardChange?: ((guard: RouteLeaveGuard | null) => void) | null;
   /** What kind of tab is in front, as it changes; null once the panel is gone.
    *  The host that sizes the panel reads this, since a chart has a floor of
    *  its own. */
@@ -159,7 +161,7 @@ function FilePanel({
   onAddContext = null,
   showSystemFiles = false,
   onToggleSystemFiles = null,
-  onDirtyChange = null,
+  onLeaveGuardChange = null,
   onActiveTabKindChange = null,
   canShare = false,
 }: FilePanelProps): React.ReactElement {
@@ -272,14 +274,6 @@ function FilePanel({
   const edit = useFileEdit({
     tabId: activeTab.id, workspaceId, selectedFile, setFileContent, readFileFullFn, writeFileFn, ask, onSaveSettled,
   });
-
-  // Every draft, parked or on screen, lives in this mount and dies with it. A
-  // wrapper that owns the close button therefore has to ask before it unmounts
-  // the panel, and can only know to when the panel says so. Reporting clean on
-  // the way out keeps it from asking about a panel that is already gone.
-  const reportDirty = useEffectEvent((dirty: boolean) => onDirtyChange?.(dirty));
-  useEffect(() => { reportDirty(edit.hasAnyUnsavedChanges); }, [edit.hasAnyUnsavedChanges]);
-  useEffect(() => () => reportDirty(false), []);
 
   // Reported on mount too, for a strip restored with a chart in front.
   const reportActiveKind = useEffectEvent((kind: FileTab['kind'] | null) => onActiveTabKindChange?.(kind));
@@ -489,6 +483,18 @@ function FilePanel({
     if (anyUnsavedNow()) askDiscard(go);
     else go();
   }, [anyUnsavedNow, askDiscard]);
+
+  // Every draft, parked or on screen, lives in this mount and dies with it, so
+  // a wrapper that can unmount the panel leaves through this guard. Handed up
+  // once and read through a ref, since the guard itself changes with every
+  // keystroke; withdrawn on the way out, so nothing asks about a panel that is
+  // already gone.
+  const guardLeaveRef = useLatestRef(guardLeave);
+  const reportLeaveGuard = useEffectEvent((guard: RouteLeaveGuard | null) => onLeaveGuardChange?.(guard));
+  useEffect(() => {
+    reportLeaveGuard((go) => guardLeaveRef.current(go));
+    return () => reportLeaveGuard(null);
+  }, [guardLeaveRef]);
 
   const leaveForMarketView = useCallback((spec: ChartTabSpec) => {
     guardLeave(() => onOpenInMarketView?.(spec));

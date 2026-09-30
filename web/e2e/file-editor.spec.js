@@ -122,4 +122,33 @@ test.describe('file editor', () => {
     await page.keyboard.press('Enter');
     await expect.poll(() => writes).toEqual([`${VERBATIM}print(1)`]);
   });
+
+  test('the chat header closes a panel holding a draft only through the app dialog', async ({ page }) => {
+    // The chat's own exits asked with a native confirm, which froze the page,
+    // the chat's stream included, and read the draft as last rendered.
+    const native = [];
+    page.on('dialog', (dialog) => { native.push(dialog.type()); dialog.dismiss(); });
+    await serveMonacoLocally(page);
+    await mockFile(page);
+    await openEditor(page);
+
+    const lines = page.locator('.monaco-editor .view-lines');
+    await lines.waitFor({ timeout: 30000 });
+    await lines.click();
+    await page.keyboard.press('ControlOrMeta+End');
+    await page.keyboard.type('x');
+
+    const toggle = page.locator('button[title="Workspace Files"]');
+    const ask = page.getByRole('dialog', { name: 'Discard changes' });
+    await toggle.click();
+    await expect(ask).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(ask).toBeHidden();
+    await expect(lines).toContainText('x');
+
+    await toggle.click();
+    await ask.getByRole('button', { name: 'Discard' }).click();
+    await expect(page.locator('.file-panel-crumb')).toHaveCount(0);
+    expect(native).toEqual([]);
+  });
 });

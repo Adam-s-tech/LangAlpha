@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { useLocation, useNavigate } from 'react-router';
-import { useTranslation } from 'react-i18next';
 import { appendPathSuffix, getPreviewUrl } from '../../utils/api';
 import { computeAgentArtifactRouting } from '../../utils/agentPaths';
 import { collectRecentWritePaths, collectWriteLog, type TurnMessage } from '../../utils/fileRefResolver';
@@ -14,6 +13,7 @@ import { CHART_SURFACE_MIN_WIDTH } from '@/pages/MarketView/components/chartSurf
 import type { FileTab } from '../filePanel/useFileTabs';
 import { isOneShotKind, stampTarget, type ChartTabSpec, type PanelTarget, type PlanTabSpec, type UnsequencedTarget } from '../filePanel/types';
 import type { OpenFileHandler } from '../../utils/fileLocation';
+import type { RouteLeaveGuard } from '../../contexts/RouteLeaveGuardContext';
 import type { PreviewData } from '../../hooks/utils/types';
 import type { ProvenanceRecord } from '@/types/chat';
 import type { PlanData } from './types';
@@ -106,16 +106,18 @@ export function useRightPanel({
   const [rightPanelType, setRightPanelType] = useState<'file' | 'detail' | 'preview' | null>(null);
 
   // The file panel holds its drafts in memory, and closing the panel unmounts
-  // it. The panel asks before its own close while a draft is open; this is
-  // the same guard for the exits this hook owns. A ref, not state: nothing
-  // here renders on it, and a handler reads the current answer either way.
-  const { t } = useTranslation();
-  const filesDirtyRef = useRef(false);
-  const handleFilesDirtyChange = useCallback((dirty: boolean) => { filesDirtyRef.current = dirty; }, []);
-  const confirmLeaveFiles = useCallback(
-    () => !filesDirtyRef.current || window.confirm(t('filePanel.discardUnsaved')),
-    [t],
-  );
+  // it. The exits this hook owns go through the panel's own leave guard, the
+  // one its close button uses, so they ask in the same dialog and judge the
+  // draft as typed rather than as last rendered. A ref, not state: nothing
+  // here renders on it. No guard means no panel, and so no draft to lose.
+  const filesLeaveGuardRef = useRef<RouteLeaveGuard | null>(null);
+  const handleFilesLeaveGuardChange = useCallback((guard: RouteLeaveGuard | null) => {
+    filesLeaveGuardRef.current = guard;
+  }, []);
+  const leaveFiles = useCallback<RouteLeaveGuard>((go) => {
+    const guard = filesLeaveGuardRef.current;
+    if (guard) guard(go); else go();
+  }, []);
   const [rightPanelWidth, setRightPanelWidth] = useState(750);
   // What the file panel has in front, reported by the panel as it changes. A
   // chart is the one tab with a width of its own: below the surface's floor
@@ -371,14 +373,16 @@ export function useRightPanel({
     const shown = (override: string | null) => (isFlashMode && override) || workspaceId;
     const nextOverride = r.clearWorkspaceId ? null : (r.setWorkspaceId ?? filePanelWorkspaceId);
     const switching = shown(nextOverride) !== shown(filePanelWorkspaceId);
-    if (switching && !confirmLeaveFiles()) return;
-    if (r.clearWorkspaceId) {
-      setFilePanelWorkspaceId(null);
-    } else if (r.setWorkspaceId) {
-      setFilePanelWorkspaceId(r.setWorkspaceId);
-    }
-    landInFilePanel(target);
-  }, [landInFilePanel, setFilePanelWorkspaceId, workspaceDirName, previousDirNames, confirmLeaveFiles, isFlashMode, workspaceId, filePanelWorkspaceId]);
+    const go = () => {
+      if (r.clearWorkspaceId) {
+        setFilePanelWorkspaceId(null);
+      } else if (r.setWorkspaceId) {
+        setFilePanelWorkspaceId(r.setWorkspaceId);
+      }
+      landInFilePanel(target);
+    };
+    if (switching) leaveFiles(go); else go();
+  }, [landInFilePanel, setFilePanelWorkspaceId, workspaceDirName, previousDirNames, leaveFiles, isFlashMode, workspaceId, filePanelWorkspaceId]);
 
   // A turn's sources open as a tab of the file view, one per turn; the tab
   // reads its live records through `getSourcesRecords`.
@@ -695,15 +699,16 @@ export function useRightPanel({
   // Toggle file panel
   const handleToggleFilePanel = useCallback(() => {
     if (rightPanelType === 'file') {
-      if (!confirmLeaveFiles()) return;
-      setRightPanelType(null);
-      popPanelHistory();
+      leaveFiles(() => {
+        setRightPanelType(null);
+        popPanelHistory();
+      });
     } else {
       applyPanelWidth(DEFAULT_PANEL_WIDTH);
       setRightPanelType('file');
       pushPanelHistory();
     }
-  }, [rightPanelType, applyPanelWidth, pushPanelHistory, popPanelHistory, confirmLeaveFiles]);
+  }, [rightPanelType, applyPanelWidth, pushPanelHistory, popPanelHistory, leaveFiles]);
 
   return {
     activeTabKind,
@@ -729,9 +734,9 @@ export function useRightPanel({
     handleClosePreview,
     handleRefreshPreview,
     handleToggleFilePanel,
-    handleFilesDirtyChange,
+    handleFilesLeaveGuardChange,
     handleActiveTabKindChange,
-    confirmLeaveFiles,
+    leaveFiles,
     handleOpenPreview,
     handleOpenChart,
     handleOpenInMarketView,

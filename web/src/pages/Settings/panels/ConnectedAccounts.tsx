@@ -272,7 +272,8 @@ export function ConnectedAccounts() {
                 )}
               </div>
             </div>
-            <div>
+            {/* The description wraps instead: a squeezed CJK label breaks between any two characters. */}
+            <div className="shrink-0">
               {codexOAuthStatus.connected ? (
                 <button
                   type="button"
@@ -387,7 +388,7 @@ export function ConnectedAccounts() {
                 )}
               </div>
             </div>
-            <div>
+            <div className="shrink-0">
               {claudeOAuthStatus.connected ? (
                 <button
                   type="button"

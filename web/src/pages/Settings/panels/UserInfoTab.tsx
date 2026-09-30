@@ -348,20 +348,22 @@ export function UserInfoTab() {
       </div>
 
       {/* Where the transcript lands when a reply finishes */}
-      <div className="settings-row">
-        <div>
+      <div className="settings-row flex-wrap">
+        <div className="flex-1 basis-64">
           <label id={turnEndLabelId} className="text-[0.8125rem] font-medium" style={{ color: 'var(--color-text-primary)' }}>{t('settings.turnEndScroll')}</label>
           <p className="mt-0.5 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{t('settings.turnEndScrollDesc')}</p>
         </div>
-        <SegmentedControl
-          labelledBy={turnEndLabelId}
-          value={turnEndScroll}
-          onChange={(v) => { void handleTurnEndScrollChange(v); }}
-          options={[
-            { value: 'bottom', label: t('settings.turnEndScrollBottom') },
-            { value: 'reply_start', label: t('settings.turnEndScrollReplyStart') },
-          ]}
-        />
+        <div className="flex shrink-0">
+          <SegmentedControl
+            labelledBy={turnEndLabelId}
+            value={turnEndScroll}
+            onChange={(v) => { void handleTurnEndScrollChange(v); }}
+            options={[
+              { value: 'bottom', label: t('settings.turnEndScrollBottom') },
+              { value: 'reply_start', label: t('settings.turnEndScrollReplyStart') },
+            ]}
+          />
+        </div>
       </div>
 
       {/* Whether reasoning is shown as it streams */}

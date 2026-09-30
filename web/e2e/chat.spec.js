@@ -674,7 +674,12 @@ test.describe('Chat View -- SSE Streaming', () => {
     await expect(page.getByText('Options trading involves contracts')).toBeVisible({ timeout: 15000 });
   });
 
+  // The panel opens at 55% of the chat column, capped at 850 px, and below
+  // 720 px the file tree is a sheet that starts closed. At the default
+  // 1280 px viewport the panel is 561 px, so each case sets the width it means.
   test('file panel opens and lists files', async ({ page }) => {
+    // Wide enough for the full 850 px panel, where the tree is a column.
+    await page.setViewportSize({ width: 1920, height: 1080 });
     await mockAPI(page, {
       ...chatViewOverrides(),
       'GET /workspaces/a0000001-0000-4000-8000-000000000001/files': { files: ['report.pdf', 'analysis.py', 'chart.png'] },
@@ -689,6 +694,28 @@ test.describe('Chat View -- SSE Streaming', () => {
 
     // File panel should open and list the files
     await expect(page.getByText('report.pdf')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('analysis.py')).toBeVisible();
+    await expect(page.getByText('chart.png')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Show file tree' })).toHaveCount(0);
+  });
+
+  test('a narrow file panel opens with the tree closed and lists files on request', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await mockAPI(page, {
+      ...chatViewOverrides(),
+      'GET /workspaces/a0000001-0000-4000-8000-000000000001/files': { files: ['report.pdf', 'analysis.py', 'chart.png'] },
+    });
+    await configureEmptyReplay();
+
+    await page.goto('/chat/t/b0000001-0000-4000-8000-000000000001');
+    await page.waitForSelector('textarea', { timeout: 10000 });
+    await page.locator('button[title="Workspace Files"]').click();
+
+    const showTree = page.getByRole('button', { name: 'Show file tree' });
+    await expect(showTree).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('report.pdf')).toHaveCount(0);
+    await showTree.click();
+    await expect(page.getByText('report.pdf')).toBeVisible();
     await expect(page.getByText('analysis.py')).toBeVisible();
     await expect(page.getByText('chart.png')).toBeVisible();
   });

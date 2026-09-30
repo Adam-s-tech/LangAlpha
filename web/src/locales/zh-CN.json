@@ -203,7 +203,6 @@
     "logoutConfirmMsg": "确定要退出登录吗？",
     "timezone": "时区",
     "selectTimezone": "选择时区...",
-    "selectLocale": "选择语言...",
     "preferencesDesc": "偏好设置通过与 Agent 对话来管理。点击下方按钮进行更新。",
     "noPreferencesYet": "暂无偏好设置。点击下方按钮进行设置。",
     "riskTolerance": "风险偏好",

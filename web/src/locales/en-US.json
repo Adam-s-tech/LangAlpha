@@ -203,7 +203,6 @@
     "logoutConfirmMsg": "Are you sure you want to logout?",
     "timezone": "Timezone",
     "selectTimezone": "Select timezone...",
-    "selectLocale": "Select locale...",
     "preferencesDesc": "Preferences are managed through conversation with the agent. Use the button below to update them.",
     "noPreferencesYet": "No preferences set yet. Use the button below to set up your profile.",
     "riskTolerance": "Risk Tolerance",

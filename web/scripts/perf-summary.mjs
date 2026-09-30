@@ -73,7 +73,7 @@ const KINDS = {
     // One table: every streaming run is the same scenario.
     groupOf: () => '',
     configOf: (r) => ({ ...r.config, mode: r.mode }),
-    describe: (c) => (c.cpuRate != null ? `${modeText(c.mode)}, cpu x${c.cpuRate}, ${c.events} events, ${c.chunkChars} chars every ${c.chunkDelayMs} ms, reply ${c.replyChars} chars${c.panel ? `, panel ${c.panel}` : ''}${c.renders ? ', renders counted' : ''}` : '(no config recorded)'),
+    describe: (c) => (c.cpuRate != null ? `${modeText(c.mode)}, cpu x${c.cpuRate}, ${c.events} events, ${c.chunkChars} chars every ${c.chunkDelayMs} ms, reply ${c.replyChars} chars${c.panel ? `, panel ${c.panel}` : ''}${c.renders ? ', renders counted' : ''}${c.endWait ? '' : ', end awaited by getByText'}` : '(no config recorded)'),
   },
   typewriter: {
     prefix: 'typewriter-',

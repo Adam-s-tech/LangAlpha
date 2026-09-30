@@ -194,7 +194,10 @@ test.describe('streaming smoothness', () => {
       await page.evaluate((opts) => window.__smooth.start(document.querySelector('main') || document.body, opts), probe);
     }
 
-    await expect(page.getByText(END_MARKER)).toBeVisible({ timeout: 150_000 });
+    // Not `getByText().toBeVisible()`: its polling walks the whole transcript on
+    // the page's own main thread (3 s of a 32 KB run), inside the window being
+    // measured. A second's lag on the end costs only idle frames.
+    await page.waitForFunction((end) => (document.querySelector('main') || document.body).textContent.includes(end), END_MARKER, { polling: 1000, timeout: 150_000 });
     // The open tab follows its call's record: the replaced result shows.
     if (PANEL === 'tool') await expect(page.locator('.file-panel').getByText(TAB_CALL_OUTPUT)).toBeVisible({ timeout: 10000 });
     // The typewriter and the last fold animations run past the final chunk.
@@ -222,7 +225,7 @@ test.describe('streaming smoothness', () => {
     const run = {
       label: label(),
       at: new Date().toISOString(),
-      config: { cpuRate: CPU_RATE, chunkDelayMs: CHUNK_DELAY_MS, chunkChars: CHUNK_CHARS, events: events.length, replyChars: reply.length, panel: PANEL || null, renders: RENDERS },
+      config: { cpuRate: CPU_RATE, chunkDelayMs: CHUNK_DELAY_MS, chunkChars: CHUNK_CHARS, events: events.length, replyChars: reply.length, panel: PANEL || null, renders: RENDERS, endWait: 'textContent' },
       metrics: m,
       requests,
       profile,

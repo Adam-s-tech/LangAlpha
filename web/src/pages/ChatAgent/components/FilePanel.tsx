@@ -17,7 +17,6 @@ import {
   triggerFileDownload, resolveWorkspaceFile,
 } from '../utils/api';
 import { linkCandidates } from '../utils/fileRefResolver';
-import type { WriteEvent } from '../utils/fileRefResolver';
 import { classifyAgentPath, parseAgentPath } from '../utils/agentPaths';
 import { useStableHandler } from '@/hooks/useStableHandler';
 import { useLatestRef } from '@/hooks/useLatestRef';
@@ -60,8 +59,8 @@ import { ActiveTabBody } from './filePanel/ActiveTabBody';
 import { useWatchTab } from './filePanel/useWatchTab';
 import type { MarketWatchState } from '../session/marketWatchEvents';
 import { RouteLeaveGuardContext, type RouteLeaveGuard } from '../contexts/RouteLeaveGuardContext';
-import type { SubagentInfo, ToolCallProcessRecord } from './ToolCallDetailView';
-import { countDedupedSources, type ProvenanceRecord } from '@/types/chat';
+import type { SubagentInfo } from './ToolCallDetailView';
+import type { TranscriptReader } from './filePanel/useTranscript';
 
 /** Below this the tree cannot be a column without starving the viewer. */
 const TREE_OVERLAY_WIDTH = 720;
@@ -85,18 +84,14 @@ interface FilePanelProps {
   onOpenInMarketView?: ((spec: ChartTabSpec) => void) | null;
   /** Leaves for a subagent's own transcript, from a tool tab showing its task. */
   onOpenSubagentTask?: ((info: SubagentInfo) => void) | null;
-  /** A tool call's live record, for a tool tab; read on every render so a running call's result shows when it lands. */
-  getToolCallProcess?: ((toolCallId: string) => ToolCallProcessRecord | undefined) | null;
-  /** A turn's live provenance, for a sources tab; read on every render so records streaming in show. */
-  getSourcesRecords?: ((messageId: string) => Record<string, ProvenanceRecord> | undefined) | null;
-  /** Every turn's provenance merged, the sources tab's "All sources" scope; read only while that tab is showing. */
-  getAllSourcesRecords?: (() => Record<string, ProvenanceRecord> | undefined) | null;
+  /** The chat's transcript, subscribed to by what reads it: a tool tab follows
+   *  its call's record, a sources tab its turn's records, and the changed-file
+   *  dot the write log, each as it lands. Absent where no chat is streaming. */
+  transcript?: TranscriptReader | null;
   /** Opens a reference to another workspace (a `__wsref__` link inside a viewed file). */
   onOpenFile?: OpenFileHandler | null;
   /** This thread's Write/Edit paths, newest first, for resolving a reference by name. */
   getRecentWritePaths?: (() => string[]) | null;
-  /** Every Write/Edit in the thread, newest first; what marks an open tab changed. */
-  getWriteLog?: (() => WriteEvent[]) | null;
   files?: string[];
   filesLoading?: boolean;
   filesError?: string | null;
@@ -142,12 +137,9 @@ function FilePanel({
   marketWatch = null,
   onOpenInMarketView = null,
   onOpenSubagentTask = null,
-  getToolCallProcess = null,
-  getSourcesRecords = null,
-  getAllSourcesRecords = null,
+  transcript = null,
   onOpenFile = null,
   getRecentWritePaths = null,
-  getWriteLog = null,
   files = [],
   filesLoading = false,
   filesError = null,
@@ -235,7 +227,7 @@ function FilePanel({
   const fileContent = body?.content ?? null;
   const fileMime = body?.mime ?? null;
 
-  const changed = useChangedFiles(getWriteLog);
+  const changed = useChangedFiles(transcript);
   useEffect(() => {
     if (selectedFile && readAt) changed.markRead(selectedFile);
   }, [selectedFile, readAt]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -391,19 +383,6 @@ function FilePanel({
   const [memoDiffOpen, setMemoDiffOpen] = useState(false);
 
   useWatchTab(tabs, marketWatch);
-
-  const sourceCount = useCallback(
-    (messageId: string) => countDedupedSources(getSourcesRecords?.(messageId)),
-    [getSourcesRecords],
-  );
-
-  // Merged only while a sources tab is showing: the accessor is remade per
-  // transcript change, so a thread streaming with a file in front never pays
-  // for a merge nothing reads.
-  const allSourcesRecords = useMemo(
-    () => (activeTab.kind === 'sources' ? getAllSourcesRecords?.() : undefined),
-    [activeTab.kind, getAllSourcesRecords],
-  );
 
   const retry = useCallback(() => {
     downloads.clearError();
@@ -598,8 +577,7 @@ function FilePanel({
         onActivate={activateTab}
         onClose={closeTab}
         onPin={tabs.pinTab}
-        sourceCount={sourceCount}
-        getToolCallProcess={getToolCallProcess ?? undefined}
+        transcript={transcript}
         onNewTab={singleFileMode || readOnly ? null : newTab}
         hasChanged={changed.hasChanged}
         treeOpen={treeShown}
@@ -739,9 +717,7 @@ function FilePanel({
                 marketWatch={marketWatch}
                 onOpenFile={onOpenFile}
                 onOpenSubagentTask={onOpenSubagentTask}
-                getToolCallProcess={getToolCallProcess}
-                getSourcesRecords={getSourcesRecords}
-                allSourcesRecords={allSourcesRecords}
+                transcript={transcript}
                 onAddContext={onAddContext}
                 onOpenInMarketView={onOpenInMarketView ? leaveForMarketView : null}
                 file={{

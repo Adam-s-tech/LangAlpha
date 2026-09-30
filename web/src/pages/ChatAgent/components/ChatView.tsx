@@ -807,11 +807,8 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     handleOpenInMarketView,
     detailToolCall,
     detailPlanData,
-    getToolCallProcess,
-    getSourcesRecords,
-    getAllSourcesRecords,
+    transcript,
     getRecentWritePaths,
-    getWriteLog,
   } = useRightPanel({
     isMobile,
     workspaceId,
@@ -827,6 +824,9 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     subagentTranscripts,
     watching: showWatchChip,
   });
+  // The file panel's props are one compiled scope, so this handler's per-chunk
+  // identity would re-create every inline prop beside it and re-render the panel.
+  const openSubagentTaskFromPanel = useStableHandler(handleOpenSubagentTask);
 
   // Keep the ref in sync so SSE events (via handleOpenPreviewFromStream) use the latest closure
   useLayoutEffect(() => {
@@ -1779,14 +1779,11 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                   onTargetMemoryHandled={handleTargetMemoryHandled}
                   onTargetMemoHandled={handleTargetMemoHandled}
                   onOpenInMarketView={handleOpenInMarketView}
-                  onOpenSubagentTask={handleOpenSubagentTask}
-                  getToolCallProcess={getToolCallProcess}
-                  getSourcesRecords={getSourcesRecords}
-                  getAllSourcesRecords={getAllSourcesRecords}
+                  onOpenSubagentTask={openSubagentTaskFromPanel}
+                  transcript={transcript}
                   marketWatch={marketWatch}
                   onOpenFile={handleOpenFileFromChat}
                   getRecentWritePaths={getRecentWritePaths}
-                  getWriteLog={getWriteLog}
                   files={workspaceFiles}
                   filesLoading={filesLoading}
                   filesError={filesError}
@@ -1846,14 +1843,11 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                       onTargetMemoryHandled={handleTargetMemoryHandled}
                       onTargetMemoHandled={handleTargetMemoHandled}
                       onOpenInMarketView={handleOpenInMarketView}
-                      onOpenSubagentTask={handleOpenSubagentTask}
-                      getToolCallProcess={getToolCallProcess}
-                      getSourcesRecords={getSourcesRecords}
-                      getAllSourcesRecords={getAllSourcesRecords}
+                      onOpenSubagentTask={openSubagentTaskFromPanel}
+                      transcript={transcript}
                       marketWatch={marketWatch}
                       onOpenFile={handleOpenFileFromChat}
                       getRecentWritePaths={getRecentWritePaths}
-                      getWriteLog={getWriteLog}
                       files={workspaceFiles}
                       filesLoading={filesLoading}
                       filesError={filesError}

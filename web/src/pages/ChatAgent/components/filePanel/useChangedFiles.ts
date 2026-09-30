@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { WriteEvent } from '../../utils/fileRefResolver';
+import { useTranscriptRead, type TranscriptReader } from './useTranscript';
 
-const NO_WRITES: WriteEvent[] = [];
+const NO_WRITES: readonly WriteEvent[] = [];
 const NO_MARKS: ReadonlyMap<string, string | null> = new Map();
 
 /** The newest write of one path in a newest-first log, or null for none. */
 const newestWriteOf = (log: readonly WriteEvent[], path: string) => log.find((w) => w.path === path)?.id ?? null;
+
+const readWriteLog = (reader: TranscriptReader) => reader.writeLog();
 
 /**
  * Which open files the agent has rewritten since the tab showing them last
@@ -16,34 +19,24 @@ const newestWriteOf = (log: readonly WriteEvent[], path: string) => log.find((w)
  * the bytes; a different id at the front later is a write that happened
  * since. The id, not a count: the log a lookup uses names each file once, so
  * the second write of a file that was already newest changes nothing in it.
- * A panel with no log (a share, the gallery) simply never marks anything,
- * which is correct: nothing is writing.
+ * A panel with no transcript (a share, the gallery) simply never marks
+ * anything, which is correct: nothing is writing.
  *
- * The log is a live array behind a getter, and nothing re-renders when the
- * agent appends to it, so it is read after each render rather than
- * subscribed to. The equality guard is what keeps that from looping; in
- * practice the render that notices is the one the refreshed file list causes.
+ * The log is subscribed to, so a write marks its tab as it lands even while
+ * nothing else about the panel changes.
  */
-export function useChangedFiles(getWriteLog?: (() => WriteEvent[]) | null) {
-  const [writes, setWrites] = useState<WriteEvent[]>(NO_WRITES);
+export function useChangedFiles(transcript?: TranscriptReader | null) {
+  const writes = useTranscriptRead(transcript, readWriteLog) ?? NO_WRITES;
   // Per path, the newest write it had when its tab last read it (null: none
   // yet). Replaced rather than edited, so `hasChanged` is a new function
   // whenever a mark moves and a strip that caches on it shows the dot go.
   const [marks, setMarks] = useState(NO_MARKS);
 
-  // Deliberately dep-less: it runs after every render, and the equality guard
-  // below is what stops the update chain.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const next = getWriteLog?.() ?? NO_WRITES;
-    setWrites((prev) => (prev.length === next.length && prev[0]?.id === next[0]?.id ? prev : next.slice()));
-  });
-
   /** This path's bytes are now in hand; writes after this moment are changes. */
   const markRead = useCallback((path: string) => {
-    const mark = newestWriteOf(getWriteLog?.() ?? NO_WRITES, path);
+    const mark = newestWriteOf(transcript?.writeLog() ?? NO_WRITES, path);
     setMarks((prev) => (prev.has(path) && prev.get(path) === mark ? prev : new Map(prev).set(path, mark)));
-  }, [getWriteLog]);
+  }, [transcript]);
 
   const forget = useCallback((path: string) => {
     setMarks((prev) => {

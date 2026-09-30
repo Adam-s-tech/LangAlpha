@@ -5,17 +5,19 @@
  * function, not as a counter bump behind the same one.
  */
 import { describe, it, expect } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { TabStrip } from '../TabStrip';
 import { useChangedFiles } from '../useChangedFiles';
 import type { FileTab } from '../useFileTabs';
+import type { TranscriptReader } from '../useTranscript';
 import type { WriteEvent } from '../../../utils/fileRefResolver';
+import { createTranscriptStore } from '../transcriptStore';
 
 const tabs: FileTab[] = [{ id: 'a', kind: 'file', path: 'notes.md', preview: false, location: null, locationSeq: 0 }];
 const noop = () => {};
 
-function Strip({ getWriteLog }: { getWriteLog: () => WriteEvent[] }) {
-  const changed = useChangedFiles(getWriteLog);
+function Strip({ transcript }: { transcript: TranscriptReader }) {
+  const changed = useChangedFiles(transcript);
   return (
     <>
       <TabStrip
@@ -37,14 +39,15 @@ function Strip({ getWriteLog }: { getWriteLog: () => WriteEvent[] }) {
 
 describe('TabStrip changed dot', () => {
   it('sets on a write after the read and clears on the next read', () => {
-    const log = { current: [] as WriteEvent[] };
-    const getWriteLog = () => log.current;
-    const { rerender } = render(<Strip getWriteLog={getWriteLog} />);
+    let log: WriteEvent[] = [];
+    const collectWrites = () => log;
+    const store = createTranscriptStore({ messages: [], collectWrites });
+    render(<Strip transcript={store.reader} />);
     fireEvent.click(screen.getByText('read'));
     expect(screen.queryByTitle('Changed since you opened it')).toBeNull();
 
-    log.current = [{ id: 'w1', path: 'notes.md' }];
-    rerender(<Strip getWriteLog={getWriteLog} />);
+    log = [{ id: 'w1', path: 'notes.md' }];
+    act(() => store.publish({ messages: [], collectWrites }));
     expect(screen.getByTitle('Changed since you opened it')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('read'));

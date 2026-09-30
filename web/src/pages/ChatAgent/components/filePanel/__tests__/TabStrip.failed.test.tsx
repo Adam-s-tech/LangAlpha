@@ -8,6 +8,7 @@ import { render, screen } from '@testing-library/react';
 import { TabStrip } from '../TabStrip';
 import type { FileTab } from '../useFileTabs';
 import type { ToolCallProcessRecord } from '../../ToolCallDetailView';
+import { createTranscriptStore } from '../transcriptStore';
 
 const tabs: FileTab[] = [
   { id: 'a', kind: 'tool', preview: false, toolCallId: 'tc-failed' },
@@ -21,6 +22,8 @@ const records: Record<string, ToolCallProcessRecord> = {
   'tc-task': { toolName: 'Task', toolCall: { name: 'Task', args: {} }, isFailed: true },
 };
 
+const transcript = createTranscriptStore({ messages: [{ toolCallProcesses: records }] }).reader;
+
 const strip = (activeId: string) => (
   <TabStrip
     tabs={tabs}
@@ -30,7 +33,7 @@ const strip = (activeId: string) => (
     onPin={() => {}}
     onNewTab={null}
     hasChanged={() => false}
-    getToolCallProcess={(id) => records[id]}
+    transcript={transcript}
     treeOpen={false}
     onToggleTree={null}
     onPanelClose={null}

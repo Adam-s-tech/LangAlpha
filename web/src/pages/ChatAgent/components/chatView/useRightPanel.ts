@@ -3,7 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { appendPathSuffix, getPreviewUrl } from '../../utils/api';
 import { computeAgentArtifactRouting } from '../../utils/agentPaths';
-import { collectRecentWritePaths, collectWriteLog, type TurnMessage } from '../../utils/fileRefResolver';
+import { collectRecentWritePaths, collectWriteLog } from '../../utils/fileRefResolver';
 import { useStableHandler } from '@/hooks/useStableHandler';
 import { useLatestRef } from '@/hooks/useLatestRef';
 import { isValidUuid } from '../../utils/uuid';
@@ -15,9 +15,9 @@ import { isOneShotKind, stampTarget, type ChartTabSpec, type PanelTarget, type P
 import type { OpenFileHandler } from '../../utils/fileLocation';
 import type { RouteLeaveGuard } from '../../contexts/RouteLeaveGuardContext';
 import type { PreviewData } from '../../hooks/utils/types';
-import type { ProvenanceRecord } from '@/types/chat';
 import type { PlanData } from './types';
-import { NO_TRANSCRIPTS, useToolCallLookup } from './toolCallLookup';
+import { NO_TRANSCRIPTS, useToolCallLookup, type TranscriptMessage } from './toolCallLookup';
+import { useTranscriptReader } from '../filePanel/transcriptStore';
 import { DEFAULT_PANEL_WIDTH, PLAN_TAB_WIDTH, detailPanelWidth } from '../filePanel/detailWidth';
 
 // A running app or a live chart opens wide, so its toolbar has room.
@@ -54,9 +54,9 @@ export function useRightPanel({
   /** The cross-workspace override; only Flash's panel shows it. */
   filePanelWorkspaceId?: string | null;
   isFlashMode?: boolean;
-  messages: unknown[];
+  messages: readonly TranscriptMessage[];
   /** Each subagent's own messages, so a tool row clicked in its transcript resolves too. */
-  subagentTranscripts?: readonly (readonly unknown[])[];
+  subagentTranscripts?: readonly (readonly TranscriptMessage[])[];
   /** A market watch is running, so a watch call's row opens its live Status tab. */
   watching?: boolean;
 }) {
@@ -385,7 +385,7 @@ export function useRightPanel({
   }, [landInFilePanel, setFilePanelWorkspaceId, workspaceDirName, previousDirNames, leaveFiles, isFlashMode, workspaceId, filePanelWorkspaceId]);
 
   // A turn's sources open as a tab of the file view, one per turn; the tab
-  // reads its live records through `getSourcesRecords`.
+  // reads its live records through `transcript`.
   const handleOpenSourcesFromChat = useCallback((messageId: string) => {
     landInFilePanel({ kind: 'sources', messageId });
   }, [landInFilePanel]);
@@ -396,47 +396,30 @@ export function useRightPanel({
     landInFilePanel({ kind: 'status' });
   }, [landInFilePanel]);
 
-  // The transcript accessors a tab reads through. Each is remade per
-  // transcript change and read at render, so a tab shows a call's result as
-  // it lands and a turn's sources as they stream in, without holding a copy of
-  // either (see useToolCallLookup for why a click-time copy would not do).
+  // What this controller reads a tool call through: remade per transcript
+  // change and read at render, so the mobile sheet and a click see the call as
+  // it is now (see useToolCallLookup for why a click-time copy would not do).
   const getToolCallProcess = useToolCallLookup(messages, subagentTranscripts);
 
-  const getSourcesRecords = useCallback((messageId: string): Record<string, ProvenanceRecord> | undefined => {
-    const msg = messages.find((m) => (m as { id?: string }).id === messageId);
-    return (msg as { provenanceRecords?: Record<string, ProvenanceRecord> } | undefined)?.provenanceRecords;
-  }, [messages]);
+  // The file panel reads the transcript through a subscription instead: a
+  // tool or sources tab follows its records, and the changed-file dot the
+  // write log, without the panel rendering on every streamed chunk.
+  const collectWrites = useCallback(
+    (msgs: readonly TranscriptMessage[]) => collectWriteLog(msgs, workspaceDirName, previousDirNames),
+    [workspaceDirName, previousDirNames],
+  );
+  const transcript = useTranscriptReader(messages, subagentTranscripts, collectWrites);
 
-  // Thread-wide provenance: every turn's records merged in chronological order.
-  // The sources tab dedups across turns (first occurrence wins) and offers a
-  // "This turn / All sources" switch when this set is larger than the turn's.
-  // A merge over every turn is only worth doing while that tab is showing,
-  // which is the reader's call, so this is a callback rather than a memo.
-  const getAllSourcesRecords = useCallback((): Record<string, ProvenanceRecord> => {
-    const merged: Record<string, ProvenanceRecord> = {};
-    for (const m of messages) {
-      const recs = (m as { provenanceRecords?: Record<string, ProvenanceRecord> }).provenanceRecords;
-      if (!recs) continue;
-      // First occurrence wins: keep the earliest turn's metadata for a colliding
-      // key (Object.assign would let later turns overwrite — last-wins).
-      for (const key in recs) {
-        if (!(key in merged)) merged[key] = recs[key];
-      }
-    }
-    return merged;
-  }, [messages]);
-
-  // The mobile sheet's tool call, read live the same way a tab reads it.
+  // The mobile sheet's tool call comes through the lookup above, not through
+  // `transcript`: the store publishes after the commit, so a subscription here
+  // would render ChatView a second time for every change to the call.
   const detailToolCall = detailToolCallId ? getToolCallProcess(detailToolCallId) ?? null : null;
 
   // Read at click time rather than derived per render: the file panel only
   // needs this thread's Write/Edit paths when it resolves a reference, and a
   // memo over `messages` would rebuild on every streamed chunk.
   const getRecentWritePaths = useStableHandler(
-    () => collectRecentWritePaths(messages as TurnMessage[], workspaceDirName, previousDirNames),
-  );
-  const getWriteLog = useStableHandler(
-    () => collectWriteLog(messages as TurnMessage[], workspaceDirName, previousDirNames),
+    () => collectRecentWritePaths(messages, workspaceDirName, previousDirNames),
   );
 
   // One-shot ?file= deep link: opens the file panel targeting that file. Gated
@@ -742,10 +725,7 @@ export function useRightPanel({
     handleOpenInMarketView,
     detailToolCall,
     detailPlanData: detailPlan?.plan ?? null,
-    getToolCallProcess,
-    getSourcesRecords,
-    getAllSourcesRecords,
+    transcript,
     getRecentWritePaths,
-    getWriteLog,
   };
 }

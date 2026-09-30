@@ -428,10 +428,11 @@
           "claude-haiku-4.5"
         ],
         "pricing": {
-          "input": 0.8,
-          "cached_input": 0.08,
-          "cache_5m": 1.0,
-          "output": 4.0,
+          "input": 1.0,
+          "cached_input": 0.1,
+          "cache_5m": 1.25,
+          "cache_1h": 2.0,
+          "output": 5.0,
           "unit": "per_1m_tokens"
         }
       }

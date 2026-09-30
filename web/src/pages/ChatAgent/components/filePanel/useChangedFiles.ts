@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { WriteEvent } from '../../utils/fileRefResolver';
 
 const NO_WRITES: WriteEvent[] = [];
+const NO_MARKS: ReadonlyMap<string, string | null> = new Map();
 
 /** The newest write of one path in a newest-first log, or null for none. */
 const newestWriteOf = (log: readonly WriteEvent[], path: string) => log.find((w) => w.path === path)?.id ?? null;
@@ -25,10 +26,10 @@ const newestWriteOf = (log: readonly WriteEvent[], path: string) => log.find((w)
  */
 export function useChangedFiles(getWriteLog?: (() => WriteEvent[]) | null) {
   const [writes, setWrites] = useState<WriteEvent[]>(NO_WRITES);
-  const marks = useRef(new Map<string, string | null>());
-  // A mark is stamped from an effect once a read settles, after the render
-  // that showed the bytes; the dot it clears needs a render of its own.
-  const [, rerender] = useState(0);
+  // Per path, the newest write it had when its tab last read it (null: none
+  // yet). Replaced rather than edited, so `hasChanged` is a new function
+  // whenever a mark moves and a strip that caches on it shows the dot go.
+  const [marks, setMarks] = useState(NO_MARKS);
 
   // Deliberately dep-less: it runs after every render, and the equality guard
   // below is what stops the update chain.
@@ -41,22 +42,25 @@ export function useChangedFiles(getWriteLog?: (() => WriteEvent[]) | null) {
   /** This path's bytes are now in hand; writes after this moment are changes. */
   const markRead = useCallback((path: string) => {
     const mark = newestWriteOf(getWriteLog?.() ?? NO_WRITES, path);
-    if (marks.current.has(path) && marks.current.get(path) === mark) return;
-    marks.current.set(path, mark);
-    rerender((n) => n + 1);
+    setMarks((prev) => (prev.has(path) && prev.get(path) === mark ? prev : new Map(prev).set(path, mark)));
   }, [getWriteLog]);
 
   const forget = useCallback((path: string) => {
-    marks.current.delete(path);
+    setMarks((prev) => {
+      if (!prev.has(path)) return prev;
+      const next = new Map(prev);
+      next.delete(path);
+      return next;
+    });
   }, []);
 
   const hasChanged = useCallback((path: string) => {
-    const mark = marks.current.get(path);
+    const mark = marks.get(path);
     if (mark === undefined) return false;
     const newest = newestWriteOf(writes, path);
     // A write that has scrolled off the capped log is unknowable, not a change.
     return newest !== null && newest !== mark;
-  }, [writes]);
+  }, [marks, writes]);
 
   return { markRead, forget, hasChanged };
 }

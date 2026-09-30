@@ -473,7 +473,7 @@
         "noMatches": "No widgets match your search.",
         "hintClickToSelect": "Click to select · double-click or",
         "hintToAdd": "to add",
-        "hintAddSentence": "Click to select · double-click or <enter></enter> to add",
+        "hintAddSentence": "Click to select · double-click or <enter/> to add",
         "cancel": "Cancel",
         "addWidget": "Add widget",
         "addNamed": "Add {{title}}",

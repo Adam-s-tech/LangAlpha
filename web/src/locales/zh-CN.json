@@ -473,7 +473,7 @@
         "noMatches": "没有匹配的小组件。",
         "hintClickToSelect": "点击选择 · 双击或按",
         "hintToAdd": "添加",
-        "hintAddSentence": "点击选择 · 双击或按 <enter></enter> 添加",
+        "hintAddSentence": "点击选择 · 双击或按 <enter/> 添加",
         "cancel": "取消",
         "addWidget": "添加小组件",
         "addNamed": "添加 {{title}}",

@@ -23,6 +23,7 @@ from src.observability import (
 from src.observability.tracing import tracer as _otel_tracer
 
 from ptc_agent.core.sandbox.livefs_runtime import protocol as livefs_protocol
+from ptc_agent.core.sandbox import sessions as _sessions
 from ptc_agent.core.sandbox.retry import RetryPolicy
 
 from ..paths import SandboxLayout, WorkspaceLayout
@@ -514,23 +515,24 @@ async def execute_bash_command(
                 error=str(upload_err),
             )
 
-        # Background execution via dedicated Daytona session per command
+        # Background execution via a dedicated session per command
         if background:
-            session_id = await sandbox._create_bg_session(bash_id)
+            session_id = await sandbox._create_bg_session()
             assert sandbox.runtime is not None
             # Inject the same MCP provenance trace env the foreground path
             # uses so a backgrounded `python script.py` that imports the MCP
-            # wrappers records its mcp_trace too — harvested on completion in
+            # wrappers records its mcp_trace too, harvested on completion in
             # get_background_command_status. The audit .sh stays clean; only
             # the executed command carries the exports.
-            bg_trace_path, bg_command = sandbox._build_trace_env_command(
-                bash_id, full_command, call_id=call_id
+            _, bg_command = sandbox._build_trace_env_command(
+                bash_id,
+                full_command,
+                call_id=call_id,
+                trace_path=_sessions.bg_trace_path(sandbox, session_id),
+                own_shell=True,
             )
-            # Track immediately so cleanup() can find it if execute fails
-            sentinel_key = f"_pending:{session_id}"
-            sandbox._bg_sessions[sentinel_key] = session_id
             try:
-                result = await sandbox._runtime_call(
+                await sandbox._runtime_call(
                     sandbox.runtime.session_execute,
                     session_id,
                     bg_command,
@@ -539,7 +541,7 @@ async def execute_bash_command(
                     total_timeout=30,
                 )
             except Exception:
-                # Clean up the session to avoid leaking on the Daytona side
+                # Clean up the session so it doesn't leak on the sandbox
                 try:
                     await sandbox._runtime_call(
                         sandbox.runtime.delete_session,
@@ -548,23 +550,17 @@ async def execute_bash_command(
                     )
                 except Exception:
                     logger.debug("Failed to clean up bg session after execute failure", session_id=session_id)
-                sandbox._bg_sessions.pop(sentinel_key, None)
                 raise
-            # Replace sentinel with real cmd_id key
-            sandbox._bg_sessions.pop(sentinel_key, None)
-            sandbox._bg_sessions[result.cmd_id] = session_id
-            sandbox._bg_trace_paths[result.cmd_id] = bg_trace_path
             logger.debug(
                 "Background command started",
                 bash_id=bash_id,
-                cmd_id=result.cmd_id,
                 session_id=session_id,
             )
             return {
                 "success": True,
                 "stdout": (
-                    f"Background command started (command_id: {result.cmd_id})\n"
-                        f"Use BashOutput tool with command_id=\"{result.cmd_id}\" to check output and status."
+                    f"Background command started (command_id: {session_id})\n"
+                        f"Use BashOutput tool with command_id=\"{session_id}\" to check output and status."
                 ),
                 "stderr": "",
                 "exit_code": 0,
@@ -693,6 +689,8 @@ def _build_trace_env_command(
     bash_id: str,
     full_command: str,
     call_id: str | None = None,
+    trace_path: str | None = None,
+    own_shell: bool = False,
 ) -> tuple[str, str]:
     """Wrap a bash command with the MCP-provenance trace env.
 
@@ -706,14 +704,16 @@ def _build_trace_env_command(
         ``call_id`` tags the shell for the file mount, in the environment it
         starts with rather than an export inside it: the mount reads a
         process's starting environment, and the shell's own redirections are
-        requests of the shell's pid.
+        requests of the shell's pid. ``own_shell`` runs the command in a child
+        shell even without one, for a session whose long-lived shell a
+        command's ``exit`` would end before its exit code is recorded.
         """
     # Use the cached working dir (set on create/reconnect via
     # fetch_working_dir, and used by normalize_path on this same bash path) so
     # wrapping a command doesn't add a Daytona round-trip per bash invocation.
     layout = sandbox.layout
     pythonpath = ":".join(sandbox.workspace().pythonpath(layout))
-    trace_path = f"{layout.system_trace}/{bash_id}_{uuid.uuid4().hex}.jsonl"
+    trace_path = trace_path or f"{layout.system_trace}/{bash_id}_{uuid.uuid4().hex}.jsonl"
     command = (
         f"export MCP_TRACE_FILE={shlex.quote(trace_path)} && "
         f"export PTC_WORKSPACE_CONFIG={shlex.quote(sandbox.workspace().mcp_client_config)} && "
@@ -726,6 +726,8 @@ def _build_trace_env_command(
             f"env {livefs_protocol.CALL_ENV}={shlex.quote(call_id)} "
             f"bash -c {shlex.quote(command)}"
         )
+    elif own_shell:
+        command = f"bash -c {shlex.quote(command)}"
     return trace_path, command
 
 

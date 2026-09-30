@@ -82,6 +82,15 @@ class TestBashOutputMcpTraceArtifact:
         assert "stopped" in msg.content
 
     @pytest.mark.asyncio
+    async def test_a_stop_that_failed_says_so(self):
+        backend = _make_backend()
+        backend.astop_background_command = AsyncMock(side_effect=RuntimeError("timeout"))
+        tool = create_bash_output_tool(backend)
+        msg = await tool.ainvoke(_tool_call("cmd-1", action="stop"))
+        assert msg.content.startswith("ERROR: Could not stop")
+        assert "may still be running" in msg.content
+
+    @pytest.mark.asyncio
     async def test_missing_trace_key_defaults_to_empty(self):
         # A status dict without mcp_trace (e.g. legacy/unknown cmd) is tolerated.
         tool = create_bash_output_tool(

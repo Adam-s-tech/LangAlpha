@@ -37,7 +37,19 @@ def create_bash_output_tool(backend: SandboxBackend) -> BaseTool:
         """
         try:
             if action == "stop":
-                stopped = await backend.astop_background_command(command_id)
+                try:
+                    stopped = await backend.astop_background_command(command_id)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to stop background command",
+                        command_id=command_id,
+                        error=str(e),
+                    )
+                    return (
+                        f"ERROR: Could not stop background command {command_id}, "
+                        f"so it may still be running: {e!s}",
+                        {"mcp_trace": []},
+                    )
                 if stopped:
                     msg = f"Background command {command_id} stopped."
                 else:
@@ -45,6 +57,13 @@ def create_bash_output_tool(backend: SandboxBackend) -> BaseTool:
                 return msg, {"mcp_trace": []}
 
             result = await backend.aget_background_command_status(command_id)
+            if not result.get("found", True):
+                return (
+                    f"No background command found with id {command_id}. A status "
+                    "check that saw it finish already returned its output, or the "
+                    "computer restarted since it started.",
+                    {"mcp_trace": []},
+                )
 
             is_running = result["is_running"]
             exit_code = result["exit_code"]

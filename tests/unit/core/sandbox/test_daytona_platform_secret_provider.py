@@ -313,7 +313,7 @@ async def test_create_forwards_secret_bindings():
 
 @pytest.mark.asyncio
 async def test_runtime_wraps_update_env_and_update_secrets():
-    from ptc_agent.core.sandbox.providers.daytona import DaytonaRuntime
+    from ptc_agent.core.sandbox.providers.daytona_runtime import DaytonaRuntime
 
     sdk_sandbox = MagicMock(id="sandbox-id")
     sdk_sandbox.update_env = AsyncMock()

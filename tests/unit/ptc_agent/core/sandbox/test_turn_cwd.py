@@ -166,14 +166,18 @@ class TestTheCallId:
 
     @pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
     @pytest.mark.asyncio
-    async def test_a_command_with_no_call_id_runs_as_given(
+    async def test_a_command_with_no_call_id_runs_untagged(
         self, sandbox, runtime, background
     ):
         await sandbox.execute_bash_command("pwd", background=background)
 
         sent = self._sent(runtime, background)
-        assert any(c.endswith(f"cd {WORK_DIR} && pwd") for c in sent), sent
         assert not any(c.startswith("env ") for c in sent), sent
+        if background:
+            # Still a child shell, so the command's own `exit` cannot end the
+            # session's shell.
+            sent = [shlex.split(c)[2] for c in sent if c.startswith("bash -c ")]
+        assert any(c.endswith(f"cd {WORK_DIR} && pwd") for c in sent), sent
 
     @pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
     @pytest.mark.asyncio
@@ -240,7 +244,7 @@ class TestProviderSurface:
 
     @pytest.mark.asyncio
     async def test_daytona_code_run_sends_the_env_and_the_source_unchanged(self):
-        from ptc_agent.core.sandbox.providers.daytona import DaytonaRuntime
+        from ptc_agent.core.sandbox.providers.daytona_runtime import DaytonaRuntime
 
         inner = AsyncMock()
         inner.process.exec = AsyncMock(

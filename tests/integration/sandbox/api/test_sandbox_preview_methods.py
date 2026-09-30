@@ -294,143 +294,91 @@ class TestGetPreviewServerLogs:
 # ---------------------------------------------------------------------------
 
 
+async def _launch(sandbox, command: str = "sleep 999") -> str:
+    """Start a background command on faked sessions; returns its command_id."""
+    created = []
+
+    async def fake_create_session(session_id):
+        created.append(session_id)
+
+    sandbox.runtime.create_session = fake_create_session
+    sandbox.runtime.session_execute = AsyncMock(
+        return_value=SessionCommandResult(cmd_id="c1", exit_code=None, stdout="", stderr="")
+    )
+    sandbox.runtime.list_sessions = AsyncMock(return_value=[])
+
+    result = await sandbox.execute_bash_command(command, background=True)
+
+    assert result["success"] is True
+    [cmd_id] = created
+    assert f'command_id="{cmd_id}"' in result["stdout"]
+    return cmd_id
+
+
 class TestBackgroundCommandStop:
     """PTCSandbox.stop_background_command via execute_bash_command(background=True)."""
 
     async def test_run_and_stop_background_command(self, sandbox):
-        """Start a background command, then stop it."""
-        created_sessions = []
-        deleted_sessions = []
-        call_count = 0
+        """The command_id a launch hands back is the session a stop deletes."""
+        cmd_id = await _launch(sandbox)
+        delete = sandbox.runtime.delete_session = AsyncMock()
 
-        async def fake_create_session(session_id):
-            created_sessions.append(session_id)
-
-        async def fake_delete_session(session_id):
-            deleted_sessions.append(session_id)
-
-        async def fake_session_execute(session_id, command, *, run_async=False, timeout=None):
-            nonlocal call_count
-            call_count += 1
-            return SessionCommandResult(
-                cmd_id=f"bg-cmd-{call_count:03d}",
-                exit_code=None,
-                stdout="",
-                stderr="",
-            )
-
-        sandbox.runtime.create_session = fake_create_session
-        sandbox.runtime.delete_session = fake_delete_session
-        sandbox.runtime.session_execute = fake_session_execute
-
-        # Start a background command
-        result = await sandbox.execute_bash_command(
-            "sleep 999",
-            background=True,
-        )
-
-        assert result["success"] is True
-        assert "bg-cmd-001" in result["stdout"]
-
-        # Verify the session was tracked
-        cmd_id = "bg-cmd-001"
-        assert cmd_id in sandbox._bg_sessions
-
-        # Stop the background command
-        stopped = await sandbox.stop_background_command(cmd_id)
-
-        assert stopped is True
-        assert cmd_id not in sandbox._bg_sessions
-        # The session should have been deleted
-        assert any("bg-" in s for s in deleted_sessions)
+        assert await sandbox.stop_background_command(cmd_id) is True
+        delete.assert_awaited_once_with(cmd_id)
 
     async def test_stop_unknown_command_returns_false(self, sandbox):
         """Stopping a non-existent command ID returns False."""
         result = await sandbox.stop_background_command("nonexistent-cmd")
         assert result is False
 
+    async def test_stop_of_a_session_already_gone_returns_false(self, sandbox):
+        sandbox.runtime.delete_session = AsyncMock(side_effect=FileNotFoundError)
+        assert await sandbox.stop_background_command("bg-0123456789ab") is False
+
 
 class TestGetBackgroundCommandStatus:
     """PTCSandbox.get_background_command_status with mocked sessions."""
 
     async def test_status_of_running_command(self, sandbox):
-        """Check status of a running background command."""
-        async def fake_create_session(session_id):
-            pass
-
-        async def fake_session_execute(session_id, command, *, run_async=False, timeout=None):
-            return SessionCommandResult(
-                cmd_id="bg-cmd-001", exit_code=None, stdout="", stderr="",
+        """A running command reports its output so far and keeps its session."""
+        cmd_id = await _launch(sandbox)
+        sandbox.runtime.session_logs = AsyncMock(
+            return_value=SessionCommandResult(
+                cmd_id="c1", exit_code=None, stdout="working...\n", stderr=""
             )
-
-        async def fake_session_command_logs(session_id, cmd_id):
-            return SessionCommandResult(
-                cmd_id=cmd_id,
-                exit_code=None,  # still running
-                stdout="working...\n",
-                stderr="",
-            )
-
-        sandbox.runtime.create_session = fake_create_session
-        sandbox.runtime.session_execute = fake_session_execute
-        sandbox.runtime.session_command_logs = fake_session_command_logs
-        sandbox.runtime.delete_session = AsyncMock()
-
-        await sandbox.execute_bash_command("sleep 999", background=True)
-        cmd_id = "bg-cmd-001"
+        )
+        delete = sandbox.runtime.delete_session = AsyncMock()
 
         status = await sandbox.get_background_command_status(cmd_id)
 
         assert status["is_running"] is True
         assert status["cmd_id"] == cmd_id
         assert "working" in status["stdout"]
-        # Session should NOT be cleaned up yet
-        assert cmd_id in sandbox._bg_sessions
+        sandbox.runtime.session_logs.assert_awaited_once_with(cmd_id)
+        delete.assert_not_awaited()
 
     async def test_status_of_completed_command_auto_cleans(self, sandbox):
-        """Completed command status auto-cleans the session."""
-        deleted_sessions = []
-
-        async def fake_create_session(session_id):
-            pass
-
-        async def fake_delete_session(session_id):
-            deleted_sessions.append(session_id)
-
-        async def fake_session_execute(session_id, command, *, run_async=False, timeout=None):
-            return SessionCommandResult(
-                cmd_id="bg-cmd-001", exit_code=None, stdout="", stderr="",
-            )
-
-        async def fake_session_command_logs(session_id, cmd_id):
-            return SessionCommandResult(
-                cmd_id=cmd_id,
-                exit_code=0,  # completed
-                stdout="done\n",
-                stderr="",
-            )
-
-        sandbox.runtime.create_session = fake_create_session
-        sandbox.runtime.delete_session = fake_delete_session
-        sandbox.runtime.session_execute = fake_session_execute
-        sandbox.runtime.session_command_logs = fake_session_command_logs
-
-        await sandbox.execute_bash_command("echo hello", background=True)
-        cmd_id = "bg-cmd-001"
+        """Reading a finished command's output deletes its session."""
+        cmd_id = await _launch(sandbox, "echo hello")
+        sandbox.runtime.session_logs = AsyncMock(
+            return_value=SessionCommandResult(cmd_id="c1", exit_code=0, stdout="done\n", stderr="")
+        )
+        delete = sandbox.runtime.delete_session = AsyncMock()
 
         status = await sandbox.get_background_command_status(cmd_id)
 
         assert status["is_running"] is False
         assert status["success"] is True
         assert status["exit_code"] == 0
-        # Session should be auto-cleaned
-        assert cmd_id not in sandbox._bg_sessions
-        assert len(deleted_sessions) > 0
+        delete.assert_awaited_once_with(cmd_id)
 
     async def test_status_of_unknown_command(self, sandbox):
-        """Querying status for an unknown command returns a failure dict."""
-        status = await sandbox.get_background_command_status("nonexistent")
+        """An id with no session behind it, or not shaped like one, is not found."""
+        sandbox.runtime.session_logs = AsyncMock(return_value=None)
 
-        assert status["success"] is False
-        assert status["is_running"] is False
-        assert "No background session" in status["stderr"]
+        for cmd_id in ("bg-0123456789ab", "nonexistent"):
+            status = await sandbox.get_background_command_status(cmd_id)
+            assert status["found"] is False
+            assert status["success"] is False
+            assert status["is_running"] is False
+        sandbox.runtime.session_logs.assert_awaited_once_with("bg-0123456789ab")

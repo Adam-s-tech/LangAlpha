@@ -47,6 +47,7 @@ from ptc_agent.core.sandbox.runtime import (
     SandboxRuntime,
     SandboxTransientError,
     SessionCommandResult,
+    SessionState,
     STREAM_CHUNK_BYTES,
 )
 
@@ -72,9 +73,49 @@ _DOCKER_STATE_MAP: dict[str, RuntimeState] = {
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
+# Every session script starts with this. Session state sits on the container's
+# disk, which outlives a stop, while the processes it names do not.
+#
+# ``R`` is the current run's directory, named by the start time of the
+# container's PID 1, which every start replaces. A stop ends every process in
+# the container, so a restart begins with no sessions, as on Daytona.
+#
+# ``st`` prints a pid's start time in clock ticks since boot: field 22 of its
+# stat, counted after the command name, which may hold spaces. A process later
+# given the same pid starts later, so a command's .pid holds its wrapper's pid
+# and start time, and ``live`` checks that the wrapper is still the process
+# behind that pid before the command reads as running or is signalled.
+_SESSIONS_ROOT = "/tmp/.sessions"
+_SESSION_SH = (
+    'st() { local s; { read -r s < "/proc/$1/stat"; } 2>/dev/null || return 1; '
+    's=${s##*) }; set -- $s; echo "${20}"; }; '
+    'live() { local p t; { read -r p t < "$1"; } 2>/dev/null; '
+    'case $p in ""|*[!0-9]*) return 1;; esac; '
+    '[ -n "$t" ] && [ "$(st "$p")" = "$t" ]; }; '
+    f"R={_SESSIONS_ROOT}/run-$(st 1); "
+)
+# The code a shell reports for a SIGKILL, which is how a wrapper ends without
+# writing its exit code (the OOM killer, or a kill -9).
+_KILLED_EXIT = 137
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _status_sh(name: str) -> str:
+    """Shell that sets ``e`` to command ``name``'s exit code, empty while it runs.
+
+    Liveness is read before the exit code because the wrapper writes the code
+    before it ends: one still missing after the wrapper was seen gone is never
+    coming. A command with no .pid yet is still launching.
+    """
+    return (
+        f"a=1; [ ! -e {name}.pid ] || live {name}.pid || a=0; "
+        f"e=$(cat {name}.exit 2>/dev/null); "
+        f"[ -n \"$e\" ] || [ $a = 1 ] || e={_KILLED_EXIT}; "
+    )
 
 
 def _parse_proxy_port_range(range_str: str) -> list[int]:
@@ -86,6 +127,36 @@ def _parse_proxy_port_range(range_str: str) -> list[int]:
     if start > end:
         raise ValueError(f"Invalid proxy port range: start ({start}) > end ({end})")
     return list(range(start, end + 1))
+
+
+# The file mount (livefs) is FUSE, mounted by root through a root-only exec.
+# The capabilities reach root processes only; the sandbox's own user runs
+# without them. SYS_PTRACE lets that root daemon read a command's environment,
+# which names the command a save belongs to; without it every save runs for no
+# conversation. Docker's default AppArmor profile refuses every mount, so the
+# container runs unconfined, and that applies to its user too.
+_FUSE_HOST_CONFIG: dict[str, Any] = {
+    "Devices": [
+        {
+            "PathOnHost": "/dev/fuse",
+            "PathInContainer": "/dev/fuse",
+            "CgroupPermissions": "rwm",
+        }
+    ],
+    "CapAdd": ["SYS_ADMIN", "SYS_PTRACE"],
+    "SecurityOpt": ["apparmor=unconfined"],
+}
+
+
+async def _remove_quietly(container: Any, name: str) -> None:
+    try:
+        await container.delete(force=True)
+    except Exception as cleanup_error:
+        logger.warning(
+            "Failed to remove container after a failed start",
+            container_name=name,
+            error=str(cleanup_error),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -163,15 +234,24 @@ class DockerRuntime(SandboxRuntime):
     async def exec(self, command: str, timeout: int = 60) -> ExecResult:
         return await self._exec(command, timeout)
 
-    async def exec_as_root(self, command: str, timeout: int = 60) -> ExecResult:
-        return await self._exec(command, timeout, user="root")
+    async def exec_as_root(
+        self, command: str, timeout: int = 60, env: dict[str, str] | None = None
+    ) -> ExecResult:
+        return await self._exec(command, timeout, user="root", env=env)
 
-    async def _exec(self, command: str, timeout: int, user: str = "") -> ExecResult:
+    async def _exec(
+        self,
+        command: str,
+        timeout: int,
+        user: str = "",
+        env: dict[str, str] | None = None,
+    ) -> ExecResult:
         try:
             exec_obj = await self._container.exec(
                 cmd=["bash", "-c", command],
                 workdir=self._working_dir,
                 user=user,
+                environment=env,
             )
             # Read all output from the multiplexed stream
             stdout_parts: list[str] = []
@@ -503,10 +583,21 @@ class DockerRuntime(SandboxRuntime):
     async def create_session(self, session_id: str) -> None:
         if not _SESSION_ID_RE.match(session_id):
             raise ValueError(f"Invalid session_id: {session_id!r}")
-        check = await self.exec(f"test -d /tmp/.sessions/{session_id}", timeout=5)
-        if check.exit_code == 0:
+        # Exit 3 marks an existing session. An earlier run's directory names
+        # nothing that is still running, so it goes.
+        result = await self.exec(
+            f"{_SESSION_SH}[ -e $R/{session_id} ] && exit 3; "
+            f"mkdir -p $R/{session_id} || exit 1; "
+            f"for d in {_SESSIONS_ROOT}/run-*; do [ $d = $R ] || rm -rf $d; done; true",
+            timeout=10,
+        )
+        if result.exit_code == 3:
             raise RuntimeError(f"Session already exists: {session_id}")
-        await self.exec(f"mkdir -p /tmp/.sessions/{session_id}", timeout=5)
+        if result.exit_code != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise RuntimeError(
+                f"Could not create session {session_id} (exit {result.exit_code}): {detail}"
+            )
 
     async def session_execute(
         self,
@@ -519,22 +610,27 @@ class DockerRuntime(SandboxRuntime):
         if not _SESSION_ID_RE.match(session_id):
             raise ValueError(f"Invalid session_id: {session_id!r}")
         cmd_id = uuid.uuid4().hex[:8]
-        session_dir = f"/tmp/.sessions/{session_id}"
 
         if run_async:
             encoded = base64.b64encode(command.encode()).decode("ascii")
             # Use setsid to create a new process group so delete_session
-            # can kill the entire tree (not just the wrapper).
-            # Note: there is a sub-millisecond window between exec returning
-            # and the .pid file being written. delete_session called in that
-            # window would miss the PID. In practice this is not an issue
-            # because sessions are long-lived (preview servers, etc.).
+            # can kill the entire tree (not just the wrapper). The command
+            # runs in a subshell so its own `exit` still reaches the .exit
+            # write, and with no arguments, so the session directory the
+            # wrapper takes as $1 stays out of its view.
+            # The wrapper is bash, so field 22 of its stat is its start time.
+            # Its .pid is written aside and renamed in, so no reader sees half
+            # of it. A stop can land before then: delete_session moves the
+            # session aside before reading PIDs, so the rename fails and a
+            # command the stop missed never runs.
             wrapped = (
-                f"nohup setsid bash -c '"
-                f"echo $$ > {session_dir}/{cmd_id}.pid; "
-                f"eval \"$(echo {encoded} | base64 -d)\"; "
-                f"echo $? > {session_dir}/{cmd_id}.exit"
-                f"' > {session_dir}/{cmd_id}.stdout 2> {session_dir}/{cmd_id}.stderr &"
+                f"{_SESSION_SH}D=$R/{session_id}; "
+                "nohup setsid bash -c '"
+                f"echo \"$$ $(cut -d\" \" -f22 /proc/$$/stat 2>/dev/null)\" > $1/{cmd_id}.new "
+                f"&& mv $1/{cmd_id}.new $1/{cmd_id}.pid || exit; "
+                f"( set --; eval \"$(echo {encoded} | base64 -d)\" ); "
+                f"echo $? > $1/{cmd_id}.exit"
+                f"' bash $D > $D/{cmd_id}.stdout 2> $D/{cmd_id}.stderr &"
             )
             await self.exec(wrapped, timeout=10)
             return SessionCommandResult(cmd_id=cmd_id, exit_code=None, stdout="", stderr="")
@@ -554,17 +650,22 @@ class DockerRuntime(SandboxRuntime):
             raise ValueError(f"Invalid session_id: {session_id!r}")
         if not _SESSION_ID_RE.match(command_id):
             raise ValueError(f"Invalid command_id: {command_id!r}")
-        session_dir = f"/tmp/.sessions/{session_id}"
-        # Single exec round-trip: emit all three files separated by a null byte
+        # Single exec round-trip: emit all three files separated by a null
+        # byte. The exit code is read first, so a finished status never pairs
+        # with output read before the last of it was written. Exit 3 marks a
+        # missing session.
         _SEP = "\\x00"
         result = await self.exec(
-            f"cat {session_dir}/{command_id}.stdout 2>/dev/null; "
+            f"{_SESSION_SH}cd $R/{session_id} 2>/dev/null || exit 3; "
+            f"{_status_sh(command_id)}"
+            f"cat {command_id}.stdout 2>/dev/null; "
             f"printf '{_SEP}'; "
-            f"cat {session_dir}/{command_id}.stderr 2>/dev/null; "
-            f"printf '{_SEP}'; "
-            f"cat {session_dir}/{command_id}.exit 2>/dev/null",
+            f"cat {command_id}.stderr 2>/dev/null; "
+            f"printf '{_SEP}%s' \"$e\"",
             timeout=5,
         )
+        if result.exit_code == 3:
+            raise FileNotFoundError(f"No session {session_id}")
         parts = result.stdout.split("\x00", 2)
         stdout = parts[0] if len(parts) > 0 else ""
         stderr = parts[1] if len(parts) > 1 else ""
@@ -577,20 +678,88 @@ class DockerRuntime(SandboxRuntime):
             stderr=stderr,
         )
 
+    async def session_logs(self, session_id: str) -> SessionCommandResult | None:
+        if not _SESSION_ID_RE.match(session_id):
+            raise ValueError(f"Invalid session_id: {session_id!r}")
+        _SEP = "\\x00"
+        latest = _status_sh('"$id"')
+        # Exit 3 marks a missing session; the newest .pid names its command.
+        # Its exit code is read before its output, as in session_command_logs.
+        result = await self.exec(
+            f"{_SESSION_SH}cd $R/{session_id} 2>/dev/null || exit 3; "
+            "id=$(ls -t -- *.pid 2>/dev/null | head -1); id=${id%.pid}; "
+            f"{latest}"
+            f"printf '%s{_SEP}' \"$id\"; "
+            f"cat \"$id.stdout\" 2>/dev/null; printf '{_SEP}'; "
+            f"cat \"$id.stderr\" 2>/dev/null; printf '{_SEP}%s' \"$e\"; true",
+            timeout=5,
+        )
+        if result.exit_code == 3:
+            return None
+        parts = result.stdout.split("\x00", 3) + ["", "", "", ""]
+        exit_str = parts[3].strip()
+        return SessionCommandResult(
+            cmd_id=parts[0],
+            exit_code=int(exit_str) if exit_str.isdigit() else None,
+            stdout=parts[1],
+            stderr=parts[2],
+        )
+
+    async def list_sessions(self) -> list[SessionState]:
+        # A session runs while one of its commands has a live wrapper and no
+        # .exit, or while it has no .pid at all: a launch is about to use it,
+        # so eviction leaves it alone.
+        result = await self.exec(
+            f"{_SESSION_SH}cd $R 2>/dev/null || exit 0; "
+            "for d in */; do [ -d \"$d\" ] || continue; n=0; r=0; "
+            "for p in \"$d\"*.pid; do [ -e \"$p\" ] || continue; n=1; "
+            "live \"$p\" && [ ! -e \"${p%.pid}.exit\" ] && r=1; done; "
+            "[ $n = 0 ] && r=1; "
+            "echo \"${d%/} $r\"; done",
+            timeout=10,
+        )
+        states = []
+        for line in result.stdout.splitlines():
+            name, _, running = line.rpartition(" ")
+            if name:
+                states.append(SessionState(session_id=name, running=running == "1"))
+        return states
+
     async def delete_session(self, session_id: str) -> None:
         if not _SESSION_ID_RE.match(session_id):
             raise ValueError(f"Invalid session_id: {session_id!r}")
-        session_dir = f"/tmp/.sessions/{session_id}"
+        # One rename takes the session away before its PIDs are read, so a
+        # launch that has not written its .pid yet finds it gone and never
+        # runs (session_execute). Hidden, so list_sessions skips it. Exit 3
+        # marks a missing session.
+        #
         # Kill the entire process group (negative PID) so child processes
-        # spawned by the session command are also terminated.
-        await self.exec(
-            f"for f in {session_dir}/*.pid; do "
-            f"  pid=$(cat \"$f\" 2>/dev/null | tr -cd '0-9'); "
-            f"  [ -n \"$pid\" ] && kill -- -\"$pid\" 2>/dev/null; "
-            f"  [ -n \"$pid\" ] && kill \"$pid\" 2>/dev/null; "
-            f"done; rm -rf {session_dir}",
+        # spawned by the session command are also terminated. A group's id is
+        # not handed out again while the group has a member, so with the
+        # wrapper gone, a group by that id is, short of a full wrap of the pid
+        # space, what the command left behind. A pid that names another
+        # process now is not this command's to signal.
+        result = await self.exec(
+            f"{_SESSION_SH}D=$R/{session_id}; X=$R/.{session_id}.$$; "
+            "mv $D $X || { [ -e $D ] || exit 3; exit 1; }; "
+            "for f in $X/*.pid; do "
+            "  { read -r pid start < \"$f\"; } 2>/dev/null; "
+            "  case $pid in \"\"|*[!0-9]*) continue;; esac; "
+            "  now=$(st $pid); "
+            "  if [ \"$now\" = \"$start\" ]; then kill -- -$pid; kill $pid; "
+            "  elif [ -z \"$now\" ]; then kill -- -$pid; fi; "
+            "done 2>/dev/null; rm -rf $X",
             timeout=10,
         )
+        if result.exit_code == 3:
+            raise FileNotFoundError(f"No session {session_id}")
+        # A timeout or a failed exec comes back as -1, and the command may
+        # still be running, so only 0 is a stop.
+        if result.exit_code != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise RuntimeError(
+                f"Could not delete session {session_id} (exit {result.exit_code}): {detail}"
+            )
 
     # -- Capabilities & metadata --
 
@@ -796,6 +965,31 @@ class DockerProvider(SandboxProvider):
             "refusing to run an elevated tier at host size"
         )
 
+    async def _start_new(
+        self, client: Any, config: dict[str, Any], name: str, sizing: TierSizing
+    ) -> Any:
+        """Create and start a container; one that fails to start is removed."""
+        try:
+            container = await client.containers.create(config=config, name=name)
+        except Exception as e:
+            if sizing.elevated:
+                host_config = config["HostConfig"]
+                disk_note = (
+                    f", {sizing.disk_gib}G disk" if "StorageOpt" in host_config else ""
+                )
+                raise RuntimeError(
+                    f"Docker rejected the {sizing.tier!r} tier limits "
+                    f"({sizing.cpus} vCPU, {sizing.memory_bytes} bytes{disk_note}): "
+                    f"{e}; refusing to create a base-sized container for an elevated tier"
+                ) from e
+            raise
+        try:
+            await container.start()
+        except BaseException:
+            await _remove_quietly(container, name)
+            raise
+        return container
+
     async def create(
         self,
         *,
@@ -830,22 +1024,7 @@ class DockerProvider(SandboxProvider):
             "NetworkMode": self._config.network_mode,
             "AutoRemove": False,  # We manage removal ourselves
             "Init": True,  # tini as PID 1 for zombie reaping
-            # The file mount (livefs) is FUSE, mounted by root through a
-            # root-only exec. The capabilities reach root processes only; the
-            # sandbox's own user runs without them. SYS_PTRACE lets that root
-            # daemon read a command's environment, which names the command a
-            # save belongs to; without it every save runs for no conversation.
-            # Docker's default AppArmor profile refuses every mount, so the
-            # container runs unconfined, and that applies to its user too.
-            "Devices": [
-                {
-                    "PathOnHost": "/dev/fuse",
-                    "PathInContainer": "/dev/fuse",
-                    "CgroupPermissions": "rwm",
-                }
-            ],
-            "CapAdd": ["SYS_ADMIN", "SYS_PTRACE"],
-            "SecurityOpt": ["apparmor=unconfined"],
+            **_FUSE_HOST_CONFIG,
         }
         self._apply_disk_quota(host_config, sizing)
 
@@ -892,24 +1071,25 @@ class DockerProvider(SandboxProvider):
         container_config["Env"] = [f"{k}={v}" for k, v in env.items()]
 
         try:
-            container_obj = await client.containers.create(
-                config=container_config,
-                name=container_name,
+            container_obj = await self._start_new(
+                client, container_config, container_name, sizing
             )
         except Exception as e:
-            if sizing.elevated:
-                disk_note = (
-                    f", {sizing.disk_gib}G disk" if "StorageOpt" in host_config else ""
-                )
-                raise RuntimeError(
-                    f"Docker rejected the {sizing.tier!r} tier limits "
-                    f"({sizing.cpus} vCPU, {sizing.memory_bytes} bytes{disk_note}): "
-                    f"{e}; refusing to create a base-sized container for an elevated tier"
-                ) from e
-            raise
+            if "/dev/fuse" not in str(e):
+                raise
+            # A host without FUSE still runs sandboxes, without the file
+            # mount: the file tools reach the server-held files in process.
+            logger.warning(
+                "Docker host has no /dev/fuse; sandbox runs without the file mount",
+                container_name=container_name,
+                error=str(e),
+            )
+            for key in _FUSE_HOST_CONFIG:
+                del host_config[key]
+            container_obj = await self._start_new(
+                client, container_config, container_name, sizing
+            )
         try:
-            await container_obj.start()
-
             info = await container_obj.show()
             if sizing.elevated:
                 await self._verify_tier_applied(container_obj, info, sizing)
@@ -926,14 +1106,7 @@ class DockerProvider(SandboxProvider):
             # No runtime/provider reference exists yet, so this method is the
             # only owner capable of removing a container that started but could
             # not be inspected or validated.
-            try:
-                await container_obj.delete(force=True)
-            except Exception as cleanup_error:
-                logger.warning(
-                    "Failed to remove container after post-start initialization",
-                    container_name=container_name,
-                    error=str(cleanup_error),
-                )
+            await _remove_quietly(container_obj, container_name)
             raise
 
         logger.info(

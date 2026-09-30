@@ -101,13 +101,6 @@ class PTCSandbox:
         # Track per-thread code dirs that have been created (avoids repeated mkdir)
         self._thread_dirs_created: set[str] = set()
 
-        # Per-command sessions for background Bash commands (cmd_id → session_id)
-        self._bg_sessions: dict[str, str] = {}
-        # Per-command MCP provenance trace paths for background Bash (cmd_id →
-        # trace_path). Harvested when get_background_command_status observes the
-        # command finished, so a backgrounded script's MCP calls are recorded
-        # too (the foreground/ExecuteCode path harvests inline).
-        self._bg_trace_paths: dict[str, str] = {}
         # Per-port sessions for preview servers (port → (session_id, cmd_id))
         self._preview_sessions: dict[int, tuple[str, str]] = {}
         # The workspace that started each locally tracked preview. A computer
@@ -710,8 +703,6 @@ class PTCSandbox:
         self._reconnect_incomplete = True
 
         # Clear stale state — sessions and preview links don't survive stop/start
-        self._bg_sessions.clear()
-        self._bg_trace_paths.clear()
         self._preview_sessions.clear()
         self._preview_link_cache.clear()
 
@@ -1245,9 +1236,8 @@ class PTCSandbox:
 
         try:
             if self.runtime:
-                # Clean up all managed sessions (preview + background)
-                all_sessions = [sid for sid, _ in self._preview_sessions.values()] + list(self._bg_sessions.values())
-                for sid in dict.fromkeys(all_sessions):  # deduplicate
+                # Clean up preview sessions; deleting the sandbox ends the rest
+                for sid in dict.fromkeys(sid for sid, _ in self._preview_sessions.values()):
                     try:
                         await self._runtime_call(
                             self.runtime.delete_session, sid,
@@ -1257,8 +1247,6 @@ class PTCSandbox:
                         logger.debug("Failed to delete session", session_id=sid)
                 self._preview_sessions.clear()
                 self._preview_owners.clear()
-                self._bg_sessions.clear()
-                self._bg_trace_paths.clear()
 
                 if self._reconnect_incomplete:
                     logger.info(
@@ -1489,9 +1477,16 @@ class PTCSandbox:
         return await _execution.execute_bash_command(self, command, working_dir, timeout, background=background, thread_id=thread_id, call_id=call_id)
 
     def _build_trace_env_command(
-        self, bash_id: str, full_command: str, call_id: str | None = None
+        self,
+        bash_id: str,
+        full_command: str,
+        call_id: str | None = None,
+        trace_path: str | None = None,
+        own_shell: bool = False,
     ) -> tuple[str, str]:
-        return _execution._build_trace_env_command(self, bash_id, full_command, call_id)
+        return _execution._build_trace_env_command(
+            self, bash_id, full_command, call_id, trace_path, own_shell
+        )
 
     # -- sessions --
 
@@ -1529,11 +1524,8 @@ class PTCSandbox:
             owner=owner,
         )
 
-    async def _evict_finished_bg_sessions(self) -> None:
-        return await _sessions._evict_finished_bg_sessions(self)
-
-    async def _create_bg_session(self, label: str) -> str:
-        return await _sessions._create_bg_session(self, label)
+    async def _create_bg_session(self) -> str:
+        return await _sessions._create_bg_session(self)
 
     async def get_background_command_status(self, cmd_id: str) -> dict[str, Any]:
         return await _sessions.get_background_command_status(self, cmd_id)

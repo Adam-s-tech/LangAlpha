@@ -73,9 +73,13 @@ const wordStart = (text: string, idx: number) => {
  * stream (see the pacing constants), not the speed.
  */
 export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTextOptions = {}): string {
-  const [displayText, setDisplayText] = useState('');
-  const cursorRef = useRef(0);       // characters revealed so far
-  const targetRef = useRef('');      // latest full text
+  // Text that exists at mount is on screen in the mount's own commit. Starting
+  // empty and snapping from the first effect took two commits, and a bubble
+  // that mounts with its reply (a reconnect catch-up) could paint empty in
+  // between, then jump to full height as a layout shift.
+  const [displayText, setDisplayText] = useState(text);
+  const cursorRef = useRef(text.length); // characters revealed so far
+  const targetRef = useRef(text);        // latest full text
   const animatingRef = useRef(false);
   const controlsRef = useRef<AnimationPlaybackControls | null>(null);
   const mountedRef = useRef(false);  // tracks first effect run
@@ -186,9 +190,10 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
       return;
     }
 
-    // On first effect run, display whatever text already exists instantly.
-    // Only text arriving AFTER mount gets the typing animation.
-    // This prevents re-animation on tab switches, reconnects, and remounts.
+    // Text that existed at mount shows as is (the initial state holds it);
+    // only text arriving after mount types out. This prevents re-animation on
+    // tab switches, reconnects, and remounts. The write is a no-op on a true
+    // mount and catches `enabled` turning on after text changed.
     if (!mountedRef.current) {
       mountedRef.current = true;
       setDisplayText(text);

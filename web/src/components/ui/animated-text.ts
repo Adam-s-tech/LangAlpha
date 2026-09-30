@@ -79,6 +79,9 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
   // between, then jump to full height as a layout shift.
   const [displayText, setDisplayText] = useState(text);
   const cursorRef = useRef(text.length); // characters revealed so far
+  // Where the reveal has reached before the word hold: it runs ahead of the
+  // cursor while it types through a word the hold keeps off screen.
+  const posRef = useRef(text.length);
   const targetRef = useRef(text);        // latest full text
   const animatingRef = useRef(false);
   const controlsRef = useRef<AnimationPlaybackControls | null>(null);
@@ -113,7 +116,13 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
   }, []);
 
   const startChain = useCallback(() => {
-    const from = cursorRef.current;
+    // Resume from where the reveal reached, not from what the hold let on
+    // screen. Every update restarts the chain, so restarting at the held
+    // cursor threw away the progress into the word being held: once text
+    // arrived every frame, a word longer than one frame's progress (any
+    // link past MAX_WORD_CHARS) stayed hidden until the stream ended.
+    const shown = cursorRef.current;
+    const from = Math.max(posRef.current, shown);
     const target = targetRef.current;
     const to = finishingRef.current ? target.length : wordStart(target, target.length);
 
@@ -144,9 +153,10 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
       ease: 'linear',
       onUpdate(latest) {
         if (chain !== chainRef.current) return;
-        // Never behind `from`: a cursor that already sits inside a word
-        // (mounted mid-stream) holds there rather than retracting the stub.
-        const idx = Math.max(from, wordStart(target, Math.round(latest)));
+        posRef.current = latest;
+        // Never behind what is shown: a cursor that already sits inside a
+        // word (mounted mid-stream) holds there rather than retracting the stub.
+        const idx = Math.max(shown, wordStart(target, Math.round(latest)));
         cursorRef.current = idx;
         const now = Date.now();
         if (now - lastUpdateTimeRef.current < 32) return;
@@ -156,6 +166,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
       onComplete() {
         if (chain !== chainRef.current) return;
         cursorRef.current = to;
+        posRef.current = to;
         setDisplayText(target.slice(0, to));
 
         // Check if more text arrived while we were animating
@@ -170,6 +181,10 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
   }, []);
 
   useEffect(() => {
+    // If the stretch the reveal ran through changed, resume from the screen.
+    if (!text.startsWith(targetRef.current.slice(0, posRef.current))) {
+      posRef.current = cursorRef.current;
+    }
     if (!enabled) {
       const behind = mountedRef.current && cursorRef.current > 0 && text.startsWith(targetRef.current.slice(0, cursorRef.current))
         ? text.length - cursorRef.current
@@ -187,6 +202,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
       }
       setDisplayText(text);
       cursorRef.current = text.length;
+      posRef.current = text.length;
       return;
     }
 
@@ -198,6 +214,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
       mountedRef.current = true;
       setDisplayText(text);
       cursorRef.current = text.length;
+      posRef.current = text.length;
       targetRef.current = text;
       return;
     }
@@ -205,6 +222,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
     if (!text) {
       setDisplayText('');
       cursorRef.current = 0;
+      posRef.current = 0;
       targetRef.current = '';
       return;
     }
@@ -213,6 +231,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
     if (!text.startsWith(targetRef.current.slice(0, cursorRef.current))) {
       stopChain();
       cursorRef.current = 0;
+      posRef.current = 0;
       arrivalRef.current = { at: 0, cps: 0 };
     }
 
@@ -227,6 +246,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
       // Never behind what is already on screen: the boundary can sit before
       // the cursor when the snap point falls inside the run it was typing.
       cursorRef.current = Math.max(cursorRef.current, wordStart(text, text.length - LIVE_TAIL_CHARS));
+      posRef.current = Math.max(posRef.current, cursorRef.current);
       setDisplayText(text.slice(0, cursorRef.current));
     }
 

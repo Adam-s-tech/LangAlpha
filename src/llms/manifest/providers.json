@@ -60,26 +60,26 @@
           "input_tiers": [
             {
               "max_tokens": 272000,
-              "rate": 2.5,
-              "cached_input": 0.25,
-              "cache_5m": 3.125
+              "rate": 2.0,
+              "cached_input": 0.2,
+              "cache_5m": 2.5
             },
             {
               "max_tokens": null,
-              "rate": 5.0,
-              "cached_input": 0.5,
-              "cache_5m": 6.25
+              "rate": 4.0,
+              "cached_input": 0.4,
+              "cache_5m": 5.0
             }
           ],
-          "cache_5m": 3.125,
+          "cache_5m": 2.5,
           "output_tiers": [
             {
               "max_tokens": 272000,
-              "rate": 15.0
+              "rate": 12.0
             },
             {
               "max_tokens": null,
-              "rate": 22.5
+              "rate": 18.0
             }
           ],
           "output_pricing_mode": "input_dependent",
@@ -98,26 +98,26 @@
           "input_tiers": [
             {
               "max_tokens": 272000,
-              "rate": 1.0,
-              "cached_input": 0.1,
-              "cache_5m": 1.25
+              "rate": 0.2,
+              "cached_input": 0.02,
+              "cache_5m": 0.25
             },
             {
               "max_tokens": null,
-              "rate": 2.0,
-              "cached_input": 0.2,
-              "cache_5m": 2.5
+              "rate": 0.4,
+              "cached_input": 0.04,
+              "cache_5m": 0.5
             }
           ],
-          "cache_5m": 1.25,
+          "cache_5m": 0.25,
           "output_tiers": [
             {
               "max_tokens": 272000,
-              "rate": 6.0
+              "rate": 1.2
             },
             {
               "max_tokens": null,
-              "rate": 9.0
+              "rate": 1.8
             }
           ],
           "output_pricing_mode": "input_dependent",

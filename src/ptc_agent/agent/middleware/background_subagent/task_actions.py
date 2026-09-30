@@ -32,6 +32,7 @@ from ptc_agent.agent.middleware.background_subagent.spawn import (
     TaskRunRefused,
     settle_never_started,
     spawn_task_writer,
+    stopped_launch_artifact,
 )
 
 if TYPE_CHECKING:
@@ -206,7 +207,7 @@ async def _spawn_writer(
             ),
             tool_call_id=tool_call_id,
             name="Task",
-            status="error",
+            artifact=stopped_launch_artifact(),
         )
     return None
 

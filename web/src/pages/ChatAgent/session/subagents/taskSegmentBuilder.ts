@@ -98,9 +98,12 @@ export function deriveTaskSegment(
  *
  * The reply is never the task's outcome — both tools return the moment the
  * launch is dispatched, and terminal status arrives later per task (a replayed
- * artifact, or a live `chan_close`). The exception is a launch that was
- * *refused*: it opens no run, produces no artifact and no channel, so nothing
- * else will ever settle its card and the reply's own "Error" prefix has to.
+ * artifact, or a live `chan_close`). The exception is a launch that never ran:
+ * it opens no run, produces no task artifact and no channel, so nothing else
+ * will ever settle its card and the reply has to. A *refused* launch says so
+ * with its "Error" prefix; one a stop refused mid-setup carries
+ * `artifact.launch === 'cancelled'` and settles as stopped, since a stop is a
+ * cancellation rather than a failure.
  *
  * Live streaming and history replay both stamp through here — they used to
  * carry a copy each, which is how they came to disagree on the field's name.
@@ -109,10 +112,13 @@ export function applyLaunchReply(
   record: SubagentTaskRecord,
   result: { content?: unknown; artifact?: unknown },
 ): SubagentTaskRecord {
+  const stopped =
+    (result.artifact as { launch?: unknown } | null | undefined)?.launch === 'cancelled';
+  const status = stopped ? 'cancelled' : isToolResultFailure(result) ? 'error' : undefined;
   return {
     ...record,
     ...(typeof result.content === 'string' ? { result: result.content } : {}),
-    ...(isToolResultFailure(result) ? { status: 'error' } : {}),
+    ...(status ? { status } : {}),
   };
 }
 

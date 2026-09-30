@@ -4,6 +4,9 @@
 the frontend reads it. A refused launch opens no run and no channel, so nothing
 will ever arrive to settle its card: an unstamped failure leaves the card
 spinning for the life of the thread.
+
+A launch a stop refused mid-setup is the exception: a stop is a cancellation,
+so its reply stays a success and settles the card through its artifact.
 """
 
 from __future__ import annotations
@@ -74,14 +77,15 @@ def _task() -> BackgroundTask:
         ("resume", "was stopped before the resume started."),
     ],
 )
-async def test_a_stopped_launch_is_stamped_an_error(
+async def test_a_stopped_launch_settles_as_stopped_not_failed(
     monkeypatch: pytest.MonkeyPatch, action: str, ending: str
 ):
-    """A stop mid-setup refuses the writer; the refusal must not read success.
+    """A stop mid-setup refuses the writer, and the run settles cancelled.
 
-    The run was admitted and the stop settles it cancelled, but this reply
-    carries no task artifact, so nothing else settles the launch card: a
-    defaulted success leaves it looking like it ran.
+    The reply carries no task artifact, so nothing else settles the launch
+    card. The frontend settles the record cancelled from this artifact, which
+    an init card shows as "Stopped"; without it the card spins "Running", and
+    an error status shows "Failed". A resume card reads "Resumed" either way.
     """
 
     async def _stopped(*_args: Any, **_kwargs: Any) -> None:
@@ -102,7 +106,8 @@ async def test_a_stopped_launch_is_stamped_an_error(
 
     assert message is not None
     assert message.content == f"Background subagent {_task().display_id} {ending}"
-    assert message.status == "error"
+    assert message.status == "success"
+    assert message.artifact == {"launch": "cancelled"}
 
 
 @pytest.mark.asyncio

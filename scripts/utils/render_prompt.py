@@ -140,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Resolve the guidance level from this model's manifest entry "
-            "(e.g. claude-opus-5) instead of --guidance."
+            "(e.g. claude-opus-5-5) instead of --guidance."
         ),
     )
     p.add_argument(

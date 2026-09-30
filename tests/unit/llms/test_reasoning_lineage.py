@@ -159,18 +159,18 @@ class TestProviderRouteStamp:
     """
 
     def test_a_manifest_route_stamps_its_bare_key(self):
-        assert LLM("claude-opus-5")._provider_route() == "anthropic"
+        assert LLM("claude-opus-5-5")._provider_route() == "anthropic"
 
     def test_oauth_keeps_its_own_key_and_inherits_the_group(self):
         """Its declared base_url matches the manifest, so it is not a redirect."""
-        route = LLM("claude-opus-5-oauth")._provider_route()
+        route = LLM("claude-opus-5-5-oauth")._provider_route()
         assert route == "claude-oauth"
         assert lineage_for_route(route) == ANTHROPIC_LINEAGE
 
     def test_a_byok_base_url_override_qualifies_the_route(self):
         """The BYOK path that made the bare provider key unsafe as an identity."""
         route = LLM(
-            "claude-opus-5",
+            "claude-opus-5-5",
             api_key="unused",
             base_url_override="https://gateway.example/v1",
         )._provider_route()
@@ -180,7 +180,7 @@ class TestProviderRouteStamp:
 
 class TestModelIdFallback:
     def test_unambiguous_id_resolves(self):
-        assert lineage_for_model_id("claude-opus-5") == ANTHROPIC_LINEAGE
+        assert lineage_for_model_id("claude-opus-5-5") == ANTHROPIC_LINEAGE
 
     def test_unknown_and_missing_ids_fail_closed(self):
         assert lineage_for_model_id("some-unknown-model") == UNKNOWN_LINEAGE

@@ -282,20 +282,6 @@
     ],
     "anthropic": [
       {
-        "id": "claude-fable-5",
-        "name": "Claude Fable 5",
-        "is_reasoning": true,
-        "description": "Claude Fable 5 model",
-        "pricing": {
-          "input": 10.0,
-          "cached_input": 1.0,
-          "cache_5m": 12.5,
-          "cache_1h": 20.0,
-          "output": 50.0,
-          "unit": "per_1m_tokens"
-        }
-      },
-      {
         "id": "claude-fable-5-1",
         "name": "Claude Fable 5.1",
         "is_reasoning": true,
@@ -324,20 +310,6 @@
         }
       },
       {
-        "id": "claude-opus-5",
-        "name": "Claude Opus 5",
-        "is_reasoning": true,
-        "description": "Claude Opus 5 model",
-        "pricing": {
-          "input": 5.0,
-          "cached_input": 0.5,
-          "cache_5m": 6.25,
-          "cache_1h": 10.0,
-          "output": 25.0,
-          "unit": "per_1m_tokens"
-        }
-      },
-      {
         "id": "claude-sonnet-5-5",
         "name": "Claude Sonnet 5.5",
         "is_reasoning": true,
@@ -352,10 +324,55 @@
         }
       },
       {
+        "id": "claude-haiku-4-5-20251001",
+        "name": "Claude 4.5 Haiku",
+        "is_reasoning": true,
+        "description": "Fast and cost-efficient model",
+        "alias": [
+          "claude-haiku-4.5"
+        ],
+        "pricing": {
+          "input": 1.0,
+          "cached_input": 0.1,
+          "cache_5m": 1.25,
+          "cache_1h": 2.0,
+          "output": 5.0,
+          "unit": "per_1m_tokens"
+        }
+      },
+      {
+        "id": "claude-fable-5",
+        "name": "Claude Fable 5",
+        "is_reasoning": true,
+        "description": "Retired 2026-09-30, superseded by Claude Fable 5.1. Kept until the next retirement so a custom model on this id still bills.",
+        "pricing": {
+          "input": 10.0,
+          "cached_input": 1.0,
+          "cache_5m": 12.5,
+          "cache_1h": 20.0,
+          "output": 50.0,
+          "unit": "per_1m_tokens"
+        }
+      },
+      {
+        "id": "claude-opus-5",
+        "name": "Claude Opus 5",
+        "is_reasoning": true,
+        "description": "Retired 2026-09-30, superseded by Claude Opus 5.5. Kept until the next retirement so a custom model on this id still bills.",
+        "pricing": {
+          "input": 5.0,
+          "cached_input": 0.5,
+          "cache_5m": 6.25,
+          "cache_1h": 10.0,
+          "output": 25.0,
+          "unit": "per_1m_tokens"
+        }
+      },
+      {
         "id": "claude-sonnet-5",
         "name": "Claude Sonnet 5",
         "is_reasoning": true,
-        "description": "Claude Sonnet 5 model",
+        "description": "Retired 2026-09-30, superseded by Claude Sonnet 5.5. Kept until the next retirement so a custom model on this id still bills.",
         "pricing": {
           "input": 2.0,
           "cached_input": 0.2,
@@ -369,7 +386,7 @@
         "id": "claude-opus-4-8",
         "name": "Claude 4.8 Opus",
         "is_reasoning": true,
-        "description": "Claude 4.8 Opus model",
+        "description": "Retired 2026-09-30, superseded by Claude Opus 5.5. Kept until the next retirement so a custom model on this id still bills.",
         "alias": [
           "claude-opus-4.8"
         ],
@@ -386,7 +403,7 @@
         "id": "claude-sonnet-4-6",
         "name": "Claude 4.6 Sonnet",
         "is_reasoning": true,
-        "description": "Claude 4.6 Sonnet model",
+        "description": "Retired 2026-09-30, superseded by Claude Sonnet 5.5. Kept until the next retirement so a custom model on this id still bills.",
         "alias": [
           "claude-sonnet-4.6"
         ],
@@ -416,23 +433,6 @@
           "output_pricing_mode": "input_dependent",
           "cache_5m": 3.75,
           "cache_1h": 6.0,
-          "unit": "per_1m_tokens"
-        }
-      },
-      {
-        "id": "claude-haiku-4-5-20251001",
-        "name": "Claude 4.5 Haiku",
-        "is_reasoning": true,
-        "description": "Fast and cost-efficient model",
-        "alias": [
-          "claude-haiku-4.5"
-        ],
-        "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "cache_5m": 1.25,
-          "cache_1h": 2.0,
-          "output": 5.0,
           "unit": "per_1m_tokens"
         }
       }

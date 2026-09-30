@@ -53,7 +53,7 @@ def test_the_platform_fixture_actually_prices():
     telling "byok was excluded" apart from "nothing priced at all". No value is
     pinned here, only that pricing happened."""
     priced = calculate_cost_from_per_call_records(
-        [_record(i, "claude-opus-5") for i in range(6)]
+        [_record(i, "claude-opus-5-5") for i in range(6)]
     )
     assert priced["platform_cost"] > 0
 
@@ -62,15 +62,15 @@ def test_the_platform_fixture_actually_prices():
     "records",
     [
         pytest.param(
-            [_record(i, "claude-opus-5") for i in range(6)],
+            [_record(i, "claude-opus-5-5") for i in range(6)],
             id="stamped-platform",
         ),
         pytest.param(
-            [_record(i, "claude-opus-5", billing_type=None) for i in range(6)],
+            [_record(i, "claude-opus-5-5", billing_type=None) for i in range(6)],
             id="billing-type-absent-defaults-to-platform",
         ),
         pytest.param(
-            [_record(i, "claude-opus-5", billing_type="byok") for i in range(6)],
+            [_record(i, "claude-opus-5-5", billing_type="byok") for i in range(6)],
             id="own-key-call-contributes-nothing",
         ),
         pytest.param(
@@ -94,7 +94,7 @@ def test_the_running_total_matches_the_billed_pass(records):
 
 def test_reset_clears_the_running_total_and_its_cursor():
     tracker = PerCallTokenTracker()
-    tracker.per_call_records.append(_record(0, "claude-opus-5"))
+    tracker.per_call_records.append(_record(0, "claude-opus-5-5"))
     assert tracker.platform_usd_total() > 0
 
     tracker.reset()
@@ -113,5 +113,5 @@ def test_a_record_that_cannot_be_priced_is_skipped_rather_than_freezing_the_mete
     tracker.per_call_records.append({"no": "model_name here"})
     assert tracker.platform_usd_total() == 0.0
 
-    tracker.per_call_records.append(_record(1, "claude-opus-5"))
+    tracker.per_call_records.append(_record(1, "claude-opus-5-5"))
     assert tracker.platform_usd_total() > 0

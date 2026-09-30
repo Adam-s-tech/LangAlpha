@@ -209,7 +209,9 @@ export default defineConfig(({ mode }) => {
           ws: true,
         },
       },
-      cors: true,
+      // `cors` stays at Vite's default, which answers only loopback origins,
+      // `*.localhost` included (the dev proxy's worktree hosts). `true` let any
+      // page open in the developer's browser read this server's responses.
     },
   }
 })

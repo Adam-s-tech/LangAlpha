@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { useHomeTimezone } from '@/hooks/useHomeTimezone';
+import { useLatestRef } from '@/hooks/useLatestRef';
 import { useUser } from '@/hooks/useUser';
 import { sendChatMessageStream, sendRetryStream, getWorkflowStatus, sendHitlResponse, fetchThreadTurns, cancelWorkflow } from '../utils/api';
 import { useLocalRunPublisher } from '@/lib/threadLifecycle/useLocalRunPublisher';
@@ -215,6 +216,12 @@ export function useChatMessages(
 
   // Track current plan mode so HITL resume can forward it
   const currentPlanModeRef = useRef(false);
+
+  // The agent mode the latest run in view was started in. The server picks the
+  // graph that resumes a checkpoint by agent_mode, so a resume answers in this
+  // mode rather than the one the composer shows now. Null for a run this view
+  // only attached to; the resume then sends the current mode.
+  const runAgentModeRef = useRef<string | null>(null);
 
   // Track last-used model options so HITL resume can forward them
   const lastModelOptionsRef = useRef<ModelOptions>({ model: null, reasoningEffort: null, fastMode: null });
@@ -741,6 +748,7 @@ export function useChatMessages(
         // to another thread with it unanswered is the expected way to meet it.
         setPendingInterrupt(null);
         setPendingRejection(null);
+        runAgentModeRef.current = null;
       }
     }
     // answerBoard is created once and never replaced, so it is omitted the way
@@ -1464,6 +1472,7 @@ export function useChatMessages(
       if (pendingRunIdFromHeader) {
         currentRunIdRef.current = pendingRunIdFromHeader;
       }
+      runAgentModeRef.current = agentMode;
       setMessages((prev) =>
         updateMessage(prev, userMessage.id as string, (msg) => {
           if (msg.role !== 'user') return msg;
@@ -1779,6 +1788,7 @@ export function useChatMessages(
     // it. Prevents a stale run_id from biasing a reconnect into an older
     // ``workflow:stream:{tid}:{rid}`` key.
     currentRunIdRef.current = null;
+    runAgentModeRef.current = agentMode;
     // Fresh AbortController so stopWorkflow can abort this stream's reader.
     const abortController = new AbortController();
     mainStreamAbortRef.current = abortController;
@@ -2008,8 +2018,14 @@ export function useChatMessages(
   /**
    * Resumes an interrupted turn with an HITL response (approve or reject).
    * Follows the same pattern as handleSendMessage but sends messages: [] with hitl_response.
+   * Stable, and always the last committed render's body: a resume can come
+   * long after the render that armed the interrupt, through handlers memoized
+   * on it, and has to use the current runtime, callbacks and model options.
    */
-  const resumeWithHitlResponse = useCallback(async (hitlResponse: HitlResponseBody, planMode: boolean = false) => {
+  const resumeLatestRef = useLatestRef(async (hitlResponse: HitlResponseBody, planMode: boolean = false) => {
+    const resumeAgentMode = runAgentModeRef.current ?? agentMode;
+    // The resume opens the next run, in the same mode.
+    runAgentModeRef.current = resumeAgentMode;
     // Ahead of beginResume, so the settler's fence captures this run's own
     // epoch rather than the previous one (which it would already fail).
     sessionEpochRef.current += 1;
@@ -2066,7 +2082,7 @@ export function useChatMessages(
         processEvent,
         planMode,
         lastModelOptionsRef.current as { model?: string; reasoningEffort?: string; fastMode?: boolean },
-        agentMode,
+        resumeAgentMode,
         // Latch the fresh run_id from response headers before the first SSE
         // body byte. Without this, an early disconnect (between the pre-POST
         // clear above and the metadata frame) would let
@@ -2175,8 +2191,11 @@ export function useChatMessages(
       // edit/regenerate map UI position → turn_index by counting non-steering
       // assistant bubbles. MessageList hides empty settled bubbles instead.
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, threadId, updateTodoListCard, updateSubagentCard, finalizePendingTodos]);
+  });
+  const resumeWithHitlResponse = useCallback(
+    (hitlResponse: HitlResponseBody, planMode: boolean = false) => resumeLatestRef.current(hitlResponse, planMode),
+    [resumeLatestRef],
+  );
 
   const handleApproveInterrupt = useCallback(() => {
     if (!pendingInterrupt) return;
@@ -2478,6 +2497,9 @@ export function useChatMessages(
     // Edit/regenerate opens a fresh backend run; clear the prior run_id so
     // the new metadata frame becomes the source of truth.
     currentRunIdRef.current = null;
+    // The retry route takes no agent_mode, so the server starts it from its
+    // default; answering in that same default resolves to the same graph.
+    runAgentModeRef.current = viaRetryEndpoint ? 'ptc' : agentMode;
     // A fork truncates persisted turns > forkFromTurn server-side; pin the
     // rendered-turn watermark to the fork turn so the reactivation staleness
     // check compares against the post-truncation reality (a stale-high

@@ -13,6 +13,8 @@ import { Sunrise, Sunset } from 'lucide-react';
 import { useTheme } from '../../../../contexts/ThemeContext';
 import { createThemeResolver, useThemeTokens } from '@/lib/themeTokens';
 import { useTranslation } from 'react-i18next';
+import { createFormatter } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import { buildMarketViewUrl } from '@/pages/MarketView/utils/marketRoute';
 import { useRouteLeaveGuard } from '../../contexts/RouteLeaveGuardContext';
 
@@ -78,6 +80,9 @@ const ANALYST_COLORS: Record<string, string> = {
   'Sell': '#f87171',
   'Strong Sell': 'var(--color-loss)',
 };
+
+const plainNumber = createFormatter({});
+const price2 = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const formatNumber = (num: number | null | undefined): string => {
   if (num == null) return 'N/A';
@@ -906,6 +911,7 @@ function LazyChart({ height, children, root }: { height: number; children: React
 
 export const CompanyOverviewCard = memo(function CompanyOverviewCard({ data, scrollContainerRef }: DataProps & { scrollContainerRef?: React.RefObject<HTMLDivElement | null> }): React.ReactElement {
   const { t } = useTranslation();
+  const locale = useLocale();
   const {
     symbol, name, quote, performance, analystRatings,
     revenueByProduct, revenueByGeo,
@@ -1039,7 +1045,7 @@ export const CompanyOverviewCard = memo(function CompanyOverviewCard({ data, scr
             {hasSI && (
               <QuoteStat
                 label={`${t('toolArtifact.shortInterest', 'Short Interest')}${(latestSI!.settlement_date as string | undefined) ? ` (${latestSI!.settlement_date as string})` : ''}`}
-                value={(latestSI!.short_interest as number).toLocaleString()}
+                value={plainNumber(latestSI!.short_interest as number, locale)}
               />
             )}
             {siPctOfFloat != null && (
@@ -1119,6 +1125,7 @@ function QuoteStat({ label, value }: QuoteStatProps): React.ReactElement {
 
 export function MarketIndicesChart({ data }: DataProps): React.ReactElement {
   const { t } = useTranslation();
+  const locale = useLocale();
   const indices = data?.indices as Record<string, Record<string, unknown>> | undefined;
   if (!indices || Object.keys(indices).length === 0) {
     return <div style={{ color: TEXT_COLOR, padding: 16 }}>{t('toolArtifact.noIndexData')}</div>;
@@ -1151,7 +1158,7 @@ export function MarketIndicesChart({ data }: DataProps): React.ReactElement {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem', flexShrink: 0 }}>
                 {lastClose != null && (
                   <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>
-                    {lastClose.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {price2(lastClose, locale)}
                   </span>
                 )}
                 {changePct != null && (

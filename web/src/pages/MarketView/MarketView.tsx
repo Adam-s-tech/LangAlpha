@@ -465,7 +465,9 @@ function MarketViewInner() {
       parts.push(`RSI(${meta.rsiPeriod}): ${meta.rsiValue ?? 'N/A'}`);
 
       const c = meta.lastCandle;
-      parts.push(`Latest candle — O: ${c.open} H: ${c.high} L: ${c.low} C: ${c.close} Vol: ${c.volume?.toLocaleString()}`);
+      // Prompt text for the model, not display: pinned so it reads the same
+      // digits whatever the browser's locale.
+      parts.push(`Latest candle — O: ${c.open} H: ${c.high} L: ${c.low} C: ${c.close} Vol: ${c.volume?.toLocaleString('en-US')}`);
     }
 
     const overview = overviewData as OverviewData | null;

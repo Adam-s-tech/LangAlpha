@@ -5,7 +5,7 @@ import { HeaderPill } from './HeaderPill';
 import { ExtendedHoursPair } from './ExtendedHoursPair';
 import './StockHeader.css';
 import type { StockSearchHit } from '@/lib/marketUtils';
-import { compactNumberFixed2, fixed2, signedFixed2 } from '@/lib/format';
+import { compactNumberFixed2, createDateFormatter, fixed2, signedFixed2 } from '@/lib/format';
 import { DASH, fixed2OrDash as fmt, type StockQuoteModel } from '../hooks/useStockQuoteModel';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useTranslation } from 'react-i18next';
@@ -34,6 +34,8 @@ interface StockHeaderProps {
   /** A host's own buttons, beside Company Overview. */
   headerActions?: React.ReactNode;
 }
+
+const tickTimeFormat = createDateFormatter({ hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 const EXCHANGE_LABELS: Record<string, string> = { HK: 'HK', SS: 'SH', SZ: 'SZ', L: 'LON', T: 'TYO', TO: 'TSX', AX: 'ASX' };
 
@@ -65,7 +67,7 @@ const StockHeader = ({ symbol, quote: q, chartMeta: _chartMeta, onToggleOverview
 
   const formatTickTime = (date: Date | null): string | null => {
     if (!date) return null;
-    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return tickTimeFormat(date, locale);
   };
 
   const watchlistBtn = onOpenWatchlist ? (

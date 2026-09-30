@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Share2, Copy, Check, Link2, Lock, FileText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from '@/components/ui/use-toast';
 import { createDateFormatter } from '@/lib/format';
 import { useCopyShareLink } from '@/hooks/useCopyShareLink';
@@ -105,7 +106,6 @@ export default function ShareButton({ threadId, initialIsShared = false, workspa
   const [shareState, setShareState] = useState<ThreadShareStatus | null>(null);
   const [copied, setCopied] = useState(false);
   const [updating, setUpdating] = useState(false);
-  const popoverRef = useRef<HTMLDivElement>(null);
 
   // Fetch full share status when popover opens (ensures fresh data including URL + permissions)
   useEffect(() => {
@@ -123,18 +123,6 @@ export default function ShareButton({ threadId, initialIsShared = false, workspa
     })();
     return () => { cancelled = true; };
   }, [open, threadId]);
-
-  // Close popover on outside click
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
 
   const handleToggleShare = useCallback(async (enabled: boolean) => {
     setUpdating(true);
@@ -184,136 +172,140 @@ export default function ShareButton({ threadId, initialIsShared = false, workspa
   const isShared = shareState ? shareState.is_shared === true : initialIsShared;
   const permissions = shareState?.permissions || {};
 
+  // Radix owns dismissal: Escape and an outside press close it, and a keyboard
+  // close hands focus back to the trigger.
   return (
-    <div className="relative" ref={popoverRef}>
-      <button
-        onClick={() => setOpen((p) => !p)}
-        className="p-2 rounded-md transition-colors"
-        style={{
-          color: isShared ? 'var(--color-accent-primary)' : 'var(--color-text-primary)',
-          backgroundColor: open ? 'var(--color-border-muted)' : undefined,
-        }}
-        title={t('share.shareConversation')}
-        onMouseEnter={(e) => { if (!open) e.currentTarget.style.backgroundColor = 'var(--color-border-muted)'; }}
-        onMouseLeave={(e) => { if (!open) e.currentTarget.style.backgroundColor = ''; }}
-      >
-        <Share2 className="h-5 w-5" />
-      </button>
-
-      {open && (
-        <div
-          className="absolute right-0 top-full mt-2 w-80 rounded-lg border shadow-lg z-50"
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="p-2 rounded-md transition-colors"
           style={{
-            backgroundColor: 'var(--color-bg-elevated, var(--color-bg-card))',
-            borderColor: 'var(--color-border-muted)',
+            color: isShared ? 'var(--color-accent-primary)' : 'var(--color-text-primary)',
+            backgroundColor: open ? 'var(--color-border-muted)' : undefined,
           }}
+          title={t('share.shareConversation')}
+          onMouseEnter={(e) => { if (!open) e.currentTarget.style.backgroundColor = 'var(--color-border-muted)'; }}
+          onMouseLeave={(e) => { if (!open) e.currentTarget.style.backgroundColor = ''; }}
         >
-          {loading ? (
-            <div className="px-4 py-6 text-center">
-              <span className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>{t('common.loading')}</span>
-            </div>
-          ) : (
-            <div className="p-4 space-y-3">
-              {/* Header */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {isShared ? (
-                    <Link2 className="h-4 w-4" style={{ color: 'var(--color-accent-primary)' }} />
-                  ) : (
-                    <Lock className="h-4 w-4" style={{ color: 'var(--color-text-tertiary)' }} />
-                  )}
-                  <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                    {isShared ? t('share.publicLinkEnabled') : t('share.shareConversation')}
-                  </span>
-                </div>
-                {/* Toggle */}
-                <button
-                  onClick={() => handleToggleShare(!isShared)}
-                  disabled={updating}
-                  className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200"
-                  style={{
-                    backgroundColor: isShared ? 'var(--color-accent-primary)' : 'var(--color-border-muted)',
-                    opacity: updating ? 0.6 : 1,
-                  }}
-                >
-                  <span
-                    className="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200"
-                    style={{ transform: isShared ? 'translateX(16px)' : 'translateX(0)' }}
-                  />
-                </button>
+          <Share2 className="h-5 w-5" />
+        </button>
+      </PopoverTrigger>
+
+      <PopoverContent
+        align="end"
+        sideOffset={8}
+        className="w-80 p-0 rounded-lg shadow-lg"
+        style={{
+          backgroundColor: 'var(--color-bg-elevated, var(--color-bg-card))',
+          borderColor: 'var(--color-border-muted)',
+        }}
+      >
+        {loading ? (
+          <div className="px-4 py-6 text-center">
+            <span className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>{t('common.loading')}</span>
+          </div>
+        ) : (
+          <div className="p-4 space-y-3">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {isShared ? (
+                  <Link2 className="h-4 w-4" style={{ color: 'var(--color-accent-primary)' }} />
+                ) : (
+                  <Lock className="h-4 w-4" style={{ color: 'var(--color-text-tertiary)' }} />
+                )}
+                <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                  {isShared ? t('share.publicLinkEnabled') : t('share.shareConversation')}
+                </span>
               </div>
+              {/* Toggle */}
+              <button
+                onClick={() => handleToggleShare(!isShared)}
+                disabled={updating}
+                className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200"
+                style={{
+                  backgroundColor: isShared ? 'var(--color-accent-primary)' : 'var(--color-border-muted)',
+                  opacity: updating ? 0.6 : 1,
+                }}
+              >
+                <span
+                  className="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200"
+                  style={{ transform: isShared ? 'translateX(16px)' : 'translateX(0)' }}
+                />
+              </button>
+            </div>
 
-              {isShared && shareState && (
-                <>
-                  {/* Share URL */}
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="flex-1 flex items-center px-3 py-1.5 rounded-md text-xs truncate"
-                      style={{
-                        backgroundColor: 'var(--color-bg-input)',
-                        color: 'var(--color-text-secondary)',
-                      }}
-                    >
-                      <span className="truncate">
-                        {window.location.origin}{shareState.share_url}
-                      </span>
-                    </div>
-                    <button
-                      onClick={handleCopy}
-                      className="p-1.5 rounded-md transition-colors shrink-0"
-                      style={{ color: copied ? 'var(--color-success)' : 'var(--color-text-secondary)' }}
-                      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-border-muted)'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = ''; }}
-                      title={t('share.copyLink')}
-                    >
-                      {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                    </button>
+            {isShared && shareState && (
+              <>
+                {/* Share URL */}
+                <div className="flex items-center gap-2">
+                  <div
+                    className="flex-1 flex items-center px-3 py-1.5 rounded-md text-xs truncate"
+                    style={{
+                      backgroundColor: 'var(--color-bg-input)',
+                      color: 'var(--color-text-secondary)',
+                    }}
+                  >
+                    <span className="truncate">
+                      {window.location.origin}{shareState.share_url}
+                    </span>
                   </div>
+                  <button
+                    onClick={handleCopy}
+                    className="p-1.5 rounded-md transition-colors shrink-0"
+                    style={{ color: copied ? 'var(--color-success)' : 'var(--color-text-secondary)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-border-muted)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = ''; }}
+                    title={t('share.copyLink')}
+                  >
+                    {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  </button>
+                </div>
 
-                  {/* Permissions */}
-                  <div className="space-y-2 pt-1">
-                    <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                      {t('share.permissions')}
-                    </p>
-                    <label className="flex items-center gap-2 cursor-pointer">
+                {/* Permissions */}
+                <div className="space-y-2 pt-1">
+                  <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                    {t('share.permissions')}
+                  </p>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={permissions.allow_files || false}
+                      onChange={(e) => handlePermissionChange('allow_files', e.target.checked)}
+                      disabled={updating}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                      {t('share.allowFileBrowsing')}
+                    </span>
+                  </label>
+                  {permissions.allow_files && (
+                    <label className="flex items-center gap-2 cursor-pointer ml-4">
                       <input
                         type="checkbox"
-                        checked={permissions.allow_files || false}
-                        onChange={(e) => handlePermissionChange('allow_files', e.target.checked)}
+                        checked={permissions.allow_download || false}
+                        onChange={(e) => handlePermissionChange('allow_download', e.target.checked)}
                         disabled={updating}
                         className="rounded border-gray-300"
                       />
                       <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                        {t('share.allowFileBrowsing')}
+                        {t('share.allowFileDownload')}
                       </span>
                     </label>
-                    {permissions.allow_files && (
-                      <label className="flex items-center gap-2 cursor-pointer ml-4">
-                        <input
-                          type="checkbox"
-                          checked={permissions.allow_download || false}
-                          onChange={(e) => handlePermissionChange('allow_download', e.target.checked)}
-                          disabled={updating}
-                          className="rounded border-gray-300"
-                        />
-                        <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                          {t('share.allowFileDownload')}
-                        </span>
-                      </label>
-                    )}
-                  </div>
+                  )}
+                </div>
 
-                  {/* Info */}
-                  <p className="text-xs pt-1" style={{ color: 'var(--color-text-tertiary)' }}>
-                    {t('share.anyoneWithLink')}
-                  </p>
-                </>
-              )}
-              {workspaceId && <SharedInWorkspace workspaceId={workspaceId} />}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+                {/* Info */}
+                <p className="text-xs pt-1" style={{ color: 'var(--color-text-tertiary)' }}>
+                  {t('share.anyoneWithLink')}
+                </p>
+              </>
+            )}
+            {workspaceId && <SharedInWorkspace workspaceId={workspaceId} />}
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }

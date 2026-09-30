@@ -1,6 +1,6 @@
 import pytest
 
-from src.llms.llm import get_max_pdf_pages
+from src.llms.llm import LLM, get_max_pdf_pages
 
 
 class TestGetMaxPdfPages:
@@ -26,7 +26,12 @@ class TestGetMaxPdfPages:
     )
     def test_a_sub_1m_anthropic_route_gets_the_tighter_one(self, model):
         """The pair that makes a single global cap impossible: same vendor, same
-        modality support, six-fold difference in what a request may carry."""
+        modality support, six-fold difference in what a request may carry.
+
+        An unknown model also gets 100, so a retired target would still pass
+        here while testing nothing; the entry has to exist below 1M."""
+        entry = LLM.get_model_config().get_model_config(model)
+        assert entry is not None and entry["context"] < 1_000_000
         assert get_max_pdf_pages(model) == 100
 
     def test_a_provider_with_no_documented_page_limit_reports_none(self):

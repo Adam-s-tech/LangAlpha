@@ -609,6 +609,14 @@ class TestPDFPageCeilingIsPerTarget:
         blocks, _ = await _blocks_reaching("claude-sonnet-5-5", _pdf_block(300))
         assert [b["type"] for b in blocks] == ["text", "file"]
 
+    def test_the_200k_route_is_still_one(self):
+        """An unknown model fails closed to the same 100 pages, so the tests
+        below would pass against a retired key while proving nothing."""
+        from src.llms.llm import LLM
+
+        entry = LLM.get_model_config().get_model_config("claude-haiku-4-5")
+        assert entry is not None and entry["context"] < 1_000_000
+
     @pytest.mark.asyncio
     async def test_the_same_pdf_is_stripped_for_a_200k_route(self):
         blocks, request = await _blocks_reaching("claude-haiku-4-5", _pdf_block(300))

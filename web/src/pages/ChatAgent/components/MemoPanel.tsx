@@ -38,7 +38,7 @@ import {
 import { useWorkspaces } from '../../../hooks/useWorkspaces';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
-import { formatBytes } from '@/lib/format';
+import { createDateFormatter, formatBytes } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
 import {
@@ -77,25 +77,19 @@ const ACCEPT_ATTR = '.md,.txt,.csv,.json,.pdf,text/markdown,text/plain,text/csv,
 
 // --- Helpers ---------------------------------------------------------------
 
-function formatDate(iso: string | null, now: number): string {
+const clockTime = createDateFormatter({ hour: '2-digit', minute: '2-digit' });
+const monthDay = createDateFormatter({ month: 'short', day: 'numeric' });
+const monthDayYear = createDateFormatter({ year: 'numeric', month: 'short', day: 'numeric' });
+
+function formatDate(iso: string | null, now: number, locale: string): string {
   if (!iso) return '';
   try {
     const d = new Date(iso);
     const today = new Date(now);
     const sameYear = d.getFullYear() === today.getFullYear();
     const sameDay = d.toDateString() === today.toDateString();
-    if (sameDay) {
-      return d.toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    }
-    return d.toLocaleDateString(
-      [],
-      sameYear
-        ? { month: 'short', day: 'numeric' }
-        : { year: 'numeric', month: 'short', day: 'numeric' },
-    );
+    if (sameDay) return clockTime(d, locale);
+    return sameYear ? monthDay(d, locale) : monthDayYear(d, locale);
   } catch {
     return '';
   }
@@ -1362,7 +1356,7 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
                       className="hidden @min-[420px]:table-cell px-2 py-2 whitespace-nowrap"
                       style={{ color: 'var(--color-text-tertiary)' }}
                     >
-                      {formatDate(entry.created_at, now)}
+                      {formatDate(entry.created_at, now, locale)}
                     </td>
                   </tr>
                 );

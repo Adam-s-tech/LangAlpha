@@ -6,6 +6,8 @@ import {
 import { useTranslation } from 'react-i18next';
 import { utcMsToETDate } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { useLocale } from '@/hooks/useLocale';
+import { createFormatter } from '@/lib/format';
 import { InlineAutomationCard } from './InlineAutomationCards';
 import { InlinePreviewCard } from './InlinePreviewCard';
 import { InlineChartAnnotationCard } from './InlineChartAnnotationCard';
@@ -204,16 +206,21 @@ export function InlineStockPriceCard({ artifact, onClick }: InlineCardProps): Re
 
 // ─── InlineCompanyOverviewCard ───────────────────────────────────────
 
-function formatMarketCap(num: number | null | undefined): string {
+// Number#toLocaleString()'s defaults, in the app's language rather than the browser's.
+const grouped = createFormatter({ maximumFractionDigits: 3 });
+const grouped2dp = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function formatMarketCap(num: number | null | undefined, locale: string): string {
   if (num == null) return 'N/A';
   if (Math.abs(num) >= 1e12) return `$${(num / 1e12).toFixed(2)}T`;
   if (Math.abs(num) >= 1e9) return `$${(num / 1e9).toFixed(2)}B`;
   if (Math.abs(num) >= 1e6) return `$${(num / 1e6).toFixed(2)}M`;
-  return `$${num.toLocaleString()}`;
+  return `$${grouped(num, locale)}`;
 }
 
 export function InlineCompanyOverviewCard({ artifact, onClick }: InlineCardProps): React.ReactElement | null {
   const { t } = useTranslation();
+  const locale = useLocale();
   const isMobile = useIsMobile();
   const sz = isMobile ? SIZES_MOBILE : SIZES_DESKTOP;
   const { symbol, name, quote } = (artifact || {}) as {
@@ -319,7 +326,7 @@ export function InlineCompanyOverviewCard({ artifact, onClick }: InlineCardProps
           <QuoteRow label={t('toolArtifact.volume')} value={formatCompactNumber(quote.volume as number)} />
         )}
         {(quote.marketCap as number | undefined) != null && (
-          <QuoteRow label={t('toolArtifact.marketCap')} value={formatMarketCap(quote.marketCap as number)} />
+          <QuoteRow label={t('toolArtifact.marketCap')} value={formatMarketCap(quote.marketCap as number, locale)} />
         )}
       </div>
     </div>
@@ -345,6 +352,7 @@ function QuoteRow({ label, value }: QuoteRowProps): React.ReactElement {
 
 export function InlineMarketIndicesCard({ artifact, onClick }: InlineCardProps): React.ReactElement | null {
   const { t } = useTranslation();
+  const locale = useLocale();
   const isMobile = useIsMobile();
   const sz = isMobile ? SIZES_MOBILE : SIZES_DESKTOP;
   const indices = (artifact as Record<string, unknown> | undefined)?.indices as Record<string, Record<string, unknown>> | undefined;
@@ -382,7 +390,7 @@ export function InlineMarketIndicesCard({ artifact, onClick }: InlineCardProps):
               <div style={{ display: 'flex', alignItems: 'center', gap: sz.gap, flexShrink: 0 }}>
                 {lastClose != null && (
                   <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>
-                    {lastClose.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {grouped2dp(lastClose, locale)}
                   </span>
                 )}
                 {changePct != null && (

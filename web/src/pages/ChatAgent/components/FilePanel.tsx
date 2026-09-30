@@ -166,7 +166,10 @@ function FilePanel({
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const panelRef = useRef<HTMLDivElement>(null);
-  const narrow = useNarrowContainer(panelRef, TREE_OVERLAY_WIDTH);
+  // The tree waits for the measurement: rendered docked before it, a narrow
+  // panel painted the column for a frame and then animated it shut.
+  const narrowOrUnmeasured = useNarrowContainer(panelRef, TREE_OVERLAY_WIDTH);
+  const narrow = narrowOrUnmeasured ?? false;
 
   // A share reads through its own endpoints, which take no workspace id.
   // Memoised as one object: every hook below closes over these, and rebuilding
@@ -767,6 +770,7 @@ function FilePanel({
             </div>
           </div>
 
+          {narrowOrUnmeasured !== null && (
           <AnimatePresence initial={false}>
           {treeShown && (
             <TreeColumn
@@ -807,6 +811,7 @@ function FilePanel({
             />
           )}
           </AnimatePresence>
+          )}
         </div>
 
       <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileInputChange} />

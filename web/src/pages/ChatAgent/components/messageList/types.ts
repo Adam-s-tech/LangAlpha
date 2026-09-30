@@ -1,3 +1,5 @@
+import type { TextChunkMark } from '@/types/chat';
+
 // Stable empty object to avoid defeating React.memo with fresh `|| {}` fallbacks
 export const EMPTY_OBJ = {} as Record<string, never>;
 
@@ -18,7 +20,8 @@ export interface ContentSegmentRecord {
   type: string;
   content?: string;
   order: number;
-  lastOrder?: number;
+  /** Text-only: where each live chunk ended (see `session/stream/textChunks`). */
+  chunks?: TextChunkMark;
   reasoningId?: string;
   toolCallId?: string;
   todoListId?: string;

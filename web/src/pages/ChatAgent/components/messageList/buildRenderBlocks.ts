@@ -3,7 +3,7 @@ import { INLINE_ARTIFACT_TOOLS, isInlineArtifactReady } from '../charts/InlineAr
 import { normalizeSubagentText } from './normalizeSubagentText';
 import { isUserProfileReadmePath } from '../../utils/agentPaths';
 import { MIN_LIVE_EXPOSURE_MS } from './liveZoneTiming';
-import { inOrder } from './messageText';
+import { inChunkOrder } from '../../session/stream/textChunks';
 import type { ContentSegmentRecord, ToolCallProcessRecord } from './types';
 import type { ActivityItem, ToolActivityItem, LiveState, ToolCallData, ToolCallResultData } from './activityTypes';
 
@@ -104,10 +104,8 @@ export type RenderBlock =
   | HtmlWidgetRenderBlock;
 
 /** Sort segments by `order` and merge consecutive text segments into one group.
- *  A streaming reply holds one text segment per chunk and this runs on every
- *  chunk, so a run is joined once when it closes rather than rebuilt per
- *  segment: the per-segment rebuild made each chunk cost the length of the
- *  reply in allocations. */
+ *  This runs on every chunk, so a run is joined once when it closes rather than
+ *  rebuilt per segment. */
 export function groupSegments(segments: ContentSegmentRecord[]): ContentSegmentRecord[] {
     const groups: ContentSegmentRecord[] = [];
     let run: ContentSegmentRecord[] = [];
@@ -118,11 +116,10 @@ export function groupSegments(segments: ContentSegmentRecord[]): ContentSegmentR
         type: 'text',
         content: run.length === 1 ? first.content : run.map((s) => s.content || '').join(''),
         order: first.order,
-        lastOrder: run[run.length - 1].order,
       });
       run = [];
     };
-    for (const segment of inOrder(segments)) {
+    for (const segment of inChunkOrder(segments)) {
       if (segment.type === 'text') {
         run.push(segment);
       } else {

@@ -15,7 +15,7 @@ import type { HtmlWidgetData } from '../../hooks/utils/types';
 import {
   ZERO_USAGE, extractTokenUsageDelta, accumulateTokenUsage,
 } from '../../utils/tokenUsage';
-import { computeSteeringBoundary, shouldSkipSteeringRollback } from './steeringRollback';
+import { computeSteeringBoundary, keepSegmentsThrough, shouldSkipSteeringRollback } from './steeringRollback';
 import {
   buildModelFallbackSegment, appendNotificationSegmentOnce,
   isOnboardingRelatedToolSuccess, mapToolCallIdToAgentId,
@@ -256,10 +256,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
 
           // Keep only segments at or before the steering point. Guard
           // already proved boundary is a positive finite number.
-          const boundary = effectiveSteeringAtOrder as number;
-          const keptSegments = (aMsg.contentSegments || []).filter(
-            (s) => s.order <= boundary
-          );
+          const keptSegments = keepSegmentsThrough(aMsg.contentSegments || [], effectiveSteeringAtOrder as number);
 
           // Rebuild plain-text content from kept text segments
           const keptContent = keptSegments

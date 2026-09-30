@@ -13,6 +13,8 @@ import {
 import type { MessageRecord, ToolCallRecord, ToolCallResultRecord } from '../../hooks/utils/types';
 import { getOrCreateTaskRefs, nextArrivalSeq } from '../streamRefs';
 import { isTaskAgentId } from '../../utils/agentId';
+import { appendTextChunk } from '../stream/textChunks';
+import type { ContentSegment } from '@/types/chat';
 import type {
   StreamRefs, TaskRefs, ToolCallChunkRecord, UpdateSubagentCard,
 } from '../streamRefs';
@@ -247,10 +249,7 @@ export function handleSubagentMessageChunk({
     const prev = updatedMessages[messageIndex];
     updatedMessages[messageIndex] = {
       ...prev,
-      contentSegments: [
-        ...((prev.contentSegments as unknown[]) || []),
-        { type: 'text', content, order: currentOrder },
-      ],
+      contentSegments: appendTextChunk((prev.contentSegments as ContentSegment[]) || [], content, currentOrder),
       content: ((prev.content as string) || '') + content,
       contentType: 'text',
       isStreaming: true,

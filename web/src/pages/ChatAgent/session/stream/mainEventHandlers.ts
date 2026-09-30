@@ -9,8 +9,9 @@ import { ownerOfToolCall } from '../toolCallOwner';
 import { deriveTaskSegment, applyTaskSegment, applyLaunchReply } from '../subagents/taskSegmentBuilder';
 import type { MessageRecord, SetMessages, ToolCallRecord, ToolCallResultRecord, TodoPayload, HtmlWidgetData } from '../../hooks/utils/types';
 import type { ProvenanceEvent } from '@/types/sse';
-import type { ProvenanceRecord, SubagentTaskRecord, TextSegment } from '@/types/chat';
+import type { ContentSegment, ProvenanceRecord, SubagentTaskRecord, TextSegment } from '@/types/chat';
 import { provenanceEventToRecord, provenanceRecordKey } from './provenance';
+import { appendTextChunk } from './textChunks';
 import { nextArrivalSeq } from '../streamRefs';
 import type { StreamRefs, ToolCallChunkRecord } from '../streamRefs';
 
@@ -211,15 +212,7 @@ export function handleTextContent({ assistantMessageId, content, finishReason, r
       prev.map((msg: MessageRecord) => {
         if (msg.id !== assistantMessageId) return msg;
 
-        const newSegments = [
-          ...((msg.contentSegments as unknown[]) || []),
-          {
-            type: 'text',
-            content,
-            order: currentOrder,
-            ...(phase ? { phase } : {}),
-          },
-        ];
+        const newSegments = appendTextChunk((msg.contentSegments as ContentSegment[]) || [], content, currentOrder, phase);
 
         const accumulatedText = ((msg.content as string) || '') + content;
 

@@ -221,9 +221,32 @@ async def _resolve_data_files(
             # Sanitize non-standard JSON tokens (NaN/Infinity) that Python's
             # json.dumps emits by default — these break browser JSON.parse.
             _, ext = os.path.splitext(path)
-            if ext.lower() in ('.json', '.geojson', '.topojson'):
-                value = re.sub(r'\bNaN\b', 'null', value)
-                value = re.sub(r'(?<![A-Za-z_])-?Infinity\b', 'null', value)
+            # Sanitizing shrinks text by at most 5/9 (`-Infinity` -> `null`), so
+            # text longer than 9/4 of the remaining budget is over the cap
+            # either way; skip the scan, whose per-token cost is ~20 bytes of
+            # memory per input character on dense short-string JSON. Text with
+            # neither spelling, which is most data, has nothing to rewrite, and
+            # skipping it keeps this synchronous scan off the event loop.
+            if (
+                ext.lower() in ('.json', '.geojson', '.topojson')
+                and len(value) * 4 <= (_INLINE_DATA_CAP - inline_total) * 9
+                and ("NaN" in value or "Infinity" in value)
+            ):
+                # Match quoted strings first so names and labels stay intact.
+                # Avoid a parse/dump round trip that could alter numeric precision.
+                # The closing quote is optional and a backslash escapes any
+                # character, so the string branch can never backtrack after it
+                # starts: a truncated string (malformed JSON) stays linear and
+                # is left byte-for-byte intact. The possessive `*+` states
+                # that to the engine, which then keeps no per-iteration
+                # backtrack state; a plain `*` costs ~120 bytes of memory per
+                # character of the longest string, and this runs on the whole
+                # file before the inline cap is applied.
+                value = re.sub(
+                    r'"(?:\\[\s\S]|[^"\\])*+"?|(?P<constant>(?<!\w)(?:NaN|-?Infinity)\b)',
+                    lambda token: "null" if token.group("constant") else token.group(0),
+                    value,
+                )
         else:
             b64 = base64.b64encode(content).decode()  # type: ignore[arg-type]
             value = f"data:{mime};base64,{b64}"

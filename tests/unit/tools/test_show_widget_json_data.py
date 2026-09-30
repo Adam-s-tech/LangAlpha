@@ -78,9 +78,11 @@ def test_truncated_json_with_escaped_quotes_is_intact_and_fast():
     """A file cut off inside a string full of escaped quotes is the worst case
     for a string-first scan that can backtrack: if an unterminated string made
     the scan retry from every quote it would be O(n^2) in the tail length. The
-    tail is one unterminated string, so nothing may be rewritten, and the call
-    must stay linear."""
-    payload = '{"rows":[{"html":"' + '\\"' * 100_000
+    bare NaN up front is what makes the text a scan candidate; the tail is one
+    unterminated string, so nothing in it may be rewritten, and the call must
+    stay linear."""
+    tail = '"rows":[{"html":"' + '\\"' * 100_000
+    payload = '{"v":NaN,' + tail
     backend = AsyncMock()
     backend.aread_text.return_value = payload
     filename = "truncated.json"
@@ -89,7 +91,7 @@ def test_truncated_json_with_escaped_quotes_is_intact_and_fast():
     result = asyncio.run(_resolve_data_files(backend, [f"/work/{filename}"]))
     elapsed = time.perf_counter() - started
 
-    assert result == {filename: payload}
+    assert result == {filename: '{"v":null,' + tail}
     # Generous quadratic-scan detector, not a microbenchmark: a linear scan
     # takes well under 10ms here.
     assert elapsed < 5.0
@@ -170,8 +172,9 @@ def test_over_cap_dense_json_is_dropped_without_scanning(item):
     inline cap afterwards anyway, so text that cannot fit even after
     sanitizing must not be scanned. Measured with tracemalloc: scanning this
     input peaks around 120-170 MB, while the bound sits well above the linear
-    cost of holding the input itself."""
-    payload = "[" + ",".join([item] * (8_000_000 // (len(item) + 1))) + "]"
+    cost of holding the input itself. The bare NaN leaves the size gate as the
+    only reason to skip."""
+    payload = "[NaN," + ",".join([item] * (8_000_000 // (len(item) + 1))) + "]"
     backend = AsyncMock()
     backend.aread_text.return_value = payload
 
@@ -240,9 +243,10 @@ def test_gate_threshold_follows_the_remaining_budget_not_the_full_cap():
     """After an earlier file uses most of the cap, dense JSON that is under 9/4
     of the full cap but over 9/4 of what is left must not be scanned. Measured
     with tracemalloc: scanning it would allocate one match string per token
-    (~20 MB here), skipping it holds only the input."""
+    (~20 MB here), skipping it holds only the input. The bare NaN leaves the
+    size gate as the only reason to skip."""
     first = "x" * (_INLINE_DATA_CAP - 100_000)
-    dense = "[" + ",".join(['""'] * 350_000) + "]"
+    dense = "[NaN," + ",".join(['""'] * 350_000) + "]"
     assert len(dense) * 4 <= _INLINE_DATA_CAP * 9
     assert len(dense) * 4 > 100_000 * 9
     contents = {"/work/a.txt": first, "/work/b.json": dense}
@@ -259,3 +263,25 @@ def test_gate_threshold_follows_the_remaining_budget_not_the_full_cap():
 
     assert result == {"a.txt": first}
     assert peak < 8 * 1024 * 1024, f"sanitizer peak {peak / 1e6:.0f} MB"
+
+
+def test_json_without_constants_is_not_scanned():
+    """Most data has no bare NaN/Infinity, and the scan only rewrites those, so
+    text with neither spelling skips it and comes back as is. Measured with
+    tracemalloc: scanning this dense input would allocate one match string per
+    token, skipping it holds only the input."""
+    dense = "[" + ",".join(['""'] * 170_000) + "]"
+    assert len(dense) <= _INLINE_DATA_CAP
+    backend = AsyncMock()
+    backend.aread_text.return_value = dense
+
+    tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        result = asyncio.run(_resolve_data_files(backend, ["/work/dense.json"]))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert result == {"dense.json": dense}
+    assert peak < 2 * 1024 * 1024, f"sanitizer peak {peak / 1e6:.1f} MB"

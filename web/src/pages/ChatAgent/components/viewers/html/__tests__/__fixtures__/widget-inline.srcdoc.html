@@ -24,7 +24,7 @@ body > :first-child {
 (function(){
   var _p=JSON.parse;
   JSON.parse=function(t,r){
-    if(typeof t==='string'){
+    if(typeof t==='string'&&(t.indexOf('NaN')!==-1||t.indexOf('Infinity')!==-1)){
       var inString=false;
       t=t.replace(/\\[\s\S]|"|(?<!\w)(?:NaN|-?Infinity)\b/g,function(token){
         if(token==='"'){inString=!inString;return token;}

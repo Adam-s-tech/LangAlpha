@@ -149,7 +149,9 @@ export function buildHtmlSrcDoc(
   // 1. Patch JSON.parse to handle NaN/Infinity from Python's json.dumps (not valid JSON).
   //    Quoted strings are left untouched: a flat token scan with a per-parse
   //    inString flag, so there is no repetition for the regexp engine to
-  //    backtrack over and a very long string cannot exhaust its stack.
+  //    backtrack over and a very long string cannot exhaust its stack. Text
+  //    with neither spelling skips the scan: the patch is global to the iframe,
+  //    so every other parse (chart libraries included) would pay for it.
   // 2. Catch uncaught errors and unhandled rejections, display an inline error overlay.
   // 3. Route link clicks to window.open(..., 'noopener'): a plain <a href>
   //    navigates the IFRAME itself, rendering the target inside the sandbox
@@ -158,7 +160,7 @@ export function buildHtmlSrcDoc(
 (function(){
   var _p=JSON.parse;
   JSON.parse=function(t,r){
-    if(typeof t==='string'){
+    if(typeof t==='string'&&(t.indexOf('NaN')!==-1||t.indexOf('Infinity')!==-1)){
       var inString=false;
       t=t.replace(/\\\\[\\s\\S]|"|(?<!\\w)(?:NaN|-?Infinity)\\b/g,function(token){
         if(token==='"'){inString=!inString;return token;}

@@ -93,8 +93,8 @@ describe.each(['widget-inline', 'widget-fullscreen'] as const)('%s JSON data', (
     // A realistic truncated write: the file is cut off inside a string full of
     // escaped quotes, the worst case for a string-first scan that retries from
     // every quote. The call must finish and the native parser must still
-    // reject the payload.
-    const truncated = '{"rows":[{"html":"' + '\\"'.repeat(100_000);
+    // reject the payload. The bare NaN makes the text a scan candidate.
+    const truncated = '{"v":NaN,"rows":[{"html":"' + '\\"'.repeat(100_000);
     let error: unknown;
     const started = performance.now();
     try {
@@ -142,10 +142,11 @@ describe.each(['widget-inline', 'widget-fullscreen'] as const)('%s JSON data', (
 
   it('rejects a truncated 12 MB string as SyntaxError, not RangeError', () => {
     // The malformed counterpart of the payload above: the scan must finish and
-    // hand the text to the native parser, which rejects it.
+    // hand the text to the native parser, which rejects it. The bare NaN makes
+    // the text a scan candidate.
     let error: unknown;
     try {
-      parseWidgetData(variant, `{"blob":"${'A'.repeat(12_000_000)}`);
+      parseWidgetData(variant, `{"v":NaN,"blob":"${'A'.repeat(12_000_000)}`);
     } catch (caught) {
       error = caught;
     }

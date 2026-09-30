@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
 import { getNews } from '../utils/api';
-import { useLocale } from '@/hooks/useLocale';
 import {
   type DashboardNewsItem,
   NEWS_POLL_INTERVAL_MS,
@@ -24,7 +23,6 @@ interface TickerRow {
  * @param provider - Optional news provider to target (e.g. 'tickertick')
  */
 export function useTickerNews(rows: TickerRow[], cacheKey: string, provider?: string): { items: TickerNewsItem[]; loading: boolean } {
-  const locale = useLocale();
   const tickers = (rows || []).map((r) => r.symbol).filter(Boolean);
   // Sorted so row reordering doesn't churn the query key. The ticker set,
   // cacheKey, and provider are all in the key, so a change refetches and the
@@ -37,7 +35,7 @@ export function useTickerNews(rows: TickerRow[], cacheKey: string, provider?: st
     queryKey: ['dashboard', 'tickerNews', cacheKey, provider ?? null, tickerKey],
     queryFn: async () => {
       const data = await getNews({ tickers, limit: 50, provider });
-      return data.results?.length > 0 ? mapNewsResults(data.results, locale, Date.now()) : [];
+      return data.results?.length > 0 ? mapNewsResults(data.results) : [];
     },
     enabled: hasTickers,
     staleTime: NEWS_STALE_MS,

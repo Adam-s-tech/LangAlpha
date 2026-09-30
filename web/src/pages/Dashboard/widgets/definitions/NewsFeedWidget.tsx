@@ -4,6 +4,8 @@ import { AnimatePresence, motion } from '@/lib/framer';
 import { Newspaper, Clock, Search, X } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { useNow } from '@/hooks/useNow';
+import { useLocale } from '@/hooks/useLocale';
+import { relativeTime } from '@/lib/format';
 import { useDashboardContext } from '../framework/DashboardDataContext';
 import { registerWidget } from '../framework/WidgetRegistry';
 import { NewsFeedConfigSchema } from '../framework/configSchemas';
@@ -42,7 +44,6 @@ interface NewsItem {
   id?: string | number;
   title: string;
   source?: string;
-  time?: string;
   publishedAt?: string | null;
   image?: string | null;
   favicon?: string | null;
@@ -64,6 +65,9 @@ function NewsRow({
   idx: number;
   onClick: () => void;
 }) {
+  const locale = useLocale();
+  const now = useNow();
+  const time = relativeTime(item.publishedAt, locale, now);
   const sentimentColor = item.isHot ? 'var(--color-profit)' : 'var(--color-text-secondary)';
   const tickers = (item.tickers?.length ?? 0) > 0 ? item.tickers! : null;
 
@@ -118,12 +122,12 @@ function NewsRow({
               {item.source}
             </span>
           ) : null}
-          {item.time ? (
+          {time ? (
             <span
               className="text-[0.625rem] flex items-center gap-0.5 shrink-0"
               style={{ color: 'var(--color-text-tertiary)' }}
             >
-              <Clock size={9} /> {item.time}
+              <Clock size={9} /> {time}
             </span>
           ) : null}
         </div>
@@ -243,7 +247,7 @@ function NewsFeedWidget({ instance, updateConfig }: WidgetRenderProps<NewsFeedCo
       const newsItems = filteredItems.map((it) => ({
         title: it.title,
         source: it.source,
-        publishedAt: it.time,
+        publishedAt: it.publishedAt ?? undefined,
         url: it.articleUrl ?? undefined,
         tickers: it.tickers,
       }));
@@ -275,7 +279,7 @@ function NewsFeedWidget({ instance, updateConfig }: WidgetRenderProps<NewsFeedCo
       const fallback: NewsArticleDetail = {
         title: item.title,
         source: item.source,
-        publishedAt: item.time,
+        publishedAt: item.publishedAt ?? undefined,
         url: item.articleUrl ?? undefined,
         tickers: item.tickers,
       };

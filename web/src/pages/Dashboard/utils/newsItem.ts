@@ -1,5 +1,3 @@
-import { relativeTime } from '@/lib/format';
-
 /** How often the dashboard news feeds re-poll their warm server buffer. */
 export const NEWS_POLL_INTERVAL_MS = 60000;
 /** Staleness window for news queries — just under the poll interval so an open
@@ -17,7 +15,6 @@ export interface NewsSentimentItem {
 export interface DashboardNewsItem {
   id: string;
   title: string;
-  time: string;
   publishedAt: string | null;
   isHot: boolean;
   source: string;
@@ -54,17 +51,13 @@ export function isWithinDateRange(
   return Number.isFinite(ts) && ts >= now - DATE_RANGE_MS[range];
 }
 
-/** Map raw /news results into the normalized DashboardNewsItem shape. `time`
- *  is stamped in `locale` relative to `now`. */
-export function mapNewsResults(
-  results: Record<string, unknown>[],
-  locale: string,
-  now: number,
-): DashboardNewsItem[] {
+/** Map raw /news results into the normalized DashboardNewsItem shape. The time
+ *  stays a raw timestamp: a row formats it against the live clock and language,
+ *  so a string stamped here would freeze at the fetch. */
+export function mapNewsResults(results: Record<string, unknown>[]): DashboardNewsItem[] {
   return results.map((r) => ({
     id: r.id as string,
     title: r.title as string,
-    time: relativeTime(r.published_at as string | null | undefined, locale, now),
     publishedAt: (r.published_at as string) || null,
     isHot: r.has_sentiment as boolean,
     source: (r.source as Record<string, unknown> | undefined)?.name as string || '',

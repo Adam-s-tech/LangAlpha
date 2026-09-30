@@ -4,13 +4,14 @@ import { motion, AnimatePresence } from '@/lib/framer';
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useNow } from '@/hooks/useNow';
+import { useLocale } from '@/hooks/useLocale';
+import { relativeTime } from '@/lib/format';
 import { isWithinDateRange, type NewsDateRange } from '../utils/newsItem';
 
 interface NewsItem {
   id?: string | number;
   title: string;
   source?: string;
-  time?: string;
   publishedAt?: string | null;
   image?: string | null;
   favicon?: string | null;
@@ -37,6 +38,9 @@ interface NewsRowProps {
 }
 
 function NewsRow({ item, idx, onNewsClick, skipAnimation }: NewsRowProps) {
+  const locale = useLocale();
+  const now = useNow();
+  const time = relativeTime(item.publishedAt, locale, now);
   const sentiment = item.isHot ? 'positive' : 'neutral';
   const sentimentColor =
     sentiment === 'positive'
@@ -101,12 +105,14 @@ function NewsRow({ item, idx, onNewsClick, skipAnimation }: NewsRowProps) {
               {item.source}
             </span>
           )}
-          <span
-            className="text-xs flex items-center gap-1"
-            style={{ color: 'var(--color-text-secondary)' }}
-          >
-            <Clock size={10} /> {item.time}
-          </span>
+          {time && (
+            <span
+              className="text-xs flex items-center gap-1"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
+              <Clock size={10} /> {time}
+            </span>
+          )}
         </div>
         <h3
           className="text-sm font-medium truncate transition-colors"

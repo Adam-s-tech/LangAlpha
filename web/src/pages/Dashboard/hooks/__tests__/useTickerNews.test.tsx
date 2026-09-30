@@ -113,7 +113,7 @@ describe('useTickerNews (React Query)', () => {
 
     expect(result.current.items[0]).toMatchObject({
       id: '1', title: 'T', isHot: true, author: null,
-      source: '', favicon: null, image: null, keywords: [], publishedAt: null, time: '',
+      source: '', favicon: null, image: null, keywords: [], publishedAt: null,
     });
   });
 

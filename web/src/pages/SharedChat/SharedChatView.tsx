@@ -187,7 +187,6 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
               assistantMessagesByPair,
               pairStateByPair,
               refs: sharedRefs,
-              messages: [],
               setMessages: setMessagesCompat,
             });
             return;

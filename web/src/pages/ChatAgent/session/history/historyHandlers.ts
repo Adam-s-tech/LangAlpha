@@ -50,7 +50,6 @@ export function handleHistoryUserMessage({
   assistantMessagesByPair,
   pairStateByPair,
   refs,
-  messages: _messages,
   setMessages,
 }: {
   event: HistoryEvent;
@@ -58,7 +57,6 @@ export function handleHistoryUserMessage({
   assistantMessagesByPair: Map<number, string>;
   pairStateByPair: Map<number, PairState>;
   refs: HistoryUserMessageRefs;
-  messages: MessageRecord[];
   setMessages: SetMessages;
 }): boolean {
   const { recentlySentTracker, currentMessageRef, newMessagesStartIndexRef } = refs;

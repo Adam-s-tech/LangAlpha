@@ -546,7 +546,6 @@ export function useChatMessages(
     // render-current
     workspaceId,
     threadId,
-    messages,
     t,
     updateSubagentCard,
     updateTodoListCard,

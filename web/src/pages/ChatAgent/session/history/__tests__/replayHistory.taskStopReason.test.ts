@@ -29,7 +29,6 @@ function buildRuntime() {
   return {
     workspaceId: 'ws-1',
     threadId: 'thread-1',
-    get messages() { return messages; },
     t: (key: string) => key,
     updateTodoListCard: null,
     setMessages: ((updater: (prev: MessageRecord[]) => MessageRecord[]) => {

@@ -479,7 +479,6 @@ export async function loadConversationHistory(
           assistantMessagesByPair,
           pairStateByPair,
           refs,
-          messages: rt.messages as unknown as Record<string, unknown>[],
           setMessages: setMessagesForHandlers,
         });
         return;

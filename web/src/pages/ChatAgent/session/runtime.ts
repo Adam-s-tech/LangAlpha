@@ -81,7 +81,6 @@ export interface HistoryRuntime {
   // render-current
   workspaceId: string;
   threadId: string;
-  messages: MessageRecord[];
   t: Translate;
   updateTodoListCard: ((todoData: Record<string, unknown>, isNew?: boolean) => void) | null;
   // stable (setters)

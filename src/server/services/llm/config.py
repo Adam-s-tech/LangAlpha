@@ -21,6 +21,7 @@ from src.server.services.features import effective_flags_for_user
 from .availability import (
     _MODEL_PREF_KEYS,
     cleanup_stale_model_preferences,
+    drop_dead_models,
     raise_byok_key_required,
     raise_model_removed,
 )
@@ -38,6 +39,16 @@ from . import user_models
 _MODE_MODEL_MAP = {
     "ptc": ("name", "preferred_model"),
     "flash": ("flash", "preferred_flash_model"),
+}
+
+# Saved models a turn reaches besides its own. The flash key is one only on a
+# PTC turn, whose compaction and fetch inherit it; a flash turn never reads the
+# PTC key at all.
+_ROLE_PREF_KEYS = {
+    "ptc": tuple(k for k in _MODEL_PREF_KEYS if k != "preferred_model"),
+    "flash": tuple(
+        k for k in _MODEL_PREF_KEYS if k not in ("preferred_model", "preferred_flash_model")
+    ),
 }
 
 # ---------------------------------------------------------------------------
@@ -181,7 +192,7 @@ def apply_compaction(config, tuning: Tuning, entry: dict[str, Any] | None) -> No
 
 async def check_model_available(
     config, user_id: str, model_pref: dict, effective_model: str,
-    request_model: str | None, *, is_byok: bool,
+    request_model: str | None, *, is_byok: bool, scrub: bool = True,
 ) -> bool:
     """Fail loudly when this turn's model cannot be served; report whether the
     name is user-defined.
@@ -221,7 +232,7 @@ async def check_model_available(
         # attribution check (the scrub in ``cleanup_stale_model_preferences``
         # still filters fallback_models once it fires).
         if any(model_pref.get(k) == effective_model for k in _MODEL_PREF_KEYS):
-            removed = await cleanup_stale_model_preferences(user_id)
+            removed = await cleanup_stale_model_preferences(user_id) if scrub else []
             raise_model_removed(effective_model, removed)
         elif request_model == effective_model:
             raise_model_removed(effective_model, [])
@@ -244,6 +255,7 @@ async def resolve_llm_config(
     *,
     enabled_subagents: list[str] | None = None,
     workspace_id: str | None = None,
+    user_facing: bool = True,
 ):
     """Resolve the final LLM config for one turn: which model runs, how it is
     tuned, what it is allowed to reach, and every client it can call.
@@ -252,6 +264,9 @@ async def resolve_llm_config(
     points; all current callers pass it explicitly). ``enabled_subagents``
     threads the request's active subagent list so per-subagent model roles get
     their own credential resolution; ``None`` falls back to the config default.
+    ``user_facing=False`` is a call no user is waiting on (a title, memo
+    metadata): nobody would see the ``model_removed`` CTA, so its own saved
+    model is read like a role and nothing is scrubbed.
     """
     if is_byok is None:
         from src.server.database.api_keys import is_byok_active
@@ -261,7 +276,18 @@ async def resolve_llm_config(
     # One copy up front. Everything below mutates the request's own config, so
     # nothing has to reason about whether it is still aliased to the caller's.
     config = base_config.model_copy(deep=True)
-    model_pref = await user_models.get_model_preference(user_id)
+    saved_pref = await user_models.get_model_preference(user_id)
+
+    # A role or fallback saved as a model this manifest lacks resolves as if
+    # never set: without this a platform user's role reaches the name-based
+    # factory and every turn fails at graph build. The view is read-only.
+    # "Absent here" is not "retired" (a rollback or an older worker knows fewer
+    # models), so nothing is deleted on the strength of it. The turn's own key
+    # is not a role; a dead one there is refused below with a CTA instead.
+    role_keys = _ROLE_PREF_KEYS[mode] if user_facing else _MODEL_PREF_KEYS
+    model_pref, dropped = drop_dead_models(saved_pref, role_keys)
+    if dropped:
+        logger.info(f"[CHAT] Ignoring saved models not in the manifest for user={user_id}: {dropped}")
 
     await load_user_context(config, user_id, workspace_id, model_pref)
     selection = select_model(config, model_pref, mode, request_model)
@@ -276,9 +302,11 @@ async def resolve_llm_config(
     apply_compaction(config, tuning, user_models.model_entry(model_pref, selection.effective_model))
     await gate_capabilities(config, user_id, model_pref)
 
+    # The saved prefs, not the view: attribution asks whether the refused name
+    # is one the user saved, and a dropped role may be that name.
     user_defined = await check_model_available(
-        config, user_id, model_pref, selection.effective_model,
-        request_model, is_byok=is_byok,
+        config, user_id, saved_pref, selection.effective_model,
+        request_model, is_byok=is_byok, scrub=user_facing,
     )
 
     # The request's overrides go down whole. Per-request > per-model profile >

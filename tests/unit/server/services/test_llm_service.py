@@ -169,6 +169,7 @@ class TestUserIdProvided:
             mode="flash",
             reasoning_effort="medium",
             fast_mode=None,
+            user_facing=False,
         )
         # llm_client was present on the resolved config — no create_llm fallback
         mock_create.assert_not_called()

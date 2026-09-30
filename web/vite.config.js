@@ -109,33 +109,46 @@ function skipEntryPreload() {
   }
 }
 
-// Serves pdf.js's image decoders (JBIG2 and CCITT since pdf.js 6, JPEG 2000) at
-// assets/pdfjs-wasm/<version>/, the `wasmUrl` PdfViewer passes. pdf.js fetches
-// them by bare filename from one directory, so they cannot take hashed names;
-// the version in the path keeps a long-cached copy from pairing a new worker
-// with old decoders. Without them, those images are silently left blank.
+// The pdfjs-dist directories pdf.js fetches from at runtime: image decoders
+// (JBIG2, CCITT, JPEG 2000, ICC color), the predefined CMaps a non-embedded CJK
+// font is encoded with, the fonts it substitutes for non-embedded Symbol and
+// ZapfDingbats, and the CMYK output profile. Without them those glyphs, images
+// and colors are silently dropped or degraded.
+const PDFJS_DATA = ['wasm', 'cmaps', 'standard_fonts', 'iccs']
+
+// Serves PDFJS_DATA at assets/pdfjs/<version>/<dir>/, the URLs PdfViewer passes.
+// pdf.js fetches by bare filename, so the files cannot take hashed names; the
+// version in the path keeps a long-cached copy from pairing a new worker with
+// old data. Emitted as loose assets, nothing imports them into a chunk.
 /** @returns {import('vite').Plugin} */
-function pdfjsWasm() {
+function pdfjsData() {
   const pkg = path.resolve(import.meta.dirname, 'node_modules/pdfjs-dist')
-  const dir = path.join(pkg, 'wasm')
   const { version } = JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'), 'utf8'))
-  const route = `assets/pdfjs-wasm/${version}/`
+  const route = `assets/pdfjs/${version}/`
   /** @type {Record<string, string>} */
   const types = { '.wasm': 'application/wasm', '.js': 'text/javascript' }
   return {
-    name: 'la-pdfjs-wasm',
+    name: 'la-pdfjs-data',
     configureServer(server) {
-      server.middlewares.use(`/${route}`, (req, res, next) => {
-        if (!req.url) return next()
-        const file = path.join(dir, path.basename(req.url.split('?')[0]))
-        if (!fs.existsSync(file)) return next()
+      // Plugin middleware runs before Vite strips the base, so a non-root base
+      // stays on the request URL and the mount has to carry it.
+      server.middlewares.use(`${server.config.base}${route}`, (req, res, next) => {
+        const [dir = '', name = '', ...rest] = (req.url ?? '').split('?')[0].split('/').filter(Boolean)
+        // A backslash separates paths on Windows, so a name holding one would
+        // walk out of the directory.
+        if (!PDFJS_DATA.includes(dir) || rest.length || path.basename(name) !== name) return next()
+        const file = path.join(pkg, dir, name)
+        if (!fs.statSync(file, { throwIfNoEntry: false })?.isFile()) return next()
         res.setHeader('Content-Type', types[path.extname(file)] ?? 'application/octet-stream')
         fs.createReadStream(file).pipe(res)
       })
     },
     generateBundle() {
-      for (const name of fs.readdirSync(dir)) {
-        this.emitFile({ type: 'asset', fileName: route + name, source: fs.readFileSync(path.join(dir, name)) })
+      for (const dir of PDFJS_DATA) {
+        for (const name of fs.readdirSync(path.join(pkg, dir))) {
+          const source = fs.readFileSync(path.join(pkg, dir, name))
+          this.emitFile({ type: 'asset', fileName: `${route}${dir}/${name}`, source })
+        }
       }
     },
   }
@@ -162,7 +175,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: env.VITE_CDN_BASE || '/',
-    plugins: [...reactPlugins(), emitVersionManifest(), skipEntryPreload(), pdfjsWasm(), localePreload(path.resolve(import.meta.dirname, 'src/locales'))],
+    plugins: [...reactPlugins(), emitVersionManifest(), skipEntryPreload(), pdfjsData(), localePreload(path.resolve(import.meta.dirname, 'src/locales'))],
     resolve: {
       // `@/` and the tests' `@e2e/` come from the tsconfig projects' `paths`,
       // each file resolving through the project that owns it.

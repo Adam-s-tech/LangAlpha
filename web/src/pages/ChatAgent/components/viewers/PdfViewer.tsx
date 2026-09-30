@@ -10,10 +10,16 @@ import './PdfViewer.css';
 import pdfjsWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
-// Image decoders the build emits beside the worker (vite.config.js `pdfjsWasm`).
-// Module-level so react-pdf sees one options object and never reloads over it.
+// Runtime data the build emits beside the worker (vite.config.js `pdfjsData`).
+// With all of these set pdf.js lets the worker fetch for itself, which it also
+// requires before color-managing ICC content. Module-level so react-pdf sees
+// one options object and never reloads over it.
+const PDFJS_DATA_URL = `${import.meta.env.BASE_URL}assets/pdfjs/${pdfjs.version}/`;
 const DOCUMENT_OPTIONS = {
-  wasmUrl: `${import.meta.env.BASE_URL}assets/pdfjs-wasm/${pdfjs.version}/`,
+  wasmUrl: `${PDFJS_DATA_URL}wasm/`,
+  cMapUrl: `${PDFJS_DATA_URL}cmaps/`,
+  standardFontDataUrl: `${PDFJS_DATA_URL}standard_fonts/`,
+  iccUrl: `${PDFJS_DATA_URL}iccs/`,
 };
 
 const ZOOM_STEPS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];

@@ -159,21 +159,22 @@ describe('migrateDashboardPrefs', () => {
           },
         ],
       });
-      expect((out?.widgets[0].config as { displayMode?: string }).displayMode).toBe('adaptive');
+      // The kept symbol is what proves the field-level catch ran: the
+      // whole-config fallback also yields 'adaptive', but with no symbols.
+      expect(out?.widgets[0].config).toEqual({ symbols: ['NASDAQ:NVDA'], displayMode: 'adaptive' });
     });
 
-    it('coerces bad field values to schema defaults via per-field .catch()', () => {
-      // Input is a non-empty object with one bogus enum (displayMode: 42) and
-      // a missing array (symbols). Per-field .catch('adaptive') and .catch([])
-      // recover the values on the SUCCESS branch — the result matches
-      // defaultConfig because the catch defaults happen to equal it. This
-      // exercises field-level recovery, not the top-level fallback (covered
-      // in the next test).
+    // Each bad field sits beside a good one that differs from defaultConfig,
+    // because the catch defaults equal defaultConfig: a config that recovered
+    // field by field and one that fell back wholesale look the same otherwise.
+    it.each([
+      ['displayMode', { symbols: ['NASDAQ:NVDA'], displayMode: 42 }, { symbols: ['NASDAQ:NVDA'], displayMode: 'adaptive' }],
+      ['symbols', { displayMode: 'compact' }, { symbols: [], displayMode: 'compact' }],
+    ])('recovers a bad %s value via its own .catch() and keeps the other field', (_field, config, expected) => {
       const out = migrateDashboardPrefs({
-        widgets: [{ id: 'a', type: 'tv.ticker-tape', config: { displayMode: 42 } }],
+        widgets: [{ id: 'a', type: 'tv.ticker-tape', config }],
       });
-      const def = getWidget('tv.ticker-tape')?.defaultConfig as object;
-      expect(out?.widgets[0].config).toMatchObject(def);
+      expect(out?.widgets[0].config).toEqual(expected);
     });
 
     it('falls back to defaultConfig when top-level config shape is unparseable', () => {

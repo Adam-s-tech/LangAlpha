@@ -8,7 +8,7 @@
  * outcome goes.
  */
 import React from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { MemoryRouter } from 'react-router';
@@ -16,6 +16,12 @@ import type { SubagentTaskRecord } from '@/types/chat';
 import { MessageContentSegments } from '../MessageContentSegments';
 import { SubagentTelemetryContext } from '../../SubagentTelemetryContext';
 import type { SubagentTelemetry } from '../../../session/subagents/resolveSubagentTelemetry';
+import { buildRateLimitError } from '@/utils/rateLimitError';
+
+vi.mock('@/utils/rateLimitError', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/rateLimitError')>();
+  return { ...actual, buildRateLimitError: vi.fn(actual.buildRateLimitError) };
+});
 
 type SegmentsProps = React.ComponentProps<typeof MessageContentSegments>;
 
@@ -85,5 +91,29 @@ describe('MessageContentSegments — credit-stop notice placement', () => {
   it('renders nothing at the foot for an ordinary turn', () => {
     renderWith(undefined);
     expect(screen.queryByTestId('subagent-credit-stop-notice')).toBeNull();
+  });
+});
+
+describe('MessageContentSegments — credit-stop notice while prose streams', () => {
+  it('does not redraw the notice for a chunk of prose', () => {
+    const telemetry = { toolCalls: 13, tokenUsage: { input: 0, output: 0, total: 0 }, ...CREDIT_STOP };
+    const resolve = (id: string): SubagentTelemetry | undefined => (id === 'tc-1' ? telemetry : undefined);
+    const at = (text: string) => (
+      <MemoryRouter>
+        <SubagentTelemetryContext.Provider value={resolve}>
+          <MessageContentSegments
+            {...props}
+            isStreaming
+            segments={[props.segments[0], { type: 'text', order: 1, content: text }] as SegmentsProps['segments']}
+          />
+        </SubagentTelemetryContext.Provider>
+      </MemoryRouter>
+    );
+    const { rerender } = render(at(PROSE));
+    const draws = vi.mocked(buildRateLimitError).mock.calls.length;
+    rerender(at(`${PROSE} More`));
+    rerender(at(`${PROSE} More prose`));
+    expect(vi.mocked(buildRateLimitError).mock.calls.length).toBe(draws);
+    expect(screen.getByTestId('subagent-credit-stop-notice')).toBeInTheDocument();
   });
 });

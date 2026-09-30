@@ -309,7 +309,7 @@ test.describe('activity live zone', () => {
       await page.getByRole('button', { name: 'Send message', exact: true }).click();
       const spinner = page.getByTestId('streaming-indicator');
       await expect(page.getByText('Advanced Micro Devices', { exact: true }).first()).toBeVisible();
-      await expect(spinner).toHaveCSS('margin-top', '12px');
+      await expect(spinner).toHaveCSS('padding-top', '12px');
       await expect(spinner).toHaveAttribute('data-quiet', 'true');
       await page.waitForTimeout(250);
       await page.screenshot({ path: `../output/playwright/live-spinner-after-${width}.png` });

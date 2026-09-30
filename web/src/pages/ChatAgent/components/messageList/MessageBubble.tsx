@@ -521,14 +521,20 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
               });
             const quiet = (arrivalQuiet || waitingForParagraph) && !preparingTool;
             const size = isMobile ? 20 : 24;
-            // The row leaves in px, never from `auto`: an auto exit inside the
-            // chat scroller forces a layout a row short and clamps the scroll.
+            // The gap above the glyph is padding inside the row, not a margin:
+            // content that renders zero-height (text still held back, a block
+            // with nothing to show yet) lets a margin collapse out through the
+            // bubble's top, and the bubble then jumps up as the first visible
+            // content lands. The row leaves in px, never from `auto`: an auto
+            // exit inside the chat scroller forces a layout a row short and
+            // clamps the scroll.
+            const gap = hasContent ? 12 : 0;
             return (
               <motion.div
                 key="streaming-indicator"
                 className="transition-opacity duration-200"
-                style={{ opacity: quiet ? 1 : 0, height: size, marginTop: hasContent ? 12 : 0, overflow: 'hidden' }}
-                exit={{ height: 0, marginTop: 0, opacity: 0, transition: EXIT_TWEEN }}
+                style={{ opacity: quiet ? 1 : 0, height: size + gap, paddingTop: gap, overflow: 'hidden' }}
+                exit={{ height: 0, paddingTop: 0, opacity: 0, transition: EXIT_TWEEN }}
                 aria-hidden={!quiet}
                 data-testid="streaming-indicator"
                 data-quiet={quiet ? 'true' : 'false'}

@@ -1,4 +1,4 @@
-import { createElement, type ComponentProps, type CSSProperties, type Key, type ReactNode } from 'react';
+import { createElement, useState, type ComponentProps, type CSSProperties, type Key, type ReactNode } from 'react';
 import PrismAsyncLight from 'react-syntax-highlighter/dist/esm/prism-async-light';
 import createNode, { createClassNameString, createStyleObject } from 'react-syntax-highlighter/dist/esm/create-element';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -51,7 +51,8 @@ declare module 'react-syntax-highlighter/dist/esm/create-element' {
 }
 
 type HighlighterProps = ComponentProps<typeof PrismAsyncLight>;
-type RendererProps = Parameters<NonNullable<HighlighterProps['renderer']>>[0];
+type Renderer = NonNullable<HighlighterProps['renderer']>;
+type RendererProps = Parameters<Renderer>[0];
 type RendererNode = RendererProps['rows'][number];
 type Stylesheet = RendererProps['stylesheet'];
 
@@ -95,19 +96,35 @@ function renderNode(node: RendererNode, stylesheet: Stylesheet, index: Styleshee
   return createElement(node.tagName, { key, ...properties, ...shape }, children);
 }
 
-function renderer({ rows, stylesheet, useInlineStyles }: RendererProps): ReactNode {
-  if (!useInlineStyles) {
-    return rows.map((node, i) => createNode({ node, stylesheet, useInlineStyles, key: `code-segment-${i}` }));
-  }
-  const index = indexFor(stylesheet);
-  return rows.map((node, i) => renderNode(node, stylesheet, index, `code-segment-${i}`));
+// One per highlighter: a row drawn the same as last time at its position keeps
+// its element, so React skips it. A fence still streaming redraws every line it
+// has on each newline, and React used to diff every token of them again.
+function createHighlightRenderer(): Renderer {
+  let sheet: Stylesheet | undefined;
+  let drawn: Array<{ source: string; element: ReactNode }> = [];
+  return ({ rows, stylesheet, useInlineStyles }: RendererProps): ReactNode => {
+    if (!useInlineStyles) {
+      return rows.map((node, i) => createNode({ node, stylesheet, useInlineStyles, key: `code-segment-${i}` }));
+    }
+    const index = indexFor(stylesheet);
+    if (stylesheet !== sheet) {
+      sheet = stylesheet;
+      drawn = [];
+    }
+    drawn = rows.map((node, i) => {
+      const source = JSON.stringify(node);
+      return drawn[i]?.source === source ? drawn[i] : { source, element: renderNode(node, stylesheet, index, `code-segment-${i}`) };
+    });
+    return drawn.map((row) => row.element);
+  };
 }
 
 // Passing a renderer turns line wrapping on when wrapLines is unset, so it is
 // pinned to what the library does without one.
 function SyntaxHighlighter(props: HighlighterProps): ReactNode {
+  const [renderer] = useState(createHighlightRenderer);
   return createElement(PrismAsyncLight, { ...props, renderer, wrapLines: props.wrapLines ?? false });
 }
 
 export default SyntaxHighlighter;
-export { oneDark, oneLight, renderer as highlightRenderer };
+export { oneDark, oneLight, createHighlightRenderer };

@@ -10,7 +10,7 @@ import rust from 'react-syntax-highlighter/dist/esm/languages/prism/rust';
 import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql';
 import tsx from 'react-syntax-highlighter/dist/esm/languages/prism/tsx';
 import yaml from 'react-syntax-highlighter/dist/esm/languages/prism/yaml';
-import { highlightRenderer, oneDark, oneLight } from '../SyntaxHighlighter';
+import { createHighlightRenderer, oneDark, oneLight } from '../SyntaxHighlighter';
 
 // The renderer replaces the library's for speed only: every call site's markup
 // must stay byte for byte what the library draws, in both themes and in every
@@ -43,9 +43,11 @@ const shapes: Array<[string, Shape]> = [
   ['bare', {}],
 ];
 
-function draw(language: string, code: string, style: typeof oneDark, props: Shape, ours: boolean): string {
+type Renderer = ReturnType<typeof createHighlightRenderer>;
+
+function draw(language: string, code: string, style: typeof oneDark, props: Shape, ours?: Renderer): string {
   return renderToStaticMarkup(
-    <PrismLight language={language} style={style} {...props} {...(ours ? { renderer: highlightRenderer, wrapLines: props.wrapLines ?? false } : {})}>
+    <PrismLight language={language} style={style} {...props} {...(ours ? { renderer: ours, wrapLines: props.wrapLines ?? false } : {})}>
       {code}
     </PrismLight>,
   );
@@ -56,10 +58,13 @@ describe('highlightRenderer', () => {
     for (const [shapeName, props] of shapes) {
       it(`draws what the library draws: ${themeName}, ${shapeName}`, () => {
         for (const [language, code] of samples) {
-          const library = draw(language, code, theme, props, false);
-          expect(draw(language, code, theme, props, true)).toBe(library);
-          // Second pass reads every token's class string and style from the cache.
-          expect(draw(language, code, theme, props, true)).toBe(library);
+          const library = draw(language, code, theme, props);
+          const ours = createHighlightRenderer();
+          expect(draw(language, code, theme, props, ours)).toBe(library);
+          // Second pass reuses every row, and a fresh renderer reads every
+          // token's class string and style from the theme's cache.
+          expect(draw(language, code, theme, props, ours)).toBe(library);
+          expect(draw(language, code, theme, props, createHighlightRenderer())).toBe(library);
         }
       });
     }
@@ -70,8 +75,24 @@ describe('highlightRenderer', () => {
       { type: 'element' as const, tagName: 'span' as const, properties: { className: ['token', 'keyword'] }, children: [{ type: 'text' as const, value: 'def' }] },
       { type: 'element' as const, tagName: 'span' as const, properties: { className: ['token', 'keyword'] }, children: [{ type: 'text' as const, value: 'return' }] },
     ] }];
-    const [line] = highlightRenderer({ rows, stylesheet: oneDark, useInlineStyles: true }) as Array<{ props: { children: Array<{ props: { style: object } }> } }>;
+    const [line] = createHighlightRenderer()({ rows, stylesheet: oneDark, useInlineStyles: true }) as Array<{ props: { children: Array<{ props: { style: object } }> } }>;
     const [a, b] = line.props.children;
     expect(a.props.style).toBe(b.props.style);
+  });
+
+  it('keeps the element of a row drawn the same as last time, and only that one', () => {
+    const row = (text: string, className: string[]) => ({ type: 'element' as const, tagName: 'span' as const, properties: { className: [] }, children: [
+      { type: 'element' as const, tagName: 'span' as const, properties: { className }, children: [{ type: 'text' as const, value: text }] },
+    ] });
+    const render = createHighlightRenderer();
+    const draw = (rows: ReturnType<typeof row>[], stylesheet = oneDark) => render({ rows, stylesheet, useInlineStyles: true }) as unknown[];
+    const first = draw([row('x = 1\n', ['token']), row('y', ['token'])]);
+    const grown = draw([row('x = 1\n', ['token']), row('y = 2\n', ['token']), row('', ['token'])]);
+    expect(grown[0]).toBe(first[0]);
+    expect(grown[1]).not.toBe(first[1]);
+    const recolored = draw([row('x = 1\n', ['token', 'string']), row('y = 2\n', ['token']), row('', ['token'])]);
+    expect(recolored[0]).not.toBe(grown[0]);
+    expect(recolored[1]).toBe(grown[1]);
+    expect(draw([row('x = 1\n', ['token', 'string'])], oneLight)[0]).not.toBe(recolored[0]);
   });
 });

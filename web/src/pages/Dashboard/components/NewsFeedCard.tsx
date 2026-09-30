@@ -3,12 +3,15 @@ import { TrendingUp, Clock, Briefcase, Eye, Search, X } from 'lucide-react';
 import { motion, AnimatePresence } from '@/lib/framer';
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { useNow } from '@/hooks/useNow';
+import { isWithinDateRange, type NewsDateRange } from '../utils/newsItem';
 
 interface NewsItem {
   id?: string | number;
   title: string;
   source?: string;
   time?: string;
+  publishedAt?: string | null;
   image?: string | null;
   favicon?: string | null;
   tickers?: string[];
@@ -17,7 +20,6 @@ interface NewsItem {
 }
 
 type TabKey = 'market' | 'portfolio' | 'watchlist';
-type DateRangeKey = 'all' | '1h' | '6h' | '24h' | '7d';
 
 const TAB_KEYS: { key: TabKey; icon: React.ComponentType<{ size?: number }> }[] = [
   { key: 'market', icon: TrendingUp },
@@ -25,32 +27,7 @@ const TAB_KEYS: { key: TabKey; icon: React.ComponentType<{ size?: number }> }[] 
   { key: 'watchlist', icon: Eye },
 ];
 
-const DATE_RANGE_KEYS: DateRangeKey[] = ['all', '1h', '6h', '24h', '7d'];
-
-function parseRelativeTime(timeStr: string | undefined | null): number | null {
-  if (!timeStr) return null;
-  const now = Date.now();
-  const m = timeStr.match(/^(\d+)\s*(min|hr|hrs|hour|hours|day|days)/i);
-  if (!m) return now;
-  const val = parseInt(m[1], 10);
-  const unit = m[2].toLowerCase();
-  if (unit === 'min') return now - val * 60 * 1000;
-  if (unit.startsWith('hr') || unit.startsWith('hour')) return now - val * 3600 * 1000;
-  if (unit.startsWith('day')) return now - val * 86400 * 1000;
-  return now;
-}
-
-function getDateRangeCutoff(key: DateRangeKey): number {
-  if (key === 'all') return 0;
-  const now = Date.now();
-  switch (key) {
-    case '1h': return now - 3600 * 1000;
-    case '6h': return now - 6 * 3600 * 1000;
-    case '24h': return now - 24 * 3600 * 1000;
-    case '7d': return now - 7 * 86400 * 1000;
-    default: return 0;
-  }
-}
+const DATE_RANGE_KEYS: NewsDateRange[] = ['all', '1h', '6h', '24h', '7d'];
 
 interface NewsRowProps {
   item: NewsItem;
@@ -234,7 +211,8 @@ function NewsFeedCard({
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<TabKey>('market');
   const [tickerFilter, setTickerFilter] = useState('');
-  const [dateRange, setDateRange] = useState<DateRangeKey>('all');
+  const [dateRange, setDateRange] = useState<NewsDateRange>('all');
+  const now = useNow();
 
   const tabLabels: Record<TabKey, string> = {
     market: t('dashboard.newsFeedCard.tabMarket'),
@@ -242,7 +220,7 @@ function NewsFeedCard({
     watchlist: t('dashboard.newsFeedCard.tabWatchlist'),
   };
 
-  const dateRangeLabels: Record<DateRangeKey, string> = {
+  const dateRangeLabels: Record<NewsDateRange, string> = {
     all: t('dashboard.newsFeedCard.rangeAll'),
     '1h': t('dashboard.newsFeedCard.range1h'),
     '6h': t('dashboard.newsFeedCard.range6h'),
@@ -271,17 +249,12 @@ function NewsFeedCard({
       );
     }
 
-    // Date range filter
     if (dateRange !== 'all') {
-      const cutoff = getDateRangeCutoff(dateRange);
-      result = result.filter((item) => {
-        const ts = parseRelativeTime(item.time);
-        return ts !== null && ts >= cutoff;
-      });
+      result = result.filter((item) => isWithinDateRange(item.publishedAt, dateRange, now));
     }
 
     return result;
-  }, [items, tickerFilter, dateRange]);
+  }, [items, tickerFilter, dateRange, now]);
 
   // Collect unique tickers across current items for quick-pick
   const _availableTickers = useMemo(() => {

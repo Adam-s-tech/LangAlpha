@@ -32,6 +32,28 @@ export interface DashboardNewsItem {
   sentiments?: NewsSentimentItem[] | null;
 }
 
+export type NewsDateRange = 'all' | '1h' | '6h' | '24h' | '7d';
+
+const DATE_RANGE_MS: Record<Exclude<NewsDateRange, 'all'>, number> = {
+  '1h': 3600 * 1000,
+  '6h': 6 * 3600 * 1000,
+  '24h': 24 * 3600 * 1000,
+  '7d': 7 * 86400 * 1000,
+};
+
+/** Whether a story falls inside a news feed's date-range filter. Reads the raw
+ *  timestamp, never the displayed "5m ago", whose wording varies by locale and
+ *  source; a story without a parseable timestamp is outside every bounded range. */
+export function isWithinDateRange(
+  publishedAt: string | null | undefined,
+  range: NewsDateRange,
+  now: number,
+): boolean {
+  if (range === 'all') return true;
+  const ts = publishedAt ? new Date(publishedAt).getTime() : NaN;
+  return Number.isFinite(ts) && ts >= now - DATE_RANGE_MS[range];
+}
+
 /** Map raw /news results into the normalized DashboardNewsItem shape. `time`
  *  is stamped in `locale` relative to `now`. */
 export function mapNewsResults(

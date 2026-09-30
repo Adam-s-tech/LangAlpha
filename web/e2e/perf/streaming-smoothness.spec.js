@@ -13,6 +13,10 @@ import { label, writeRun } from './run.js';
 const CPU_RATE = Number(process.env.PERF_CPU || 4);
 const CHUNK_DELAY_MS = Number(process.env.PERF_CHUNK_MS || 8);
 const CHUNK_CHARS = Number(process.env.PERF_CHUNK_CHARS || 8);
+// Sections of the fixture reply (about 1.3 KB each). The segment and markdown
+// work a chunk costs grows with what is already on screen, so a long reply is
+// where a per-chunk walk over the transcript shows.
+const SECTIONS = Number(process.env.PERF_SECTIONS || 6);
 const PROFILE = !!process.env.PERF_PROFILE;
 const TRACE = !!process.env.PERF_TRACE;
 // What the file panel beside the stream shows, if it is open: `code` is a
@@ -141,8 +145,8 @@ test.describe('streaming smoothness', () => {
       events: [sseEvents.replayDone()],
       delay: 10,
     });
-    const reply = buildReply();
-    const events = buildEvents(CHUNK_CHARS, { toolTabPause: PANEL === 'tool' ? TOOL_TAB_PAUSE_MS : 0 });
+    const reply = buildReply(SECTIONS);
+    const events = buildEvents(CHUNK_CHARS, { toolTabPause: PANEL === 'tool' ? TOOL_TAB_PAUSE_MS : 0, sections: SECTIONS });
     await configureSSE({
       method: 'POST',
       path: `/api/v1/threads/${TH}/messages`,

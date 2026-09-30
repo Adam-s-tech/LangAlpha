@@ -71,19 +71,19 @@ function numbered(i) {
 3. Regress margin on mix and utilization; report the residual.`;
 }
 
-/** The whole reply as one markdown string (about 14 KB). */
-export function buildReply() {
+/** The whole reply as one markdown string (about 8 KB at the default six sections). */
+export function buildReply(sections = 6) {
   const parts = ['# NVDA earnings deep dive\n'];
-  for (let i = 0; i < 6; i++) {
-    parts.push(`## Section ${i + 1}: ${['Growth', 'Margins', 'Cash', 'Risks', 'Valuation', 'Setup'][i]}\n`);
+  for (let i = 0; i < sections; i++) {
+    parts.push(`## Section ${i + 1}: ${['Growth', 'Margins', 'Cash', 'Risks', 'Valuation', 'Setup'][i % 6]}\n`);
     parts.push(PARA[i % PARA.length]);
     parts.push(list(i));
     parts.push(PARA[(i + 1) % PARA.length]);
     if (i % 2 === 0) parts.push(codePython(i));
-    if (i === 1) parts.push(TABLE);
-    if (i === 3) parts.push(CODE_JSON);
-    if (i === 4) parts.push(MATH);
-    if (i === 5) parts.push(CODE_BASH);
+    if (i % 6 === 1) parts.push(TABLE);
+    if (i % 6 === 3) parts.push(CODE_JSON);
+    if (i % 6 === 4) parts.push(MATH);
+    if (i % 6 === 5) parts.push(CODE_BASH);
     parts.push(numbered(i));
     parts.push(QUOTE);
   }
@@ -104,7 +104,7 @@ export const TAB_CALL_OUTPUT = 'replaced-call-output';
  * and after the reply the call's result arrives again with new output, which
  * replaces its record the way a running call's result does.
  */
-export function buildEvents(chunkChars = 8, { toolTabPause = 0 } = {}) {
+export function buildEvents(chunkChars = 8, { toolTabPause = 0, sections = 6 } = {}) {
   const events = [];
   events.push(sseEvents.messageChunk('start', 'reasoning_signal'));
   for (const c of chunk(buildReasoning(), chunkChars)) events.push(sseEvents.messageChunk(c, 'reasoning'));
@@ -114,7 +114,7 @@ export function buildEvents(chunkChars = 8, { toolTabPause = 0 } = {}) {
   events.push(sseEvents.finishToolCalls());
   for (const id of calls) events.push({ ...sseEvents.toolCallResult(id, 'ok'), delayAfter: 150 });
   if (toolTabPause) events[events.length - 1].delayAfter = toolTabPause;
-  for (const c of chunk(buildReply(), chunkChars)) events.push(sseEvents.messageChunk(c));
+  for (const c of chunk(buildReply(sections), chunkChars)) events.push(sseEvents.messageChunk(c));
   if (toolTabPause) events.push(sseEvents.toolCallResult(TAB_CALL, TAB_CALL_OUTPUT));
   events.push(sseEvents.finishStop());
   events.push(sseEvents.creditUsage());

@@ -36,6 +36,7 @@ arrival pattern.
 | `PERF_HEADED=1` | all three | Runs on the real display. Headless rAF caps near 110 fps with no vsync, and a headless tab never goes hidden, so the hidden-tab scenario only measures a real background tab here. |
 | `PERF_CPU=<n>` | smoothness | CPU throttling rate (default 4). |
 | `PERF_CHUNK_MS=<n>` / `PERF_CHUNK_CHARS=<n>` | smoothness | Token cadence: chars per SSE event and the gap between them (defaults 8 and 8). |
+| `PERF_SECTIONS=<n>` | smoothness | Length of the reply, in fixture sections of about 1.3 KB (default 6, about 8 KB). Work that walks what is already on screen grows per chunk with the reply, so a long reply (24 is about 32 KB) is where it shows. |
 | `PERF_PANEL=code` / `PERF_PANEL=tool` | smoothness | Streams with the file panel open beside the chat, at 1600x900 so the tree docks: `code` on a 300-line Python file, `tool` on one of the turn's calls, whose record is replaced once the reply is done (the run fails if the tab does not show the new output). The panel's own DOM churn is counted apart from the transcript's. |
 | `PERF_RENDERS=1` | smoothness | Counts component renders by name, page-wide and under the panel when `PERF_PANEL` is set. Names are source names in a dev or `PERF_UNMINIFIED` run. Walking every commit costs main-thread time, so read renders and commits from such a run, not frame timings. |
 | `PERF_PROFILE=1` | smoothness | Records a V8 CPU profile and prints self time per module and per function: what to fix next. The raw profile is saved beside the run as `.cpuprofile`, for inclusive time per component or for DevTools. |
@@ -48,7 +49,7 @@ arrival pattern.
 
 ## Layout
 
-- `streamFixture.js` - the deterministic ~14 KB reply and the SSE event list built from it, plus the code file the panel scenario opens.
+- `streamFixture.js` - the deterministic reply (~8 KB, longer with `PERF_SECTIONS`) and the SSE event list built from it, plus the code file the panel scenario opens.
 - `metrics.js` - the smoothness probe (frame gaps, LoAF, DOM churn), plus renders per component and one region's churn when asked.
 - `probe.js` - the transcript sampler (text length, scroll position, layout shifts) plus its report, shared by the typewriter and catch-up specs.
 - `rafFreeze.js` - parks rAF callbacks, standing in for a hidden tab where there is no display.

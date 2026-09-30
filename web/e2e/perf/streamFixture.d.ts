@@ -2,8 +2,8 @@
 // which imports buildReply: tsc resolves this file for that import, and
 // dropping it fails `pnpm typecheck` even though e2e/ is excluded.
 export const END_MARKER: string;
-export function buildReply(): string;
-export function buildEvents(chunkChars?: number, opts?: { toolTabPause?: number }): Array<Record<string, unknown>>;
+export function buildReply(sections?: number): string;
+export function buildEvents(chunkChars?: number, opts?: { toolTabPause?: number; sections?: number }): Array<Record<string, unknown>>;
 export const TAB_CALL: string;
 export const TAB_CALL_OUTPUT: string;
 export function buildCodeFile(lines?: number): string;

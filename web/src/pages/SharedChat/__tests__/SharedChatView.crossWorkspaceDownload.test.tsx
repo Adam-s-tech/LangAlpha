@@ -7,8 +7,9 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import type { MessageActions } from '../../ChatAgent/components/messageList/MessageActionsContext';
+import type { PanelTarget } from '../../ChatAgent/components/FilePanel';
 
 let captured: MessageActions | null = null;
 
@@ -31,7 +32,13 @@ vi.mock('../../ChatAgent/components/MessageList', async () => {
   return { default: MessageListProbe };
 });
 
-vi.mock('../../ChatAgent/components/FilePanel', () => ({ default: () => null }));
+// Shows what the panel was asked to open, which is where an unplaceable
+// card's click lands.
+vi.mock('../../ChatAgent/components/FilePanel', () => ({
+  default: ({ target }: { target: PanelTarget | null }) => (
+    <div data-testid="file-panel" data-path={target?.kind === 'file' ? target.path ?? '' : ''} />
+  ),
+}));
 vi.mock('../../ChatAgent/contexts/WorkspaceContext', () => ({
   WorkspaceProvider: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
 }));
@@ -79,9 +86,12 @@ describe('SharedChatView deliverable download', () => {
     downloadSharedFile.mockClear();
   });
 
+  // `onDownloadFile` is typed to return nothing, so each case waits on what
+  // the click did rather than on the handler.
   it('does not resolve or save a card that names another workspace', async () => {
     const { onDownloadFile } = await actions();
-    await onDownloadFile!('results/report.md', 'other-workspace-id');
+    act(() => { onDownloadFile!('results/report.md', 'other-workspace-id'); });
+    expect(await screen.findByTestId('file-panel')).toHaveAttribute('data-path', 'results/report.md');
     expect(resolveSharedFile).not.toHaveBeenCalled();
     expect(downloadSharedFile).not.toHaveBeenCalled();
   });
@@ -90,8 +100,9 @@ describe('SharedChatView deliverable download', () => {
     // The control that makes the line above mean something: the same handler,
     // the same path, no qualifier, and the save goes through.
     const { onDownloadFile } = await actions();
-    await onDownloadFile!('results/report.md');
+    act(() => { onDownloadFile!('results/report.md'); });
+    await waitFor(() => expect(downloadSharedFile).toHaveBeenCalledWith('tok', 'results/report.md'));
     expect(resolveSharedFile).toHaveBeenCalledWith('tok', ['results/report.md'], []);
-    expect(downloadSharedFile).toHaveBeenCalledWith('tok', 'results/report.md');
+    expect(screen.queryByTestId('file-panel')).not.toBeInTheDocument();
   });
 });

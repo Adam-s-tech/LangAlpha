@@ -3,6 +3,7 @@ import { reactPlugins } from './scripts/react-plugins.ts'
 import fs from 'fs'
 import path from 'path'
 import { localePreload } from './scripts/locale-preload.ts'
+import { monacoVersionDefine } from './scripts/monaco-version.ts'
 
 // Shared by the entry and the lazy vendors — see codeSplitting below.
 const EAGER_SHARED = new Set(['clsx', 'use-sync-external-store'])
@@ -175,6 +176,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: env.VITE_CDN_BASE || '/',
+    define: monacoVersionDefine(import.meta.dirname),
     plugins: [...reactPlugins(), emitVersionManifest(), skipEntryPreload(), pdfjsData(), localePreload(path.resolve(import.meta.dirname, 'src/locales'))],
     resolve: {
       // `@/` and the tests' `@e2e/` come from the tsconfig projects' `paths`,

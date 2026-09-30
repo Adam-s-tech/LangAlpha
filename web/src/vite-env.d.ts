@@ -16,6 +16,10 @@ interface ImportMetaEnv {
   readonly VITE_PLATFORM_URL?: string;
   readonly VITE_CONTACT_EMAILS?: string;
 }
+
+/** The installed monaco-editor release, from `scripts/monaco-version.ts`. */
+declare const __MONACO_VERSION__: string;
+
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }

@@ -271,8 +271,15 @@ test.describe('Thread Gallery', () => {
     await expect(threadCard).toBeVisible({ timeout: 10000 });
     await threadCard.click();
 
-    // Should navigate to chat view - textarea should appear
-    await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 });
+    // The gallery keeps its own composer, same component and label, through
+    // its exit animation, and the chat view's can mount on either side of the
+    // exit's end. So the chat view is known by its URL, by the gallery's other
+    // card being gone, and by its composer being the one left.
+    await expect(page).toHaveURL(/\/chat\/t\/b0000001-0000-4000-8000-000000000001$/, { timeout: 10000 });
+    await expect(page.getByRole('heading', { name: 'Second thread', exact: true })).toHaveCount(0, { timeout: 10000 });
+    const composer = page.getByRole('textbox', { name: 'Type / for skills, @ for files' });
+    await expect(composer).toHaveCount(1, { timeout: 10000 });
+    await expect(composer).toBeVisible();
   });
 
   test('delete thread removes from list', async ({ page }) => {

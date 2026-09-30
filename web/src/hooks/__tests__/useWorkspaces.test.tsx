@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
 import { renderHookWithProviders } from '../../test/utils';
-import { useAllWorkspaces, useWorkspaces } from '../useWorkspaces';
+import { useWorkspaces } from '../useWorkspaces';
+import { useAllWorkspaces } from '../useAllWorkspaces';
 import { waitFor } from '@testing-library/react';
 
 vi.mock('../../pages/ChatAgent/utils/api', () => ({

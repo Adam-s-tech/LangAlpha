@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useAllWorkspaces } from '@/hooks/useWorkspaces';
+import { useAllWorkspaces } from '@/hooks/useAllWorkspaces';
 import { useFlashWorkspace } from '@/hooks/useFlashWorkspace';
 import type { ScopeWorkspace } from '../components/ScopeControl';
 

@@ -64,7 +64,16 @@ const EXPECTED = ['index', 'vendor-dnd', 'vendor-motion', 'vendor-react']
 // device-zone read in lib/deviceTimezone, the automations query keys and the
 // lifecycle feed's invalidation add about 0.7 kB. A local build read +4.8 kB
 // against main. Nothing moved chunks; the eager set is unchanged.
-const MAX_EAGER_KB = 485
+//
+// Raised 485 -> 490 for user-level MCP servers and secrets. The Plugins scope
+// control, the MCP server dialog and list, and the vault's security copy carry
+// strings in both locales, and i18n.ts still bundles every locale into the
+// entry, so about 0.5 kB gz of strings ride the critical path. CI read 485.3
+// against 484.6 on main. The every-workspace list helpers that change had put
+// in useWorkspaces.ts, which the entry imports, moved to useAllWorkspaces.ts
+// for 0.1 kB back; the strings alone still clear 485. Nothing moved chunks;
+// the eager set is unchanged.
+const MAX_EAGER_KB = 490
 
 const outDir = process.argv[2] || 'dist'
 const indexPath = join(outDir, 'index.html')

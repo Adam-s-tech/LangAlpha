@@ -7,7 +7,7 @@ vi.mock('../../utils/api', () => ({
 }));
 
 import { getWorkspaces } from '../../utils/api';
-import { getAllWorkspaces } from '@/hooks/useWorkspaces';
+import { getAllWorkspaces } from '@/hooks/useAllWorkspaces';
 import { getAllReorderWorkspaces } from '../workspaceGallery/loadReorderWorkspaces';
 
 const mockGetWorkspaces = getWorkspaces as Mock;

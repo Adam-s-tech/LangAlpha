@@ -52,6 +52,8 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 
 vi.mock('@/hooks/useWorkspaces', () => ({
   useWorkspaces: () => ({ data: { workspaces: [{ workspace_id: 'ws-1', name: 'Research' }] } }),
+}));
+vi.mock('@/hooks/useAllWorkspaces', () => ({
   useAllWorkspaces: () => ({ data: { workspaces: [{ workspace_id: 'ws-1', name: 'Research' }] } }),
 }));
 vi.mock('@/pages/ChatAgent/utils/api/workspaces', () => ({

@@ -9,7 +9,7 @@ const query = vi.hoisted(() => ({
   refetch: vi.fn(),
 }));
 
-vi.mock('@/hooks/useWorkspaces', () => ({ useAllWorkspaces: () => query }));
+vi.mock('@/hooks/useAllWorkspaces', () => ({ useAllWorkspaces: () => query }));
 vi.mock('@/hooks/useFlashWorkspace', () => ({ useFlashWorkspace: () => undefined }));
 
 import { WorkspacesLoadNote } from '../components/WorkspacesLoadNote';

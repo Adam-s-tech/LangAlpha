@@ -116,7 +116,7 @@ function ChatInput({
   isLoading = false,
   isCompacting = false,
   onStop,
-  placeholder = 'Type / for skills, @ for files',
+  placeholder,
   files: workspaceFiles = [],
   // Mode toggle
   mode,
@@ -856,7 +856,7 @@ function ChatInput({
                   stopListening();
                 }
               }}
-              placeholder={isListening ? "" : placeholder}
+              placeholder={isListening ? "" : (placeholder ?? t("chat.placeholderDefault"))}
               className={`font-content w-full bg-transparent border-0 text-(--color-text-primary) ${isMobile ? 'text-base' : 'text-sm'} placeholder:text-(--color-text-tertiary) resize-none overflow-y-auto leading-relaxed block transition-opacity duration-300 ${isListening ? 'opacity-20' : 'opacity-100'}`}
               rows={minRows}
               disabled={disabled}

@@ -167,7 +167,12 @@ export function usePreviews(workspaceId: string) {
 
   const previews = useMemo(() => [...map.values()].sort((a, b) => a.port - b.port), [map]);
 
-  return { previews, byPort: map, register, open, ensure, refresh };
+  // One object until an entry changes: the panes and the tree's open handler
+  // take it whole, and a new one per panel render re-rendered both.
+  return useMemo(
+    () => ({ previews, byPort: map, register, open, ensure, refresh }),
+    [previews, map, register, open, ensure, refresh],
+  );
 }
 
 export type PreviewsApi = ReturnType<typeof usePreviews>;

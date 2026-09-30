@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useLatestRef } from '@/hooks/useLatestRef';
 import { getCompletedRowTitle } from '../toolDisplayConfig';
 
 /** Screen-reader announcer for tool-call completions (carved out of ChatView,
@@ -20,11 +21,11 @@ export function useToolCallAnnouncer(messages: unknown[]): string {
 
   // Drain the announcement queue one item at a time. Each announcement is
   // displayed for 1500ms, followed by ~80ms of silence before the next so
-  // screen readers treat each as a fresh utterance. Stable identity (no
-  // deps) — uses tRef for fresh translations.
-  const tRef = useRef(t);
-  tRef.current = t;
-  const pumpAnnouncements = useCallback(() => {
+  // screen readers treat each as a fresh utterance. Stable identity: it reads
+  // tRef for fresh translations, and is named so the timer can re-arm it
+  // without reading the const it is being assigned to.
+  const tRef = useLatestRef(t);
+  const pumpAnnouncements = useCallback(function pump() {
     if (announcementClearTimerRef.current) return;
     const next = announcementQueueRef.current.shift();
     if (!next) return;
@@ -37,10 +38,10 @@ export function useToolCallAnnouncer(messages: unknown[]): string {
       announcementClearTimerRef.current = null;
       setRecentlyCompletedAnnouncement('');
       if (announcementQueueRef.current.length > 0) {
-        setTimeout(pumpAnnouncements, 80);
+        setTimeout(pump, 80);
       }
     }, 1500);
-  }, []);
+  }, [tRef]);
 
   // Aria-live announcements for tool call completion. Watches assistant
   // messages for tool-call processes that have transitioned out of

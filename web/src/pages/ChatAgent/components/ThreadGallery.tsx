@@ -24,7 +24,7 @@ import SandboxSettingsPanel from './SandboxSettingsPanel';
 import { deleteThread, updateThreadTitle, updateThread } from '../utils/api';
 import { isValidUuid } from '../utils/uuid';
 import { useWorkspaceFiles } from '../hooks/useWorkspaceFiles';
-import { removeStoredThreadId } from '../hooks/utils/threadStorage';
+import { getStoredThreadId, removeStoredThreadId } from '../hooks/utils/threadStorage';
 import { saveChatSession } from '../hooks/utils/chatSessionRestore';
 import iconComputerLight from '../../../assets/img/icon-computer.svg';
 import iconComputerDark from '../../../assets/img/icon-computer-dark.svg';
@@ -306,8 +306,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
       // Clean up localStorage: remove thread ID for deleted thread
       if (workspaceId) {
         // Check if the deleted thread is the currently stored thread for this workspace
-        const storedThreadId = localStorage.getItem(`workspace_thread_id_${workspaceId}`);
-        if (storedThreadId === threadId) {
+        if (getStoredThreadId(workspaceId) === threadId) {
           removeStoredThreadId(workspaceId);
         }
       }

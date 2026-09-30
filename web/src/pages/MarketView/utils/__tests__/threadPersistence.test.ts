@@ -91,7 +91,7 @@ describe('threadPersistence', () => {
       const key = `marketview_thread_id_${WS}_NVDA`;
       localStorage.setItem(key, '__default__');
       expect(getMarketThreadId(WS, 'NVDA')).toBeNull();
-      expect(localStorage.getItem(key)).toBeNull();
+      expect(localStorage.length).toBe(0);
     });
 
     it('returns null for empty workspace', () => {

@@ -1,4 +1,4 @@
-import { safeLocalStorage } from '@/lib/utils';
+import { userLocalStorage } from '@/lib/userStorage';
 
 const PREFIX = 'marketview_thread_id_';
 
@@ -15,10 +15,10 @@ export function getMarketThreadId(
   symbol: string,
 ): string | null {
   if (!workspaceId || !symbol) return null;
-  const raw = safeLocalStorage.getItem(keyFor(workspaceId, symbol));
+  const raw = userLocalStorage.getItem(keyFor(workspaceId, symbol));
   if (!raw) return null;
   if (raw === '__default__') {
-    safeLocalStorage.removeItem(keyFor(workspaceId, symbol));
+    userLocalStorage.removeItem(keyFor(workspaceId, symbol));
     return null;
   }
   return raw;
@@ -31,10 +31,10 @@ export function setMarketThreadId(
 ): void {
   if (!workspaceId || !symbol) return;
   if (!threadId || threadId === '__default__') {
-    safeLocalStorage.removeItem(keyFor(workspaceId, symbol));
+    userLocalStorage.removeItem(keyFor(workspaceId, symbol));
     return;
   }
-  safeLocalStorage.setItem(keyFor(workspaceId, symbol), threadId);
+  userLocalStorage.setItem(keyFor(workspaceId, symbol), threadId);
 }
 
 export function clearMarketThreadId(
@@ -42,7 +42,7 @@ export function clearMarketThreadId(
   symbol: string,
 ): void {
   if (!workspaceId || !symbol) return;
-  safeLocalStorage.removeItem(keyFor(workspaceId, symbol));
+  userLocalStorage.removeItem(keyFor(workspaceId, symbol));
 }
 
 /**
@@ -55,17 +55,5 @@ export function clearAllMarketThreadsForWorkspace(
   workspaceId: string | null | undefined,
 ): void {
   if (!workspaceId) return;
-  const prefix = `${PREFIX}${workspaceId}_`;
-  // safeLocalStorage doesn't expose iteration; access the underlying store
-  // defensively. In SSR/no-localStorage environments this is a no-op.
-  try {
-    const keys: string[] = [];
-    for (let i = 0; i < localStorage.length; i += 1) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(prefix)) keys.push(k);
-    }
-    keys.forEach((k) => safeLocalStorage.removeItem(k));
-  } catch {
-    // no-op
-  }
+  userLocalStorage.removeByPrefix(`${PREFIX}${workspaceId}_`);
 }

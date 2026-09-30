@@ -51,6 +51,7 @@ vi.mock('@/pages/ChatAgent/components/StatusPanel', () => ({
 
 import FilePanel from '@/pages/ChatAgent/components/FilePanel';
 import { tabsStorageKey } from '@/pages/ChatAgent/components/filePanel/useFileTabs';
+import { userLocalStorage } from '@/lib/userStorage';
 
 const FILES = ['notes.md'];
 
@@ -145,7 +146,7 @@ describe('FilePanel store tabs', () => {
     fireEvent.click(storeRow('Memory'));
     await screen.findByTestId('memory-panel');
 
-    expect(JSON.parse(localStorage.getItem(tabsStorageKey('ws'))!).tabs).toEqual([{ kind: 'memory' }]);
+    expect(JSON.parse(userLocalStorage.getItem(tabsStorageKey('ws'))!).tabs).toEqual([{ kind: 'memory' }]);
   });
 });
 

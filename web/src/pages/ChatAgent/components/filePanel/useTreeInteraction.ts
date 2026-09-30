@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type React from 'react';
 import type { RefObject } from 'react';
+import { userLocalStorage } from '@/lib/userStorage';
 import type { FileSelection } from './useFileSelection';
 
 interface TreeInteractionArgs {
@@ -15,7 +16,7 @@ interface TreeInteractionArgs {
 }
 
 function readDocked(key: string): boolean {
-  try { return localStorage.getItem(key) !== 'false'; } catch { return true; }
+  try { return userLocalStorage.getItem(key) !== 'false'; } catch { return true; }
 }
 
 /**
@@ -43,7 +44,7 @@ export function useTreeInteraction({
   }, [storageKey, dock.key]);
   useEffect(() => {
     if (dock.key !== storageKey) return;
-    try { localStorage.setItem(storageKey, String(dock.docked)); } catch { /* blocked store */ }
+    try { userLocalStorage.setItem(storageKey, String(dock.docked)); } catch { /* blocked store */ }
   }, [dock, storageKey]);
   const docked = dock.docked;
   const setDocked = useCallback((next: boolean | ((prev: boolean) => boolean)) => {

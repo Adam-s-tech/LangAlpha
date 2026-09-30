@@ -16,6 +16,7 @@ import type { Session } from '@supabase/supabase-js';
 import { isPlatformMode } from '../config/hostMode';
 import { tokenEndpointCooldownRemainingMs } from './authCooldown';
 import { supabase } from './supabase';
+import { setStorageUser } from './userStorage';
 
 /**
  * Deliberately below auth-js's own 90s `EXPIRY_MARGIN_MS`. Its background timer
@@ -114,6 +115,7 @@ export function publishSession(session: Session | null): void {
   if ((session?.user?.id ?? null) !== currentUserId()) generation += 1;
   if (!session?.access_token) {
     cache = { status: 'signed-out' };
+    setStorageUser(null);
     return;
   }
   cache = {
@@ -126,6 +128,7 @@ export function publishSession(session: Session | null): void {
     expiresAtMs: typeof session.expires_at === 'number' ? session.expires_at * 1000 : 0,
     stampedAt: Date.now(),
   };
+  setStorageUser(cache.userId);
 }
 
 /**
@@ -159,6 +162,7 @@ export function authGeneration(): number {
 /** Module singletons outlive React (web/AGENTS.md), so sign-out must wipe this. */
 export function clearAuthToken(): void {
   cache = { status: 'signed-out' };
+  setStorageUser(null);
   generation += 1;
   inFlightRead = null;
   inFlightForce = null;

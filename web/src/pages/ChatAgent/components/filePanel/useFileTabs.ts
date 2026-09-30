@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod/mini';
 import { INTERVALS } from '@/lib/bars/chartConstants';
 import { readTypedTicker } from '@/lib/marketUtils';
+import { userLocalStorage } from '@/lib/userStorage';
 import type { FileLocation } from '../../utils/fileLocation';
 import { isValidUuid } from '../../utils/uuid';
 import { PREVIEW_PORT_MAX, PREVIEW_PORT_MIN, type ChartTabSpec, type PlanTabSpec, type PreviewSpec, type ToolTabSpec } from './types';
@@ -206,7 +207,7 @@ export function lastChartStorageKey(workspaceId: string): string {
 export function lastChartSymbol(workspaceId: string, { persist = true }: { persist?: boolean } = {}): string {
   if (!persist || !workspaceId) return DEFAULT_CHART_SYMBOL;
   try {
-    return readTypedTicker(localStorage.getItem(lastChartStorageKey(workspaceId)) ?? '') ?? DEFAULT_CHART_SYMBOL;
+    return readTypedTicker(userLocalStorage.getItem(lastChartStorageKey(workspaceId)) ?? '') ?? DEFAULT_CHART_SYMBOL;
   } catch {
     return DEFAULT_CHART_SYMBOL;
   }
@@ -214,7 +215,7 @@ export function lastChartSymbol(workspaceId: string, { persist = true }: { persi
 
 function rememberChartSymbol(workspaceId: string, symbol: string): void {
   if (!workspaceId) return;
-  try { localStorage.setItem(lastChartStorageKey(workspaceId), symbol); } catch { /* not worth failing over */ }
+  try { userLocalStorage.setItem(lastChartStorageKey(workspaceId), symbol); } catch { /* not worth failing over */ }
 }
 
 /**
@@ -257,7 +258,7 @@ function toPersisted({ id: _id, ...body }: PersistableTab): PersistedTab {
 function readPersisted(key: string | null): StripBody | null {
   if (!key) return null;
   try {
-    const raw = localStorage.getItem(key);
+    const raw = userLocalStorage.getItem(key);
     if (!raw) return null;
     const saved = persistedStateSchema.safeParse(JSON.parse(raw));
     if (!saved.success) return null;
@@ -406,9 +407,9 @@ export function useFileTabs(
     }
     const json = JSON.stringify({ tabs: named.map(toPersisted), active });
     try {
-      localStorage.setItem(store, json);
+      userLocalStorage.setItem(store, json);
       // The seed is whatever strip was shown last, in whichever thread.
-      if (seedStore && seedStore !== store) localStorage.setItem(seedStore, json);
+      if (seedStore && seedStore !== store) userLocalStorage.setItem(seedStore, json);
     } catch { /* a full or blocked store is not worth failing a render over */ }
   }, [state, key, store, seedStore, onScreen]);
 

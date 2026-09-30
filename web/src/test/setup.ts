@@ -50,3 +50,11 @@ class ResizeObserverMock {
   disconnect = vi.fn();
 }
 window.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
+
+// Tests run past the auth gate, as the app does. A platform build keeps no
+// workspace state for nobody (lib/userStorage.ts), so without a user every
+// tab and thread persistence test would find nothing stored. Imported per test
+// so a file that mocks the host mode gets the instance it mocked.
+beforeEach(async () => {
+  (await import('@/lib/userStorage')).setStorageUser('test-user');
+});

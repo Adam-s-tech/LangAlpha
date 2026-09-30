@@ -128,6 +128,7 @@ vi.mock('@/pages/ChatAgent/utils/api', async (importActual) => ({
 
 import MarketChatPanel from '../MarketChatPanel';
 import { chartSelectionStore } from '../../stores/chartSelectionStore';
+import { userLocalStorage } from '@/lib/userStorage';
 
 type PanelProps = React.ComponentProps<typeof MarketChatPanel>;
 
@@ -384,7 +385,7 @@ describe('MarketChatPanel', () => {
     expect(screen.getByTestId('search').textContent).toBe('?thread=thread-xyz');
     view.rerender({ symbol: 'MSFT' });
     expect(screen.getByTestId('search').textContent).toBe('');
-    expect(localStorage.getItem('marketview_thread_id_ws-1_MSFT')).toBeNull();
+    expect(userLocalStorage.getItem('marketview_thread_id_ws-1_MSFT')).toBeNull();
   });
 
   it('shows no continue button on a fresh chat with no return path', () => {

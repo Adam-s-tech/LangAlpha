@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useEffect, useState } from 'react';
 import { act, renderHook } from '@testing-library/react';
+import { userLocalStorage } from '@/lib/userStorage';
 import { useFileTabs, lastChartSymbol, lastChartStorageKey, tabsStorageKey, threadTabsStorageKey, type FileTab } from '../useFileTabs';
 
 /** File paths in strip order; the empty tab reads as null. */
@@ -10,7 +11,7 @@ const activePath = ({ tabs, activeId }: { tabs: FileTab[]; activeId: string }) =
   return tab?.kind === 'file' ? tab.path : null;
 };
 const ports = (tabs: FileTab[]) => tabs.map((t) => (t.kind === 'preview' ? t.port : undefined));
-const stored = (key: string) => JSON.parse(localStorage.getItem(key)!);
+const stored = (key: string) => JSON.parse(userLocalStorage.getItem(key)!);
 
 beforeEach(() => localStorage.clear());
 
@@ -158,7 +159,7 @@ describe('useFileTabs running apps', () => {
   });
 
   it('brings the start command back with a restored preview tab', () => {
-    localStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
+    userLocalStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
       tabs: [{ kind: 'preview', port: 8050, command: 'python app.py' }],
       active: 0,
     }));
@@ -176,7 +177,7 @@ describe('useFileTabs running apps', () => {
   });
 
   it('drops a stored preview tab that names no port', () => {
-    localStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
+    userLocalStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
       tabs: [{ kind: 'preview' }],
       active: 0,
     }));
@@ -187,7 +188,7 @@ describe('useFileTabs running apps', () => {
   });
 
   it('drops a stored preview whose port the preview endpoint would refuse', () => {
-    localStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
+    userLocalStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
       tabs: [{ kind: 'preview', port: 80 }, { kind: 'preview', port: 10000 }, { kind: 'preview', port: 5173 }],
       active: 0,
     }));
@@ -266,7 +267,7 @@ describe('useFileTabs persistence', () => {
     // File tabs were stored as `{ path, preview }` and every other kind carried
     // `path: null, preview: false` beside its own fields; a chart could also
     // have no interval yet.
-    localStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
+    userLocalStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
       tabs: [
         { path: 'a.md', preview: true },
         { path: null, kind: 'settings', preview: false },
@@ -284,7 +285,7 @@ describe('useFileTabs persistence', () => {
   });
 
   it('drops the entries it cannot read and keeps the rest', () => {
-    localStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
+    userLocalStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
       tabs: [{ kind: 'file', path: 'a.md', preview: false }, { kind: 'file', path: 7 }, 'junk', { kind: 'unknown' }],
       active: 'nope',
     }));
@@ -294,7 +295,7 @@ describe('useFileTabs persistence', () => {
   });
 
   it('keeps the tab that was in front when an entry before it is dropped', () => {
-    localStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
+    userLocalStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
       tabs: [
         { kind: 'file', path: 'a.md', preview: false },
         { kind: 'unknown' },
@@ -310,7 +311,7 @@ describe('useFileTabs persistence', () => {
   });
 
   it('falls back to the surviving tab before one that was itself dropped', () => {
-    localStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
+    userLocalStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
       tabs: [{ kind: 'file', path: 'a.md', preview: false }, { kind: 'unknown' }, { kind: 'file', path: 'c.md', preview: false }],
       active: 1,
     }));
@@ -362,7 +363,7 @@ describe('useFileTabs persistence', () => {
   });
 
   it('starts clean on a strip that cannot be read back', () => {
-    localStorage.setItem(tabsStorageKey('ws'), '{not json');
+    userLocalStorage.setItem(tabsStorageKey('ws'), '{not json');
     const { result } = renderHook(() => useFileTabs('ws'));
 
     expect(paths(result.current.tabs)).toEqual([null]);
@@ -424,8 +425,8 @@ describe('useFileTabs thread scope', () => {
 
   it('does not write the outgoing thread’s strip over the incoming thread’s saved one', () => {
     const strip = (path: string) => JSON.stringify({ tabs: [{ kind: 'file', path, preview: false }], active: 0 });
-    localStorage.setItem(threadTabsStorageKey('ws', 't1'), strip('one.md'));
-    localStorage.setItem(threadTabsStorageKey('ws', 't2'), strip('two.md'));
+    userLocalStorage.setItem(threadTabsStorageKey('ws', 't1'), strip('one.md'));
+    userLocalStorage.setItem(threadTabsStorageKey('ws', 't2'), strip('two.md'));
     // A sibling effect updating the same component first, the way a real panel
     // has several: with an update already pending, React defers the switch's
     // updater to the next render instead of computing it on the spot, and the
@@ -457,12 +458,12 @@ describe('useFileTabs thread scope', () => {
     // Same tab objects, not a re-read: a location or scroll it held survives.
     expect(result.current.activeTab.id).toBe(id);
     expect(paths(result.current.tabs)).toEqual(['a.md']);
-    expect(localStorage.getItem(threadTabsStorageKey('ws', 't9'))).not.toBeNull();
+    expect(userLocalStorage.getItem(threadTabsStorageKey('ws', 't9'))).not.toBeNull();
   });
 
   it('keeps a strip the reader emptied empty, rather than reseeding it from the workspace', () => {
-    localStorage.setItem(tabsStorageKey('ws'), JSON.stringify({ tabs: [{ kind: 'file', path: 'z.md', preview: false }], active: 0 }));
-    localStorage.setItem(threadTabsStorageKey('ws', 't1'), JSON.stringify({ tabs: [], active: 0 }));
+    userLocalStorage.setItem(tabsStorageKey('ws'), JSON.stringify({ tabs: [{ kind: 'file', path: 'z.md', preview: false }], active: 0 }));
+    userLocalStorage.setItem(threadTabsStorageKey('ws', 't1'), JSON.stringify({ tabs: [], active: 0 }));
     const { result } = renderHook(() => useFileTabs('ws', 't1'));
     expect(paths(result.current.tabs)).toEqual([null]);
   });
@@ -480,7 +481,7 @@ describe('useFileTabs thread scope', () => {
 
   it('drops a stored strip’s excess and out-of-range entries rather than the whole strip', () => {
     const tabs = Array.from({ length: 70 }, (_, i) => ({ kind: 'file', path: `f${i}.md`, preview: false }));
-    localStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
+    userLocalStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
       tabs: [{ kind: 'preview', port: 0 }, { kind: 'chart', symbol: 'X'.repeat(40) }, ...tabs],
       active: 0,
     }));
@@ -490,7 +491,7 @@ describe('useFileTabs thread scope', () => {
   });
 
   it('drops a stored chart whose symbol is not a ticker and uppercases one that is', () => {
-    localStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
+    userLocalStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
       tabs: [
         { kind: 'chart', symbol: '   ' },
         { kind: 'chart', symbol: 'amd' },
@@ -504,7 +505,7 @@ describe('useFileTabs thread scope', () => {
   });
 
   it('reads a new workspace’s own seed rather than carrying the old strip across', () => {
-    localStorage.setItem(tabsStorageKey('ws2'), JSON.stringify({ tabs: [{ kind: 'file', path: 'z.md', preview: false }], active: 0 }));
+    userLocalStorage.setItem(tabsStorageKey('ws2'), JSON.stringify({ tabs: [{ kind: 'file', path: 'z.md', preview: false }], active: 0 }));
     const { result, rerender } = renderHook(
       ({ ws }: { ws: string }) => useFileTabs(ws, 't1'),
       { initialProps: { ws: 'ws' } },
@@ -518,7 +519,7 @@ describe('useFileTabs thread scope', () => {
     // A peek beside a gallery keeps its strip in memory, but it is still this
     // workspace's: a second reference to another workspace swaps the id under
     // a live strip, and the tabs left on screen would be read through it.
-    localStorage.setItem(tabsStorageKey('ws2'), JSON.stringify({ tabs: [{ kind: 'file', path: 'z.md', preview: false }], active: 0 }));
+    userLocalStorage.setItem(tabsStorageKey('ws2'), JSON.stringify({ tabs: [{ kind: 'file', path: 'z.md', preview: false }], active: 0 }));
     const { result, rerender } = renderHook(
       ({ ws }: { ws: string }) => useFileTabs(ws, null, { persist: false }),
       { initialProps: { ws: 'ws' } },
@@ -530,7 +531,7 @@ describe('useFileTabs thread scope', () => {
     // Blank rather than ws2's seed: a strip that writes nothing reads nothing.
     expect(paths(result.current.tabs)).toEqual([null]);
     expect(stored(tabsStorageKey('ws2')).tabs).toEqual([{ kind: 'file', path: 'z.md', preview: false }]);
-    expect(localStorage.getItem(tabsStorageKey('ws'))).toBeNull();
+    expect(userLocalStorage.getItem(tabsStorageKey('ws'))).toBeNull();
   });
 });
 
@@ -573,7 +574,7 @@ describe('useFileTabs chart tabs', () => {
   });
 
   it('restores a chart tab whose stored interval this build no longer has on the daily view', () => {
-    localStorage.setItem(
+    userLocalStorage.setItem(
       tabsStorageKey('ws'),
       JSON.stringify({ tabs: [{ kind: 'chart', symbol: 'NVDA', timeframe: '7min' }], active: 0 }),
     );
@@ -582,7 +583,7 @@ describe('useFileTabs chart tabs', () => {
   });
 
   it('drops a stored chart tab with no symbol', () => {
-    localStorage.setItem(tabsStorageKey('ws'), JSON.stringify({ tabs: [{ kind: 'chart' }], active: 0 }));
+    userLocalStorage.setItem(tabsStorageKey('ws'), JSON.stringify({ tabs: [{ kind: 'chart' }], active: 0 }));
     const { result } = renderHook(() => useFileTabs('ws'));
     expect(paths(result.current.tabs)).toEqual([null]);
   });
@@ -664,11 +665,11 @@ describe('useFileTabs chart retarget', () => {
   });
 
   it('falls back to the default when the stored symbol is not a ticker', () => {
-    localStorage.setItem(lastChartStorageKey('ws'), '   ');
+    userLocalStorage.setItem(lastChartStorageKey('ws'), '   ');
     expect(lastChartSymbol('ws')).toBe('SPY');
-    localStorage.setItem(lastChartStorageKey('ws'), 'not a ticker at all');
+    userLocalStorage.setItem(lastChartStorageKey('ws'), 'not a ticker at all');
     expect(lastChartSymbol('ws')).toBe('SPY');
-    localStorage.setItem(lastChartStorageKey('ws'), 'amd');
+    userLocalStorage.setItem(lastChartStorageKey('ws'), 'amd');
     expect(lastChartSymbol('ws')).toBe('AMD');
   });
 });
@@ -766,7 +767,7 @@ describe('useFileTabs transcript tabs', () => {
   });
 
   it('drops a stored tool or sources entry, should one turn up', () => {
-    localStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
+    userLocalStorage.setItem(tabsStorageKey('ws'), JSON.stringify({
       tabs: [{ kind: 'tool', toolCallId: 'a' }, { kind: 'file', path: 'a.md' }, { kind: 'sources', messageId: 'm' }],
       active: 2,
     }));

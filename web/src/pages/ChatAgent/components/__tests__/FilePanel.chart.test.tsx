@@ -52,6 +52,7 @@ vi.mock('@/pages/MarketView/components/MarketChartSurface', () => ({
 
 import FilePanel from '@/pages/ChatAgent/components/FilePanel';
 import { lastChartStorageKey, tabsStorageKey } from '@/pages/ChatAgent/components/filePanel/useFileTabs';
+import { userLocalStorage } from '@/lib/userStorage';
 
 const FILES = ['notes.md'];
 const GOOGL = { kind: 'chart', symbol: 'GOOGL', timeframe: '1day', seq: 1 } as const;
@@ -174,7 +175,7 @@ describe('FilePanel chart tabs', () => {
   });
 
   it('turns an empty tab into a chart at once, on the last symbol looked at', async () => {
-    localStorage.setItem(lastChartStorageKey('ws'), 'MSFT');
+    userLocalStorage.setItem(lastChartStorageKey('ws'), 'MSFT');
     renderWithProviders(panel());
 
     fireEvent.click(screen.getByText('Open a chart'));
@@ -192,13 +193,13 @@ describe('FilePanel chart tabs', () => {
   });
 
   it('remembers the last symbol per workspace, not across them', async () => {
-    localStorage.setItem(lastChartStorageKey('other'), 'MSFT');
+    userLocalStorage.setItem(lastChartStorageKey('other'), 'MSFT');
     renderWithProviders(panel({ target: GOOGL }));
     await screen.findByTestId('chart-surface');
 
-    expect(localStorage.getItem(lastChartStorageKey('ws'))).toBe('GOOGL');
-    expect(localStorage.getItem(lastChartStorageKey('other'))).toBe('MSFT');
-    expect(localStorage.getItem('filePanel.lastChart')).toBeNull();
+    expect(userLocalStorage.getItem(lastChartStorageKey('ws'))).toBe('GOOGL');
+    expect(userLocalStorage.getItem(lastChartStorageKey('other'))).toBe('MSFT');
+    expect(userLocalStorage.getItem('filePanel.lastChart')).toBeNull();
   });
 
   it('changes symbol from the chart header, in the same tab', async () => {
@@ -226,15 +227,15 @@ describe('FilePanel chart tabs', () => {
   });
 
   it('keeps a non-persisting strip out of the workspace seed', async () => {
-    localStorage.setItem(tabsStorageKey('ws'), JSON.stringify({ tabs: [{ kind: 'file', path: 'notes.md', preview: false }], active: 0 }));
+    userLocalStorage.setItem(tabsStorageKey('ws'), JSON.stringify({ tabs: [{ kind: 'file', path: 'notes.md', preview: false }], active: 0 }));
     renderWithProviders(panel({ target: GOOGL, persistTabs: false }));
     await screen.findByTestId('chart-surface');
 
     // A gallery browsing beside the threads opened a chart; the seed the
     // threads start from still names the file, not the chart.
-    const seed = JSON.parse(localStorage.getItem(tabsStorageKey('ws'))!);
+    const seed = JSON.parse(userLocalStorage.getItem(tabsStorageKey('ws'))!);
     expect(seed.tabs).toEqual([{ kind: 'file', path: 'notes.md', preview: false }]);
-    expect(localStorage.getItem(lastChartStorageKey('ws'))).toBeNull();
+    expect(userLocalStorage.getItem(lastChartStorageKey('ws'))).toBeNull();
   });
 
   it('puts its actions in the chart header rather than a crumb row of its own', async () => {

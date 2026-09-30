@@ -45,9 +45,8 @@ export interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 import { isPlatformMode } from '@/config/hostMode';
+import { LOCAL_USER_ID } from '@/config/localUser';
 import { withShellReturn } from '../lib/desktopAuthHandoff';
-
-const _LOCAL_DEV_USER_ID = (import.meta.env.VITE_AUTH_USER_ID as string) || 'local-dev-user';
 
 const baseURL = (import.meta.env.VITE_API_BASE_URL as string) ?? '';
 
@@ -56,7 +55,7 @@ const baseURL = (import.meta.env.VITE_API_BASE_URL as string) ?? '';
  * Presents the app as permanently logged-in with a local-dev identity.
  */
 const _localDevValue: AuthContextValue = {
-  userId: _LOCAL_DEV_USER_ID,
+  userId: LOCAL_USER_ID,
   isInitialized: true,
   isLoggedIn: true,
   loginWithEmail: () => Promise.resolve(),

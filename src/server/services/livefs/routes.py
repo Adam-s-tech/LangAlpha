@@ -26,8 +26,8 @@ from ptc_agent.agent.backends import (
 )
 from ptc_agent.agent.backends.db_json_route import DbJsonRoute
 from ptc_agent.agent.backends.langgraph_store import StoreListingIncomplete
-from ptc_agent.core.sandbox.livefs_runtime.protocol import Refusal
-from src.server.services.user_data_io import UserDataValidationError
+from ptc_agent.core.sandbox.livefs_runtime.protocol import INLINE_MAX_BYTES, Refusal
+from ptc_agent.agent.backends.db_json_route import UserDataValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +76,11 @@ def version_of(content: str) -> str:
 def file_entry(name: str, content: str, *, writable: bool) -> dict[str, Any]:
     """A listing entry for a file whose content the route holds, carried
     along so the daemon need not read it (the tree trims what it may carry)."""
-    data = content.encode()
     return {
         "name": name,
         "type": "file",
-        "size": len(data),
-        "version": hashlib.sha256(data).hexdigest()[:32],
+        "size": len(content.encode()),
+        "version": version_of(content),
         "writable": writable,
         "content": content,
     }
@@ -103,6 +102,21 @@ class Saved(NamedTuple):
     as_sent: bool
 
 
+class InlineBudget:
+    """How much file content one listing carries: none of a file past the
+    per-file limit, and nothing once the listing's total is spent."""
+
+    def __init__(self, total: int) -> None:
+        self._left = total
+
+    def take(self, size: int) -> bool:
+        """Whether a file of ``size`` bytes is carried, spending it if so."""
+        if size > INLINE_MAX_BYTES or size > self._left:
+            return False
+        self._left -= size
+        return True
+
+
 class MountRoute(Protocol):
     """What the tree asks of a route, at sandbox paths under ``root_prefix``."""
 
@@ -118,6 +132,13 @@ class MountRoute(Protocol):
         """The directory's entries; None where there is no directory. A file's
         ``version`` is the one ``read`` returns with the same bytes, and it may
         carry ``content`` when the route holds it anyway."""
+
+    async def list_tree(
+        self, path: str, inline: InlineBudget
+    ) -> dict[str, list[dict[str, Any]]] | None:
+        """The directory and each one below it, by its path relative to
+        ``path``, when the route lists them together; None to list them one
+        at a time. Files carry ``content`` as far as ``inline`` allows."""
 
     async def read(self, path: str) -> tuple[str, str] | None:
         """Content and the version a save must name; None where no file is."""
@@ -185,6 +206,9 @@ class _StoreRoute:
             return None
         return sorted(entries.values(), key=lambda e: e["name"])
 
+    async def list_tree(self, path: str, inline: InlineBudget) -> None:
+        return None
+
     async def read(self, path: str) -> tuple[str, str] | None:
         content = await self._route.aread_text(path)
         return None if content is None else (content, version_of(content))
@@ -236,11 +260,14 @@ class _RowsRoute:
     async def list(self, path: str) -> list[dict[str, Any]] | None:
         return await self._route.alist(path)
 
+    async def list_tree(self, path: str, inline: InlineBudget) -> None:
+        return None
+
     async def read(self, path: str) -> tuple[str, str] | None:
         return await self._route.aread_versioned(path)
 
     async def write(self, path: str, content: str, version: str | None) -> Saved:
-        if version is None and await self._route.aread_versioned(path) is not None:
+        if version is None and self._route.exists(path):
             raise LivefsError(Refusal.EXISTS, f"{path} already exists", path)
         with _refusing(path):
             stored = await self._route.awrite_versioned(path, content, version or "")

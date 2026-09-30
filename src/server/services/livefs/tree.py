@@ -28,7 +28,7 @@ from ptc_agent.core.paths import USER_DATA_FILES, SandboxLayout, WorkspaceLayout
 from ptc_agent.core.sandbox.livefs_mount import CallContext
 from ptc_agent.core.sandbox.livefs_runtime.protocol import (
     INLINE_LISTING_MAX_BYTES,
-    INLINE_MAX_BYTES,
+    INLINE_TREE_MAX_BYTES,
     MAX_FILE_BYTES,
     MOUNT,
     Refusal,
@@ -38,6 +38,7 @@ from src.server.database.workspace_folders import is_top_level
 from src.server.services import transcripts
 from src.server.services.livefs.history import IndexRoute, TranscriptRoute
 from src.server.services.livefs.routes import (
+    InlineBudget,
     LivefsError,
     MountRoute,
     Saved,
@@ -193,20 +194,17 @@ class Listing(NamedTuple):
     #: served by a route, so it changes only when those do, which the host
     #: answers by running ``link`` again.
     structural: bool
+    #: The directories below it the route listed with it, each whole, by
+    #: path relative to it: ``{"entries": [...], "writable": bool}``.
+    below: dict[str, dict[str, Any]]
 
 
 def _carried(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop the content a listing may not carry: a file past the per-file
-    cap, and whatever no longer fits the listing's total."""
-    spent = 0
+    """Drop the content a listing may not carry."""
+    inline = InlineBudget(INLINE_LISTING_MAX_BYTES)
     for entry in entries:
-        if "content" not in entry:
-            continue
-        size = entry["size"]
-        if size > INLINE_MAX_BYTES or spent + size > INLINE_LISTING_MAX_BYTES:
+        if "content" in entry and not inline.take(entry["size"]):
             del entry["content"]
-        else:
-            spent += size
     return entries
 
 
@@ -375,12 +373,25 @@ class LivefsTree:
     async def list(self, path: str) -> Listing:
         node = await self._node(path)
         if isinstance(node, _Dir):
-            return Listing([{"name": name, "type": "dir"} for name in node.names], False, True)
+            entries = [{"name": name, "type": "dir"} for name in node.names]
+            return Listing(entries, False, True, {})
+        route = node.route
         with _answering(node.path):
-            listed = await node.route.list(node.path)
-            if listed is None:
-                raise not_found(node.path)
-            return Listing(_carried(listed), node.route.is_writable(node.path), False)
+            tree = await route.list_tree(node.path, InlineBudget(INLINE_TREE_MAX_BYTES))
+            if tree is None:
+                listed = await route.list(node.path)
+                if listed is None:
+                    raise not_found(node.path)
+                return Listing(_carried(listed), route.is_writable(node.path), False, {})
+        below = {
+            relative: {
+                "entries": entries,
+                "writable": route.is_writable(f"{node.path}/{relative}"),
+            }
+            for relative, entries in tree.items()
+            if relative
+        }
+        return Listing(tree[""], route.is_writable(node.path), False, below)
 
     async def read(self, path: str) -> tuple[str, str, str]:
         """Content, version and the sandbox path the agent knows it by."""

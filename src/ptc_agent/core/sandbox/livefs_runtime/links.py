@@ -43,18 +43,13 @@ def _set_aside(target: str) -> str:
     return aside
 
 
-def link(
-    value: str, target: str, owner: os.stat_result, *, replace: bool = False
-) -> str | None:
+def link(value: str, target: str, owner: os.stat_result) -> str | None:
     """Point ``target`` at ``value``; returns where anything already there
-    went. With ``replace``, a file there is an older copy of what the link
-    serves and is removed instead."""
+    went."""
     aside = None
     if os.path.islink(target):
         if os.readlink(target) == value:
             return None
-    elif replace and os.path.isfile(target):
-        os.unlink(target)
     elif os.path.isdir(target):
         try:
             os.rmdir(target)

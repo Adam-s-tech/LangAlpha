@@ -5,26 +5,40 @@ them through the sandbox paths the mount links in, so a search over hundreds
 of megabytes runs in the sandbox rather than on the server.
 
 Each is a ``MountRoute`` of its own, listing a directory from the stored
-digests rather than every file's content.
+digests rather than every file's content. The transcripts list as a tree, so
+a search over them costs the sandbox one request rather than one per thread.
 """
 
 from __future__ import annotations
 
+import asyncio
 import functools
+import json
 import logging
+from collections import Counter, OrderedDict
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from ptc_agent.core.paths import THREAD_DIR_NAME, WorkspaceLayout
+from ptc_agent.agent.transcript import transcript_subdir
+from ptc_agent.core.paths import THREAD_DIR_NAME, SandboxLayout, WorkspaceLayout
 from ptc_agent.core.sandbox.livefs_runtime.protocol import Refusal
 from src.server.services import transcripts
-from src.server.services.livefs.routes import LivefsError, Saved, version_of
-from src.utils.cache.redis_cache import get_cache_client
+from src.server.services.livefs.cache import client as _cache
+from src.server.services.livefs.cache import tag
+from src.server.services.livefs.routes import InlineBudget, LivefsError, Saved, version_of
 
 logger = logging.getLogger(__name__)
 
 # A version's size never changes, so this only has to outlive the version.
 _INDEX_SIZE_TTL_S = 86400
+
+# Blob bytes a read keeps, per process.
+_READ_CACHE_BYTES = 64 * 1024 * 1024
+
+# Files one tree listing names at most: a few hundred threads, which keeps the
+# answer to about a quarter of a megabyte before any content.
+_TREE_MAX_FILES = 2000
 
 
 def _file(name: str, size: int, version: str) -> dict[str, Any]:
@@ -39,6 +53,29 @@ def _file(name: str, size: int, version: str) -> dict[str, Any]:
 
 def _dir(name: str) -> dict[str, Any]:
     return {"name": name, "type": "dir"}
+
+
+def _directories(
+    files: dict[str, tuple[str, int]], under: str
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Each directory at or under ``under`` by its path relative to it, with
+    its entries by name, from every file's sha256 and size by its path."""
+    base = f"{under}/" if under else ""
+    directories: dict[str, dict[str, dict[str, Any]]] = {}
+    for file_path, (sha256, size) in files.items():
+        if not file_path.startswith(base):
+            continue
+        *folders, name = file_path[len(base) :].split("/")
+        parent = ""
+        for folder in folders:
+            directories.setdefault(parent, {}).setdefault(folder, _dir(folder))
+            parent = f"{parent}/{folder}" if parent else folder
+        directories.setdefault(parent, {})[name] = _file(name, size, sha256[:32])
+    return directories
+
+
+def _sorted(entries: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(entries.values(), key=lambda e: e["name"])
 
 
 def _read_only(path: str) -> LivefsError:
@@ -69,6 +106,77 @@ class _ReadOnly:
         return None
 
 
+class _VerifiedBytes:
+    """Blob bytes already fetched and checked against their digest, by
+    (user, sha256), within a byte budget, the least recently read going first.
+
+    Bytes under a digest never change, so a copy here is never stale, and a
+    read resolves the row naming the digest, which is what authorizes it,
+    before asking. Concurrent misses for one digest share a fetch.
+    """
+
+    def __init__(self, budget: int) -> None:
+        self._budget = budget
+        self._size = 0
+        self._held: OrderedDict[tuple[str, str], bytes] = OrderedDict()
+        self._fetching: dict[tuple[str, str], asyncio.Future[bytes]] = {}
+
+    async def get(
+        self, key: tuple[str, str], fetch: Callable[[], Awaitable[bytes]]
+    ) -> bytes:
+        data = self._held.get(key)
+        if data is not None:
+            self._held.move_to_end(key)
+            return data
+        pending = self._fetching.get(key)
+        if pending is None or pending.get_loop() is not asyncio.get_running_loop():
+            pending = asyncio.ensure_future(fetch())
+            self._fetching[key] = pending
+            pending.add_done_callback(lambda done: self._settle(key, done))
+        # Shielded: a reader that goes away leaves the fetch to the others.
+        return await asyncio.shield(pending)
+
+    def _settle(self, key: tuple[str, str], done: asyncio.Future[bytes]) -> None:
+        if self._fetching.get(key) is done:
+            del self._fetching[key]
+        if done.cancelled() or done.exception() is not None:
+            return
+        data = done.result()
+        # One file never takes more than a quarter of the budget.
+        if key in self._held or len(data) > self._budget // 4:
+            return
+        self._held[key] = data
+        self._size += len(data)
+        while self._size > self._budget:
+            _, evicted = self._held.popitem(last=False)
+            self._size -= len(evicted)
+
+
+_verified = _VerifiedBytes(_READ_CACHE_BYTES)
+
+
+async def read_file_with_digest(
+    workspace_id: str, short_id: str, path: str
+) -> tuple[bytes, str] | None:
+    """One file of a thread's stored transcript, by its directory name and
+    the path inside it, with the sha256 its listing gave; None when there is
+    no such file. The digest names these exact bytes, so a caller needs no
+    hash of its own."""
+    from src.server.database.thread_transcripts import load_transcript_file
+    from src.server.database.workspace_file_blobs import fetch_blob
+
+    row = await load_transcript_file(workspace_id, short_id, path)
+    if row is None:
+        return None
+    if row.content is not None:
+        return row.content, row.sha256
+    user_id, sha256 = row.user_id, row.sha256
+    data = await _verified.get(
+        (user_id, sha256), lambda: fetch_blob(user_id, sha256)
+    )
+    return data, sha256
+
+
 class TranscriptRoute(_ReadOnly):
     """One workspace's stored transcripts, a directory per thread."""
 
@@ -83,27 +191,62 @@ class TranscriptRoute(_ReadOnly):
         if relative is None:
             return None
         if not relative:
-            ids = await db.workspace_transcripts(self._workspace_id)
-            return [_dir(name) for name in sorted({t[:8] for t in ids})]
+            ids = Counter(t[:8] for t in await db.workspace_transcripts(self._workspace_id))
+            return [_dir(name) for name in sorted(ids) if ids[name] == 1]
         short_id, _, inner = relative.partition("/")
         if not THREAD_DIR_NAME.match(short_id):
             return None
-        files = await transcripts.list_files(self._workspace_id, short_id)
+        files = await db.list_transcript(self._workspace_id, short_id)
         if files is None:
             return None
-        base = f"{inner}/" if inner else ""
-        entries: dict[str, dict[str, Any]] = {}
-        for file_path, (sha256, size) in files.items():
-            if not file_path.startswith(base):
-                continue
-            name, nested, _ = file_path[len(base) :].partition("/")
-            if nested:
-                entries.setdefault(name, _dir(name))
-            else:
-                entries[name] = _file(name, size, sha256[:32])
-        if not entries and inner:
+        entries = _directories(files, inner).get("")
+        return None if entries is None else _sorted(entries)
+
+    async def list_tree(
+        self, path: str, inline: InlineBudget
+    ) -> dict[str, list[dict[str, Any]]] | None:
+        """One query for every thread's files, or one thread's, and one for
+        the bytes of those the listing carries, taken in the order a search
+        walks them."""
+        from src.server.database import thread_transcripts as db
+
+        relative = self._relative(path)
+        if relative is None:
             return None
-        return sorted(entries.values(), key=lambda e: e["name"])
+        short_id = relative.partition("/")[0]
+        if short_id and not THREAD_DIR_NAME.match(short_id):
+            return None
+        listed = await db.list_transcript_tree(
+            self._workspace_id, short_id or None, _TREE_MAX_FILES + 1
+        )
+        cut = len(listed) > _TREE_MAX_FILES
+        if cut:
+            # The last thread may be cut short, and a directory is listed
+            # whole or not at all: it is listed when a command reaches it.
+            listed = [f for f in listed if f.short_id != listed[-1].short_id]
+        files = {f"{f.short_id}/{f.path}": f for f in listed}
+        directories = _directories(
+            {name: (f.sha256, f.byte_len) for name, f in files.items()}, relative
+        )
+        if not relative:
+            directories[""] = (
+                {e["name"]: e for e in await self.list(path) or ()}
+                if cut
+                else directories.get("", {})
+            )
+        elif "" not in directories:
+            return None
+        base = f"{relative}/" if relative else ""
+        carried = [
+            f
+            for name, f in sorted(files.items())
+            if name.startswith(base) and inline.take(f.byte_len)
+        ]
+        for f, data in (await db.load_transcript_contents(carried)).items():
+            name = f"{f.short_id}/{f.path}"
+            parent, _, filename = name[len(base) :].rpartition("/")
+            directories[parent][filename]["content"] = data.decode()
+        return {parent: _sorted(entries) for parent, entries in directories.items()}
 
     async def read(self, path: str) -> tuple[str, str] | None:
         relative = self._relative(path)
@@ -112,11 +255,54 @@ class TranscriptRoute(_ReadOnly):
         short_id, _, inner = relative.partition("/")
         if not inner or not THREAD_DIR_NAME.match(short_id):
             return None
-        found = await transcripts.read_file_with_digest(self._workspace_id, short_id, inner)
+        found = await read_file_with_digest(self._workspace_id, short_id, inner)
         if found is None:
             return None
         data, sha256 = found
         return data.decode(), sha256[:32]
+
+
+def transcript_dir(layout: WorkspaceLayout, thread_id: str) -> str:
+    return layout.join(transcript_subdir(thread_id[:8]))
+
+
+def _iso(value: Any) -> Any:
+    return value.isoformat() if isinstance(value, datetime) else value
+
+
+def index_content(root: str, rows: list[dict[str, Any]]) -> str:
+    """The computer's thread index: one line per thread of a live folder,
+    with where its transcript is, or null when none is served there: before
+    its first turn ends, or while another of its workspace's transcripts
+    shares the directory name."""
+    machine = SandboxLayout.for_root(root)
+    named = Counter(
+        (str(row["workspace_id"]), str(row["conversation_thread_id"])[:8])
+        for row in rows
+        if row.get("has_transcript")
+    )
+    lines = []
+    for row in rows:
+        # A folder staged mid-move is under _internal until it lands.
+        if not row.get("dir_name") or "/" in row["dir_name"]:
+            continue
+        thread_id = str(row["conversation_thread_id"])
+        entry = {
+            "thread_id": thread_id,
+            "title": row.get("title"),
+            "workspace": row.get("workspace_name"),
+            "workspace_id": str(row["workspace_id"]),
+            "created_at": _iso(row.get("created_at")),
+            "updated_at": _iso(row.get("updated_at")),
+            "transcript": (
+                transcript_dir(machine.for_workspace(row["dir_name"]), thread_id)
+                if named[(str(row["workspace_id"]), thread_id[:8])] == 1
+                and row.get("has_transcript")
+                else None
+            ),
+        }
+        lines.append(json.dumps(entry, ensure_ascii=False, default=str))
+    return "".join(line + "\n" for line in lines)
 
 
 @functools.cache
@@ -135,16 +321,11 @@ def _index_shape() -> str:
         "updated_at": at,
         "has_transcript": True,
     }
-    return version_of(transcripts.index_content("/r", [probe]))
+    return version_of(index_content("/r", [probe]))
 
 
 def _size_key(computer_id: str, version: str) -> str:
-    return f"livefs:{{{computer_id}}}:index:{version}"
-
-
-def _cache() -> Any:
-    cache = get_cache_client()
-    return cache.client if cache.enabled and cache.client else None
+    return f"{tag(computer_id)}:index:{version}"
 
 
 class IndexRoute(_ReadOnly):
@@ -171,7 +352,7 @@ class IndexRoute(_ReadOnly):
         from src.server.database.conversation import list_computer_threads
 
         digest, rows = await list_computer_threads(self._computer_id)
-        text = transcripts.index_content(self._root, rows)
+        text = index_content(self._root, rows)
         version, size = self._version(digest), len(text.encode())
         cache = _cache()
         if cache is not None:
@@ -195,6 +376,9 @@ class IndexRoute(_ReadOnly):
             logger.debug("livefs index size not read", exc_info=True)
             return None
         return (version, int(size)) if size is not None else None
+
+    async def list_tree(self, path: str, inline: InlineBudget) -> None:
+        return None
 
     async def list(self, path: str) -> list[dict[str, Any]] | None:
         if self._relative(path) != "":

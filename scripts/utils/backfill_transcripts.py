@@ -6,7 +6,9 @@ Threads from before the store existed have no copy, so the first bring-up of
 every computer would render all of them. This renders them ahead of time
 instead, one thread at a time with a pause between, newest first. No sandbox
 is touched, so no evicted result is marked missing. Safe to stop and rerun: a
-thread already current is skipped.
+thread already current is skipped. Each export takes the thread's export lock
+in Redis, as the servers' do, so it never lands over a turn end's; a thread a
+server is exporting is left to it.
 
 Run inside the backend container (needs the app's env and venv); every render
 reads a whole checkpoint into this process, so keep the concurrency low:
@@ -35,9 +37,13 @@ async def _open_infra():
     from src.server.app import setup
     from src.server.database import pool as db_pool
     from src.server.utils.checkpointer import get_checkpointer, open_checkpointer_pool
+    from src.utils.cache.redis_cache import init_cache
 
     pool = db_pool.get_or_create_pool()
     await pool.open()
+    # Raises when Redis is down: an export without the lock could land over a
+    # server's.
+    await init_cache()
     checkpointer = get_checkpointer(
         "postgres",
         db_host=os.getenv("DB_HOST", "localhost"),

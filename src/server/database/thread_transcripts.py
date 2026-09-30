@@ -1,17 +1,17 @@
 """Stored thread transcripts, which the file mount serves.
 
 Each agent of a thread (its own, and each background task's) is stored on its
-own: a header row carries the manifest its copy was rendered with, and a file
-row each other file, by its whole path in the thread's directory: its bytes
-when they are small or there is no object storage, else the blob behind them.
-A save replaces one agent's copy and leaves the others alone.
+own: a header row records what its copy was rendered from, and a file row
+each of its files, the manifest among them, by its whole path in the thread's
+directory: its bytes when they are small, the manifest's always, or there is
+no object storage, else the blob behind them. A save replaces one agent's
+copy and leaves the others alone.
 """
 
 from __future__ import annotations
 
-import hashlib
-import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from psycopg.errors import ForeignKeyViolation
 from psycopg.rows import dict_row
@@ -19,13 +19,28 @@ from psycopg.rows import dict_row
 from ptc_agent.core.paths import THREAD_DIR_NAME
 from src.server.database.pool import get_db_connection
 
-logger = logging.getLogger(__name__)
+# The fingerprint of a copy compaction saved live, from the messages in hand
+# mid-turn: no render from a checkpoint matches it.
+LIVE_FINGERPRINT = ""
+
+
+@dataclass(frozen=True)
+class TaskRun:
+    """A task's latest run as a render read it. The copy's header and
+    fingerprint come from it, and it moves without a new checkpoint (the run
+    finishing, another starting), which the checkpoint order cannot see."""
+
+    task_id: str
+    run_id: Any
+    status: str | None
+    final_checkpoint_id: str | None
 
 
 @dataclass
 class StoredTranscript:
-    """One agent's copy. A load fills the header alone; a save lists every
-    file with what it has in hand for each."""
+    """One agent's copy. A load fills the header and the manifest alone; a
+    save lists every file, the manifest among them, with what it has in hand
+    for each."""
 
     fingerprint: str
     checkpoint_id: str | None
@@ -37,6 +52,8 @@ class StoredTranscript:
     #: Paths carried over unrendered from the copy this one replaces. Nothing
     #: here holds their bytes, so their rows must already hold this sha.
     carried: set[str] = field(default_factory=set)
+    #: A task's render: the run it read, which must still read so to save.
+    run: TaskRun | None = None
 
 
 class StaleCopy(Exception):
@@ -44,10 +61,15 @@ class StaleCopy(Exception):
     copy moved after this one was rendered against it. Render it in full."""
 
 
+class _RunMoved(Exception):
+    """A task's run moved after its render read it, so its copy is a later
+    export's to save."""
+
+
 @dataclass(frozen=True)
 class StoredFile:
-    #: The blob's namespace; None for a manifest, which is always in its row.
-    user_id: str | None
+    #: The blob's namespace.
+    user_id: str
     sha256: str
     content: bytes | None
 
@@ -74,17 +96,26 @@ async def load_stored(
     thread_ids: list[str], prefix: str | None = None
 ) -> dict[str, dict[str, StoredTranscript]]:
     """Each thread's stored agents by prefix, or only the one ``prefix``
-    names: the header alone, which is all a render needs of what it replaces."""
+    names: the header and the manifest alone, which is all a render needs of
+    what it replaces."""
+    from ptc_agent.agent.transcript.store import MANIFEST, TASK_META
+
     if not thread_ids:
         return {}
-    only = "" if prefix is None else " AND prefix = %s"
-    params = (thread_ids,) if prefix is None else (thread_ids, prefix)
+    only = "" if prefix is None else " AND s.prefix = %s"
+    params = (MANIFEST, TASK_META, thread_ids) + (() if prefix is None else (prefix,))
     async with get_db_connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT conversation_thread_id, prefix, fingerprint, checkpoint_id, "
-                "manifest FROM thread_transcripts "
-                f"WHERE conversation_thread_id = ANY(%s::uuid[]){only}",
+                """
+                SELECT s.conversation_thread_id, s.prefix, s.fingerprint,
+                       s.checkpoint_id, f.content
+                FROM thread_transcripts s
+                LEFT JOIN thread_transcript_files f
+                    ON f.conversation_thread_id = s.conversation_thread_id
+                   AND f.path = s.prefix || CASE s.prefix WHEN '' THEN %s ELSE %s END
+                """
+                f"WHERE s.conversation_thread_id = ANY(%s::uuid[]){only}",
                 params,
             )
             stored: dict[str, dict[str, StoredTranscript]] = {}
@@ -92,7 +123,7 @@ async def load_stored(
                 await cur.fetchall()
             ):
                 stored.setdefault(str(thread_id), {})[agent] = StoredTranscript(
-                    fingerprint, checkpoint_id, manifest
+                    fingerprint, checkpoint_id, bytes(manifest or b"").decode()
                 )
     return stored
 
@@ -132,20 +163,22 @@ async def workspace_transcripts(workspace_id: str) -> list[str]:
             return [str(row[0]) for row in await cur.fetchall()]
 
 
-# The thread whose transcript directory is a short id: the newest one if two
-# of the workspace's threads share the prefix. The prefix is a uuid range, so
-# the primary key finds it.
+# The thread whose transcript directory is a short id, and none when two of
+# the workspace's threads with a transcript share the prefix: their segments
+# are numbered alike, so serving either there would answer a path written for
+# the other with the wrong conversation. The prefix is a uuid range, so the
+# primary key finds it.
 _THREAD_BY_SHORT_ID = """
     WITH thread AS (
-        SELECT t.conversation_thread_id AS id FROM conversation_threads t
+        SELECT (array_agg(t.conversation_thread_id))[1] AS id
+        FROM conversation_threads t
         WHERE t.workspace_id = %s
           AND t.conversation_thread_id BETWEEN %s::uuid AND %s::uuid
           AND EXISTS (
               SELECT 1 FROM thread_transcripts s
               WHERE s.conversation_thread_id = t.conversation_thread_id
           )
-        ORDER BY t.updated_at DESC
-        LIMIT 1
+        HAVING count(*) = 1
     )
 """
 
@@ -161,10 +194,9 @@ def _short_id_range(short_id: str) -> tuple[str, str] | None:
 
 async def list_transcript(
     workspace_id: str, short_id: str
-) -> list[tuple[str, str | None, str, int]] | None:
-    """Every file of the transcript directory ``short_id`` names, as (agent
-    prefix, path, sha256, size), an agent's manifest with the path None;
-    None when there is no such directory."""
+) -> dict[str, tuple[str, int]] | None:
+    """Every file of the transcript directory ``short_id`` names, by its path
+    in it, with its sha256 and size; None when there is no such directory."""
     bounds = _short_id_range(short_id)
     if bounds is None:
         return None
@@ -173,43 +205,103 @@ async def list_transcript(
             await cur.execute(
                 _THREAD_BY_SHORT_ID
                 + """
-                SELECT s.prefix, NULL, s.manifest_sha256, s.manifest_len
-                FROM thread_transcripts s JOIN thread ON s.conversation_thread_id = thread.id
-                UNION ALL
-                SELECT f.prefix, f.path, f.sha256, f.byte_len
+                SELECT f.path, f.sha256, f.byte_len
                 FROM thread_transcript_files f
                 JOIN thread ON f.conversation_thread_id = thread.id
                 """,
                 (workspace_id, *bounds),
             )
             rows = await cur.fetchall()
+    return {path: (sha256, int(byte_len)) for path, sha256, byte_len in rows} or None
+
+
+@dataclass(frozen=True)
+class ListedFile:
+    thread_id: str
+    short_id: str
+    path: str
+    sha256: str
+    byte_len: int
+
+
+async def list_transcript_tree(
+    workspace_id: str, short_id: str | None, limit: int
+) -> list[ListedFile]:
+    """The first ``limit`` files of the workspace's transcript directories,
+    or of the one ``short_id`` names, in directory order, each directory
+    naming its thread as ``_THREAD_BY_SHORT_ID`` picks it."""
+    if short_id is None:
+        bounds = ("00000000-0000-0000-0000-000000000000", "ffffffff-ffff-ffff-ffff-ffffffffffff")
+    else:
+        bounds = _short_id_range(short_id)
+        if bounds is None:
+            return []
+    async with get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                WITH thread AS (
+                    SELECT (array_agg(t.conversation_thread_id))[1] AS id,
+                        left(t.conversation_thread_id::text, 8) AS short_id
+                    FROM conversation_threads t
+                    WHERE t.workspace_id = %s
+                      AND t.conversation_thread_id BETWEEN %s::uuid AND %s::uuid
+                      AND EXISTS (
+                          SELECT 1 FROM thread_transcripts s
+                          WHERE s.conversation_thread_id = t.conversation_thread_id
+                      )
+                    GROUP BY 2
+                    HAVING count(*) = 1
+                )
+                SELECT thread.id, thread.short_id, f.path, f.sha256, f.byte_len
+                FROM thread_transcript_files f
+                JOIN thread ON f.conversation_thread_id = thread.id
+                ORDER BY 2, 3
+                LIMIT %s
+                """,
+                (workspace_id, *bounds, limit),
+            )
+            rows = await cur.fetchall()
     return [
-        (prefix, path, sha256, int(byte_len)) for prefix, path, sha256, byte_len in rows
-    ] or None
+        ListedFile(str(thread_id), short, path, sha256, int(byte_len))
+        for thread_id, short, path, sha256, byte_len in rows
+    ]
+
+
+async def load_transcript_contents(files: list[ListedFile]) -> dict[ListedFile, bytes]:
+    """The bytes of each file its row holds, in one round trip. A file whose
+    row names other bytes now, saved since it was listed, is left out."""
+    if not files:
+        return {}
+    async with get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT w.n, f.content, f.sha256
+                FROM unnest(%s::uuid[], %s::text[]) WITH ORDINALITY AS w(id, path, n)
+                JOIN thread_transcript_files f
+                    ON f.conversation_thread_id = w.id AND f.path = w.path
+                """,
+                ([f.thread_id for f in files], [f.path for f in files]),
+            )
+            rows = await cur.fetchall()
+    return {
+        files[n - 1]: bytes(content)
+        for n, content, sha256 in rows
+        if content is not None and sha256 == files[n - 1].sha256
+    }
 
 
 async def load_transcript_file(
-    workspace_id: str, short_id: str, path: str, *, manifest_of: str | None = None
+    workspace_id: str, short_id: str, path: str
 ) -> StoredFile | None:
-    """One file of the transcript directory ``short_id`` names, or the
-    manifest of the agent ``manifest_of`` names, in one round trip."""
+    """One file of the transcript directory ``short_id`` names, in one round
+    trip."""
     bounds = _short_id_range(short_id)
     if bounds is None:
         return None
     async with get_db_connection() as conn:
         async with conn.cursor() as cur:
-            if manifest_of is not None:
-                await cur.execute(
-                    _THREAD_BY_SHORT_ID
-                    + """
-                    SELECT s.manifest_sha256, s.manifest FROM thread_transcripts s
-                    JOIN thread ON s.conversation_thread_id = thread.id
-                    WHERE s.prefix = %s
-                    """,
-                    (workspace_id, *bounds, manifest_of),
-                )
-                row = await cur.fetchone()
-                return StoredFile(None, row[0], row[1].encode()) if row else None
             await cur.execute(
                 _THREAD_BY_SHORT_ID
                 + """
@@ -252,14 +344,19 @@ async def save_stored(
 ) -> bool:
     """Replace one agent's stored copy unless a newer render already landed.
 
-    Checkpoint ids sort by time, so a save racing a later one (another
-    worker's turn end) loses on the header row's lock and leaves the newer
-    copy alone. Only the file rows that differ are written, read under that
-    lock. A file row without bytes names a blob, which must be registered.
+    Each copy's checkpoint is its own agent's (the thread's, or the task's
+    namespace), and checkpoint ids sort by time, so a save racing a later one
+    (another worker's turn end) loses on the header row's lock and leaves the
+    newer copy alone. At the same checkpoint a copy saved live holds the
+    messages past it, so only another live save replaces it, and a task's
+    render lands only while its run reads as the render read it: exports of
+    a thread may overlap, and one that read a task running would otherwise
+    land over the finished copy at the checkpoint they share. Only the file
+    rows that differ are written, read under that lock.
+    A file row without bytes names a blob, which must be registered.
     Returns whether this save landed; raises ``StaleCopy`` when a file it
     carried over no longer matches its row.
     """
-    manifest = transcript.manifest.encode()
     try:
         async with get_db_connection() as conn:
             async with conn.transaction():
@@ -268,19 +365,18 @@ async def save_stored(
                         """
                         INSERT INTO thread_transcripts AS s
                             (conversation_thread_id, prefix, fingerprint,
-                             checkpoint_id, manifest, manifest_sha256,
-                             manifest_len, stored_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, clock_timestamp())
+                             checkpoint_id, stored_at)
+                        VALUES (%s, %s, %s, %s, clock_timestamp())
                         ON CONFLICT (conversation_thread_id, prefix) DO UPDATE
                             SET fingerprint = EXCLUDED.fingerprint,
                                 checkpoint_id = EXCLUDED.checkpoint_id,
-                                manifest = EXCLUDED.manifest,
-                                manifest_sha256 = EXCLUDED.manifest_sha256,
-                                manifest_len = EXCLUDED.manifest_len,
                                 stored_at = clock_timestamp()
                             WHERE s.checkpoint_id IS NULL
                                OR EXCLUDED.checkpoint_id IS NULL
-                               OR s.checkpoint_id <= EXCLUDED.checkpoint_id
+                               OR s.checkpoint_id < EXCLUDED.checkpoint_id
+                               OR (s.checkpoint_id = EXCLUDED.checkpoint_id
+                                   AND NOT (s.fingerprint = %s
+                                            AND EXCLUDED.fingerprint <> %s))
                         RETURNING 1
                         """,
                         (
@@ -288,13 +384,36 @@ async def save_stored(
                             prefix,
                             transcript.fingerprint,
                             transcript.checkpoint_id,
-                            transcript.manifest,
-                            hashlib.sha256(manifest).hexdigest(),
-                            len(manifest),
+                            LIVE_FINGERPRINT,
+                            LIVE_FINGERPRINT,
                         ),
                     )
                     if await cur.fetchone() is None:
                         return False
+                    run = transcript.run
+                    if run is not None:
+                        # Read after the header row's lock: a save it waited
+                        # on read the run before committing, so this one sees
+                        # the run at least as far along as that one did.
+                        await cur.execute(
+                            """
+                            SELECT 1 FROM subagent_tasks t
+                            LEFT JOIN subagent_runs r ON r.task_run_id = t.latest_run_id
+                            WHERE t.thread_id = %s AND t.task_id = %s
+                              AND r.task_run_id IS NOT DISTINCT FROM %s
+                              AND r.status IS NOT DISTINCT FROM %s
+                              AND r.final_checkpoint_id IS NOT DISTINCT FROM %s
+                            """,
+                            (
+                                thread_id,
+                                run.task_id,
+                                run.run_id,
+                                run.status,
+                                run.final_checkpoint_id,
+                            ),
+                        )
+                        if await cur.fetchone() is None:
+                            raise _RunMoved
                     # Every save of this agent takes the header row first, so
                     # the rows read here are the ones this save replaces.
                     await cur.execute(
@@ -330,10 +449,24 @@ async def save_stored(
                             """,
                             rows,
                         )
-    except ForeignKeyViolation:
-        # The thread was deleted while its render was in flight.
+    except (ForeignKeyViolation, _RunMoved):
+        # The thread was deleted while its render was in flight, or the task's
+        # run moved; either way the transaction rolled the header back.
         return False
     return True
+
+
+async def drop_rewound(thread_id: str, checkpoint_id: str, *, conn) -> None:
+    """Drop the thread's own copy when it was rendered past ``checkpoint_id``,
+    where a fork pins the thread back: it shows the turns the fork discards,
+    and no save at the older checkpoint may replace it. ``conn`` is the
+    fork's transaction, so the copy goes with the turns or not at all."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "DELETE FROM thread_transcripts "
+            "WHERE conversation_thread_id = %s AND prefix = '' AND checkpoint_id > %s",
+            (thread_id, checkpoint_id),
+        )
 
 
 async def delete_stored(thread_id: str, prefixes: set[str]) -> None:

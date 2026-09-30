@@ -21,6 +21,7 @@ from psycopg.rows import dict_row
 from src.server.database import conversation as qr_db
 from src.server.database import order_attempts as oa_db
 from src.server.database import pool
+from src.server.database import thread_transcripts as tt_db
 from src.server.database.runs import subagent_runs as sr_db
 from src.server.database.runs.outbox import (
     build_finalize_jobs_from_run_row,
@@ -247,6 +248,7 @@ async def start_run(
                         raise TurnLifecycleError(
                             f"fork checkpoint pin failed for thread={thread_id}"
                         )
+                    await tt_db.drop_rewound(thread_id, fork.checkpoint_id, conn=conn)
                     logger.info(
                         f"[turn_lifecycle] fork truncated {deleted} rows from "
                         f"turn>={fork.from_turn} thread={thread_id} "

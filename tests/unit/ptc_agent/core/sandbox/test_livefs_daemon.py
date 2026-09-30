@@ -25,7 +25,7 @@ import pytest
 
 # The sandbox runs this package as ``livefs``; its siblings are relative
 # imports, so the host path loads the same code.
-from ptc_agent.core.sandbox.livefs_runtime import boot, daemon, lifecycle, ops, remote
+from ptc_agent.core.sandbox.livefs_runtime import boot, daemon, lifecycle, ops, remote, views
 from ptc_agent.core.sandbox.livefs_runtime.protocol import (
     CALL_ENV,
     MAX_FILE_BYTES,
@@ -56,8 +56,10 @@ def _json_only(path: str, body: bytes) -> bool:
 class _Server:
     """The livefs endpoint over a dict of mount-relative paths to bytes.
     ``store`` is what a save keeps of the bytes sent, ``version`` what names
-    a file's bytes, ``structural`` the directories it makes up, and
-    ``inline`` whether a listing carries each file's text."""
+    a file's bytes, ``structural`` the directories it makes up,
+    ``inline`` whether a listing carries each file's text, ``trees`` the
+    directories whose listing carries every one below it, and ``read_only``
+    the files no save may change."""
 
     def __init__(
         self,
@@ -69,6 +71,8 @@ class _Server:
         version=_version,
         structural=(),
         inline=False,
+        trees=(),
+        read_only=(),
     ) -> None:
         self.files = dict(files)
         self.sealed = set(sealed)
@@ -77,6 +81,8 @@ class _Server:
         self.version = version
         self.structural = set(structural)
         self.inline = inline
+        self.trees = set(trees)
+        self.read_only = set(read_only)
         self.writes: list[tuple[str, bytes, dict]] = []
         self.reads: list[str] = []
         self.lists: list[str] = []
@@ -84,8 +90,7 @@ class _Server:
     def request(self, method, action, params, *, body=None, headers=None, call=None, attempts=2):
         return getattr(self, f"_{action}")(params.get("path", ""), params, body, headers or {})
 
-    def _list(self, path, params, body, headers):
-        self.lists.append(path)
+    def _entries(self, path):
         prefix = f"{path}/" if path else ""
         entries = {}
         for key, data in self.files.items():
@@ -96,16 +101,33 @@ class _Server:
                     "type": "file",
                     "size": len(data),
                     "version": self.version(data),
-                    "writable": True,
+                    "writable": key not in self.read_only,
                     **({"content": data.decode()} if self.inline else {}),
                 }
+        return list(entries.values())
+
+    def _list(self, path, params, body, headers):
+        self.lists.append(path)
+        entries = self._entries(path)
         if path and not entries:
             return 404, None, _error("not_found")
         listing = {
-            "entries": list(entries.values()),
+            "entries": entries,
             "writable": path not in self.sealed,
             "structural": path in self.structural,
         }
+        if path in self.trees:
+            below = {
+                "/".join(parts[:depth])
+                for key in self.files
+                if key.startswith(f"{path}/")
+                for parts in [key[len(path) + 1 :].split("/")[:-1]]
+                for depth in range(1, len(parts) + 1)
+            }
+            listing["below"] = {
+                folder: {"entries": self._entries(f"{path}/{folder}"), "writable": False}
+                for folder in below
+            }
         return 200, None, json.dumps(listing).encode()
 
     def _read(self, path, params, body, headers):
@@ -213,12 +235,11 @@ def _start(box, *, stage=None, base_url=None) -> dict:
     )
 
 
-def _link(box, *links, replace=()) -> dict:
+def _link(box, *links) -> dict:
     return daemon.link_folders(
         SimpleNamespace(
             root=str(box.root),
             link=[f"{source}:{box.root / target}" for source, target in links],
-            replace=[str(box.root / target) for target in replace],
         ),
         box.paths,
     )
@@ -504,22 +525,6 @@ def test_an_empty_directory_at_a_link_path_is_replaced_not_set_aside(box):
     assert not os.path.lexists(f"{memory}.local")
 
 
-def test_replace_removes_an_older_written_copy_instead_of_setting_it_aside(box):
-    index = box.root / ".agents" / "threads.jsonl"
-    index.parent.mkdir()
-    index.write_text('{"thread": "written by an older build"}\n')
-
-    answer = _link(
-        box,
-        ("computer/threads.jsonl", ".agents/threads.jsonl"),
-        replace=[".agents/threads.jsonl"],
-    )
-
-    assert answer["set_aside"] is None
-    assert os.readlink(index) == f"{box.mount}/computer/threads.jsonl"
-    assert not os.path.lexists(f"{index}.local")
-
-
 # -- server answers ------------------------------------------------------------
 
 
@@ -651,7 +656,7 @@ def test_the_call_is_read_from_the_environment_the_process_started_with(tmp_path
         (tmp_path / str(pid)).mkdir()
         (tmp_path / str(pid) / "environ").write_bytes(environ)
 
-    calls = [ops.call_in_environ(pid, str(tmp_path)) for pid in (7, 8, 9, 10)]
+    calls = [daemon.call_in_environ(pid, str(tmp_path)) for pid in (7, 8, 9, 10)]
 
     assert calls == ["call-a", None, None, None]
 
@@ -786,6 +791,37 @@ def test_a_save_whose_answer_was_lost_is_found_landed_and_not_sent_again(kernel)
     assert server.files[NOTES] == b"v2"
 
 
+def test_bytes_written_after_a_save_whose_answer_was_lost_are_saved_over_it(kernel):
+    # Regression: the next save compared the server's file with the bytes
+    # written since, not the ones the lost save sent, and its old
+    # precondition then met that landed save as a conflict.
+    server = _Server({NOTES: b"v1"})
+    answered = server._write
+
+    def checked(path, params, body, headers):
+        if headers.get("If-Match") != f'"{_version(server.files[path])}"':
+            return 412, None, _error("changed")
+        return answered(path, params, body, headers)
+
+    def lost(*args):
+        checked(*args)
+        raise OSError(errno.EIO, "no answer")
+
+    server._write = lost
+    fs = _ops(server, kernel)
+    fh = fs.open(f"/{NOTES}", os.O_WRONLY | os.O_TRUNC)
+    fs.write(f"/{NOTES}", b"v2", 0, fh)
+    with pytest.raises(OSError):
+        fs.flush(f"/{NOTES}", fh)
+
+    server._write = checked
+    fs.write(f"/{NOTES}", b"v3", 0, fh)
+    fs.release(f"/{NOTES}", fh)
+
+    assert _sent(server) == [(b"v2", False), (b"v3", False)]
+    assert server.files[NOTES] == b"v3"
+
+
 def test_bytes_written_while_an_earlier_save_is_out_are_saved_too(kernel):
     # Regression: another writer's open sent this handle's emptied file, the
     # command wrote while that save was out, and its answer marked the handle
@@ -824,6 +860,39 @@ def test_a_file_saved_in_a_directory_its_command_made_is_found_there(kernel):
     assert "archive" in fs.readdir("/user/memory", 0)
     assert fs.getattr("/user/memory/archive/a.md")["st_size"] == 1
 
+
+def test_an_open_read_handle_answers_its_files_own_mode_and_mtime(kernel):
+    # Regression: any open handle answered writable, as of the moment asked,
+    # so fstat called a read-only transcript writable and moved its mtime on
+    # every call.
+    transcript = "workspaces/w1/transcripts/a1/turn-0001.jsonl"
+    fs = _ops(_Server({transcript: b"one"}, read_only={transcript}), kernel)
+    fh = fs.open(f"/{transcript}", os.O_RDONLY)
+
+    by_handle = [fs.getattr(f"/{transcript}", fh) for _ in range(2)]
+
+    assert stat.S_IMODE(by_handle[0]["st_mode"]) == 0o444
+    assert by_handle[0]["st_mtime"] == by_handle[1]["st_mtime"]
+    assert by_handle[0]["st_mtime"] == fs.getattr(f"/{transcript}")["st_mtime"]
+
+
+
+def test_an_old_read_handle_keeps_its_time_apart_from_the_paths(kernel):
+    # Regression: a read handle on an older version asked the path's time
+    # cache for it, so stat and fstat moved each other's mtime in turn.
+    fs = _ops(_Server({"user/memory/a.md": b"one"}), kernel)
+    old = fs.open("/user/memory/a.md", os.O_RDONLY)
+    fh = fs.open("/user/memory/a.md", os.O_WRONLY | os.O_TRUNC)
+    fs.write("/user/memory/a.md", b"two", 0, fh)
+    fs.release("/user/memory/a.md", fh)
+
+    times = [
+        (fs.getattr("/user/memory/a.md")["st_mtime"], fs.getattr("/user/memory/a.md", old)["st_mtime"])
+        for _ in range(2)
+    ]
+
+    assert times[0] == times[1]
+    assert times[0][0] != times[0][1]
 
 # -- what outlives a command ---------------------------------------------------
 
@@ -884,12 +953,66 @@ def test_a_save_stored_otherwise_is_read_back_as_stored_under_a_version_kept_bef
     assert _read(fs, f"/{PREFS}") == b'{"theme": "light"}\n'
 
 
+@pytest.mark.parametrize("let_go", ["evicted", "replaced"])
+def test_bytes_kept_for_one_command_go_with_its_view(kernel, monkeypatch, let_go):
+    # Regression: they held the whole view, listings and all, once the view
+    # itself was let go, where no command could use them again.
+    server = _Server({PREFS: b"{}"}, version=lambda data: "rev-1")
+    fs = _ops(server, kernel)
+    if let_go == "evicted":
+        for n in range(views.VIEW_LIMIT + 8):
+            kernel.run(100 + n, f"call-{n}")
+            _read(fs, f"/{PREFS}")
+    else:
+        monkeypatch.setattr(views, "UNTAGGED_TTL_S", -1.0)  # untagged views are replaced at once
+        for _ in range(2):
+            _read(fs, f"/{PREFS}")
+
+    kept_for = {owner for _, _, owner in fs._views._bytes._items if owner is not None}
+    assert kept_for <= set(fs._views._views.values())
+
+
 def test_a_file_its_listing_carries_is_read_with_no_request_of_its_own(kernel):
     server = _Server({NOTES: b"notes"}, inline=True)
     fs = _ops(server, kernel)
 
     assert _read(fs, f"/{NOTES}") == b"notes"
     assert server.reads == []
+
+
+TRANSCRIPTS = "workspaces/w1/transcripts"
+THREAD_FILES = {
+    f"{TRANSCRIPTS}/a1/turn-0001.jsonl": b"one",
+    f"{TRANSCRIPTS}/a1/tasks/k1/run-0001.jsonl": b"two",
+    f"{TRANSCRIPTS}/b2/turn-0001.jsonl": b"three",
+}
+
+
+def test_a_listing_of_the_folders_below_answers_a_search_under_it(kernel):
+    # A search lists one folder and reads every file under it, each a round
+    # trip of its own unless that first listing answers for all of them.
+    server = _Server(THREAD_FILES, inline=True, trees={TRANSCRIPTS})
+    fs = _ops(server, kernel)
+    kernel.run(101, "call-a")
+    _walk(fs, f"/{TRANSCRIPTS}")
+    server.lists.clear()
+
+    assert fs.readdir(f"/{TRANSCRIPTS}", 0) == [".", "..", "a1", "b2"]
+    assert fs.readdir(f"/{TRANSCRIPTS}/a1/tasks", 0) == [".", "..", "k1"]
+    assert {path: _read(fs, f"/{path}") for path in THREAD_FILES} == THREAD_FILES
+    assert server.lists == [TRANSCRIPTS]
+    assert server.reads == []
+
+
+def test_a_folder_the_command_listed_already_stays_as_it_listed_it(kernel):
+    server = _Server(THREAD_FILES, trees={TRANSCRIPTS})
+    fs = _ops(server, kernel)
+    kernel.run(101, "call-a")
+    assert fs.readdir(f"/{TRANSCRIPTS}/a1", 0) == [".", "..", "tasks", "turn-0001.jsonl"]
+
+    server.files[f"{TRANSCRIPTS}/a1/turn-0002.jsonl"] = b"four"
+    fs.readdir(f"/{TRANSCRIPTS}", 0)
+    assert fs.readdir(f"/{TRANSCRIPTS}/a1", 0) == [".", "..", "tasks", "turn-0001.jsonl"]
 
 
 def test_the_made_up_directories_answer_every_command_but_never_hide_a_new_one(kernel):

@@ -15,54 +15,40 @@ blob registry when there is object storage.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hashlib
 import json
 import logging
-import shlex
 import uuid
-from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from langchain_core.messages import AnyMessage
 
 from ptc_agent.agent.transcript import (
-    MANIFEST,
-    TASK_META,
-    TASKS_DIR,
     TranscriptTarget,
     build_directory,
     load_manifest,
-    transcript_subdir,
 )
 from ptc_agent.agent.transcript.render import SCHEMA_VERSION
-from ptc_agent.core.paths import THREAD_DIR_NAME, SandboxLayout, WorkspaceLayout
+from ptc_agent.core.paths import WorkspaceLayout
+
+if TYPE_CHECKING:
+    from src.server.database.thread_transcripts import TaskRun
 
 logger = logging.getLogger(__name__)
 
 INDEX = "threads.jsonl"
-# Where a thread's transcript sat, under its scratch dir, before the mount
-# served them; a sync removes what is left of it.
-LEGACY_TRANSCRIPT_DIR = "transcript"
 
 # Files up to this size keep their bytes in the row even with object storage:
 # most turns fit, and a row costs a turn end no upload and a read no fetch.
 INLINE_FILE_MAX_BYTES = 64 * 1024
 
-# Renders at once: each holds one checkpointer connection while it reads, and
-# task reads and saves fan out below it.
+# Threads a bring-up exports at once. Each holds one checkpointer connection
+# while it reads, and one agent's history at a time.
 _EXPORT_CONCURRENCY = 3
-_TASK_READ_CONCURRENCY = 4
-_SAVE_CONCURRENCY = 4
 _BLOB_UPLOAD_CONCURRENCY = 8
-
-# Blob bytes a read keeps, per process.
-_READ_CACHE_BYTES = 64 * 1024 * 1024
-
-
-def transcript_dir(layout: WorkspaceLayout, thread_id: str) -> str:
-    return layout.join(transcript_subdir(thread_id[:8]))
 
 
 def index_path(root: str) -> str:
@@ -70,10 +56,18 @@ def index_path(root: str) -> str:
     return f"{root.rstrip('/')}/{WorkspaceLayout.AGENTS_DIR}/{INDEX}"
 
 
-def _task_print(row: dict[str, Any]) -> str:
+def _task_run(task_id: str, row: dict[str, Any]) -> TaskRun:
+    from src.server.database.thread_transcripts import TaskRun
+
+    return TaskRun(
+        task_id, row.get("latest_run_id"), row.get("status"), row.get("final_checkpoint_id")
+    )
+
+
+def _task_print(run: TaskRun) -> str:
+    """What a task's fingerprint is taken from: the run its save checks."""
     return "|".join(
-        str(row.get(key) or "")
-        for key in ("latest_run_id", "status", "final_checkpoint_id")
+        str(value or "") for value in (run.run_id, run.status, run.final_checkpoint_id)
     )
 
 
@@ -82,10 +76,6 @@ def _fingerprint(source: str | None) -> str:
     thread's checkpoint for its own agent, a task's print for a task."""
     payload = json.dumps([SCHEMA_VERSION, source])
     return hashlib.sha1(payload.encode()).hexdigest()[:16]
-
-
-def _manifest_path(prefix: str) -> str:
-    return prefix + (TASK_META if prefix else MANIFEST)
 
 
 def _iso(value: Any) -> Any:
@@ -97,6 +87,20 @@ def _newer(held: Any, candidate: Any) -> bool:
     ids sort by time, so an export racing a newer one (another worker's turn
     end) stands down instead of undoing it."""
     return bool(held and candidate and held > candidate)
+
+
+def _live_at(copy: Any, checkpoint_id: str | None) -> bool:
+    """Whether ``copy`` is the thread's own, saved live past ``checkpoint_id``:
+    the store keeps it over a render from there, so none is made. Without a
+    checkpoint a render reads the latest one, which is not behind it."""
+    from src.server.database.thread_transcripts import LIVE_FINGERPRINT
+
+    return (
+        copy is not None
+        and checkpoint_id is not None
+        and copy.fingerprint == LIVE_FINGERPRINT
+        and copy.checkpoint_id == checkpoint_id
+    )
 
 
 @dataclass
@@ -139,6 +143,8 @@ class _Job:
     checkpoint_id: str | None
     #: The manifest of the stored copy this one replaces, if there is one.
     previous: str | None
+    #: A task's render from the checkpoint: the run it read.
+    run: TaskRun | None = None
 
     def render(self, *, inline: bool, full: bool = False) -> _Rendered:
         """The copy, each file named by digest. Only the segments that changed
@@ -152,7 +158,14 @@ class _Job:
             header=self.header,
             previous=None if full else load_manifest(self.previous),
         )
-        copy = StoredTranscript(self.fingerprint, self.checkpoint_id, directory.manifest)
+        copy = StoredTranscript(
+            self.fingerprint, self.checkpoint_id, directory.manifest, run=self.run
+        )
+        # Always in its row: the next render reads it from there.
+        manifest = directory.manifest.encode()
+        manifest_path = self.agent.prefix + self.agent.manifest
+        copy.files[manifest_path] = (hashlib.sha256(manifest).hexdigest(), len(manifest))
+        copy.inline[manifest_path] = manifest
         blobs: dict[str, bytes] = {}
         for name, (sha, size) in directory.files.items():
             path = self.agent.prefix + name
@@ -229,7 +242,9 @@ async def behind_in_store(threads: list[tuple[str, str | None]]) -> list[Behind]
     for thread_id, checkpoint_id in threads:
         mine = tasks.get(thread_id, {})
         wanted = {"": _fingerprint(checkpoint_id)} | {
-            TranscriptTarget(thread_id, task_id).prefix: _fingerprint(_task_print(row))
+            TranscriptTarget(thread_id, task_id).prefix: _fingerprint(
+                _task_print(_task_run(task_id, row))
+            )
             for task_id, row in mine.items()
         }
         have = stored.get(thread_id, {})
@@ -240,11 +255,73 @@ async def behind_in_store(threads: list[tuple[str, str | None]]) -> list[Behind]
     return behind
 
 
+async def _render_and_save(target: _Target, job: _Job) -> bool:
+    rendered = await asyncio.to_thread(job.render, inline=target.inline)
+    return await _save(target, job, rendered)
+
+
+async def _render_own(
+    target: _Target, thread: Behind, own: Any, reader: Any
+) -> bool | None:
+    """Render the thread's own agent from its checkpoint and store it:
+    whether the save landed. None when it stands down, the stored copy being
+    newer or the checkpoint empty."""
+    state = await reader.aget_state(thread.thread_id, thread.checkpoint_id)
+    rendered_at = (state.config or {}).get("configurable", {}).get("checkpoint_id")
+    if own is not None and _newer(own.checkpoint_id, rendered_at):
+        return None
+    messages = list((state.values or {}).get("messages") or [])
+    if not messages:
+        # Nothing to show; a copy already stored is left for the next
+        # render that has something, rather than emptied.
+        return None
+    job = _Job(
+        TranscriptTarget(thread.thread_id),
+        messages,
+        {"thread_id": thread.thread_id, "checkpoint_id": rendered_at},
+        _fingerprint(thread.checkpoint_id),
+        rendered_at,
+        own.manifest if own is not None else None,
+    )
+    return await _render_and_save(target, job)
+
+
+async def _render_task(
+    target: _Target, thread: Behind, task_id: str, previous: Any, reader: Any
+) -> bool:
+    """Render one task from its runs and store it, at its own namespace's
+    checkpoint: the thread's says nothing of how far a task running beside
+    it has got."""
+    row = thread.tasks[task_id]
+    run = _task_run(task_id, row)
+    history = await reader.aget_task_history(thread.thread_id, task_id)
+    header = {
+        "task_id": task_id,
+        "description": row.get("description"),
+        "subagent_type": row.get("subagent_type"),
+        "status": row.get("status"),
+        "created_at": _iso(row.get("created_at")),
+        "launch_call_id": row.get("launch_tool_call_id"),
+    }
+    job = _Job(
+        TranscriptTarget(thread.thread_id, task_id),
+        history.messages,
+        header,
+        _fingerprint(_task_print(run)),
+        history.checkpoint_id,
+        previous.manifest if previous is not None else None,
+        run,
+    )
+    return await _render_and_save(target, job)
+
+
 async def _render(target: _Target, thread: Behind, stored: dict[str, Any]) -> bool:
     """Render a thread's behind agents and replace their stored copies,
     ``stored`` being the headers the thread holds now by prefix, and drop the
     copies of tasks that are gone. The thread's checkpoint is read only when
-    its own agent is behind, and only the runs of the tasks rendered are.
+    its own agent is behind and not saved live past it, and only the runs of
+    the tasks rendered are. One agent is read, rendered and saved at a time,
+    so a thread with many long tasks holds one history, not all of them.
     Returns whether every save landed."""
     from src.server.database.thread_transcripts import delete_stored
     from src.server.services.history.reader import CheckpointHistoryReader
@@ -253,383 +330,174 @@ async def _render(target: _Target, thread: Behind, stored: dict[str, Any]) -> bo
     own = stored.get("")
     if own is not None and _newer(own.checkpoint_id, thread.checkpoint_id):
         return False
+    agents = thread.agents
+    if _live_at(own, thread.checkpoint_id):
+        agents = agents - {""}
+        if not agents and not thread.gone:
+            return False
     reader = CheckpointHistoryReader.get_instance()
-    rendered_at = thread.checkpoint_id
-    jobs: list[_Job] = []
-    if "" in thread.agents:
-        state = await reader.aget_state(thread_id, thread.checkpoint_id)
-        rendered_at = (state.config or {}).get("configurable", {}).get("checkpoint_id")
-        if own is not None and _newer(own.checkpoint_id, rendered_at):
+    landed: list[bool] = []
+    if "" in agents:
+        saved = await _render_own(target, thread, own, reader)
+        if saved is None:
             return False
-        messages = list((state.values or {}).get("messages") or [])
-        if not messages:
-            # Nothing to show; a copy already stored is left for the next
-            # render that has something, rather than emptied.
-            return False
-        jobs.append(
-            _Job(
-                TranscriptTarget(thread_id),
-                messages,
-                {"thread_id": thread_id, "checkpoint_id": rendered_at},
-                _fingerprint(thread.checkpoint_id),
-                rendered_at,
-                own.manifest if own is not None else None,
+        landed.append(saved)
+    for task_id in sorted(thread.tasks):
+        prefix = TranscriptTarget(thread_id, task_id).prefix
+        if prefix in agents:
+            landed.append(
+                await _render_task(target, thread, task_id, stored.get(prefix), reader)
             )
-        )
-
-    gate = asyncio.Semaphore(_TASK_READ_CONCURRENCY)
-
-    async def read_task(task_id: str) -> list[Any]:
-        async with gate:
-            return (await reader.aget_task_history(thread_id, task_id)).messages
-
-    task_ids = sorted(
-        task_id
-        for task_id in thread.tasks
-        if TranscriptTarget(thread_id, task_id).prefix in thread.agents
-    )
-    for task_id, run_messages in zip(
-        task_ids, await asyncio.gather(*(read_task(t) for t in task_ids))
-    ):
-        agent = TranscriptTarget(thread_id, task_id)
-        row = thread.tasks[task_id]
-        header = {
-            "task_id": task_id,
-            "description": row.get("description"),
-            "subagent_type": row.get("subagent_type"),
-            "status": row.get("status"),
-            "created_at": _iso(row.get("created_at")),
-            "launch_call_id": row.get("launch_tool_call_id"),
-        }
-        previous = stored.get(agent.prefix)
-        jobs.append(
-            _Job(
-                agent,
-                run_messages,
-                header,
-                _fingerprint(_task_print(row)),
-                rendered_at,
-                previous.manifest if previous is not None else None,
-            )
-        )
-
-    def render_all() -> list[tuple[_Job, _Rendered]]:
-        return [(job, job.render(inline=target.inline)) for job in jobs]
-
-    saves = asyncio.Semaphore(_SAVE_CONCURRENCY)
-
-    async def save(job: _Job, rendered: _Rendered) -> bool:
-        async with saves:
-            return await _save(target, job, rendered)
-
-    ready = await asyncio.to_thread(render_all)
-    landed = await asyncio.gather(*(save(job, rendered) for job, rendered in ready))
     if thread.gone:
         await delete_stored(thread_id, thread.gone)
     return all(landed)
 
 
-async def _bring_in_line(
-    target: _Target, threads: list[tuple[str, str | None]]
-) -> dict[str, int]:
-    """Render each thread whose stored copy is behind. ``threads`` are
-    (thread id, checkpoint id), newest first."""
+async def _export(thread_id: str, workspace_id: str | None) -> dict[str, int]:
+    """Render the thread's agents whose stored copy is behind its latest
+    checkpoint. Only ``_export_once`` calls this."""
+    from src.server.database.conversation import (
+        get_thread_by_id,
+        get_thread_checkpoint_id,
+    )
     from src.server.database.thread_transcripts import load_stored
 
-    behind = await behind_in_store(threads)
     counts = {"stored": 0, "failed": 0}
-    if not behind:
-        return counts
-    stored = await load_stored([thread.thread_id for thread in behind])
-    gate = asyncio.Semaphore(_EXPORT_CONCURRENCY)
-
-    async def one(thread: Behind) -> None:
-        async with gate:
-            try:
-                saved = await _render(target, thread, stored.get(thread.thread_id, {}))
-                counts["stored"] += saved
-            except Exception as e:
-                counts["failed"] += 1
-                logger.warning(
-                    f"Transcript export failed for thread {thread.thread_id}: {e}"
-                )
-
-    await asyncio.gather(*(one(thread) for thread in behind))
-    return counts
-
-
-async def export_thread(workspace_id: str, thread_id: str) -> dict[str, int]:
-    """Bring one thread's stored transcript up to date: at turn end, when a
-    task finishes, and for the backfill."""
-    from src.server.database.conversation import get_thread_checkpoint_id
-
+    if workspace_id is None:
+        thread = await get_thread_by_id(thread_id)
+        if not thread or not thread.get("workspace_id"):
+            return counts
+        workspace_id = str(thread["workspace_id"])
     checkpoint_id, target = await asyncio.gather(
         get_thread_checkpoint_id(thread_id), _target(workspace_id)
     )
     if target is None:
-        return {"stored": 0, "failed": 0}
-    return await _bring_in_line(target, [(thread_id, checkpoint_id)])
+        return counts
+    behind = await behind_in_store([(thread_id, checkpoint_id)])
+    if not behind:
+        return counts
+    stored = await load_stored([thread_id])
+    try:
+        counts["stored"] += await _render(target, behind[0], stored.get(thread_id, {}))
+    except Exception as e:
+        counts["failed"] += 1
+        logger.warning(f"Transcript export failed for thread {thread_id}: {e}")
+    return counts
 
 
-def index_content(root: str, rows: list[dict[str, Any]]) -> str:
-    """The computer's thread index: one line per thread of a live folder,
-    with where its transcript is, or null before its first turn ends."""
-    machine = SandboxLayout.for_root(root)
-    lines = []
-    for row in rows:
-        # A folder staged mid-move is under _internal until it lands.
-        if not row.get("dir_name") or "/" in row["dir_name"]:
-            continue
-        thread_id = str(row["conversation_thread_id"])
-        entry = {
-            "thread_id": thread_id,
-            "title": row.get("title"),
-            "workspace": row.get("workspace_name"),
-            "workspace_id": str(row["workspace_id"]),
-            "created_at": _iso(row.get("created_at")),
-            "updated_at": _iso(row.get("updated_at")),
-            "transcript": (
-                transcript_dir(machine.for_workspace(row["dir_name"]), thread_id)
-                if row.get("has_transcript")
-                else None
-            ),
-        }
-        lines.append(json.dumps(entry, ensure_ascii=False, default=str))
-    return "".join(line + "\n" for line in lines)
+# One export of a thread at a time across workers, to spare them the same
+# render: two at once are safe, since a save refuses a task's copy whose run
+# moved since its render read it. The worker holding the lock exports until
+# the flag is down; one that finds it held only raises the flag, and the
+# holder checks it again after letting go, so an export asked for mid-render
+# still runs. Both keys expire: a worker that dies holding the lock delays the
+# thread's next export rather than stopping it. Without Redis, exports run
+# unlocked.
+_LOCK_TTL_MS = 300_000
+_FLAG_TTL_S = 3600
 
 
-def _manifest_prefix(path: str) -> str | None:
-    """The agent whose manifest ``path`` is, by prefix; None for any other
-    file. A manifest is its agent's header row, not a file row."""
-    if path == MANIFEST:
-        return ""
-    head, _, name = path.rpartition("/")
-    if name == TASK_META and head.startswith(f"{TASKS_DIR}/") and head.count("/") == 1:
-        return f"{head}/"
-    return None
+def _cache() -> Any:
+    try:
+        from src.utils.cache.redis_cache import get_cache_client
 
-
-async def list_files(workspace_id: str, short_id: str) -> dict[str, tuple[str, int]] | None:
-    """Every file of a thread's stored transcript, by its path in the
-    directory, with its sha256 and size; None when there is none."""
-    from src.server.database.thread_transcripts import list_transcript
-
-    listing = await list_transcript(workspace_id, short_id)
-    if listing is None:
+        cache = get_cache_client()
+    except Exception:
         return None
-    return {
-        _manifest_path(prefix) if path is None else path: (sha256, size)
-        for prefix, path, sha256, size in listing
-    } or None
+    return cache if getattr(cache, "enabled", False) and cache.client else None
 
 
-class _VerifiedBytes:
-    """Blob bytes already fetched and checked against their digest, by
-    (user, sha256), within a byte budget, the least recently read going first.
+async def _export_once(thread_id: str, workspace_id: str | None) -> dict[str, int]:
+    """Export a thread under its lock when Redis can take it. Returns what
+    this caller stored: nothing when it left the export to the lock's holder,
+    or its save was refused for a task whose run moved, the copy then being
+    the export's that the move asked for."""
+    counts = {"stored": 0, "failed": 0}
 
-    Bytes under a digest never change, so a copy here is never stale, and a
-    read resolves the row naming the digest, which is what authorizes it,
-    before asking. Concurrent misses for one digest share a fetch.
-    """
+    async def export() -> None:
+        for key, value in (await _export(thread_id, workspace_id)).items():
+            counts[key] += value
 
-    def __init__(self, budget: int) -> None:
-        self._budget = budget
-        self._size = 0
-        self._held: OrderedDict[tuple[str, str], bytes] = OrderedDict()
-        self._fetching: dict[tuple[str, str], asyncio.Future[bytes]] = {}
-
-    async def get(
-        self, key: tuple[str, str], fetch: Callable[[], Awaitable[bytes]]
-    ) -> bytes:
-        data = self._held.get(key)
-        if data is not None:
-            self._held.move_to_end(key)
-            return data
-        pending = self._fetching.get(key)
-        if pending is None or pending.get_loop() is not asyncio.get_running_loop():
-            pending = asyncio.ensure_future(fetch())
-            self._fetching[key] = pending
-            pending.add_done_callback(lambda done: self._settle(key, done))
-        # Shielded: a reader that goes away leaves the fetch to the others.
-        return await asyncio.shield(pending)
-
-    def _settle(self, key: tuple[str, str], done: asyncio.Future[bytes]) -> None:
-        if self._fetching.get(key) is done:
-            del self._fetching[key]
-        if done.cancelled() or done.exception() is not None:
-            return
-        data = done.result()
-        # One file never takes more than a quarter of the budget.
-        if key in self._held or len(data) > self._budget // 4:
-            return
-        self._held[key] = data
-        self._size += len(data)
-        while self._size > self._budget:
-            _, evicted = self._held.popitem(last=False)
-            self._size -= len(evicted)
+    cache = _cache()
+    lock = f"transcripts:export:{thread_id}"
+    flag = f"transcripts:export-again:{thread_id}"
+    holder = uuid.uuid4().hex
+    while True:
+        acquired = None
+        if cache is not None:
+            try:
+                await cache.client.set(flag, "1", ex=_FLAG_TTL_S)
+            except Exception as e:
+                logger.warning(f"Transcript export of {thread_id} runs unlocked: {e}")
+            else:
+                # None: Redis failed it, and the client logged why.
+                acquired = await cache.acquire_lock(lock, holder, _LOCK_TTL_MS)
+                if acquired is False:
+                    return counts
+        if not acquired:
+            await export()
+            return counts
+        try:
+            while await cache.client.delete(flag):
+                await export()
+        finally:
+            await cache.release_lock(lock, holder)
+        if not await cache.client.exists(flag):
+            return counts
 
 
-_verified = _VerifiedBytes(_READ_CACHE_BYTES)
-
-
-async def read_file_with_digest(
-    workspace_id: str, short_id: str, path: str
-) -> tuple[bytes, str] | None:
-    """One file of a thread's stored transcript, by its directory name and
-    the path inside it, with the sha256 its listing gave; None when there is
-    no such file. The digest names these exact bytes, so a caller needs no
-    hash of its own."""
-    from src.server.database.thread_transcripts import load_transcript_file
-    from src.server.database.workspace_file_blobs import fetch_blob
-
-    row = await load_transcript_file(
-        workspace_id, short_id, path, manifest_of=_manifest_prefix(path)
-    )
-    if row is None:
-        return None
-    if row.content is not None:
-        return row.content, row.sha256
-    user_id, sha256 = row.user_id, row.sha256
-    data = await _verified.get(
-        (user_id, sha256), lambda: fetch_blob(user_id, sha256)
-    )
-    return data, sha256
-
-
-async def read_file(workspace_id: str, short_id: str, path: str) -> bytes | None:
-    """One file of a thread's stored transcript, by its directory name and
-    the path inside it; None when there is no such file."""
-    found = await read_file_with_digest(workspace_id, short_id, path)
-    return found[0] if found is not None else None
-
-
-_LIST_SCRIPT = """
-for d in {threads}/*/; do
-  [ -d "$d" ] || continue
-  echo "d $(basename "$d")"
-  [ -d "${{d}}{legacy}" ] && echo "t $(basename "$d")"
-done
-for d in {results}/*/; do
-  [ -d "$d" ] && echo "r $(basename "$d")"
-done
-index={index}
-[ -f "$index" ] && [ ! -L "$index" ] && echo "i"
-true
-"""
-
-
-@dataclass
-class ThreadDirListing:
-    thread_dirs: set[str]
-    #: Thread dirs still holding a transcript from before the mount.
-    legacy: set[str]
-    result_dirs: set[str]
-    #: A written index sits where the mount links its own.
-    legacy_index: bool
-
-
-def listing_script(layout: WorkspaceLayout) -> str:
-    """The shell that lists what ``prune_dead_thread_dirs`` judges, for a
-    caller to run inside a script of its own and hand back parsed."""
-    return _LIST_SCRIPT.format(
-        threads=shlex.quote(layout.join(WorkspaceLayout.THREADS_DIR)),
-        legacy=LEGACY_TRANSCRIPT_DIR,
-        results=shlex.quote(layout.join(WorkspaceLayout.LARGE_TOOL_RESULTS_DIR)),
-        index=shlex.quote(index_path(layout.root)),
-    )
-
-
-def parse_listing(stdout: str) -> ThreadDirListing:
-    found = ThreadDirListing(set(), set(), set(), False)
-    for line in stdout.splitlines():
-        parts = line.split(" ")
-        if parts[0] == "d" and len(parts) == 2:
-            found.thread_dirs.add(parts[1])
-        elif parts[0] == "t" and len(parts) == 2:
-            found.legacy.add(parts[1])
-        elif parts[0] == "r" and len(parts) == 2:
-            found.result_dirs.add(parts[1])
-        elif parts[0] == "i":
-            found.legacy_index = True
-    return found
-
-
-async def prune_dead_thread_dirs(
-    runtime: Any,
-    layout: WorkspaceLayout,
-    workspace_id: str,
-    *,
-    listing: ThreadDirListing | None = None,
-) -> set[str]:
-    """Remove the dirs of deleted threads and the transcripts written into the
-    folder before the mount served them; return the live threads' short ids.
-
-    A delete while the machine was down leaves its dirs behind. The listing
-    runs before the thread read, so a thread created meanwhile is live by the
-    time its dir could be judged; a caller passing ``listing`` ran
-    ``listing_script`` before this call. The caller holds the folder
-    throughout.
-    """
-    from src.server.database.conversation import get_workspace_thread_short_ids
-
-    if listing is None:
-        listed = await runtime.exec(listing_script(layout))
-        listing = parse_listing(listed.stdout or "")
-    live_short = await get_workspace_thread_short_ids(workspace_id)
-    threads_dir = layout.join(WorkspaceLayout.THREADS_DIR)
-    results_dir = layout.join(WorkspaceLayout.LARGE_TOOL_RESULTS_DIR)
-    dead = [
-        f"{base}/{name}"
-        for base, names in (
-            (threads_dir, listing.thread_dirs),
-            (results_dir, listing.result_dirs),
-        )
-        for name in names
-        if THREAD_DIR_NAME.match(name) and name not in live_short
-    ]
-    legacy = [
-        f"{threads_dir}/{name}/{LEGACY_TRANSCRIPT_DIR}"
-        for name in listing.legacy
-        if name in live_short
-    ]
-    if listing.legacy_index:
-        legacy.append(index_path(layout.root))
-    if dead or legacy:
-        await runtime.exec("rm -rf -- " + " ".join(shlex.quote(p) for p in dead + legacy))
-        logger.info(
-            f"Workspace {workspace_id}: removed {len(dead)} dead thread dirs and "
-            f"{len(legacy)} legacy transcripts"
-        )
-    return live_short
+async def export_thread(workspace_id: str, thread_id: str) -> dict[str, int]:
+    """Bring one thread's stored transcript up to date, for the backfill."""
+    return await _export_once(thread_id, workspace_id)
 
 
 async def sync_workspace(workspace_id: str) -> dict[str, int]:
     """Render the workspace's threads whose stored copy is behind their
     checkpoint (a turn end whose render failed, a thread from before
-    transcripts were stored), newest first.
+    transcripts were stored), newest first. The store is read for all of them
+    at once, and each behind thread exported under its lock.
     """
     from src.server.database.thread_transcripts import workspace_checkpoints
 
-    target = await _target(workspace_id)
     counts = {"stored": 0, "failed": 0}
-    if target is not None:
-        # A thread with no stamped checkpoint has not finished a turn; its
-        # first turn end exports it.
-        counts = await _bring_in_line(target, await workspace_checkpoints(workspace_id))
+    if await _target(workspace_id) is None:
+        return counts
+    # A thread with no stamped checkpoint has not finished a turn; its first
+    # turn end exports it.
+    behind = await behind_in_store(await workspace_checkpoints(workspace_id))
+    gate = asyncio.Semaphore(_EXPORT_CONCURRENCY)
+
+    async def one(thread_id: str) -> None:
+        async with gate:
+            try:
+                for key, value in (await _export_once(thread_id, workspace_id)).items():
+                    counts[key] += value
+            except Exception as e:
+                counts["failed"] += 1
+                logger.warning(f"Transcript export failed for thread {thread_id}: {e}")
+
+    await asyncio.gather(*(one(thread.thread_id) for thread in behind))
     return counts
 
 
-async def save_live(transcript: TranscriptTarget, messages: list[Any]) -> bool:
+async def save_live(transcript: TranscriptTarget, messages: Sequence[AnyMessage]) -> bool:
     """Store one agent's transcript from messages in hand, ahead of the render
     from the checkpoint: compaction points the model at it mid-turn, before
     the turn end renders it. Only the segments that changed since the stored
-    copy render. The copy keeps the checkpoint its stored one was rendered
-    at, so it never lands over a newer render, and an empty fingerprint: the
-    checkpoint the turn ends at does not exist yet, so the turn end's render
-    still reads it, and renders only what came after this save. Returns
-    whether it landed or had nothing to change."""
-    from src.server.database.conversation import get_thread_by_id
-    from src.server.database.thread_transcripts import load_stored
+    copy render. The copy takes the live fingerprint and the latest checkpoint
+    of its agent's source (the thread's, or the task's namespace), or its
+    stored one's when that is later. The messages in hand hold everything up
+    to that checkpoint, so a render from there (a turn end whose export has
+    not landed, an export that read a running task before this compaction)
+    leaves the copy in place; the next checkpoint the agent writes still
+    renders over it, and only what came after this save. Returns whether it
+    landed or had nothing to change."""
+    from src.server.database.conversation import (
+        get_thread_by_id,
+        get_thread_checkpoint_id,
+    )
+    from src.server.database.thread_transcripts import LIVE_FINGERPRINT, load_stored
+    from src.server.services.history.reader import CheckpointHistoryReader
 
     thread_id = transcript.thread_id
     thread = await get_thread_by_id(thread_id)
@@ -644,82 +512,26 @@ async def save_live(transcript: TranscriptTarget, messages: list[Any]) -> bool:
     header = {k: v for k, v in held.items() if k not in ("schema", "segments")}
     if transcript.task_id is None:
         header["thread_id"] = thread_id
+        latest = await get_thread_checkpoint_id(thread_id)
     else:
         header["task_id"] = transcript.task_id
+        latest = await CheckpointHistoryReader.get_instance().alatest_task_checkpoint_id(
+            thread_id, transcript.task_id
+        )
+    held_at = stored.checkpoint_id if stored is not None else None
+    checkpoint_id = max(filter(None, (held_at, latest)), default=None)
     job = _Job(
         transcript,
-        messages,
+        list(messages),
         header,
-        "",
-        stored.checkpoint_id if stored is not None else None,
+        LIVE_FINGERPRINT,
+        checkpoint_id,
         stored.manifest if stored is not None else None,
     )
     rendered = await asyncio.to_thread(job.render, inline=target.inline)
     if stored is not None and rendered.copy.manifest == stored.manifest:
         return True
     return await _save(target, job, rendered)
-
-
-async def _export_by_id(thread_id: str, workspace_id: str | None) -> None:
-    from src.server.database.conversation import get_thread_by_id
-
-    if workspace_id is None:
-        thread = await get_thread_by_id(thread_id)
-        workspace_id = str(thread["workspace_id"]) if thread and thread.get("workspace_id") else None
-    if workspace_id is not None:
-        await export_thread(workspace_id, thread_id)
-
-
-# One export of a thread at a time across workers. The worker holding the
-# lock exports until the flag is down; one that finds it held only raises the
-# flag, and the holder checks it again after letting go, so an export asked
-# for mid-render still runs. Both keys expire: a worker that dies holding the
-# lock delays the thread's next export rather than stopping it.
-_LOCK_TTL_S = 300
-_FLAG_TTL_S = 3600
-_RELEASE_LUA = """
-if redis.call('get', KEYS[1]) == ARGV[1] then
-  return redis.call('del', KEYS[1])
-end
-return 0
-"""
-
-
-def _redis() -> Any:
-    try:
-        from src.utils.cache.redis_cache import get_cache_client
-
-        cache = get_cache_client()
-    except Exception:
-        return None
-    return cache.client if getattr(cache, "enabled", False) and cache.client else None
-
-
-async def _export_once(thread_id: str, workspace_id: str | None) -> None:
-    client = _redis()
-    lock = f"transcripts:export:{thread_id}"
-    flag = f"transcripts:export-again:{thread_id}"
-    holder = uuid.uuid4().hex
-    while True:
-        try:
-            if client is not None:
-                await client.set(flag, "1", ex=_FLAG_TTL_S)
-                if not await client.set(lock, holder, nx=True, ex=_LOCK_TTL_S):
-                    return
-        except Exception as e:
-            logger.warning(f"Transcript export of {thread_id} runs unlocked: {e}")
-            client = None
-        if client is None:
-            await _export_by_id(thread_id, workspace_id)
-            return
-        try:
-            while await client.delete(flag):
-                await _export_by_id(thread_id, workspace_id)
-        finally:
-            with contextlib.suppress(Exception):
-                await client.eval(_RELEASE_LUA, 1, lock, holder)
-        if not await client.exists(flag):
-            return
 
 
 _exports: dict[str, asyncio.Task] = {}

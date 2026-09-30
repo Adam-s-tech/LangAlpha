@@ -6,23 +6,20 @@ server's livefs endpoint with the computer's mount token, and nothing is kept
 on disk.
 
     python3 -m livefs start --root R --base-url U [--stage S]
-    python3 -m livefs link --root R [--link SRC:DST ...] [--replace DST ...]
-    python3 -m livefs down --root R
-    python3 -m livefs status --root R
+    python3 -m livefs link --root R [--link SRC:DST ...]
 """
 
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import os
+import sys
 import threading
 from collections.abc import Callable
 
 from .lifecycle import (
     Paths,
-    code_version,
     has_libfuse,
     healthy,
     install_config,
@@ -30,18 +27,20 @@ from .lifecycle import (
     locked,
     read_state,
     rebase,
-    retire,
-    serve,
     start,
-    sweep,
     unsupported,
+    use_libfuse3,
     write_state,
 )
 from .links import link, unlink
-from .protocol import MountError
+from .ops import LiveFS
+from .protocol import CALL_ENV, MountError
 from .remote import Remote
+from .views import CONTENT_BYTES
 
 PROBE_TIMEOUT_S = 5
+
+_CALL_ENV = CALL_ENV.encode() + b"="
 
 
 def _probe(paths: Paths) -> str | None:
@@ -155,23 +154,17 @@ def link_folders(args, paths: Paths) -> dict:
             if target not in wanted:
                 unlink(target, paths.mount)
         owner = os.stat(args.root)
-        replace = {os.path.abspath(t) for t in args.replace or ()}
         failed, moved = {}, {}
         for target, source in wanted.items():
             try:
-                aside = link(
-                    os.path.join(paths.mount, source),
-                    target,
-                    owner,
-                    replace=target in replace,
-                )
+                aside = link(os.path.join(paths.mount, source), target, owner)
             except OSError as exc:
                 failed[target] = str(exc)
             else:
                 if aside:
                     moved[target] = aside
         state["links"] = sorted(wanted)
-        # What the daemon knows of the layout before it asks (``LiveFS``).
+        # How the daemon tells a new layout from a rewrite that kept it.
         state["sources"] = sorted(set(wanted.values()))
         write_state(paths, state)
     return {
@@ -197,48 +190,79 @@ def start_mount(args, paths: Paths) -> dict:
     return refused or {"ok": True, "error": None, "started": started or None}
 
 
-def down(args, paths: Paths) -> dict:
-    """Remove every link and stop serving."""
-    os.makedirs(paths.private, mode=0o700, exist_ok=True)
-    with locked(paths):
-        state = read_state(paths)
-        for target in state.get("links", ()):
-            unlink(target, paths.mount)
-        with contextlib.suppress(OSError):
-            os.unlink(paths.mount)
-        retire(state, grace=0)
-        sweep("", paths)
-        write_state(paths, {})
-    return {"ok": True, "unlinked": state.get("links", [])}
+def call_in_environ(pid: int, proc: str = "/proc") -> str | None:
+    """The call id a process started with. Its starting environment, not its
+    current one: children inherit it, and the shell's own redirections are
+    requests of the shell's pid."""
+    try:
+        with open(f"{proc}/{pid}/environ", "rb") as f:
+            for item in f.read().split(b"\0"):
+                if item.startswith(_CALL_ENV):
+                    return item[len(_CALL_ENV):].decode(errors="replace") or None
+    except OSError:
+        pass
+    return None
 
 
-def status(args, paths: Paths) -> dict:
-    state = read_state(paths)
-    return {
-        "ok": healthy(paths.mount),
-        "mount": state.get("mount"),
-        "links": state.get("links", []),
-        "code": state.get("code"),
-        "current": code_version(),
-    }
+def content_budget(default: int, cgroup: str = "/sys/fs/cgroup") -> int:
+    """``default``, or a sixteenth of the sandbox's memory limit when smaller."""
+    for name in ("memory.max", "memory/memory.limit_in_bytes"):
+        try:
+            with open(os.path.join(cgroup, name)) as f:
+                limit = f.read().strip()
+        except OSError:
+            continue
+        return min(default, int(limit) // 16) if limit.isdigit() else default
+    return default
+
+
+def serve(args, paths: Paths) -> None:
+    # mfusepy is imported only here: ``start`` runs before libfuse may be
+    # installed.
+    use_libfuse3()
+    from . import mfusepy as fuse
+
+    owner = os.stat(args.root)
+    operations = LiveFS(
+        Remote(paths.config),
+        owner.st_uid,
+        owner.st_gid,
+        caller=lambda: fuse.fuse_get_context()[2],
+        call_of=call_in_environ,
+        layout=paths.state,
+        content_bytes=content_budget(CONTENT_BYTES),
+    )
+    # Loaded while ``start`` probes the server; mounted only once it answered.
+    if getattr(args, "gated", False) and sys.stdin.readline().strip() != "go":
+        return
+    fuse.FUSE(
+        operations,
+        args.mount,
+        foreground=True,
+        allow_other=True,
+        default_permissions=True,
+        attr_timeout=0,
+        entry_timeout=0,
+        negative_timeout=0,
+        fsname="livefs",
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="livefs")
-    parser.add_argument("command", choices=("serve", "start", "link", "down", "status"))
+    parser.add_argument("command", choices=("serve", "start", "link"))
     parser.add_argument("--root", required=True)
     parser.add_argument("--mount")
     parser.add_argument("--stage")
     parser.add_argument("--base-url")
     parser.add_argument("--link", action="append")
-    parser.add_argument("--replace", action="append")
     parser.add_argument("--gated", action="store_true")
     args = parser.parse_args()
     paths = Paths()
     if args.command == "serve":
         serve(args, paths)
         return 0
-    commands = {"start": start_mount, "link": link_folders, "down": down, "status": status}
+    commands = {"start": start_mount, "link": link_folders}
     result = commands[args.command](args, paths)
     print(json.dumps(result))
     return 0 if result.get("ok") else 1

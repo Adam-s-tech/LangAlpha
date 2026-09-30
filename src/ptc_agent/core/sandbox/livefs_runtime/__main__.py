@@ -1,4 +1,4 @@
-"""``python3 -m livefs {start,link,down,status,serve} ...``."""
+"""``python3 -m livefs {start,link,serve} ...``."""
 
 import sys
 

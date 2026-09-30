@@ -6,6 +6,7 @@ tools and the mount service import it on the host.
 
 import json
 from enum import StrEnum
+from typing import Literal, NotRequired, TypedDict
 
 #: The package directory under ``_internal/src/``, run as ``python3 -m livefs``.
 PACKAGE_NAME = "livefs"
@@ -44,6 +45,42 @@ MAX_FILE_BYTES = 256 * 1024
 INLINE_MAX_BYTES = 16 * 1024
 #: ... and this much per listing; past it, entries leave it out.
 INLINE_LISTING_MAX_BYTES = 128 * 1024
+#: A listing that carries the directories below it (``below``) carries up to
+#: this much across all of them, which a search then reads without asking.
+INLINE_TREE_MAX_BYTES = 512 * 1024
+
+
+class WireEntry(TypedDict):
+    """One name in a ``/list`` answer."""
+
+    name: str
+    type: Literal["file", "dir"]
+    size: NotRequired[int]
+    version: NotRequired[str]
+    #: Absent reads as writable.
+    writable: NotRequired[bool]
+    content: NotRequired[str]
+
+
+class WireListing(TypedDict):
+    """A ``/list`` answer, and each directory its ``below`` carries."""
+
+    entries: list[WireEntry]
+    #: New files can be made in it.
+    writable: NotRequired[bool]
+    #: Made up by the server, so it changes only when the host runs ``link``.
+    structural: NotRequired[bool]
+    #: The directories below it, each whole, by path relative to it.
+    below: NotRequired[dict[str, "WireListing"]]
+
+
+class SaveAnswer(TypedDict):
+    """A ``/write`` answer."""
+
+    version: str
+    size: int
+    #: Stored byte for byte as sent, not rewritten by its route.
+    as_sent: bool
 
 
 class Refusal(StrEnum):

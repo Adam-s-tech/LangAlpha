@@ -3,6 +3,8 @@
 Rendering reads the whole checkpoint, so an agent whose stored copy is current
 is never rendered again, a render older than the stored copy stands down
 before it reads, and a task finishing reads its own run, not the thread's.
+Every export, a bring-up's and the backfill's among them, takes the thread's
+lock, and one agent is read, rendered and saved at a time.
 A save writes only the rows that changed. Compaction's live save replaces only
 its own agent's copy and leaves a fingerprint that makes the next render from
 the checkpoint redo it.
@@ -25,7 +27,8 @@ from src.server.database.thread_transcripts import (
     _changed_rows,
 )
 from src.server.services import transcripts
-from src.server.services.computer_manager import _bringup
+from src.server.services.computer_manager import _bringup, _thread_dirs
+from src.server.services.livefs.history import index_content
 from src.server.services.transcripts import (
     INLINE_FILE_MAX_BYTES,
     Behind,
@@ -44,12 +47,15 @@ NOW = datetime(2026, 9, 26, tzinfo=timezone.utc)
 
 
 class _Runtime:
-    def __init__(self, stdout: str = "") -> None:
+    def __init__(self, stdout: str = "", *, rm_exit: int = 0) -> None:
         self.stdout = stdout
+        self.rm_exit = rm_exit
         self.commands: list[str] = []
 
     async def exec(self, command: str):
         self.commands.append(command)
+        if command.startswith("rm "):
+            return SimpleNamespace(stdout="", stderr="", exit_code=self.rm_exit)
         return SimpleNamespace(stdout=self.stdout, exit_code=0)
 
 
@@ -88,12 +94,42 @@ def _stored(checkpoint_id: str = "cp-1", manifest: str = "{}", **files) -> Store
 # -- which agents render -------------------------------------------------------
 
 
+class _Cache:
+    """The shared cache client: its lock, and the raw keys the rerun flag uses."""
+
+    enabled = True
+
+    def __init__(self) -> None:
+        self.keys: dict[str, str] = {}
+        self.client = self
+
+    async def set(self, key, value, ex=None):
+        self.keys[key] = value
+
+    async def delete(self, key):
+        return int(self.keys.pop(key, None) is not None)
+
+    async def exists(self, key):
+        return int(key in self.keys)
+
+    async def acquire_lock(self, key, token, ttl_ms):
+        return self.keys.setdefault(key, token) == token
+
+    async def release_lock(self, key, token):
+        if self.keys.get(key) == token:
+            del self.keys[key]
+
+
 @pytest.fixture
 def store():
-    state = SimpleNamespace(in_store={}, tasks=[], renders=[])
+    state = SimpleNamespace(
+        in_store={}, tasks=[], renders=[], cache=_Cache(), during_render=None
+    )
 
     async def render(target, thread, stored):
         state.renders.append((thread.thread_id, thread.agents))
+        if state.during_render is not None:
+            await state.during_render()
         return True
 
     async def stored_fingerprints(ids):
@@ -104,6 +140,12 @@ def store():
 
     with (
         patch.object(transcripts, "_render", render),
+        patch.object(transcripts, "_target", AsyncMock(return_value=_target())),
+        patch(
+            "src.server.database.conversation.get_thread_checkpoint_id",
+            AsyncMock(return_value="cp-1"),
+        ),
+        patch("src.utils.cache.redis_cache.get_cache_client", lambda: state.cache),
         patch(
             "src.server.database.thread_transcripts.stored_fingerprints",
             stored_fingerprints,
@@ -117,21 +159,61 @@ def store():
         yield state
 
 
+def _workspace_threads(*threads):
+    return patch(
+        "src.server.database.thread_transcripts.workspace_checkpoints",
+        AsyncMock(return_value=list(threads)),
+    )
+
+
 @pytest.mark.asyncio
 async def test_a_thread_current_in_the_store_costs_nothing(store):
     store.in_store[T1] = {"": FP}
-    counts = await transcripts._bring_in_line(_target(), [(T1, "cp-1")])
+    counts = await transcripts.export_thread("ws-1", T1)
     assert counts == {"stored": 0, "failed": 0}
     assert store.renders == []
 
 
 @pytest.mark.asyncio
-async def test_only_threads_the_store_is_behind_on_render(store):
+async def test_the_sync_exports_only_the_threads_the_store_is_behind_on(store):
     store.in_store[T1] = {"": FP}
     store.in_store[T2] = {"": "stale"}
-    counts = await transcripts._bring_in_line(_target(), [(T1, "cp-1"), (T2, "cp-1")])
+    with _workspace_threads((T1, "cp-1"), (T2, "cp-1")):
+        counts = await transcripts.sync_workspace("ws-1")
     assert store.renders == [(T2, {""})]
-    assert counts["stored"] == 1
+    assert counts == {"stored": 1, "failed": 0}
+    assert store.cache.keys == {}
+
+
+@pytest.mark.asyncio
+async def test_a_sync_leaves_a_thread_whose_export_is_held_to_its_holder(store):
+    """Another worker is rendering the thread: the sync renders nothing over
+    it, and the flag it raises makes the holder run again."""
+    store.in_store[T1] = {"": "stale"}
+    store.cache.keys[f"transcripts:export:{T1}"] = "another-worker"
+    with _workspace_threads((T1, "cp-1")):
+        counts = await transcripts.sync_workspace("ws-1")
+    assert store.renders == []
+    assert counts == {"stored": 0, "failed": 0}
+    assert f"transcripts:export-again:{T1}" in store.cache.keys
+
+
+@pytest.mark.asyncio
+async def test_an_export_asked_for_mid_render_runs_again_under_the_same_hold(store):
+    store.in_store[T1] = {"": "stale"}
+    asked = []
+
+    async def ask_again():
+        if not asked:
+            asked.append(await transcripts.export_thread("ws-1", T1))
+
+    store.during_render = ask_again
+    counts = await transcripts.export_thread("ws-1", T1)
+
+    assert asked == [{"stored": 0, "failed": 0}]
+    assert [thread_id for thread_id, _ in store.renders] == [T1, T1]
+    assert counts == {"stored": 2, "failed": 0}
+    assert store.cache.keys == {}
 
 
 @pytest.mark.asyncio
@@ -139,7 +221,7 @@ async def test_a_task_that_moved_renders_that_task_alone(store):
     task = {"thread_id": T1, "task_id": "k1", "latest_run_id": "r2", "status": "done"}
     store.tasks = [task]
     store.in_store[T1] = {"": FP, "tasks/k1/": "run r1"}
-    await transcripts._bring_in_line(_target(), [(T1, "cp-1")])
+    await transcripts.export_thread("ws-1", T1)
     assert store.renders == [(T1, {"tasks/k1/"})]
 
 
@@ -196,7 +278,9 @@ async def test_a_finished_task_renders_from_its_run_alone(monkeypatch):
     meta = '{"schema": 2, "task_id": "k1", "launch_call_id": "call-1"}'
     reader = SimpleNamespace(
         aget_state=AsyncMock(),
-        aget_task_history=AsyncMock(return_value=SimpleNamespace(messages=[_message("go")])),
+        aget_task_history=AsyncMock(
+            return_value=SimpleNamespace(messages=[_message("go")], checkpoint_id="task-cp-1")
+        ),
     )
     monkeypatch.setattr(
         "src.server.services.history.reader.CheckpointHistoryReader.get_instance",
@@ -218,6 +302,51 @@ async def test_a_finished_task_renders_from_its_run_alone(monkeypatch):
     [(prefix, copy)] = saves
     assert prefix == "tasks/k1/"
     assert load_manifest(copy.manifest)["launch_call_id"] == "call-1"
+    # Ordered by its own run, not the thread's checkpoint beside it.
+    assert copy.checkpoint_id == "task-cp-1"
+
+
+@pytest.mark.asyncio
+async def test_a_threads_agents_are_read_and_saved_one_at_a_time(monkeypatch):
+    """A long thread's task histories are never all in memory at once."""
+    order = []
+    tasks = {
+        k: {"thread_id": T1, "task_id": k, "latest_run_id": "r1", "status": "done"}
+        for k in ("k1", "k2")
+    }
+
+    async def aget_state(thread_id, checkpoint_id):
+        order.append("read own")
+        return SimpleNamespace(
+            config={"configurable": {"checkpoint_id": "cp-1"}},
+            values={"messages": [_message("hi")]},
+        )
+
+    async def aget_task_history(thread_id, task_id):
+        order.append(f"read {task_id}")
+        return SimpleNamespace(messages=[_message(task_id)], checkpoint_id="task-cp-1")
+
+    async def save_stored(thread_id, prefix, user_id, copy):
+        order.append(f"save {prefix or 'own'}")
+        return True
+
+    reader = SimpleNamespace(aget_state=aget_state, aget_task_history=aget_task_history)
+    monkeypatch.setattr(
+        "src.server.services.history.reader.CheckpointHistoryReader.get_instance",
+        lambda: reader,
+    )
+    monkeypatch.setattr("src.server.database.thread_transcripts.save_stored", save_stored)
+
+    behind = Behind(T1, "cp-1", tasks, {"", "tasks/k1/", "tasks/k2/"}, set())
+    assert await _render(_target(inline=True), behind, {})
+    assert order == [
+        "read own",
+        "save own",
+        "read k1",
+        "save tasks/k1/",
+        "read k2",
+        "save tasks/k2/",
+    ]
 
 
 # -- what a save writes --------------------------------------------------------
@@ -262,7 +391,7 @@ def _big():
 
 def test_small_files_ride_the_rows_even_with_object_storage():
     rendered = _job([_message("hi"), _message("again"), _big()]).render(inline=False)
-    assert set(rendered.copy.inline) == {"turn-0001.jsonl"}
+    assert set(rendered.copy.inline) == {"manifest.json", "turn-0001.jsonl"}
     [(sha, data)] = rendered.blobs.items()
     assert rendered.copy.files["turn-0002.jsonl"] == (sha, len(data))
 
@@ -290,7 +419,7 @@ def _row(thread_id: str, *, stored: bool = True, dir_name: str | None = "researc
 
 
 def test_the_index_names_a_path_only_for_a_stored_transcript():
-    content = transcripts.index_content(
+    content = index_content(
         ROOT,
         [_row(T1), _row(T2, stored=False), _row("33333333-0000", dir_name=None)],
     )
@@ -300,51 +429,54 @@ def test_the_index_names_a_path_only_for_a_stored_transcript():
     assert '"transcript": null' in lines[1]
 
 
+def test_the_index_names_no_transcript_two_threads_share_a_directory_for():
+    twin = T1[:8] + "-ffff-ffff-ffff-ffffffffffff"
+    elsewhere = T1[:8] + "-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    content = index_content(
+        ROOT,
+        [
+            _row(T1),
+            _row(twin),
+            _row(T2),
+            _row(elsewhere, dir_name="other") | {"workspace_id": "ws-2"},
+        ],
+    )
+    served = ['"transcript": null' not in line for line in content.splitlines()]
+    assert served == [False, False, True, True]
+
+
 # -- the sync at bring-up ------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_the_prune_clears_dead_dirs_and_copies_from_before_the_mount(
-    monkeypatch,
-):
-    runtime = _Runtime(stdout=f"d {T1[:8]}\nt {T1[:8]}\nd 33333333\nr 33333333\ni\n")
+async def test_the_prune_clears_dead_dirs(monkeypatch):
+    runtime = _Runtime(stdout=f"d {T1[:8]}\nd 33333333\nr 33333333\n")
     monkeypatch.setattr(
         "src.server.database.conversation.get_workspace_thread_short_ids",
         AsyncMock(return_value={T1[:8], T2[:8]}),
     )
 
-    live = await transcripts.prune_dead_thread_dirs(runtime, LAYOUT, "ws-1")
+    live, pruned = await _thread_dirs.prune_dead_thread_dirs(runtime, LAYOUT, "ws-1")
 
     assert live == {T1[:8], T2[:8]}
-    removal = next(c for c in runtime.commands if c.startswith("rm "))
-    for path in (
-        f"{LAYOUT.threads}/33333333",
-        f"{LAYOUT.large_tool_results}/33333333",
-        f"{LAYOUT.threads}/{T1[:8]}/transcript",
-        transcripts.index_path(ROOT),
-    ):
-        assert path in removal
-    assert f"{LAYOUT.threads}/{T1[:8]}" not in removal.split()
+    assert pruned
+    assert runtime.commands[-1] == (
+        f"rm -rf -- {LAYOUT.threads}/33333333 {LAYOUT.large_tool_results}/33333333"
+    )
 
 
 @pytest.mark.asyncio
-async def test_the_sync_renders_the_threads_the_workspace_query_names(monkeypatch):
-    seen = {}
-
-    async def bring_in_line(target, threads):
-        seen["threads"] = threads
-        return {"stored": 0, "failed": 0}
-
-    monkeypatch.setattr(transcripts, "_bring_in_line", bring_in_line)
-    monkeypatch.setattr(transcripts, "_target", AsyncMock(return_value=_target()))
+async def test_a_prune_whose_removal_failed_says_so(monkeypatch):
+    runtime = _Runtime(stdout="d 33333333\n", rm_exit=-1)
     monkeypatch.setattr(
-        "src.server.database.thread_transcripts.workspace_checkpoints",
-        AsyncMock(return_value=[(T1, "cp-1")]),
+        "src.server.database.conversation.get_workspace_thread_short_ids",
+        AsyncMock(return_value={T1[:8]}),
     )
 
-    await transcripts.sync_workspace("ws-1")
+    live, pruned = await _thread_dirs.prune_dead_thread_dirs(runtime, LAYOUT, "ws-1")
 
-    assert seen["threads"] == [(T1, "cp-1")]
+    assert live == {T1[:8]}
+    assert not pruned
 
 
 @pytest.mark.asyncio
@@ -408,6 +540,15 @@ def live(monkeypatch):
         "src.server.database.conversation.get_thread_by_id",
         AsyncMock(return_value={"workspace_id": "ws-1"}),
     )
+    state.stamped = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "src.server.database.conversation.get_thread_checkpoint_id", state.stamped
+    )
+    state.task_tip = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "src.server.services.history.reader.CheckpointHistoryReader.get_instance",
+        lambda: SimpleNamespace(alatest_task_checkpoint_id=state.task_tip),
+    )
     monkeypatch.setattr(
         transcripts, "_target", AsyncMock(return_value=_target(inline=True))
     )
@@ -428,6 +569,42 @@ async def test_a_live_save_keeps_the_rendered_checkpoint_and_empties_the_fingerp
 
 
 @pytest.mark.asyncio
+async def test_a_live_save_takes_the_threads_checkpoint_when_its_export_is_late(live):
+    """A render at the thread's checkpoint lacks this turn, so the live copy
+    must not look older than it."""
+    live.stored[""] = _stored(checkpoint_id="cp-1")
+    live.stamped.return_value = "cp-2"
+    assert await transcripts.save_live(TranscriptTarget(T1), [_message("hi")])
+    [(_, copy)] = live.saves
+    assert copy.checkpoint_id == "cp-2"
+
+
+@pytest.mark.asyncio
+async def test_a_render_at_a_live_copys_checkpoint_renders_only_the_tasks(monkeypatch):
+    task = {"thread_id": T1, "task_id": "k1", "latest_run_id": "r1", "status": "done"}
+    reader = SimpleNamespace(
+        aget_state=AsyncMock(),
+        aget_task_history=AsyncMock(
+            return_value=SimpleNamespace(messages=[_message("go")], checkpoint_id="task-cp-1")
+        ),
+    )
+    monkeypatch.setattr(
+        "src.server.services.history.reader.CheckpointHistoryReader.get_instance",
+        lambda: reader,
+    )
+    save = AsyncMock(return_value=True)
+    monkeypatch.setattr("src.server.database.thread_transcripts.save_stored", save)
+    own = _stored()
+    own.fingerprint = ""
+
+    behind = Behind(T1, "cp-1", {"k1": task}, {"", "tasks/k1/"}, set())
+    assert await _render(_target(inline=True), behind, {"": own})
+
+    reader.aget_state.assert_not_awaited()
+    assert [c.args[1] for c in save.await_args_list] == ["tasks/k1/"]
+
+
+@pytest.mark.asyncio
 async def test_a_live_save_of_a_task_replaces_only_that_task(live):
     live.stored["tasks/k1/"] = _stored(
         manifest='{"task_id": "k1", "description": "d"}',
@@ -436,8 +613,22 @@ async def test_a_live_save_of_a_task_replaces_only_that_task(live):
     assert await transcripts.save_live(TranscriptTarget(T1, "k1"), [_message("go")])
     [(prefix, copy)] = live.saves
     assert prefix == "tasks/k1/"
-    assert copy.files.keys() == {"tasks/k1/run-0001.jsonl"}
+    assert copy.files.keys() == {"tasks/k1/meta.json", "tasks/k1/run-0001.jsonl"}
     assert load_manifest(copy.manifest)["description"] == "d"
+
+
+@pytest.mark.asyncio
+async def test_a_live_save_of_a_task_takes_the_tasks_latest_checkpoint(live):
+    """An export that read the running task before this compaction renders
+    at that checkpoint or an older one, and must not replace what it lacks."""
+    live.stored["tasks/k1/"] = _stored(checkpoint_id="task-cp-1")
+    live.stamped.return_value = "cp-9"
+    live.task_tip.return_value = "task-cp-2"
+    assert await transcripts.save_live(TranscriptTarget(T1, "k1"), [_message("go")])
+    [(_, copy)] = live.saves
+    assert copy.fingerprint == "" and copy.checkpoint_id == "task-cp-2"
+    live.task_tip.assert_awaited_once_with(T1, "k1")
+    live.stamped.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -29,7 +29,7 @@ from ptc_agent.agent.backends.db_json_route import Plan
 from ptc_agent.core.sandbox.livefs_mount import CallContext
 from ptc_agent.core.sandbox.livefs_runtime.protocol import INLINE_MAX_BYTES
 from src.server.database import workspace as workspace_db
-from src.server.database.thread_transcripts import StoredFile
+from src.server.database.thread_transcripts import ListedFile, StoredFile
 from src.server.database.workspace_folders import MOVING_DIR
 from src.server.services.automations.file import AutomationsFile, Document, FilePlan, _Delete
 from src.server.services.livefs.routes import LivefsError
@@ -63,14 +63,11 @@ SHORT = T1[:8]
 THREADS = {HERE: T1, STRANGER: T2}
 # Non-ASCII on purpose: a size counted in characters would pass on ASCII.
 TRANSCRIPT = {
+    "manifest.json": json.dumps({"thread_id": T1}, ensure_ascii=False),
     "turn-0001.jsonl": '{"role": "user", "content": "résumé 市场"}\n',
     "tasks/k1/meta.json": '{"description": "价格"}',
     "tasks/k1/run-0001.jsonl": '{"role": "ai", "content": "✓"}\n',
 }
-MANIFEST = json.dumps({"thread_id": T1}, ensure_ascii=False)
-# A manifest is its agent's header row; every other file is a file row.
-MANIFESTS = {"": MANIFEST, "tasks/k1/": TRANSCRIPT["tasks/k1/meta.json"]}
-ROWS = {path: text for path, text in TRANSCRIPT.items() if not path.endswith(".json")}
 NOW = datetime(2026, 9, 26, tzinfo=timezone.utc)
 AUTOMATIONS = "user/automations/automations.json"
 SERVED = '{"automations": [{"name": "Morning brief", "status": "active"}]}\n'
@@ -165,7 +162,7 @@ def automations(monkeypatch):
 def history(monkeypatch):
     """One stored thread per workspace in THREADS, as its rows hold it. Only
     the database is faked, so the service's own read path serves the files."""
-    content = {path: text.encode() for path, text in ROWS.items()}
+    content = {path: text.encode() for path, text in TRANSCRIPT.items()}
 
     def workspace_transcripts(workspace_id):
         return [THREADS[workspace_id]] if workspace_id in THREADS else []
@@ -177,30 +174,32 @@ def history(monkeypatch):
     def list_transcript(workspace_id, short_id):
         if not found(workspace_id, short_id):
             return None
-        manifests = [
-            (prefix, None, _sha(text.encode()), len(text.encode()))
-            for prefix, text in MANIFESTS.items()
-        ]
-        files = [
-            (path.rpartition("/")[0] + "/" if "/" in path else "", path, _sha(data), len(data))
-            for path, data in content.items()
-        ]
-        return manifests + files
+        return {path: (_sha(data), len(data)) for path, data in content.items()}
 
-    def load_transcript_file(workspace_id, short_id, path, *, manifest_of=None):
-        if not found(workspace_id, short_id):
-            return None
-        if manifest_of is not None:
-            text = MANIFESTS.get(manifest_of)
-            return None if text is None else StoredFile(None, _sha(text.encode()), text.encode())
-        if path not in content:
+    def load_transcript_file(workspace_id, short_id, path):
+        if not found(workspace_id, short_id) or path not in content:
             return None
         return StoredFile(USER, _sha(content[path]), content[path])
+
+    def list_transcript_tree(workspace_id, short_id, limit):
+        thread_id = THREADS.get(workspace_id)
+        if thread_id is None or short_id not in (None, thread_id[:8]):
+            return []
+        listed = [
+            ListedFile(thread_id, thread_id[:8], path, sha256, size)
+            for path, (sha256, size) in sorted(list_transcript(workspace_id, thread_id[:8]).items())
+        ]
+        return listed[:limit]
+
+    def load_transcript_contents(files):
+        return {f: content[f.path] for f in files if _sha(content[f.path]) == f.sha256}
 
     mocks = SimpleNamespace(
         workspace_transcripts=AsyncMock(side_effect=workspace_transcripts),
         list_transcript=AsyncMock(side_effect=list_transcript),
         load_transcript_file=AsyncMock(side_effect=load_transcript_file),
+        list_transcript_tree=AsyncMock(side_effect=list_transcript_tree),
+        load_transcript_contents=AsyncMock(side_effect=load_transcript_contents),
     )
     for name, mock in vars(mocks).items():
         monkeypatch.setattr(f"src.server.database.thread_transcripts.{name}", mock)
@@ -227,12 +226,12 @@ async def test_user_holds_the_automations_folder_which_takes_no_new_files(tree, 
     entries = (await tree.list("user")).entries
     assert [e["name"] for e in entries] == ["memory", "memo", "profile", "automations"]
 
-    listed, writable, _ = await tree.list("user/automations")
-    assert [(e["name"], e["writable"]) for e in listed] == [
+    listing = await tree.list("user/automations")
+    assert [(e["name"], e["writable"]) for e in listing.entries] == [
         ("README.md", False),
         ("automations.json", True),
     ]
-    assert writable is False
+    assert listing.writable is False
 
 
 @pytest.mark.asyncio
@@ -417,7 +416,7 @@ async def test_every_file_lists_the_size_version_and_content_its_read_returns(
     content in place of a read, so each route has to agree with its read."""
     from ptc_agent.agent.backends.user_data import UserDataBackend
     from ptc_agent.agent.backends.workflows import build_workflow_value
-    from src.server.services.livefs import history as history_route
+    from src.server.services.livefs import cache as livefs_cache
 
     big = "é" * (INLINE_MAX_BYTES // 2 + 1)
     store.put((USER, "memory"), "notes.md", {"content": "résumé 市场"})
@@ -436,7 +435,7 @@ async def test_every_file_lists_the_size_version_and_content_its_read_returns(
         monkeypatch.setitem(UserDataBackend.files, filename, profile(filename))
     sizes = _SizeCache()
     monkeypatch.setattr(
-        history_route, "get_cache_client", lambda: SimpleNamespace(enabled=True, client=sizes)
+        livefs_cache, "get_cache_client", lambda: SimpleNamespace(enabled=True, client=sizes)
     )
 
     async def walk() -> dict:
@@ -459,7 +458,7 @@ async def test_every_file_lists_the_size_version_and_content_its_read_returns(
             "user/automations/automations.json",
             "workflows/daily.js",
             f"workspaces/{HERE}/memory/plan.md",
-            *(transcripts + name for name in (*TRANSCRIPT, "manifest.json")),
+            *(transcripts + name for name in TRANSCRIPT),
             "computer/threads.jsonl",
         }
         for path, entry in listed.items():
@@ -470,6 +469,49 @@ async def test_every_file_lists_the_size_version_and_content_its_read_returns(
     assert "content" not in listed["user/memory/big.md"]
     assert "content" not in listed["computer/threads.jsonl"]
     assert listed["user/profile/README.md"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_a_transcript_listing_carries_every_folder_below_it_whole(tree, history):
+    # The daemon answers the rest of the command from these, so a folder
+    # missing a file hides it, and carried content stands in for its read.
+    listing = await tree.list(f"workspaces/{HERE}/transcripts")
+
+    assert [e["name"] for e in listing.entries] == [SHORT]
+    assert set(listing.below) == {SHORT, f"{SHORT}/tasks", f"{SHORT}/tasks/k1"}
+    assert not any(below["writable"] for below in listing.below.values())
+    files = {
+        f"{folder}/{e['name']}": e
+        for folder, below in listing.below.items()
+        for e in below["entries"]
+        if e["type"] == "file"
+    }
+    assert set(files) == {f"{SHORT}/{path}" for path in TRANSCRIPT}
+    for path, text in TRANSCRIPT.items():
+        data = text.encode()
+        entry = files[f"{SHORT}/{path}"]
+        assert (entry["size"], entry["version"], entry["content"]) == (
+            len(data),
+            _sha(data)[:32],
+            text,
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_thread_past_the_tree_limit_is_named_and_listed_on_its_own(
+    tree, history, monkeypatch
+):
+    from src.server.services.livefs import history as history_route
+
+    monkeypatch.setattr(history_route, "_TREE_MAX_FILES", len(TRANSCRIPT) - 1)
+    root = f"workspaces/{HERE}/transcripts"
+
+    listing = await tree.list(root)
+    assert [e["name"] for e in listing.entries] == [SHORT]
+    assert listing.below == {}
+    thread = await tree.list(f"{root}/{SHORT}")
+    assert [e["name"] for e in thread.entries] == ["manifest.json", "tasks", "turn-0001.jsonl"]
+    assert thread.below == {}
 
 
 @pytest.mark.asyncio

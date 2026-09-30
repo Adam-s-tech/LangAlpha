@@ -17,9 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from .links import swap_link
-from .ops import LiveFS, call_in_environ, content_budget
 from .protocol import GENERATIONS, MOUNT
-from .remote import Remote
 
 START_TIMEOUT_S = 10
 RETIRE_AFTER_S = 30
@@ -147,6 +145,18 @@ def has_libfuse() -> bool:
     return libfuse() is not None
 
 
+def use_libfuse3() -> None:
+    """Point mfusepy, which loads libfuse on import, at libfuse 3. It
+    prefers 2 when both are installed, and 2 truncates in a separate call
+    after open, which would make a redirect's empty save look written (see
+    ``LiveFS.flush``)."""
+    found = libfuse()
+    if found in _SONAMES:
+        os.environ["FUSE_LIBRARY_PATH"] = found
+    else:
+        os.environ["FUSE_LIBRARY_NAME"] = LIBFUSE
+
+
 def unsupported() -> str | None:
     """Why this sandbox cannot mount, answered before a start that would
     only time out."""
@@ -262,44 +272,6 @@ def rebase(base_url: str | None, paths: Paths) -> bool:
 # --- the daemon ---------------------------------------------------------
 
 
-def serve(args, paths: Paths) -> None:
-    # mfusepy prefers libfuse 2 when both are installed, and 2 truncates in a
-    # separate call after open, which would make a redirect's empty save look
-    # written (see ``LiveFS.flush``). mfusepy loads libfuse on import, so it
-    # is imported only here: ``start`` runs before libfuse may be installed.
-    found = libfuse()
-    if found in _SONAMES:
-        os.environ["FUSE_LIBRARY_PATH"] = found
-    else:
-        os.environ["FUSE_LIBRARY_NAME"] = LIBFUSE
-    from . import mfusepy as fuse
-
-    owner = os.stat(args.root)
-    operations = LiveFS(
-        Remote(paths.config),
-        owner.st_uid,
-        owner.st_gid,
-        caller=lambda: fuse.fuse_get_context()[2],
-        call_of=call_in_environ,
-        layout=paths.state,
-        content_bytes=content_budget(),
-    )
-    # Loaded while ``start`` probes the server; mounted only once it answered.
-    if getattr(args, "gated", False) and sys.stdin.readline().strip() != "go":
-        return
-    fuse.FUSE(
-        operations,
-        args.mount,
-        foreground=True,
-        allow_other=True,
-        default_permissions=True,
-        attr_timeout=0,
-        entry_timeout=0,
-        negative_timeout=0,
-        fsname="livefs",
-    )
-
-
 def _is_daemon(pid: object) -> bool:
     if not isinstance(pid, int):
         return False
@@ -310,19 +282,17 @@ def _is_daemon(pid: object) -> bool:
         return False
 
 
-def retire(state: dict, *, grace: float) -> None:
+def retire(state: dict) -> None:
     """Stop the daemon a new one replaced. Where its mount can be unmounted,
     that is enough: the daemon exits once the requests open against it
-    finish. Elsewhere it is stopped after ``grace``, for the same reason."""
+    finish. Elsewhere it is stopped after ``RETIRE_AFTER_S``, for the same
+    reason."""
     old, pid = state.get("mount"), state.get("pid")
     if old and mounted(old):
         subprocess.run(["umount", "-l", old], check=False, capture_output=True)
         if not mounted(old):
             return
     if not _is_daemon(pid):
-        return
-    if not grace:
-        os.kill(pid, 15)
         return
     # Checked again when the grace ends: the pid may belong to another
     # process by then.
@@ -331,7 +301,7 @@ def retire(state: dict, *, grace: float) -> None:
         [
             "sh",
             "-c",
-            f"sleep {grace:g}; tr '\\0' ' ' < /proc/{pid}/cmdline 2>/dev/null"
+            f"sleep {RETIRE_AFTER_S}; tr '\\0' ' ' < /proc/{pid}/cmdline 2>/dev/null"
             f" | grep -qF -- '{marker}' && kill {pid}",
         ],
         stdin=subprocess.DEVNULL,
@@ -426,7 +396,7 @@ def start(
     except OSError as exc:
         child.kill()
         return True, f"could not point {paths.mount} at the new mount: {exc}"
-    retire(state, grace=RETIRE_AFTER_S)
+    retire(state)
     sweep(generation, paths)
     _drop_copies(code, paths)
     state.update(pid=child.pid, code=code, mount=generation)

@@ -132,6 +132,8 @@ class TaskHistory:
     """Materialized state for one background-task checkpoint namespace."""
 
     messages: list[AnyMessage] = field(default_factory=list)
+    #: The namespace checkpoint these were read at.
+    checkpoint_id: str | None = None
     new_summarization_event: dict[str, Any] | None = None
     newly_offloaded_args: int = 0
     newly_offloaded_reads: int = 0
@@ -512,6 +514,9 @@ class CheckpointHistoryReader:
         summarization_event = values.get("_summarization_event")
         return TaskHistory(
             messages=list(values.get("messages", []) or []),
+            checkpoint_id=(snapshot.config or {})
+            .get("configurable", {})
+            .get("checkpoint_id"),
             new_summarization_event=(
                 summarization_event
                 if isinstance(summarization_event, dict)
@@ -529,6 +534,18 @@ class CheckpointHistoryReader:
                 if isinstance(record, dict)
             ],
         )
+
+    async def alatest_task_checkpoint_id(
+        self, thread_id: str, task_id: str
+    ) -> str | None:
+        """The checkpoint ``aget_task_history`` would read at now, without
+        materializing its state."""
+        tip = await self._checkpointer.aget_tuple(
+            {"configurable": {"thread_id": thread_id, "checkpoint_ns": f"task:{task_id}"}}
+        )
+        if tip is None:
+            return None
+        return (tip.config.get("configurable") or {}).get("checkpoint_id")
 
     async def aget_task_run_stamps(
         self, thread_id: str, task_id: str

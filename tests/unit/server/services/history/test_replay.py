@@ -1493,6 +1493,13 @@ def _stop_close(message_id):
     }
 
 
+def _user_stopped(turn_index, sse_events=None):
+    """A turn's response row as the finalize of a user's Stop leaves it."""
+    return _response(turn_index, sse_events, status="cancelled") | {
+        "metadata": {"cancelled_by_user": True}
+    }
+
+
 def _main_step(message_id, text, tool_call_id, result):
     return [
         _main_chunk(message_id, "text", text),
@@ -1550,12 +1557,13 @@ async def test_stopped_flash_turn_replays_its_partial_answer(monkeypatch):
     """A stop inside the only model call commits nothing past the input, so
     the checkpoint slice is the HumanMessage alone. The partial the user
     watched stream, and the close that marks it stopped, replay from the
-    finalize's archive in their live order."""
+    finalize's archive in their live order. The archived close is the turn's
+    only one: replay adds none beside it."""
     _mock_reader(monkeypatch, ThreadHistory(thread_id=THREAD, turns=[_turn(0, [])]))
     stored = [*_partial_answer(), _stop_close("lc-1")]
 
     items = await build_checkpoint_replay_items(
-        THREAD, [_query(0)], {0: _response(0, stored, status="cancelled")}
+        THREAD, [_query(0)], {0: _user_stopped(0, stored)}
     )
 
     assert items[0]["event"] == "user_message"
@@ -1595,7 +1603,7 @@ async def test_stopped_ptc_turn_replays_steps_once_and_the_partial(monkeypatch):
     ]
 
     items = await build_checkpoint_replay_items(
-        THREAD, [_query(0)], {0: _response(0, stored, status="cancelled")}
+        THREAD, [_query(0)], {0: _user_stopped(0, stored)}
     )
 
     assert _replayed(items) == [
@@ -1672,16 +1680,123 @@ async def test_stopped_tool_round_replays_the_result_that_streamed(monkeypatch):
     stored[1]["data"]["tool_calls"].append({"name": "bash", "args": {}, "id": "tc-2"})
 
     items = await build_checkpoint_replay_items(
-        THREAD, [_query(0)], {0: _response(0, stored, status="cancelled")}
+        THREAD, [_query(0)], {0: _user_stopped(0, stored)}
     )
 
     assert _replayed(items) == [
         ("ai-1", "Checking both."),
         ("tool_calls", "tc-1"),
         ("tool_call_result", "tc-1"),
+        ("ai-1", "stopped"),
     ]
     result = next(i for i in items if i["event"] == "tool_call_result")
     assert result["data"]["content"] == "first done"
+
+
+def _stopped_during_search(stored_close):
+    """A Flash turn stopped while its web search ran: the model's message,
+    text and tool call, committed; the search never returned. A provider that
+    streamed no finish leaves the message open, so the finalize closes it."""
+    stored = [
+        _main_chunk("lc-1", "text", "I'll grab current yields."),
+        {
+            "event": "tool_calls",
+            "data": {
+                "agent": _MAIN_AGENT,
+                "id": "lc-1",
+                "role": "assistant",
+                "tool_calls": [{"name": "web_search", "args": {}, "id": "tc-1"}],
+            },
+        },
+    ]
+    return stored + [_stop_close("lc-1")] if stored_close else stored
+
+
+def _search_turn():
+    return _turn(
+        0,
+        [
+            AIMessage(
+                content="I'll grab current yields.",
+                id="ai-1",
+                tool_calls=[{"name": "web_search", "args": {}, "id": "tc-1"}],
+            )
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "stored_close", [False, True], ids=["no-archived-close", "archived-close"]
+)
+async def test_stop_between_messages_closes_the_committed_message(
+    monkeypatch, stored_close
+):
+    """Stopped is recorded on the turn, not on whichever message was open. A
+    stop during a tool leaves the committed message without a close: none was
+    written, or the one written names the live id and anchors nothing."""
+    _mock_reader(monkeypatch, ThreadHistory(thread_id=THREAD, turns=[_search_turn()]))
+
+    items = await build_checkpoint_replay_items(
+        THREAD,
+        [_query(0)],
+        {0: _user_stopped(0, _stopped_during_search(stored_close))},
+    )
+
+    assert _replayed(items) == [
+        ("ai-1", "I'll grab current yields."),
+        ("tool_calls", "tc-1"),
+        ("ai-1", "stopped"),
+    ]
+    assert items[-1]["data"] == {
+        "thread_id": THREAD,
+        "agent": "main",
+        "id": "ai-1",
+        "role": "assistant",
+        "finish_reason": "stopped",
+        "turn_index": 0,
+        "response_id": "resp-0",
+    }
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [{"cancelled_by_user": False}, {}],
+    ids=["system-cancel", "unflagged"],
+)
+async def test_cancel_the_user_did_not_ask_for_gets_no_stop_close(
+    monkeypatch, metadata
+):
+    """A shutdown cancel is not a Stop: the turn replays without the chip."""
+    _mock_reader(monkeypatch, ThreadHistory(thread_id=THREAD, turns=[_search_turn()]))
+    response = _response(0, _stopped_during_search(False), status="cancelled")
+
+    items = await build_checkpoint_replay_items(
+        THREAD, [_query(0)], {0: response | {"metadata": metadata}}
+    )
+
+    assert _replayed(items) == [
+        ("ai-1", "I'll grab current yields."),
+        ("tool_calls", "tc-1"),
+    ]
+
+
+async def test_stored_replay_closes_a_user_stopped_turn_once():
+    """The sse source reads the same row: it adds the close the archive lacks
+    and leaves an archived one alone."""
+    between = build_sse_replay_items(
+        THREAD, [_query(0)], {0: _user_stopped(0, _stopped_during_search(False))}
+    )
+    mid_text = build_sse_replay_items(
+        THREAD,
+        [_query(0)],
+        {0: _user_stopped(0, [*_partial_answer(), _stop_close("lc-1")])},
+    )
+
+    assert _replayed(between)[-1] == ("lc-1", "stopped")
+    assert between[-1]["data"]["agent"] == _MAIN_AGENT
+    assert [r for r in _replayed(mid_text) if r[1] == "stopped"] == [
+        ("lc-1", "stopped")
+    ]
 
 
 @pytest.mark.parametrize("status", ["completed", "interrupted"])
@@ -1745,7 +1860,7 @@ async def test_stopped_turn_without_a_boundary_replays_its_partial(monkeypatch):
     items = await build_checkpoint_replay_items(
         THREAD,
         [_query(0), _query(1)],
-        {0: _response(0), 1: _response(1, stored, status="cancelled")},
+        {0: _response(0), 1: _user_stopped(1, stored)},
     )
 
     turn1 = [i for i in items if i["data"].get("turn_index") == 1]
@@ -1754,6 +1869,35 @@ async def test_stopped_turn_without_a_boundary_replays_its_partial(monkeypatch):
         {**row["data"], "thread_id": THREAD, "turn_index": 1, "response_id": "resp-1"}
         for row in stored
     ]
+
+
+async def test_stop_before_the_first_assistant_event_closes_the_turn(monkeypatch):
+    """A stop during bring-up archives no assistant event, so there is no
+    message to close. The turn still replays stopped on the checkpoint and
+    stored paths: its close names no message and lands on the turn."""
+    _mock_reader(
+        monkeypatch,
+        ThreadHistory(
+            thread_id=THREAD,
+            turns=[_turn(0, [AIMessage(content="a0", id="ai-0")], turn_index=0)],
+        ),
+    )
+    queries = [_query(0), _query(1)]
+    responses = {0: _response(0), 1: _user_stopped(1)}
+
+    checkpoint = await build_checkpoint_replay_items(THREAD, queries, responses)
+    stored = build_sse_replay_items(THREAD, queries, responses)
+
+    for items in (checkpoint, stored):
+        turn1 = [i for i in items if i["data"].get("turn_index") == 1]
+        assert [i["event"] for i in turn1] == ["user_message", "message_chunk"]
+        assert turn1[1]["data"] == {
+            "thread_id": THREAD,
+            "role": "assistant",
+            "finish_reason": "stopped",
+            "turn_index": 1,
+            "response_id": "resp-1",
+        }
 
 
 def _cache_probe(monkeypatch):
@@ -1832,7 +1976,7 @@ async def test_stopped_main_lane_caches_with_its_partial(monkeypatch):
     stored = [*_partial_answer(), _stop_close("lc-1")]
 
     await build_checkpoint_replay_items(
-        THREAD, [_query(0)], {0: _response(0, stored, status="cancelled")}
+        THREAD, [_query(0)], {0: _user_stopped(0, stored)}
     )
 
     assert len(segments) == 1

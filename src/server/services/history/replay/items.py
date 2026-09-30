@@ -220,6 +220,59 @@ def _error_item(
     return {"event": "error", "data": data}
 
 
+def stop_close_item(
+    thread_id: str,
+    response: dict[str, Any] | None,
+    turn_items: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """The ``finish_reason: "stopped"`` close for a user-stopped turn's last
+    main-lane assistant message, unless the turn already carries one for it.
+
+    Stopped is a fact about the turn, recorded on its response row, but the
+    stop finalize writes a close only for a message still streaming at the
+    stop. A stop between messages (during a tool, before the next model call)
+    leaves none, and a close for a message the checkpoint committed does not
+    survive the merge. A stop during bring-up, before any assistant event,
+    has no message to name, so its close carries no ``id``: clients apply a
+    close to the turn's bubble by ``turn_index``. System cancels are not
+    stops and get no close.
+
+    Public: the shared replay in ``server/app/public.py`` streams stored
+    events itself and needs the same close.
+    """
+    if not response or response.get("status") != "cancelled":
+        return None
+    metadata = response.get("metadata")
+    if not (isinstance(metadata, dict) and metadata.get("cancelled_by_user")):
+        return None
+    last: dict[str, Any] | None = None
+    closed: set[str] = set()
+    for item in turn_items:
+        data = item.get("data") if isinstance(item, dict) else None
+        if (
+            not isinstance(data, dict)
+            or item.get("event") not in ("message_chunk", "tool_calls")
+            or not data.get("id")
+            or stored_merge._lane(data.get("agent")) != stored_merge._MAIN_LANE
+        ):
+            continue
+        last = data
+        if data.get("finish_reason") == "stopped":
+            closed.add(data["id"])
+    if last is not None and last["id"] in closed:
+        return None
+    close: dict[str, Any] = {
+        "thread_id": thread_id,
+        "role": "assistant",
+        "finish_reason": "stopped",
+    }
+    if last is not None:
+        close["id"] = last["id"]
+        if last.get("agent"):
+            close["agent"] = last["agent"]
+    return {"event": "message_chunk", "data": close}
+
+
 def _enrich(
     item: dict[str, Any],
     thread_id: str,
@@ -241,8 +294,8 @@ def _stub_turn_items(
 ) -> list[dict[str, Any]]:
     """A persisted turn with no committed boundary: the in-flight active turn
     (frontend attaches to the live run via /status + run_id) or a run that
-    never checkpointed. The user_message stub, plus the terminal error for an
-    errored run, is the whole replay. Never cached.
+    never checkpointed. The user_message stub, plus the terminal error or stop
+    close the response row records, is the whole replay. Never cached.
 
     A stopped or failed turn replays its stored rows as a lane that projected
     nothing, since nothing the user watched stream is on the committed
@@ -256,15 +309,18 @@ def _stub_turn_items(
         _user_message_item(thread_id, q, response)
         for q in queries_by_turn.get(turn_index, [])
     ]
+    turn_items: list[dict[str, Any]] = []
     resurrect_lanes = stored_merge._resurrect_lanes(response, frozenset())
     if resurrect_lanes:
-        for item in stored_merge._merge_stored_payloads(
+        turn_items = stored_merge._merge_stored_payloads(
             [], stored_merge._stored_events(response), resurrect_lanes
-        ):
-            _enrich(item, thread_id, turn_index, response_id)
-            items.append(item)
-    error_item = _error_item(thread_id, response)
-    if error_item:
-        _enrich(error_item, thread_id, turn_index, response_id)
-        items.append(error_item)
-    return items
+        )
+    for terminal in (
+        stop_close_item(thread_id, response, turn_items),
+        _error_item(thread_id, response),
+    ):
+        if terminal:
+            turn_items.append(terminal)
+    for item in turn_items:
+        _enrich(item, thread_id, turn_index, response_id)
+    return items + turn_items

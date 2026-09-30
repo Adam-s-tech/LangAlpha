@@ -2468,8 +2468,12 @@ export function useChatMessages(
    * POST /retry attempt chain with `checkpointId=null` (the server resolves the
    * retry checkpoint). Sets up the assistant placeholder, event processor, and
    * stream lifecycle.
+   * Stable, and always the last committed render's body, like resume: an edit
+   * can come long after the transcript last changed, and has to send the
+   * current platform, locale, timezone and runtime. `snapshot` is the render
+   * the caller computed `truncateIndex` against.
    */
-  const streamFromCheckpoint = useCallback(async (message: string | null, checkpointId: string | null, truncateIndex: number, forkFromTurn: number | null = null, modelOptions: ModelOptions = {}, viaRetryEndpoint: boolean = false) => {
+  const streamFromCheckpointRef = useLatestRef(async (message: string | null, checkpointId: string | null, truncateIndex: number, snapshot: readonly MessageRecord[], forkFromTurn: number | null = null, modelOptions: ModelOptions = {}, viaRetryEndpoint: boolean = false) => {
     // Callers check the slot is free: an edit or regenerate already holds it
     // for its checkpoint read, and takes it again below with the same result.
 
@@ -2524,9 +2528,8 @@ export function useChatMessages(
     // the id of a card this truncation removes; a stale entry would suppress
     // the new card and leave the interrupt unanswerable. Done synchronously
     // (not in the setMessages updater) so the first stream event can't race
-    // the rebuild. `messages` here is the same render snapshot the caller
-    // computed truncateIndex against.
-    renderedInterruptIdsRef.current = collectRenderedInterruptIds(messages.slice(0, truncateIndex));
+    // the rebuild. The caller's snapshot, since truncateIndex indexes into it.
+    renderedInterruptIdsRef.current = collectRenderedInterruptIds(snapshot.slice(0, truncateIndex));
 
     setMessages((prev) => {
       const truncated = prev.slice(0, truncateIndex);
@@ -2654,10 +2657,11 @@ export function useChatMessages(
         cleanupAfterStreamEnd(finalId);
       }
     }
-  // `messages` is a real dep: the rendered-interrupt rebuild above needs the
-  // same render snapshot the caller computed truncateIndex against.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, workspaceId, threadId, agentMode]);
+  });
+  const streamFromCheckpoint = useCallback(
+    (...args: Parameters<typeof streamFromCheckpointRef.current>) => streamFromCheckpointRef.current(...args),
+    [streamFromCheckpointRef],
+  );
 
   /**
    * Edit a user message: truncate to before that message, send modified content
@@ -2716,11 +2720,10 @@ export function useChatMessages(
       return;
     }
 
-    await streamFromCheckpoint(newContent, checkpointId, msgIndex, turnIndex, modelOptions);
-  // The slot helpers reach only refs and the threadId streamFromCheckpoint
-  // already tracks.
+    await streamFromCheckpoint(newContent, checkpointId, msgIndex, messages, turnIndex, modelOptions);
+  // The slot helpers reach only refs and threadId.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, getTurnCheckpoints, streamFromCheckpoint, setMessages]);
+  }, [messages, threadId, getTurnCheckpoints, streamFromCheckpoint, setMessages]);
 
   /**
    * Regenerate an assistant response: truncate the assistant message,
@@ -2775,10 +2778,10 @@ export function useChatMessages(
 
     const checkpointId = turnsData.turns[turnIndex].regenerate_checkpoint_id;
     // Truncate at the turn's first assistant bubble (keep everything before it, including user msg)
-    await streamFromCheckpoint(null, checkpointId, truncateIndex, turnIndex, modelOptions);
+    await streamFromCheckpoint(null, checkpointId, truncateIndex, messages, turnIndex, modelOptions);
   // Same as handleEditMessage: the slot helpers reach only refs and threadId.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, getTurnCheckpoints, streamFromCheckpoint, setMessages]);
+  }, [messages, threadId, getTurnCheckpoints, streamFromCheckpoint, setMessages]);
 
   /**
    * Retry the last failed turn as a new attempt on the same turn (v4 attempt
@@ -2791,7 +2794,7 @@ export function useChatMessages(
     if (isStreamingRef.current) return;
     const lastErrorIndex = messages.findLastIndex((m) => m.role === 'assistant' && (m as AssistantMessage).error);
     const truncateIndex = lastErrorIndex !== -1 ? lastErrorIndex : messages.length;
-    await streamFromCheckpoint(null, null, truncateIndex, null, modelOptions, true);
+    await streamFromCheckpoint(null, null, truncateIndex, messages, null, modelOptions, true);
   }, [messages, streamFromCheckpoint]);
 
   // A PTC run's sandbox acquisition settles every folder on its computer, which

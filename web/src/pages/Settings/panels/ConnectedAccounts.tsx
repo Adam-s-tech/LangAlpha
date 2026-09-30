@@ -82,6 +82,19 @@ export function ConnectedAccounts() {
     setShowCodexDisclaimer(true);
   };
 
+  // Declared before handleCodexConnect: when a handler refers to a function
+  // declared after it, react-hooks/purity reads the handler's Date.now() as a
+  // render-time call.
+  const handleCodexDeviceCancel = () => {
+    if (codexPollRef.current) {
+      clearInterval(codexPollRef.current);
+      codexPollRef.current = null;
+    }
+    setIsPollingCodex(false);
+    setCodexDeviceCode(null);
+    setCodexDeviceError(null);
+  };
+
   const handleCodexConnect = async () => {
     setShowCodexDisclaimer(false);
     setIsConnectingCodex(true);
@@ -127,16 +140,6 @@ export function ConnectedAccounts() {
     } finally {
       setIsConnectingCodex(false);
     }
-  };
-
-  const handleCodexDeviceCancel = () => {
-    if (codexPollRef.current) {
-      clearInterval(codexPollRef.current);
-      codexPollRef.current = null;
-    }
-    setIsPollingCodex(false);
-    setCodexDeviceCode(null);
-    setCodexDeviceError(null);
   };
 
   const handleCodexDisconnect = async () => {

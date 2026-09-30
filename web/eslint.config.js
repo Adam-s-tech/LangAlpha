@@ -72,6 +72,9 @@ export default [
 
   reactHooks.configs.flat.recommended,
   { rules: hooksCompilerRulesAsWarnings },
+  // Promoted once the code was clean: an impure call in render is cached by
+  // the compiler and freezes at its first value.
+  { rules: { 'react-hooks/purity': 'error' } },
 
   {
     files: ['**/*.{js,jsx}'],

@@ -222,10 +222,13 @@ function ChatInput({
   // Follow the preference when it moves, which includes the optimistic write a
   // pick (or its undo) makes below, and its rollback. A preference that goes
   // back to unset is followed too: holding the old selection would keep
-  // sending a model the account never kept.
-  useEffect(() => {
+  // sending a model the account never kept. Adjusted during render, so the
+  // pill never commits a frame behind the preference.
+  const [followedPreference, setFollowedPreference] = useState(modePreferredModel);
+  if (followedPreference !== modePreferredModel) {
+    setFollowedPreference(modePreferredModel);
     setSelectedModel(modePreferredModel);
-  }, [modePreferredModel]);
+  }
 
   // Mirror the live selection to the host (ChatView gates the fallback
   // suggestion pill on the model the next send will actually use).
@@ -480,10 +483,9 @@ function ChatInput({
     if (pillModel) writeModelProfile(pillModel, { fast_mode: fast });
   }, [pillModel, writeModelProfile]);
 
-  // Reset isStopping once both a running turn and a compaction have finished.
-  useEffect(() => {
-    if (!isLoading && !isCompacting) setIsStopping(false);
-  }, [isLoading, isCompacting]);
+  // Reset isStopping once both a running turn and a compaction have finished,
+  // in the render that sees them finish.
+  if (isStopping && !isLoading && !isCompacting) setIsStopping(false);
 
   const handleStop = useCallback(() => {
     if (isStopping) return;

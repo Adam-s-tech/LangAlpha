@@ -8,6 +8,7 @@ import type { ChatMessage, AssistantMessage, NotificationSegment } from '@/types
 import type { TodoItem } from '@/types/sse';
 import { INTERRUPT_CARD_BUCKETS } from '../../session/interrupts/buckets';
 import type { MessageRecord } from '../../session/types';
+import type { ToolCallAgentIndex } from '../../session/subagents/historyStore';
 
 /** Collects the interrupt_ids of every HITL card rendered on the given messages. */
 function collectRenderedInterruptIds(messages: ChatMessage[]): Set<string> {
@@ -156,7 +157,7 @@ export function mapToolCallIdToAgentId(
   agentId: string,
   action: string,
   pendingToolCallIds: string[],
-  toolCallIdMap: Map<string, string>,
+  toolCallIdMap: Pick<ToolCallAgentIndex, 'has' | 'set'>,
 ): string[] {
   if (eventToolCallId) {
     toolCallIdMap.set(eventToolCallId, agentId);

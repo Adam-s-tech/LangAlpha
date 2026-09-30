@@ -81,7 +81,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
 
   // FIFO queue for matching Task tool call IDs to artifact 'spawned' events.
   // Populated by the tool_calls handler, drained by the artifact/spawned handler.
-  // This ensures toolCallIdToTaskIdMapRef is populated before tool_call_result.
+  // This ensures the tool-call index is populated before tool_call_result.
   const pendingTaskToolCallIds: string[] = [];
 
   // Append a notification segment to a task card's latest assistant message
@@ -809,7 +809,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
             agentId,
             action,
             pendingTaskToolCallIds,
-            rt.toolCallIdToTaskIdMapRef.current,
+            rt.subagentHistory.toolCalls,
           );
           pendingTaskToolCallIds.length = 0;
           pendingTaskToolCallIds.push(...updated);
@@ -859,17 +859,14 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
           // one alone is undone by the other. The ledger agrees on the next
           // reload, where the task's latest run is the resumed one and carries
           // no failure at all.
-          const resumedEntry = rt.subagentHistoryRef.current?.[agentId];
-          if (resumedEntry) {
-            resumedEntry.error = undefined;
-            resumedEntry.errorType = undefined;
-          }
+          rt.subagentHistory.patchEntry(agentId, { error: undefined, errorType: undefined });
           if (rt.updateSubagentCard) {
             // Prefer preserving the original spawn description (already on the card).
             // But after reconnect the card may have been wiped + recreated without a
-            // description, so fall back to subagentHistoryRef as a safety net.
-            const historyDesc = rt.subagentHistoryRef.current?.[agentId]?.description;
-            const historyPrompt = rt.subagentHistoryRef.current?.[agentId]?.prompt;
+            // description, so fall back to the history entry as a safety net.
+            const historyEntry = rt.subagentHistory.get().entries[agentId];
+            const historyDesc = historyEntry?.description;
+            const historyPrompt = historyEntry?.prompt;
             rt.updateSubagentCard(agentId, {
               agentId,
               displayId: `Task-${task_id}`,
@@ -981,7 +978,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
       // Build toolCallId → agentId mapping from Task tool artifact
       if (event.artifact?.task_id && toolCallId) {
         const agentId = `task:${event.artifact.task_id}`;
-        rt.toolCallIdToTaskIdMapRef.current.set(toolCallId, agentId);
+        rt.subagentHistory.toolCalls.set(toolCallId, agentId);
       }
 
       handleToolCallResult({

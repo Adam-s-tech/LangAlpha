@@ -1356,9 +1356,10 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
           <div className="flex-1 flex flex-col overflow-hidden min-w-0">
             {/* Messages Area - Fixed height, scrollable */}
             {/* Subscribe inline subagent cards directly to live telemetry. The
-                resolver identity changes on every SSE token (cards is a dep),
-                but only context consumers re-render — MessageBubble /
-                MessageContentSegments stay React.memo'd. */}
+                resolver identity changes whenever a card or the subagent
+                history does, not per main-agent token, and only context
+                consumers re-render: MessageBubble / MessageContentSegments
+                stay React.memo'd. */}
             <SubagentTelemetryContext value={resolveSubagentTelemetry}>
             <WorkflowRunContext value={resolveWorkflowRun}>
             <TranscriptDisplayContext value={transcriptDisplay}>

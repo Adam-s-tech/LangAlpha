@@ -70,7 +70,7 @@ export function createSubagentMuxController(rt: SubagentRuntime, deps: SubagentM
         let changed = false;
         const tasks = { ...aMsg.subagentTasks };
         Object.keys(tasks).forEach((toolCallId) => {
-          if (rt.toolCallIdToTaskIdMapRef.current.get(toolCallId) !== agentId) return;
+          if (rt.subagentHistory.toolCalls.get(toolCallId) !== agentId) return;
           if (tasks[toolCallId].status === 'running') {
             tasks[toolCallId] = { ...tasks[toolCallId], status };
             changed = true;
@@ -90,7 +90,7 @@ export function createSubagentMuxController(rt: SubagentRuntime, deps: SubagentM
    * The second half is what history alone misses: a task that closed live but
    * whose ledger the local history hasn't refreshed to terminal yet. */
   const isSettledTask = (shortTaskId: string): boolean => {
-    const historyStatus = rt.subagentHistoryRef.current?.[`task:${shortTaskId}`]?.status;
+    const historyStatus = rt.subagentHistory.get().entries[`task:${shortTaskId}`]?.status;
     return (
       isTerminalStatus(normalizeWireStatus(historyStatus)) ||
       rt.terminalTaskOutcomesRef.current.has(shortTaskId)
@@ -113,7 +113,7 @@ export function createSubagentMuxController(rt: SubagentRuntime, deps: SubagentM
       if (ev._drain === true) {
         const agentId = typeof ev.agent === 'string' ? ev.agent : '';
         const shortId = taskIdFromAgentId(agentId) ?? '';
-        const hist = rt.subagentHistoryRef.current?.[agentId];
+        const hist = rt.subagentHistory.get().entries[agentId];
         if (isSettledTask(shortId)) {
           return;
         }

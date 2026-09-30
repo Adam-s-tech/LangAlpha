@@ -31,9 +31,10 @@
 import type React from 'react';
 import type {
   MessageRecord, SetMessages, TokenUsage, PendingInterrupt, OffloadBatch, SSEEvent,
-  SubagentHistoryEntry, TaskRefs, HistoryInterruptInfo, FallbackSuggestion,
+  TaskRefs, HistoryInterruptInfo, FallbackSuggestion,
 } from './types';
 import type { UpdateSubagentCard } from './streamRefs';
+import type { SubagentHistoryStore } from './subagents/historyStore';
 import type { SubagentTokenUsage } from '../utils/tokenUsage';
 import type { RecentlySentTracker } from '../hooks/utils/recentlySentTracker';
 import type { PreviewData } from '../hooks/utils/types';
@@ -60,11 +61,10 @@ export interface SubagentRuntime {
   setReloadTrigger: React.Dispatch<React.SetStateAction<number>>;
   // stable containers, ref-current reads — owned by this lane
   subagentStateRefsRef: Ref<Record<string, TaskRefs>>;
-  subagentHistoryRef: Ref<Record<string, SubagentHistoryEntry>>;
+  subagentHistory: SubagentHistoryStore;
   subagentProcessEventRef: Ref<((event: SSEEvent) => void) | null>;
   subagentTokenUsageRef: Ref<Record<string, SubagentTokenUsage>>;
   terminalTaskOutcomesRef: Ref<Map<string, 'completed' | 'cancelled' | 'error'>>;
-  toolCallIdToTaskIdMapRef: Ref<Map<string, string>>;
   historyPendingTaskToolCallIdsRef: Ref<string[]>;
   pendingMuxResyncRef: Ref<boolean>;
   // stable containers, ref-current reads — consumed read-only
@@ -108,7 +108,7 @@ export interface HistoryRuntime {
   currentMessageRef: Ref<string | null>;
   lastEventIdRef: Ref<number | string | null>;
   renderedInterruptIdsRef: Ref<Set<string>>;
-  toolCallIdToTaskIdMapRef: Ref<Map<string, string>>;
+  subagentHistory: SubagentHistoryStore;
   recentlySentTrackerRef: Ref<RecentlySentTracker>;
   offloadBatchRef: Ref<OffloadBatch>;
 }
@@ -159,8 +159,7 @@ export interface StreamRuntime {
   renderedInterruptIdsRef: Ref<Set<string>>;
   unresolvedHistoryInterruptRef: Ref<HistoryInterruptInfo[]>;
   terminalTaskOutcomesRef: Ref<Map<string, 'completed' | 'cancelled' | 'error'>>;
-  toolCallIdToTaskIdMapRef: Ref<Map<string, string>>;
-  subagentHistoryRef: Ref<Record<string, SubagentHistoryEntry>>;
+  subagentHistory: SubagentHistoryStore;
   subagentTokenUsageRef: Ref<Record<string, SubagentTokenUsage>>;
   offloadBatchRef: Ref<OffloadBatch>;
 }
@@ -204,7 +203,7 @@ export interface RecoveryRuntime {
   terminalTaskOutcomesRef: Ref<Map<string, 'completed' | 'cancelled' | 'error'>>;
   unresolvedHistoryInterruptRef: Ref<HistoryInterruptInfo[]>;
   renderedInterruptIdsRef: Ref<Set<string>>;
-  subagentHistoryRef: Ref<Record<string, SubagentHistoryEntry>>;
+  subagentHistory: SubagentHistoryStore;
   subagentTokenUsageRef: Ref<Record<string, SubagentTokenUsage>>;
 }
 

@@ -27,13 +27,16 @@ import {
   type WorkflowLifecycleFrame,
   type WorkflowRunState,
 } from './workflowRunState';
-import type { SubagentHistoryData, StreamProcessorRefs, TaskRefs } from '../types';
+import type { SubagentHistoryData, SubagentHistoryEntry, StreamProcessorRefs, TaskRefs } from '../types';
 import type { SubagentRuntime } from '../runtime';
 
 export function projectSubagentHistory(
-  rt: SubagentRuntime,
+  rt: Pick<SubagentRuntime, 't' | 'subagentHistory' | 'subagentStateRefsRef'>,
   subagentHistoryByTaskId: Map<string, SubagentHistoryData>,
 ): void {
+  // Built here and published as one snapshot at the end, so the backfill below
+  // edits entries nobody else holds yet.
+  const projected: Record<string, SubagentHistoryEntry> = {};
   // Workflow runs whose reduced state names their children (label/type/owner);
   // backfilled onto the child entries after the loop — a child's own lane
   // carries anonymous content only, and map iteration order is not chronology.
@@ -238,13 +241,9 @@ export function projectSubagentHistory(
     // Get task metadata from stored history
     const taskMetadata = subagentHistoryByTaskId.get(taskId);
 
-    // Store history in ref so it can be used when the user explicitly
-    // opens the subagent card from the main chat view. We do NOT
-    // create the floating card here.
-    if (!rt.subagentHistoryRef.current) {
-      rt.subagentHistoryRef.current = {};
-    }
-    rt.subagentHistoryRef.current[taskId] = {
+    // Stored so it can be used when the user explicitly opens the subagent
+    // card from the main chat view. We do NOT create the floating card here.
+    projected[taskId] = {
       taskId,
       description: taskMetadata?.description || '',
       prompt: taskMetadata?.prompt || taskMetadata?.description || '',
@@ -261,6 +260,7 @@ export function projectSubagentHistory(
       currentTool: '',
       projectedRunStartedMs: taskMetadata?.projectedRunStartedMs,
       ...(workflowRun ? { workflowRun } : {}),
+      ...(taskMetadata?.ownerTaskId ? { ownerTaskId: taskMetadata.ownerTaskId } : {}),
     };
 
     // Seed persistent subagent state refs from history so that
@@ -283,15 +283,19 @@ export function projectSubagentHistory(
   for (const [wfTaskId, run] of workflowRunsByTaskId.entries()) {
     for (const child of run.children) {
       if (!child.childTaskId) continue;
-      const childEntry = rt.subagentHistoryRef.current?.[`task:${child.childTaskId}`];
-      if (!childEntry) continue;
+      const childKey = `task:${child.childTaskId}`;
+      const prior = projected[childKey] ?? rt.subagentHistory.get().entries[childKey];
+      if (!prior) continue;
       const identity = deriveChildIdentity(child, {
-        description: childEntry.description,
-        type: childEntry.type,
+        description: prior.description,
+        type: prior.type,
       });
-      childEntry.description = identity.description;
-      childEntry.type = identity.type;
-      childEntry.ownerTaskId = wfTaskId;
+      const childEntry = {
+        ...prior,
+        description: identity.description,
+        type: identity.type,
+        ownerTaskId: wfTaskId,
+      };
       if (childEntry.status === 'running') {
         const settled = identity.status
           // A settled run with a child never marked done means the child was
@@ -299,6 +303,9 @@ export function projectSubagentHistory(
           || (isWorkflowRunTerminal(run.status) ? 'cancelled' : undefined);
         if (settled) childEntry.status = settled;
       }
+      projected[childKey] = childEntry;
     }
   }
+
+  rt.subagentHistory.putEntries(projected);
 }

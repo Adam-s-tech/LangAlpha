@@ -10,6 +10,7 @@ import { taskIdFromAgentId } from '../../utils/agentId';
 import type { SSEEvent } from '../types';
 import type { SubagentRuntime } from '../runtime';
 import { projectSubagentHistory } from './projectHistory';
+import { resolveHistoryAgentId } from './historyStore';
 import { isTerminalStatus } from './subagentStatus';
 import { deriveChildIdentity, findWorkflowChildOwner } from './workflowRunState';
 
@@ -19,16 +20,16 @@ export interface TaskTranscriptMeta {
   status?: string;
 }
 
-/** Resolves true when an entry landed in the history ref. */
+/** Resolves true when an entry landed in the history. */
 export async function hydrateTaskTranscript(
-  rt: SubagentRuntime,
+  rt: Pick<SubagentRuntime, 't' | 'subagentHistory' | 'subagentStateRefsRef'>,
   threadId: string,
   subagentId: string,
   meta?: TaskTranscriptMeta,
 ): Promise<boolean> {
-  const agentId = rt.toolCallIdToTaskIdMapRef.current.get(subagentId) || subagentId;
+  const agentId = resolveHistoryAgentId(rt.subagentHistory.get(), subagentId);
   if (!threadId || threadId === '__default__') return false;
-  const prior = rt.subagentHistoryRef.current?.[agentId];
+  const prior = rt.subagentHistory.get().entries[agentId];
   if (prior?.messages?.length) return true;
   const shortId = taskIdFromAgentId(agentId) ?? agentId;
 
@@ -55,7 +56,7 @@ export async function hydrateTaskTranscript(
   // A workflow child is anonymous in its own transcript — the dispatching
   // run's reduced state is the only place its label, type and owner exist,
   // and a one-entry projection can never reach it on its own.
-  const owner = findWorkflowChildOwner(rt.subagentHistoryRef.current, shortId);
+  const owner = findWorkflowChildOwner(rt.subagentHistory.get().entries, shortId);
   const identity = deriveChildIdentity(owner?.child, {
     description: meta?.description || prior?.description,
     type: meta?.type || prior?.type,
@@ -78,18 +79,14 @@ export async function hydrateTaskTranscript(
             description: identity.description,
             type: identity.type,
             status,
+            // The transcript alone never names it; the ghost lane learned it
+            // from workflow lifecycle.
+            ownerTaskId: prior?.ownerTaskId || owner?.ownerTaskId,
           },
         ],
       ]),
     );
-    const entry = rt.subagentHistoryRef.current?.[agentId];
-    // Re-projection rebuilds the entry from transcript events alone; restore
-    // identity the ghost lane learned from workflow lifecycle.
-    const ownerTaskId = prior?.ownerTaskId || owner?.ownerTaskId;
-    if (entry && !entry.ownerTaskId && ownerTaskId) {
-      entry.ownerTaskId = ownerTaskId;
-    }
-    return !!entry;
+    return !!rt.subagentHistory.get().entries[agentId];
   } catch {
     return false;
   }

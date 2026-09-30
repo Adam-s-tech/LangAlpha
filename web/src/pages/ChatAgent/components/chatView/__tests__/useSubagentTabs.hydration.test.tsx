@@ -33,22 +33,7 @@ interface HistoryEntry {
 }
 
 function harness() {
-  const history: Record<string, HistoryEntry> = {};
-  let resolveHydrate: (() => void) | undefined;
-
-  const hydrateTaskTranscript = vi.fn(
-    async (agentId: string, meta?: { description?: string; type?: string; status?: string }) => {
-      await new Promise<void>((r) => { resolveHydrate = r; });
-      history[agentId] = {
-        taskId: agentId,
-        description: meta?.description || '',
-        type: meta?.type || 'general-purpose',
-        status: meta?.status || 'completed',
-        messages: HYDRATED_MESSAGES,
-      };
-      return true;
-    },
-  );
+  const gate: { open?: () => void } = {};
 
   const wrapper = ({ children }: { children: React.ReactNode }) => (
     <MemoryRouter>{children}</MemoryRouter>
@@ -60,6 +45,29 @@ function harness() {
       const [activeAgentId, setActiveAgentId] = React.useState('main');
       const activeAgentIdRef = React.useRef('main');
       activeAgentIdRef.current = activeAgentId;
+      // The history the way useChatMessages publishes it: a snapshot the
+      // getter closes over, so a getter captured before the fetch cannot see
+      // the entry the fetch landed.
+      const [history, setHistory] = React.useState<Record<string, HistoryEntry>>({});
+      const getSubagentHistory = React.useCallback(
+        (id: string) => (history[id] ? { ...history[id], agentId: id } : null),
+        [history],
+      );
+      const hydrateTaskTranscript = React.useCallback(
+        async (agentId: string, meta?: { description?: string; type?: string; status?: string }) => {
+          await new Promise<void>((r) => { gate.open = r; });
+          const entry: HistoryEntry = {
+            taskId: agentId,
+            description: meta?.description || '',
+            type: meta?.type || 'general-purpose',
+            status: meta?.status || 'completed',
+            messages: HYDRATED_MESSAGES,
+          };
+          setHistory((prev) => ({ ...prev, [agentId]: entry }));
+          return { ...entry, agentId };
+        },
+        [],
+      );
       const tabs = useSubagentTabs({
         threadId: 'thread-1',
         workspaceId: 'ws-1',
@@ -69,8 +77,7 @@ function harness() {
         setActiveAgentId,
         cards: cardState.cards,
         updateSubagentCard: cardState.updateSubagentCard,
-        getSubagentHistory: ((id: string) =>
-          history[id] ? { ...history[id], agentId: id } : null) as never,
+        getSubagentHistory: getSubagentHistory as never,
         resolveSubagentIdToAgentId: ((id: string) => id) as never,
         hydrateTaskTranscript: hydrateTaskTranscript as never,
         saveScrollPosition: () => {},
@@ -84,7 +91,7 @@ function harness() {
     { wrapper, initialProps: {} as { initialTaskId?: string } },
   );
 
-  return { rendered, history, flushHydrate: () => resolveHydrate?.() };
+  return { rendered, flushHydrate: () => gate.open?.() };
 }
 
 describe('useSubagentTabs — workflow-child transcript hydration', () => {

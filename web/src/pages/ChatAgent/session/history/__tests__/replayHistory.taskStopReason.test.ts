@@ -19,6 +19,7 @@ vi.mock('../../../utils/api', () => ({
 import { loadConversationHistory } from '../replayHistory';
 import type { HistoryRuntime } from '../../runtime';
 import type { HistoryInterruptInfo, MessageRecord } from '../../types';
+import { createSubagentHistoryStore } from '../../subagents/historyStore';
 
 type Ref<T> = { current: T };
 const ref = <T,>(current: T): Ref<T> => ({ current });
@@ -54,7 +55,7 @@ function buildRuntime() {
     currentMessageRef: ref<string | null>(null),
     lastEventIdRef: ref<number | string | null>(null),
     renderedInterruptIdsRef: ref(new Set<string>()),
-    toolCallIdToTaskIdMapRef: ref(new Map<string, string>()),
+    subagentHistory: createSubagentHistoryStore(),
     recentlySentTrackerRef: ref({ isRecentlySent: () => false }),
     offloadBatchRef: ref(null),
   } as unknown as HistoryRuntime;

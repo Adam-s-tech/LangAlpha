@@ -48,7 +48,7 @@ import { refreshComputersAfterTurn } from './useComputers';
 // --- Module scope extracted to session/types + utils (W1) ---
 import type {
   MessageRecord, TokenUsage, PendingInterrupt, PendingRejection,
-  SSEEvent, ModelOptions, OffloadBatch, SubagentHistoryEntry, TaskRefs,
+  SSEEvent, ModelOptions, OffloadBatch, TaskRefs,
   HistoryInterruptInfo, StreamProcessorRefs,
   ModelStatus, FallbackSuggestion,
 } from '../session/types';
@@ -64,6 +64,9 @@ import {
 import { loadConversationHistory as replayConversationHistory } from '../session/history/replayHistory';
 import { createStreamEventProcessor, type StreamRouterDeps } from '../session/stream/processStreamEvent';
 import { createFrameQueue } from '../session/stream/frameQueue';
+import {
+  EMPTY_SUBAGENT_HISTORY, createSubagentHistoryStore, readSubagentHistory, type SubagentHistoryView,
+} from '../session/subagents/historyStore';
 import {
   acquireStreamOwnership as acquireOwnership,
   releaseStreamOwnership as releaseOwnership,
@@ -110,6 +113,16 @@ export function useChatMessages(
     else setMessagesState(next);
   }, [chunkQueue]);
   useEffect(() => () => chunkQueue.cancel(), [chunkQueue]);
+  // Subagent history (replayed per-task transcripts and the tool-call id to
+  // task id index) as a snapshot with a new identity per change, so the
+  // getters below change exactly when it does. Each publish applies the queued
+  // chunks first, like any non-chunk write, and batches with the setState
+  // calls of the same task.
+  const [historyView, setHistoryView] = useState(EMPTY_SUBAGENT_HISTORY);
+  const [subagentHistory] = useState(() => createSubagentHistoryStore((next) => {
+    chunkQueue.flush();
+    setHistoryView(next);
+  }));
   const [threadId, setThreadId] = useState<string>(() => {
     // If threadId is provided from URL, use it; otherwise use localStorage
     if (initialThreadId) {
@@ -449,9 +462,6 @@ export function useChatMessages(
   // retransmits of the same send until response headers prove acceptance.
   const requestKeyRef = useRef(createRequestKeyTracker());
 
-  // Map tool call IDs (from main agent's task tool calls) to agent_ids for routing subagent events
-  const toolCallIdToTaskIdMapRef = useRef(new Map<string, string>()); // Map<toolCallId, agentId>
-
   // The CURRENT stream processor for subagent frames off the thread mux.
   // Send, reconnect and HITL resume each install theirs at attach time, so
   // task frames always route through live refs instead of a stale closure.
@@ -471,10 +481,6 @@ export function useChatMessages(
   // with the subagent-card projection — cleared only alongside clearSubagentCards()
   // on a full history-backed reset; a genuine resume deletes just that task's entry.
   const terminalTaskOutcomesRef = useRef(new Map<string, 'completed' | 'cancelled' | 'error'>());
-
-  // Track subagent history loaded from replay so it can be shown lazily
-  // Keyed by agent_id. Structure: { [agentId]: { taskId, description, type, messages, status, ... } }
-  const subagentHistoryRef = useRef<Record<string, SubagentHistoryEntry>>({});
 
   // Persistent subagent state refs — survives across turns so resumed subagents
   // retain messages from previous runs. Keyed by taskId (e.g., "task:k7Xm2p").
@@ -591,11 +597,10 @@ export function useChatMessages(
     offloadBatchRef,
     replayedRunIdsRef,
     subagentStateRefsRef,
-    subagentHistoryRef,
+    subagentHistory,
     subagentProcessEventRef,
     subagentTokenUsageRef,
     terminalTaskOutcomesRef,
-    toolCallIdToTaskIdMapRef,
     pendingMuxResyncRef,
   };
 
@@ -1031,7 +1036,7 @@ export function useChatMessages(
         // Pre-seed cards from history so per-task events don't create empty cards
         for (const taskId of muxTasks) {
           const agentId = `task:${taskId}`;
-          const historyData = subagentHistoryRef.current?.[agentId];
+          const historyData = subagentHistory.get().entries[agentId];
           if (updateSubagentCard && historyData) {
             subagentTokenUsageRef.current[agentId] = historyData.tokenUsage ?? ZERO_USAGE;
             updateSubagentCard(agentId, {
@@ -2808,6 +2813,29 @@ export function useChatMessages(
     reportBackWatch,
   };
 
+  // Resolve subagentId (e.g. toolCallId from segment) to stable agent_id for card operations.
+  const resolveSubagentIdToAgentId = useCallback(
+    (subagentId: string) => historyView.agentIdByToolCallId.get(subagentId) || subagentId,
+    [historyView.agentIdByToolCallId],
+  );
+  // Expose subagent history for lazy loading, as { ...entry, agentId } under
+  // the id the tool-call index resolves, so the caller can drive card operations.
+  const getSubagentHistory = useCallback(
+    (subagentId: string) => readSubagentHistory(historyView, subagentId),
+    [historyView],
+  );
+  // Resolves to the landed entry itself: a caller continuing after the await
+  // holds getters from before the fetch, which cannot see it yet.
+  const hydrateTranscript = useCallback(
+    async (subagentId: string, meta?: TaskTranscriptMeta): Promise<SubagentHistoryView | null> => {
+      const landed = await hydrateTaskTranscript(
+        { t, subagentHistory, subagentStateRefsRef }, threadId, subagentId, meta,
+      );
+      return landed ? readSubagentHistory(subagentHistory.get(), subagentId) : null;
+    },
+    [t, subagentHistory, threadId],
+  );
+
   return {
     messages,
     threadId,
@@ -2863,17 +2891,8 @@ export function useChatMessages(
     handleThumbUp,
     handleThumbDown,
     feedbackByTurn,
-    // Resolve subagentId (e.g. toolCallId from segment) to stable agent_id for card operations.
-    resolveSubagentIdToAgentId: (subagentId: string) =>
-      toolCallIdToTaskIdMapRef.current.get(subagentId) || subagentId,
-    // Expose subagent history for lazy loading. Resolves toolCallId -> agent_id via mapping.
-    // Returns { ...historyData, agentId } so caller can use agentId for card operations.
-    getSubagentHistory: (subagentId: string) => {
-      const agentId = toolCallIdToTaskIdMapRef.current.get(subagentId) || subagentId;
-      const data = subagentHistoryRef.current?.[agentId];
-      return data ? { ...data, agentId } : null;
-    },
-    hydrateTaskTranscript: (subagentId: string, meta?: TaskTranscriptMeta) =>
-      hydrateTaskTranscript(runtime, threadId, subagentId, meta),
+    resolveSubagentIdToAgentId,
+    getSubagentHistory,
+    hydrateTaskTranscript: hydrateTranscript,
   };
 }

@@ -3,7 +3,7 @@
  * not own: its telemetry, and why it stopped.
  *
  * Two writers feed the inline subagent card: the live `cards[...]` state
- * (driven by SSE events) and the post-refresh `subagentHistoryRef`
+ * (driven by SSE events) and the post-refresh subagent history
  * (driven by history replay). Either can be present, both can be present,
  * or neither. The resolver picks the right source so the card renders
  * the same numbers in every reconnect/refresh permutation.

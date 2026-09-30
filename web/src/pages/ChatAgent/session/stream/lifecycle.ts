@@ -406,10 +406,11 @@ export const reconnectToStream = async (
     // settled — terminal in history, or seen closing live this session — must
     // not be re-activated: no closure would ever arrive to wedge it back down.
     const liveActiveTasks = activeTasks.filter((t) => !deps.isSettledTask(t));
-    if (liveActiveTasks.length > 0 && rt.updateSubagentCard && rt.subagentHistoryRef.current) {
+    if (liveActiveTasks.length > 0 && rt.updateSubagentCard) {
+      const historyEntries = rt.subagentHistory.get().entries;
       for (const taskId of liveActiveTasks) {
         const agentId = `task:${taskId}`;
-        const historyData = rt.subagentHistoryRef.current[agentId];
+        const historyData = historyEntries[agentId];
         if (historyData) {
           // Seed the live token-usage ref from history so subsequent live
           // deltas accumulate on top of the historical total instead of

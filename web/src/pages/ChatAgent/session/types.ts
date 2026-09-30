@@ -165,7 +165,7 @@ interface ContextWindowCallbacks {
   offloadBatch: React.MutableRefObject<OffloadBatch>;
 }
 
-/** Subagent history entry stored in subagentHistoryRef. */
+/** Subagent history entry, one per task in the history snapshot (`subagents/historyStore.ts`). */
 interface SubagentHistoryEntry {
   taskId: string;
   description: string;
@@ -235,6 +235,9 @@ interface SubagentHistoryData {
   error?: string;
   /** The reason's machine spelling (``credit_stop``, ``transport_lost``, …). */
   errorType?: string;
+  /** Owning workflow run's agent id, for a workflow child whose owner is
+   *  known from elsewhere: its own transcript never names it. */
+  ownerTaskId?: string;
   /** Build-time stamp: start (epoch ms) of the newest run whose transcript
    *  the projection actually claimed — NOT the ledger's latest run, which
    *  can still be executing and deliberately excluded from the payload. */

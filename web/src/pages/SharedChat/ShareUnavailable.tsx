@@ -5,8 +5,10 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { APP_ENTRY_PATH, isPlatformMode } from '@/config/hostMode';
-import logoLight from '../../assets/img/logo.svg';
-import logoDark from '../../assets/img/logo-dark.svg';
+// Named for the ink, not the theme: logo.svg is drawn in white for a dark page,
+// logo-dark.svg in near-black for a light one.
+import logoOnDark from '../../assets/img/logo.svg';
+import logoOnLight from '../../assets/img/logo-dark.svg';
 
 interface ShareUnavailableProps {
   /** `unavailable` is the uniform 404; `failed` is any other error, with a retry. */
@@ -28,7 +30,7 @@ export default function ShareUnavailable({ variant = 'unavailable', onRetry }: S
   const { pathname, search, hash } = useLocation();
   const { theme } = useTheme();
   const { isLoggedIn, isInitialized } = useAuth();
-  const logo = theme === 'dark' ? logoDark : logoLight;
+  const logo = theme === 'light' ? logoOnLight : logoOnDark;
   const offerSignIn = variant === 'unavailable' && isPlatformMode && isInitialized && !isLoggedIn;
 
   // The whole link comes back, so an app opened at a page reopens there.

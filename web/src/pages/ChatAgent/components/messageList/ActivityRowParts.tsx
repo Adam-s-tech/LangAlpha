@@ -29,12 +29,17 @@ export function RunningIcon({ running, children }: { running: boolean; children:
   );
 }
 
+// Laid out like the `.titem-line` it sits in. It cannot be `display: contents`,
+// which would have spared restating that: an element with no box has nothing
+// for opacity to fade, so the settle would snap in.
+const SETTLED_LINE_STYLE = { display: 'flex', alignItems: 'inherit', gap: 'inherit', minWidth: 0 } as const;
+
 /** The settled half of a row (pill, chevron) fading in where the shimmer was.
  *  A row that was never live mounts settled and skips the fade. */
 export function SettledLine({ wasRunning, children }: { wasRunning: boolean; children: React.ReactNode }): React.ReactElement {
   return (
     <motion.span
-      className="contents"
+      style={SETTLED_LINE_STYLE}
       initial={wasRunning ? { opacity: 0 } : false}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.2, ease: 'easeOut' }}

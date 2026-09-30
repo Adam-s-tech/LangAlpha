@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -13,6 +13,8 @@ const AX = 3;
 const BY = 4;
 const PHASE = 1.57;
 const Y_SCALE = 0.92;
+// Outlasts a caller's opacity fade, so the dots never freeze while still seen.
+const SETTLE_MS = 250;
 
 function normalizeProgress(p: number) {
   return ((p % 1) + 1) % 1;
@@ -34,14 +36,26 @@ function point(progress: number, detailScale: number) {
 
 interface LissajousLoadingProps {
   className?: string;
+  /** False while the caller has faded the glyph out: the frame loop stops once
+   *  the fade has run, instead of redrawing 68 dots nobody can see. */
+  active?: boolean;
 }
 
 export default function LissajousLoading({
   className,
+  active = true,
 }: LissajousLoadingProps) {
   const groupRef = useRef<SVGGElement>(null);
-  const rafRef = useRef<number>(0);
+  const particlesRef = useRef<SVGCircleElement[]>([]);
   const startRef = useRef<number>(0);
+
+  const [running, setRunning] = useState(active);
+  if (active && !running) setRunning(true);
+  useEffect(() => {
+    if (active || !running) return;
+    const id = setTimeout(() => setRunning(false), SETTLE_MS);
+    return () => clearTimeout(id);
+  }, [active, running]);
 
   useEffect(() => {
     const group = groupRef.current;
@@ -61,9 +75,20 @@ export default function LissajousLoading({
       group.appendChild(circle);
       particles.push(circle);
     }
-
+    particlesRef.current = particles;
     startRef.current = performance.now();
 
+    return () => {
+      particles.forEach((c) => c.remove());
+      particlesRef.current = [];
+    };
+  }, []);
+
+  useEffect(() => {
+    const particles = particlesRef.current;
+    if (!running || !particles.length) return;
+
+    let raf = 0;
     function render(now: number) {
       const time = now - startRef.current;
       const progress = (time % DURATION_MS) / DURATION_MS;
@@ -78,16 +103,14 @@ export default function LissajousLoading({
         particles[i].setAttribute("cy", p.y.toFixed(2));
       }
 
-      rafRef.current = requestAnimationFrame(render);
+      raf = requestAnimationFrame(render);
     }
 
-    rafRef.current = requestAnimationFrame(render);
-
-    return () => {
-      cancelAnimationFrame(rafRef.current);
-      particles.forEach((c) => c.remove());
-    };
-  }, []);
+    // The clock kept running through a pause, so the figure resumes where it
+    // would have been, and is placed before the first frame rather than on it.
+    render(performance.now());
+    return () => cancelAnimationFrame(raf);
+  }, [running]);
 
   return (
     <div className={cn("relative", className)}>

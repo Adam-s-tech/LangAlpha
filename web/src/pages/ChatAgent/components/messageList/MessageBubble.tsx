@@ -539,7 +539,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
                 data-testid="streaming-indicator"
                 data-quiet={quiet ? 'true' : 'false'}
               >
-                <LissajousLoading className={`${isMobile ? 'w-5 h-5' : 'w-6 h-6'} text-neutral-500 dark:text-neutral-400`} />
+                <LissajousLoading active={quiet} className={`${isMobile ? 'w-5 h-5' : 'w-6 h-6'} text-neutral-500 dark:text-neutral-400`} />
               </motion.div>
             );
           })()}

@@ -18,7 +18,7 @@
  * blocks to one at that tick and remounts once. It stays whole from there on,
  * since the text only grows.
  */
-import { FENCE_OPEN_RE, closesFence } from './markdownSegments';
+import { FENCE_OPEN_RE, closesFence, splitLines } from './markdownSegments';
 
 const BLANK_RE = /^[ \t]*$/;
 const LIST_ITEM_RE = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
@@ -45,7 +45,7 @@ const CROSS_BLOCK_RE = /^ {0,3}(?:\[[^\]]+\]:|<(?:!--|\/?(?:address|article|asid
 export function splitMarkdownBlocks(content: string): string[] {
   if (!content) return [content];
 
-  const lines = content.split(/(?<=\n)/);
+  const lines = splitLines(content);
   const blocks: string[] = [];
   let current = '';
   let fence: string | null = null;
@@ -117,7 +117,7 @@ export function scanStreamingBlock(block: string): { lineKey: number; openFence:
   let lines = 0;
   let offset = 0;
   let fence: { opener: string; indent: number; linesBefore: number; at: number } | null = null;
-  for (const line of block.split(/(?<=\n)/)) {
+  for (const line of splitLines(block)) {
     const body = line.replace(/\r?\n$/, '');
     if (fence === null) {
       const open = FENCE_OPEN_RE.exec(line);

@@ -3000,6 +3000,32 @@
       "change": "涨跌",
       "changeExt": "涨跌（含盘前盘后）"
     },
+    "header": {
+      "watchlist": "自选股",
+      "showMetrics": "显示指标",
+      "hideMetrics": "隐藏指标",
+      "prevClose": "昨收",
+      "open": "开盘",
+      "openHint": "数值由盘中数据汇总而来，可能与图表上的日线数据略有差异。",
+      "low": "最低",
+      "high": "最高",
+      "high52w": "52 周最高",
+      "low52w": "52 周最低",
+      "avgVolume3m": "3 个月均量",
+      "volume": "成交量",
+      "dayRange": "日内区间",
+      "changePct": "涨跌幅",
+      "changePctExt": "涨跌幅（含盘前盘后）",
+      "ws": {
+        "label": "WebSocket：{{status}}",
+        "connectedSecond": "已连接（秒级）",
+        "connectedMinute": "已连接（分钟级）",
+        "connectedNoData": "已连接（无数据）",
+        "unavailable": "不可用",
+        "reconnecting": "重连中",
+        "disconnected": "已断开"
+      }
+    },
     "symbolSearch": {
       "switchSymbol": "切换标的，当前为 {{symbol}}",
       "changeSymbol": "更换股票",

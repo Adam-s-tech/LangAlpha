@@ -3031,6 +3031,32 @@
       "change": "Chg",
       "changeExt": "Chg incl. ext"
     },
+    "header": {
+      "watchlist": "Watchlist",
+      "showMetrics": "Show metrics",
+      "hideMetrics": "Hide metrics",
+      "prevClose": "Prev Close",
+      "open": "Open",
+      "openHint": "Values are aggregated from intraday data and may differ slightly from daily figures shown on the chart.",
+      "low": "Low",
+      "high": "High",
+      "high52w": "52 wk high",
+      "low52w": "52 wk low",
+      "avgVolume3m": "Avg Vol (3M)",
+      "volume": "Volume",
+      "dayRange": "Day Range",
+      "changePct": "Change %",
+      "changePctExt": "Change % incl. ext",
+      "ws": {
+        "label": "WebSocket: {{status}}",
+        "connectedSecond": "Connected (second-level)",
+        "connectedMinute": "Connected (minute-level)",
+        "connectedNoData": "Connected (no data)",
+        "unavailable": "Not available",
+        "reconnecting": "Reconnecting",
+        "disconnected": "Disconnected"
+      }
+    },
     "symbolSearch": {
       "switchSymbol": "Change symbol, currently {{symbol}}",
       "changeSymbol": "Change symbol",

@@ -1,14 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { animate, type AnimationPlaybackControls } from '@/lib/framer';
+import { isPageUnseen } from '@/lib/pageVisibility';
 
 interface UseAnimatedTextOptions {
   enabled?: boolean;
 }
 
 // Text that lands in one update by more than CATCH_UP_CHARS is not a token
-// stream (a reconnect replay applied in one pass), and text that arrives while
-// the tab is hidden is not being watched; both show at once with only the last
-// LIVE_TAIL_CHARS left to type.
+// stream (a reconnect replay applied in one pass): it shows at once with only
+// the last LIVE_TAIL_CHARS left to type.
 const CATCH_UP_CHARS = 600;
 const LIVE_TAIL_CHARS = 320;
 
@@ -186,6 +186,28 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
     });
   }, []);
 
+  // Text that arrives unseen (a hidden page, or what one held back and applies
+  // on its return, see lib/pageVisibility) was never watched arriving: it is on
+  // screen at once, up to the word the hold keeps, and the effect below finds
+  // nothing left to type. A layout effect, because the return applies in a
+  // synchronous commit and only an update from here renders before the first
+  // frame back paints.
+  useLayoutEffect(() => {
+    if (!mountedRef.current || !isPageUnseen()) return;
+    const prev = targetRef.current;
+    const continues = text.startsWith(prev.slice(0, cursorRef.current));
+    const delta = text.length - prev.length;
+    stopChain();
+    if (!continues) arrivalRef.current = { at: 0, cps: 0 };
+    else if (delta <= CATCH_UP_CHARS) noteArrival(delta);
+    targetRef.current = text;
+    finishingRef.current = false;
+    const end = enabled ? wordStart(text, text.length) : text.length;
+    cursorRef.current = continues ? Math.max(cursorRef.current, end) : end;
+    posRef.current = cursorRef.current;
+    setDisplayText(text.slice(0, cursorRef.current));
+  }, [text, enabled, stopChain, noteArrival]);
+
   useEffect(() => {
     // If the stretch the reveal ran through changed, resume from the screen.
     if (!text.startsWith(targetRef.current.slice(0, posRef.current))) {
@@ -247,7 +269,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
     if (!arrivedAtOnce) noteArrival(delta);
     finishingRef.current = false;
 
-    if ((arrivedAtOnce || document.hidden) && text.length - cursorRef.current > CATCH_UP_CHARS) {
+    if (arrivedAtOnce && text.length - cursorRef.current > CATCH_UP_CHARS) {
       stopChain();
       // Never behind what is already on screen: the boundary can sit before
       // the cursor when the snap point falls inside the run it was typing.

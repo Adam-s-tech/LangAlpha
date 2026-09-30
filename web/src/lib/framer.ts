@@ -4,11 +4,12 @@
  * the entry chunk, so there is no app-root setup that could run first, and this
  * module is the only place guaranteed to evaluate before any motion code does.
  *
- * What it sets up: every framer animation is instant while the tab is hidden.
- * A hidden tab runs no animation frames, and framer schedules everything, even
- * an instant animation, on its frame loop. So an animation created while the
- * tab is away sits at its first keyframe until the tab returns, then starts its
- * clock from that frame and plays in full. A streaming transcript accumulates
+ * What it sets up: every framer animation is instant while the page is unseen:
+ * hidden, or applying on its return what it held back while hidden (see
+ * lib/pageVisibility). A hidden tab runs no animation frames, and framer
+ * schedules everything, even an instant animation, on its frame loop. So an
+ * animation created while the tab is away sits at its first keyframe until the
+ * tab returns, then starts its clock from that frame and plays in full. A streaming transcript accumulates
  * dozens of them (rows folding out of the live zone at height 0, new rows
  * unfolding from it, the accordion growing), and the return becomes a burst of
  * collapses and expansions layered over a scroll pin that already landed.
@@ -22,14 +23,15 @@
  * `<MotionConfig reducedMotion="user">` (see lib/lazyWithMotion.tsx).
  */
 import { MotionGlobalConfig } from 'framer-motion';
+import { isPageUnseen, onPageUnseenChange } from './pageVisibility';
 
 function apply(): void {
-  MotionGlobalConfig.skipAnimations = document.hidden;
+  MotionGlobalConfig.skipAnimations = isPageUnseen();
 }
 
 if (typeof document !== 'undefined') {
   apply();
-  document.addEventListener('visibilitychange', apply);
+  onPageUnseenChange(apply);
 }
 
 export * from 'framer-motion';

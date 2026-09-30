@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createFrameQueue } from '../frameQueue';
+import { isPageUnseen } from '@/lib/pageVisibility';
 
 type Update = (prev: string[]) => string[];
 
@@ -15,13 +16,20 @@ const runFrame = () => {
 function setup() {
   let state: string[] = [];
   const applied: Update[] = [];
+  const unseen: boolean[] = [];
   const apply = (update: Update) => {
     applied.push(update);
+    unseen.push(isPageUnseen());
     state = update(state);
   };
   const q = createFrameQueue<string[]>(apply);
   const push = (s: string): Update => (prev) => [...prev, s];
-  return { q, push, applied, read: () => state };
+  return { q, push, applied, unseen, read: () => state };
+}
+
+function setVisibility(next: DocumentVisibilityState) {
+  visibility = next;
+  document.dispatchEvent(new Event('visibilitychange'));
 }
 
 beforeEach(() => {
@@ -29,10 +37,14 @@ beforeEach(() => {
   visibility = 'visible';
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => frames.push(cb));
   vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility);
+  vi.spyOn(document, 'hidden', 'get').mockImplementation(() => visibility !== 'visible');
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 });
 
 afterEach(() => {
+  if (visibility !== 'visible') setVisibility('visible');
   runFrame();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -59,20 +71,36 @@ describe('createFrameQueue', () => {
     expect(q.take()).toBeNull();
   });
 
-  it('applies at once in a hidden document, where no frame would come', () => {
-    const { q, push, read } = setup();
-    visibility = 'hidden';
+  it('batches a hidden page on a timer, where no frame would come', () => {
+    const { q, push, applied, read } = setup();
+    setVisibility('hidden');
     q.queue(push('a'));
-    expect(read()).toEqual(['a']);
+    q.queue(push('b'));
+    expect(read()).toEqual([]);
     expect(frames).toHaveLength(0);
+    vi.advanceTimersByTime(500);
+    expect(applied).toHaveLength(1);
+    expect(read()).toEqual(['a', 'b']);
   });
 
   it('applies what is waiting when the page hides', () => {
     const { q, push, read } = setup();
     q.queue(push('a'));
-    visibility = 'hidden';
-    document.dispatchEvent(new Event('visibilitychange'));
+    setVisibility('hidden');
     expect(read()).toEqual(['a']);
+  });
+
+  it('applies what the hidden page held on its return, at once and still unseen', () => {
+    const { q, push, applied, unseen, read } = setup();
+    setVisibility('hidden');
+    q.queue(push('a'));
+    setVisibility('visible');
+    expect(read()).toEqual(['a']);
+    expect(unseen).toEqual([true]);
+    expect(isPageUnseen()).toBe(false);
+    vi.advanceTimersByTime(500);
+    runFrame();
+    expect(applied).toHaveLength(1);
   });
 
   it('serves every queue from one frame callback', () => {

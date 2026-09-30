@@ -418,10 +418,7 @@
         "search": "Search",
         "searching": "Searching…",
         "loading": "Loading…",
-        "viewAll": "View all",
-        "relativeNow": "now",
-        "relativeFuture": "in {{when}}",
-        "relativePast": "{{when}} ago"
+        "viewAll": "View all"
       },
       "shell": {
         "addWidget": "Add widget",
@@ -1149,17 +1146,6 @@
       "emptyPortfolio": "Add stocks to your portfolio to see relevant news here",
       "emptyWatchlist": "Add stocks to your watchlist to see relevant news here",
       "emptyDefault": "No news available"
-    },
-    "topNews": {
-      "title": "Top News",
-      "sample1": "Retail Sales Slump Takes Toll on Market,...",
-      "sample2": "Tech Giant's Earnings Soar, Stock Hits All-Ti...",
-      "sample3": "High-Profile IPO Falls Short of Expectations...",
-      "sample4": "Electric Vehicle Stocks Skyrocket as Deman..."
-    },
-    "topResearch": {
-      "title": "Top Research",
-      "sample1": "Retail Sales Slump Takes Toll on Market, Stocks Dip"
     },
     "watchlistCard": {
       "createTitle": "Create watchlist",

@@ -418,10 +418,7 @@
         "search": "搜索",
         "searching": "搜索中...",
         "loading": "加载中...",
-        "viewAll": "查看全部",
-        "relativeNow": "刚刚",
-        "relativeFuture": "{{when}}后",
-        "relativePast": "{{when}}前"
+        "viewAll": "查看全部"
       },
       "shell": {
         "addWidget": "添加小组件",
@@ -1149,17 +1146,6 @@
       "emptyPortfolio": "添加股票到持仓以查看相关新闻",
       "emptyWatchlist": "添加股票到自选以查看相关新闻",
       "emptyDefault": "暂无新闻"
-    },
-    "topNews": {
-      "title": "头条新闻",
-      "sample1": "零售销售下滑拖累市场……",
-      "sample2": "科技巨头财报大涨，股价创历史新高……",
-      "sample3": "高调 IPO 表现不及预期……",
-      "sample4": "电动汽车股因需求飙升而暴涨……"
-    },
-    "topResearch": {
-      "title": "热门研究",
-      "sample1": "零售销售下滑拖累市场，股票走低"
     },
     "watchlistCard": {
       "createTitle": "创建自选股",

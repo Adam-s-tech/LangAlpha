@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * The deck geometry, and the one rule three separate copies of it each got
  * wrong: the offset has to ride `transform`, because that is the only property

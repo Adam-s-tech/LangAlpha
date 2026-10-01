@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A reloaded thread settles its order cards by attempt id.
  *

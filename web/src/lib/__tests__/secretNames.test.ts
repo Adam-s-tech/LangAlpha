@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
 import { MAX_SECRET_NAME_LENGTH, normalizeSecretName } from '../secretNames';

@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * What a replayed card may claim when one interrupt stopped several calls.
  *

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import {
   TOOLBAR_TIER_HYSTERESIS_PX,

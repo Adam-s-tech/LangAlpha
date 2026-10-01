@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Pin the deterministic-bubble-id contract for history replay handlers.
  *

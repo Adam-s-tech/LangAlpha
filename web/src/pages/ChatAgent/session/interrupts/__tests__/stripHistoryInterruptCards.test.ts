@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * The reconnect strip has to remove the card the redelivery will replace.
  *

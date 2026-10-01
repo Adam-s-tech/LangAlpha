@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Pure decision helpers for the manual-compaction Stop control in ChatView.
  * These cover three regressions:

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import { projectSubagentHistory } from '../projectHistory';
 import { createSubagentHistoryStore, type SubagentHistorySnapshot } from '../historyStore';

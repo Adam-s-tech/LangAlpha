@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Locks the three-phase display contract of deriveSubagentStatus. The regression
  * this guards: a still-running subagent whose detail card carried an explicit

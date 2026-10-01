@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * The plan branch is the fallthrough of both interrupt projections, so every
  * more specific branch ahead of it is a chance to swallow a `SubmitPlan`. These

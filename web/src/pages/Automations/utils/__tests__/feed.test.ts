@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import type { AutomationRun } from '@/types/automation';
 import { groupRunsByDay, nearDayKeys } from '../feed';

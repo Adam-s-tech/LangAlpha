@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Regression: custom entries must key off ``name``, not ``model_id``.
  *

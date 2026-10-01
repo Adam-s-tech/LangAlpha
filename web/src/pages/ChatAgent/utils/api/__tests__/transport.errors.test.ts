@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Locks the one link between a gate's HTTP response and what the user reads.
  *

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import { reducer, type ToastProps } from '../use-toast';
 

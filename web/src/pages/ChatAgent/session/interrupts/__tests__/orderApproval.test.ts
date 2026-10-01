@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A stopped order is answered by name, not by where it sat.
  *

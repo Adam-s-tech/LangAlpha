@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Composer toolbar fit path. Previously untestable — the math lived inside the
  * component and depended on a layout engine jsdom doesn't have; `computeFold`

@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * An interrupt that replays AFTER the resume turn that answered it must still
  * settle, for every HITL family.

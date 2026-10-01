@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * ChatView routing — verifies the pure routing function used by
  * `handleOpenFileFromChat`. Critical regressions:

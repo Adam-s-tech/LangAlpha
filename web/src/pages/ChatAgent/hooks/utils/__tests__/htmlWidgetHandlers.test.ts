@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import type { MessageRecord, SetMessages } from '../types';
 import { handleHtmlWidget } from '../streamEventHandlers';

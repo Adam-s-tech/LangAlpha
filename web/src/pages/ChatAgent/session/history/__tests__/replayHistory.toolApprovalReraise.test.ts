@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A tool-approval interrupt the backend raised again must replay answerable.
  *

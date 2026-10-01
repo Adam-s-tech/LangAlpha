@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import type { McpToolSummary } from '@/pages/ChatAgent/utils/api';
 import type { CapabilityGroup } from '../brokerages';

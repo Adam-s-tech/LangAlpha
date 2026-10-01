@@ -37,7 +37,7 @@ Requirements: Docker access to this worktree's stack, `INTERNAL_SERVICE_TOKEN`
 in the backend container, a working flash-model key (turns are real LLM calls —
 they cost a few flash generations per run). Cell 14 needs one manifest model
 whose provider key is **absent** so a run fails deterministically after START
-(default `claude-sonnet-5`; override with `GATE_FAIL_MODEL`).
+(default `claude-sonnet-5-5`; override with `GATE_FAIL_MODEL`).
 
 Because worker routing is probabilistic in real deployments, a cell that
 passes once here passes deterministically — the driver pins which worker owns

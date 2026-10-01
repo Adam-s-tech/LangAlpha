@@ -350,7 +350,7 @@ def cell_14_retry_race(st: Stack) -> tuple[bool, str]:
     # `error` terminal. Override with GATE_FAIL_MODEL if your env differs.
     # Turn 1 must COMPLETE first: retry replays from the last checkpoint, and
     # a thread whose only run died at agent init has none (404 no_checkpoints).
-    fail_model = os.environ.get("GATE_FAIL_MODEL", "claude-sonnet-5")
+    fail_model = os.environ.get("GATE_FAIL_MODEL", "claude-sonnet-5-5")
     tid = st.settled_thread()
     code, resp = st.dispatch("A", QUICK_PROMPT, tid, llm_model=fail_model)
     if code not in (200, 202):

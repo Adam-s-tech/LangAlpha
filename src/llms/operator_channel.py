@@ -130,6 +130,7 @@ _ANTHROPIC_MIDTURN_SYSTEM_MODELS = frozenset(
         "claude-opus-5-5",
         "claude-opus-5",
         "claude-opus-4-8",
+        "claude-sonnet-5-5",
         "claude-sonnet-5",
         "claude-fable-5",
         "claude-fable-5-1",

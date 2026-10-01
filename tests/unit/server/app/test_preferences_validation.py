@@ -192,6 +192,15 @@ class TestValidateCustomModels:
         )
         assert written == {}
 
+    def test_a_shadow_outlives_the_built_in_it_shadowed(self):
+        """Saved while the built-in supplied the ladder its default names. The
+        client resends the whole list on any edit, so refusing it once that
+        model is retired would lock every custom model the user has."""
+        self._validate([{
+            "name": "retired-model", "model_id": "retired-model", "provider": "openai",
+            "reasoning_effort_default": "high",
+        }])
+
     def test_text_auto_prepended(self):
         """If input_modalities is provided without 'text', it should be auto-added."""
         models = [{"name": "my-llava", "model_id": "llava", "provider": "openai", "input_modalities": ["image"]}]

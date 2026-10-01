@@ -404,12 +404,19 @@ def _validate_custom_models(custom_models: list, custom_providers: list | None =
             declared[efforts_key] = [lv for lv in REASONING_LEVELS if lv in set(efforts)]
 
         # An entry shadowing a built-in inherits that model's ladder, so a
-        # default may name a level this entry does not list itself.
+        # default may name a level this entry does not list itself. With no
+        # ladder at all no level is ever sent and the default is inert: that is
+        # a shadow whose built-in has since left the manifest, and refusing it
+        # would 400 every later save of the whole list.
         effective_efforts = declared.get(efforts_key)
         if effective_efforts is None:
             effective_efforts = reasoning_block(mc.get_model_config(name)).get("efforts") or []
         default_effort = declared.get(default_key)
-        if default_effort is not None and default_effort not in effective_efforts:
+        if (
+            default_effort is not None
+            and effective_efforts
+            and default_effort not in effective_efforts
+        ):
             raise HTTPException(
                 status_code=400,
                 detail=f"custom_models[{idx}]: {default_key} must be one of {sorted(effective_efforts)}",

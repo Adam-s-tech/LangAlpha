@@ -223,7 +223,10 @@ async def _run_flash_agent(prompt: str, user_id: str | None = None) -> str:
         try:
             from src.server.services.llm.config import resolve_llm_config
 
-            config = await resolve_llm_config(config, user_id, request_model=None, is_byok=True, mode="flash")
+            config = await resolve_llm_config(
+                config, user_id, request_model=None, is_byok=True, mode="flash",
+                user_facing=False,
+            )
         except Exception as exc:
             logger.warning(f"[MARKET_INSIGHT] Could not resolve user LLM, falling back to system: {exc}")
 

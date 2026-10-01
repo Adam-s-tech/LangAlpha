@@ -235,7 +235,7 @@ def test_unproven_anthropic_hosts_stay_off(base_url):
         assert resolve_operator_channel(client) is None
 
 
-@pytest.mark.parametrize("model", ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8"])
+@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"])
 def test_official_anthropic_models_that_accept_the_role(model):
     client = _anthropic("anthropic-test", model=model)
     with provider_entry("anthropic-test", {"sdk": "anthropic", "operator_channel": "system"}):

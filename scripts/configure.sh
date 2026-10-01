@@ -219,7 +219,7 @@ case $llm in
         sub=$(prompt_choice "Sub-choice" "a")
         case $sub in
             b)
-                set_llm_field "name" "gpt-5.6-sol-oauth"
+                set_llm_field "name" "gpt-6.1-sol-oauth"
                 set_llm_field "flash" "gpt-5.6-terra-oauth"
                 # compaction/fetch left blank → inherit the flash model
                 set_llm_field "compaction" ""
@@ -227,8 +227,8 @@ case $llm in
                 success "ChatGPT OAuth — connect your subscription in the UI after starting"
                 ;;
             *)
-                set_llm_field "name" "claude-opus-4-8-oauth"
-                set_llm_field "flash" "claude-sonnet-5-oauth"
+                set_llm_field "name" "claude-opus-5-5-oauth"
+                set_llm_field "flash" "claude-sonnet-5-5-oauth"
                 # compaction/fetch left blank → inherit the flash model
                 set_llm_field "compaction" ""
                 set_llm_field "fetch" ""

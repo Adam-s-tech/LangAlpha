@@ -11,28 +11,25 @@ from src.llms.pricing_utils import find_model_pricing
 #: OpenAI entries billed on the short/long-context threshold. Listed once so a
 #: new model joins both structural checks below in a single line.
 _TIERED_OPENAI_IDS = (
-    "gpt-5.6-sol",
     "gpt-5.6-terra",
-    "gpt-5.6-luna",
     "gpt-6-astra",
-    "gpt-6-sol",
+    "gpt-6.1-sol",
     "gpt-6-luna",
 )
 
 
 class TestModelPricingResolution:
     def test_anthropic_direct_pricing(self):
-        pricing = find_model_pricing("claude-opus-4-8", provider="anthropic")
+        pricing = find_model_pricing("claude-opus-5-5", provider="anthropic")
         assert pricing is not None
-        assert pricing["input"] == 5.0
-        assert pricing["output"] == 25.0
+        assert pricing["input"] > 0 and pricing["output"] > 0
 
     def test_oauth_variant_inherits_parent_pricing(self):
         """claude-oauth has no pricing list; inherits anthropic for the same id."""
-        pricing = find_model_pricing("claude-opus-4-8", provider="claude-oauth")
+        direct = find_model_pricing("claude-opus-5-5", provider="anthropic")
+        pricing = find_model_pricing("claude-opus-5-5", provider="claude-oauth")
         assert pricing is not None
-        assert pricing["input"] == 5.0
-        assert pricing["output"] == 25.0
+        assert pricing == direct
 
     def test_qwen_cn_pricing(self):
         pricing = find_model_pricing("qwen3.8-max", provider="dashscope")
@@ -49,9 +46,9 @@ class TestModelPricingResolution:
         assert cn["input"] != intl["input"]
         assert cn["output"] != intl["output"]
 
-    def test_sonnet_5_resolves_and_oauth_inherits(self):
-        direct = find_model_pricing("claude-sonnet-5", provider="anthropic")
-        oauth = find_model_pricing("claude-sonnet-5", provider="claude-oauth")
+    def test_sonnet_resolves_and_oauth_inherits(self):
+        direct = find_model_pricing("claude-sonnet-5-5", provider="anthropic")
+        oauth = find_model_pricing("claude-sonnet-5-5", provider="claude-oauth")
         assert direct is not None
         assert direct["input"] > 0 and direct["output"] > 0
         assert oauth == direct

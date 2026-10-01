@@ -85,8 +85,8 @@ class TestSurfaceResolution:
         the level goes."""
         client = _build(
             {
-                "name": "gpt-5.6-sol",
-                "model_id": "gpt-5.6-sol",
+                "name": "gpt-6.1-sol",
+                "model_id": "gpt-6.1-sol",
                 "provider": "openai",
                 "reasoning_efforts": ["low", "high"],
             },
@@ -107,8 +107,8 @@ class TestAShadowInheritsTheHalfItDidNotDeclare:
     #: Its own ladder is a strict subset of the built-in's, so a level only the
     #: built-in offers is what tells the two apart.
     SHADOW = {
-        "name": "gpt-5.6-sol",
-        "model_id": "gpt-5.6-sol",
+        "name": "gpt-6.1-sol",
+        "model_id": "gpt-6.1-sol",
         "provider": "openai",
         "reasoning_efforts": ["low", "high"],
     }

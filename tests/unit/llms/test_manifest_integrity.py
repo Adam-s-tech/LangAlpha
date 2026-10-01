@@ -5,12 +5,50 @@ variants + flattening) didn't break any model-to-provider resolution.
 No mocking -- these hit the actual manifest files on disk.
 """
 
+import re
 from datetime import date
+from pathlib import Path
 
 import pytest
+import yaml
 
 from src.llms.llm import ModelConfig
 from src.llms.pricing_utils import find_model_pricing
+
+_REPO = Path(__file__).resolve().parents[3]
+
+#: Keys that ship with no price card today. Leaving this set means gaining a
+#: card; joining it is a decision, which is the point: a retirement that drops
+#: a card some key still points at lands here instead of billing that key at $0.
+_UNPRICED_KEYS = frozenset({
+    "gpt-oss-120b",
+    "gpt-oss-20b",
+    "gpt-oss-20b-safe-groq",
+    "gpt-oss-120b-groq",
+    "gpt-oss-20b-deepinfra",
+    "gpt-oss-safeguard-20b-deepinfra",
+    "gpt-5.3-codex-spark-oauth",
+})
+
+
+def _shipped_default_models() -> list[tuple[str, str]]:
+    """``(where, key)`` for every model a fresh install runs without choosing one."""
+    found: list[tuple[str, str]] = []
+    llm = yaml.safe_load((_REPO / "agent_config.yaml").read_text()).get("llm") or {}
+    for field in ("name", "flash", "compaction", "fetch"):
+        if llm.get(field):
+            found.append((f"agent_config.yaml llm.{field}", llm[field]))
+    found.extend(("agent_config.yaml llm.fallback", m) for m in llm.get("fallback") or [])
+
+    # Literal presets only; the provider path reads its choices off the manifest.
+    configure = (_REPO / "scripts" / "configure.sh").read_text()
+    found.extend(
+        (f"configure.sh {field}", key)
+        for field, key in re.findall(
+            r'set_llm_field "(name|flash|compaction|fetch)" "([^"$]+)"', configure
+        )
+    )
+    return found
 
 
 _SCHEDULE_KEYS = {
@@ -96,6 +134,28 @@ class TestManifestIntegrity:
         assert not failures, (
             f"{len(failures)} model(s) failed provider resolution:\n"
             + "\n".join(f"  - {f}" for f in failures)
+        )
+
+    def test_shipped_defaults_name_models_in_the_manifest(self, model_config):
+        """A retirement has to repoint every default it strands. A stranded one
+        is no 400 at load: it surfaces as a failed first turn on a fresh install."""
+        defaults = _shipped_default_models()
+        assert any(where.startswith("configure.sh") for where, _ in defaults)
+        missing = [
+            f"{where}: {key}" for where, key in defaults
+            if model_config.get_model_config(key) is None
+        ]
+        assert not missing, "Defaults naming no model:\n" + "\n".join(missing)
+
+    def test_every_model_resolves_a_price_card(self, model_config):
+        unpriced = {
+            name for name, entry in model_config.llm_config.items()
+            if find_model_pricing(entry.get("model_id", name), provider=entry.get("provider"))
+            is None
+        }
+        assert unpriced == _UNPRICED_KEYS, (
+            f"newly unpriced: {sorted(unpriced - _UNPRICED_KEYS)}; "
+            f"now priced, drop from _UNPRICED_KEYS: {sorted(_UNPRICED_KEYS - unpriced)}"
         )
 
     def test_coding_variant_resolves_pricing_via_parent(self, model_config):

@@ -89,6 +89,7 @@ class LLMService:
                 mode=mode,
                 reasoning_effort=reasoning_effort,
                 fast_mode=None,
+                user_facing=False,
             )
             llm = resolved_config.llm_client
             model_field, _ = _MODE_MODEL_MAP[mode]

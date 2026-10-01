@@ -123,7 +123,7 @@ class TestOriginGate:
         assert types_of(out[0]) == ["text"]
 
     def test_unstamped_message_resolves_via_model_id(self):
-        msgs = [ai([signed(), TEXT], model_name="claude-opus-5")]
+        msgs = [ai([signed(), TEXT], model_name="claude-opus-5-5")]
         out, _ = _sanitize(msgs, "anthropic")
         assert out is msgs
 

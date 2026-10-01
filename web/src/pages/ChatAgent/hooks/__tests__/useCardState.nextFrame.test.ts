@@ -10,30 +10,16 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
+import { mockFrames, runFrame, settleFrames } from '@/test/frames';
 import { useCardState } from '../useCardState';
 
 const AGENT_ID = 'task:Q81mZx';
 const CARD_ID = `subagent-${AGENT_ID}`;
 
-let frames: FrameRequestCallback[] = [];
-// A 60 Hz display's frame times.
-let clock = 0;
-const runFrame = () => {
-  clock += 1000 / 60;
-  const due = frames;
-  frames = [];
-  for (const cb of due) cb(clock);
-};
-
-beforeEach(() => {
-  frames = [];
-  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => frames.push(cb));
-  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-  vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
-});
+beforeEach(mockFrames);
 
 afterEach(() => {
-  runFrame();
+  settleFrames();
   vi.restoreAllMocks();
 });
 

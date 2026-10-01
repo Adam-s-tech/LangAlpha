@@ -16,13 +16,11 @@ type Update<T> = (prev: T) => T;
  * once when the page comes back.
  *
  * Everything else must apply the queue before its own write, in the same task
- * (`take`), so no other state ever gets ahead of the text.
+ * (`flush`), so no other state ever gets ahead of the text.
  */
 export interface FrameQueue<T> {
   /** Apply on the next frame, after every update queued before it. */
   queue: (update: Update<T>) => void;
-  /** Remove and return what is queued, composed into one update. */
-  take: () => Update<T> | null;
   /** Apply what is queued now. */
   flush: () => void;
   /** Drop what is queued. */
@@ -94,17 +92,12 @@ function onReturn(): void {
 export function createFrameQueue<T>(apply: (update: Update<T>) => void): FrameQueue<T> {
   let pending: Update<T>[] = [];
 
-  function take(): Update<T> | null {
+  function flush(): void {
     waiting.delete(flush);
-    if (pending.length === 0) return null;
+    if (pending.length === 0) return;
     const batch = pending;
     pending = [];
-    return batch.length === 1 ? batch[0] : (prev) => batch.reduce((acc, update) => update(acc), prev);
-  }
-
-  function flush(): void {
-    const update = take();
-    if (update) apply(update);
+    apply(batch.length === 1 ? batch[0] : (prev) => batch.reduce((acc, update) => update(acc), prev));
   }
 
   function queue(update: Update<T>): void {
@@ -127,5 +120,5 @@ export function createFrameQueue<T>(apply: (update: Update<T>) => void): FrameQu
     pending = [];
   }
 
-  return { queue, take, flush, cancel };
+  return { queue, flush, cancel };
 }

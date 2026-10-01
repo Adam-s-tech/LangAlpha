@@ -1,21 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createFrameQueue } from '../frameQueue';
 import { isPageUnseen } from '@/lib/pageVisibility';
+import { mockFrames, pendingFrames, runFrame, setVisibility, settleFrames } from '@/test/frames';
 
 type Update = (prev: string[]) => string[];
-
-let frames: FrameRequestCallback[] = [];
-let visibility: DocumentVisibilityState = 'visible';
-// Frame times as a display reports them: a 60 Hz one unless a test says
-// otherwise, never going back across tests.
-let clock = 0;
-
-const runFrame = (interval = 1000 / 60) => {
-  clock += interval;
-  const due = frames;
-  frames = [];
-  for (const cb of due) cb(clock);
-};
 
 function setup() {
   let state: string[] = [];
@@ -31,23 +19,13 @@ function setup() {
   return { q, push, applied, unseen, read: () => state };
 }
 
-function setVisibility(next: DocumentVisibilityState) {
-  visibility = next;
-  document.dispatchEvent(new Event('visibilitychange'));
-}
-
 beforeEach(() => {
-  frames = [];
-  visibility = 'visible';
-  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => frames.push(cb));
-  vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility);
-  vi.spyOn(document, 'hidden', 'get').mockImplementation(() => visibility !== 'visible');
+  mockFrames();
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 });
 
 afterEach(() => {
-  if (visibility !== 'visible') setVisibility('visible');
-  runFrame();
+  settleFrames();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -64,15 +42,16 @@ describe('createFrameQueue', () => {
     expect(read()).toEqual(['a', 'b', 'c']);
   });
 
-  it('take hands the queue to the caller and leaves the frame nothing to apply', () => {
-    const { q, push, applied } = setup();
+  it('flush applies the queue now and leaves the frame nothing to apply', () => {
+    const { q, push, applied, read } = setup();
     q.queue(push('a'));
     q.queue(push('b'));
-    const taken = q.take();
-    expect(taken?.(['x'])).toEqual(['x', 'a', 'b']);
+    q.flush();
+    expect(applied).toHaveLength(1);
+    expect(read()).toEqual(['a', 'b']);
     runFrame();
-    expect(applied).toHaveLength(0);
-    expect(q.take()).toBeNull();
+    q.flush();
+    expect(applied).toHaveLength(1);
   });
 
   it('batches a hidden page on a timer, where no frame would come', () => {
@@ -81,7 +60,7 @@ describe('createFrameQueue', () => {
     q.queue(push('a'));
     q.queue(push('b'));
     expect(read()).toEqual([]);
-    expect(frames).toHaveLength(0);
+    expect(pendingFrames()).toBe(0);
     vi.advanceTimersByTime(500);
     expect(applied).toHaveLength(1);
     expect(read()).toEqual(['a', 'b']);
@@ -112,7 +91,7 @@ describe('createFrameQueue', () => {
     const two = setup();
     one.q.queue(one.push('a'));
     two.q.queue(two.push('b'));
-    expect(frames).toHaveLength(1);
+    expect(pendingFrames()).toBe(1);
     runFrame();
     expect(one.read()).toEqual(['a']);
     expect(two.read()).toEqual(['b']);
@@ -127,7 +106,7 @@ describe('createFrameQueue', () => {
     q.queue(push('b'));
     runFrame(1000 / 120);
     expect(applied).toHaveLength(1);
-    expect(frames).toHaveLength(1);
+    expect(pendingFrames()).toBe(1);
     runFrame(1000 / 120);
     expect(read()).toEqual(['a', 'b']);
   });

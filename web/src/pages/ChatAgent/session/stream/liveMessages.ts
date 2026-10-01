@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type SetStateAction } from 'react';
+import { createFrameQueue } from './frameQueue';
 
 /**
  * The transcript with every streamed chunk applied.
@@ -13,25 +14,51 @@ import { useEffect, useState } from 'react';
  */
 export interface LiveMessages<T> {
   get: () => T;
-  set: (value: T) => void;
   subscribe: (listener: () => void) => () => void;
 }
 
-export function createLiveMessages<T>(initial: T): LiveMessages<T> {
+/** The store with its writes: the only way into it, so no write can get ahead of a chunk. */
+export interface LiveTranscript<T> extends LiveMessages<T> {
+  /** A streamed chunk, applied on the next frame (see createFrameQueue). */
+  queue: (update: (prev: T) => T) => void;
+  /** Applies the queued chunks now. */
+  flush: () => void;
+  /** Any other write. An update applies the queued chunks first and is
+   *  computed on the result; a value replaces the transcript and drops them.
+   *  Either way it lands here and in `commit` in the same task. */
+  write: (next: SetStateAction<T>) => void;
+  dispose: () => void;
+}
+
+export function createLiveTranscript<T extends readonly unknown[]>(initial: T, commit: (value: T) => void): LiveTranscript<T> {
   let value = initial;
   const listeners = new Set<() => void>();
+  const publish = (next: T) => {
+    if (Object.is(next, value)) return;
+    value = next;
+    for (const listener of [...listeners]) listener();
+  };
+  const chunks = createFrameQueue<T>((update) => publish(update(value)));
   return {
     get: () => value,
-    set: (next) => {
-      if (Object.is(next, value)) return;
-      value = next;
-      for (const listener of [...listeners]) listener();
-    },
     subscribe: (listener) => {
       listeners.add(listener);
       return () => {
         listeners.delete(listener);
       };
+    },
+    queue: chunks.queue,
+    flush: chunks.flush,
+    dispose: chunks.cancel,
+    write: (next) => {
+      if (typeof next === 'function') {
+        chunks.flush();
+        next = next(value);
+      } else {
+        chunks.cancel();
+      }
+      publish(next);
+      commit(next);
     },
   };
 }

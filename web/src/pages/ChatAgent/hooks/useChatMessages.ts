@@ -64,8 +64,7 @@ import {
 } from '../session/subagents/hydrateTaskTranscript';
 import { loadConversationHistory as replayConversationHistory } from '../session/history/replayHistory';
 import { createStreamEventProcessor, type StreamRouterDeps } from '../session/stream/processStreamEvent';
-import { createFrameQueue } from '../session/stream/frameQueue';
-import { createLiveMessages } from '../session/stream/liveMessages';
+import { createLiveTranscript, type LiveMessages } from '../session/stream/liveMessages';
 import {
   EMPTY_SUBAGENT_HISTORY, createSubagentHistoryStore, readSubagentHistory, type SubagentHistoryView,
 } from '../session/subagents/historyStore';
@@ -105,29 +104,17 @@ export function useChatMessages(
 
   // State
   const [messages, setMessagesState] = useState<MessageRecord[]>([]);
-  // Streamed chunks wait for the next frame (see createFrameQueue) and then
-  // land in `liveMessages` alone, which only the transcript's readers render
-  // from: `messages` holds the structure and lags on the text. Every other
-  // write carries the queued chunks along and is computed on the live value,
-  // never on `messages`: nearly every updater copies the streaming message
-  // whole, and on a lagging copy it would put the old text back.
-  const [liveMessages] = useState(() => createLiveMessages<MessageRecord[]>([]));
-  const [chunkQueue] = useState(() => createFrameQueue<MessageRecord[]>(
-    (update) => liveMessages.set(update(liveMessages.get())),
-  ));
-  const setMessages = useCallback<React.Dispatch<React.SetStateAction<MessageRecord[]>>>((next) => {
-    const queued = chunkQueue.take();
-    let value: MessageRecord[];
-    if (typeof next === 'function') {
-      const live = liveMessages.get();
-      value = next(queued ? queued(live) : live);
-    } else {
-      value = next;
-    }
-    liveMessages.set(value);
-    setMessagesState(value);
-  }, [chunkQueue, liveMessages]);
-  useEffect(() => () => chunkQueue.cancel(), [chunkQueue]);
+  // Streamed chunks wait for the next frame and then land in `liveMessages`
+  // alone, which only the transcript's readers render from: `messages` holds
+  // the structure and lags on the text. Every other write goes through
+  // `setMessages`, computed on the live value, never on `messages`: nearly
+  // every updater copies the streaming message whole, and on a lagging copy it
+  // would put the old text back.
+  const [liveMessages] = useState(() => createLiveTranscript<MessageRecord[]>([], setMessagesState));
+  const setMessages = liveMessages.write;
+  useEffect(() => liveMessages.dispose, [liveMessages]);
+  // What the views get: read-only, since a write from there would skip `messages`.
+  const liveView: LiveMessages<MessageRecord[]> = liveMessages;
   // Subagent history (replayed per-task transcripts and the tool-call id to
   // task id index) as a snapshot with a new identity per change, so the
   // getters below change exactly when it does. Each publish applies the queued
@@ -135,7 +122,7 @@ export function useChatMessages(
   // calls of the same task.
   const [historyView, setHistoryView] = useState(EMPTY_SUBAGENT_HISTORY);
   const [subagentHistory] = useState(() => createSubagentHistoryStore((next) => {
-    chunkQueue.flush();
+    liveMessages.flush();
     setHistoryView(next);
   }));
   const [threadId, setThreadId] = useState<string>(() => {
@@ -576,8 +563,8 @@ export function useChatMessages(
     onOnboardingRelatedToolComplete,
     // setters (stable)
     setMessages,
-    queueMessages: chunkQueue.queue,
-    flushMessages: chunkQueue.flush,
+    queueMessages: liveMessages.queue,
+    flushMessages: liveMessages.flush,
     setIsLoading,
     setIsLoadingHistory,
     setHistoryLoadFailed,
@@ -2873,7 +2860,7 @@ export function useChatMessages(
     // Which messages there are; the text as of the last write that was not a
     // chunk. Render the text from `liveMessages` (useLiveMessages).
     messages,
-    liveMessages,
+    liveMessages: liveView,
     threadId,
     threadModels,
     isLoading,

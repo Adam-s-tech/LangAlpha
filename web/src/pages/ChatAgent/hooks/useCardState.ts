@@ -74,12 +74,13 @@ export function useCardState(initialCards: CardsMap = {}): UseCardStateResult {
   // A subagent's streamed chunks reach its card on the next frame, like the
   // main transcript's (see createFrameQueue): every chunk was a render of the
   // whole chat view, and parallel subagents stream at once. Every other write
-  // applies them first, so it can neither overtake a chunk nor be overtaken.
+  // applies them first, so it can neither overtake a chunk nor be overtaken:
+  // both updaters sit in the hook's queue in order and render in one commit.
   const [chunkQueue] = useState(() => createFrameQueue<CardsMap>(setCardsState));
   useEffect(() => () => chunkQueue.cancel(), [chunkQueue]);
   const setCards = (update: (prev: CardsMap) => CardsMap) => {
-    const queued = chunkQueue.take();
-    setCardsState(queued ? (prev) => update(queued(prev)) : update);
+    chunkQueue.flush();
+    setCardsState(update);
   };
 
   const updateTodoListCard = (todoData: TodoData) => {

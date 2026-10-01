@@ -11,7 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { useHomeTimezone } from '@/hooks/useHomeTimezone';
-import { useLatestRef } from '@/hooks/useLatestRef';
+import { useStableHandler } from '@/hooks/useStableHandler';
 import { useUser } from '@/hooks/useUser';
 import { sendChatMessageStream, sendRetryStream, getWorkflowStatus, sendHitlResponse, fetchThreadTurns, cancelWorkflow } from '../utils/api';
 import { useLocalRunPublisher } from '@/lib/threadLifecycle/useLocalRunPublisher';
@@ -2035,7 +2035,7 @@ export function useChatMessages(
    * long after the render that armed the interrupt, through handlers memoized
    * on it, and has to use the current runtime, callbacks and model options.
    */
-  const resumeLatestRef = useLatestRef(async (hitlResponse: HitlResponseBody, planMode: boolean = false) => {
+  const resumeWithHitlResponse = useStableHandler(async (hitlResponse: HitlResponseBody, planMode: boolean = false) => {
     const resumeAgentMode = runAgentModeRef.current ?? agentMode;
     // The resume opens the next run, in the same mode.
     runAgentModeRef.current = resumeAgentMode;
@@ -2205,10 +2205,6 @@ export function useChatMessages(
       // assistant bubbles. MessageList hides empty settled bubbles instead.
     }
   });
-  const resumeWithHitlResponse = useCallback(
-    (hitlResponse: HitlResponseBody, planMode: boolean = false) => resumeLatestRef.current(hitlResponse, planMode),
-    [resumeLatestRef],
-  );
 
   const handleApproveInterrupt = useCallback(() => {
     if (!pendingInterrupt) return;
@@ -2486,7 +2482,7 @@ export function useChatMessages(
    * current platform, locale, timezone and runtime. `snapshot` is the render
    * the caller computed `truncateIndex` against.
    */
-  const streamFromCheckpointRef = useLatestRef(async (message: string | null, checkpointId: string | null, truncateIndex: number, snapshot: readonly MessageRecord[], forkFromTurn: number | null = null, modelOptions: ModelOptions = {}, viaRetryEndpoint: boolean = false) => {
+  const streamFromCheckpoint = useStableHandler(async (message: string | null, checkpointId: string | null, truncateIndex: number, snapshot: readonly MessageRecord[], forkFromTurn: number | null = null, modelOptions: ModelOptions = {}, viaRetryEndpoint: boolean = false) => {
     // Callers check the slot is free: an edit or regenerate already holds it
     // for its checkpoint read, and takes it again below with the same result.
 
@@ -2671,10 +2667,6 @@ export function useChatMessages(
       }
     }
   });
-  const streamFromCheckpoint = useCallback(
-    (...args: Parameters<typeof streamFromCheckpointRef.current>) => streamFromCheckpointRef.current(...args),
-    [streamFromCheckpointRef],
-  );
 
   /**
    * Edit a user message: truncate to before that message, send modified content

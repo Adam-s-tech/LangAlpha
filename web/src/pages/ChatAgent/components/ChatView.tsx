@@ -171,20 +171,13 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     isActiveRef.current = isActive;
   });
 
-  // Nav-panel controller — mobile drawer only now (desktop nav lives in the
-  // app-shell AppSidebar); hover/pin members are unused here.
   const {
     navPanelVisible,
-    contentAreaRef,
     navSlideIn,
     handleNavMinimize,
     handleNavExpand,
     inheritNavOnActivate,
-  } = useNavPanel({ isMobile, isActiveRef });
-
-
-
-
+  } = useNavPanel();
 
   // Floating cards management - extracted to custom hook for better encapsulation
   // Must be called before useChatMessages since updateTodoListCard and updateSubagentCard are passed to it
@@ -1340,7 +1333,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
 
         {/* Content area: Chat Window (+ nav drawer on mobile — desktop nav
             lives in the app-shell AppSidebar now) */}
-        <div ref={contentAreaRef} className="flex-1 flex overflow-hidden" style={{ position: 'relative', containerType: 'inline-size' }}>
+        <div className="flex-1 flex overflow-hidden" style={{ position: 'relative', containerType: 'inline-size' }}>
           {isMobile && (
             <MobileNavDrawer
               visible={navPanelVisible}

@@ -374,6 +374,17 @@ export function useChatMessages(
   // streaming or last streamed. Read, not handed out, so no caller can move
   // the reconnect target.
   const isOwnRun = useCallback((runId: string) => runId === currentRunIdRef.current, []);
+  // Every run this view starts begins here: its assistant message counts
+  // content from zero, and its run_id comes from its own metadata frame unless
+  // the response header already named it. A stale one would bias a reconnect
+  // into the previous run's stream key.
+  const beginRun = (mode: string, runId: string | null = null): void => {
+    contentOrderCounterRef.current = 0;
+    currentReasoningIdRef.current = null;
+    currentToolCallIdRef.current = null;
+    currentRunIdRef.current = runId;
+    runAgentModeRef.current = mode;
+  };
   // Highest turn_index this view has RENDERED, compared against
   // /status.latest_turn_index by the reactivation staleness check (a run that
   // finished while this cached view was hidden is terminal — can_reconnect is
@@ -1470,10 +1481,6 @@ export function useChatMessages(
       // finally below honors wasStoppedRef and returns.
       if (wasStoppedRef.current) return;
       demotedToNewTurn = true;
-      if (pendingRunIdFromHeader) {
-        currentRunIdRef.current = pendingRunIdFromHeader;
-      }
-      runAgentModeRef.current = agentMode;
       setMessages((prev) =>
         updateMessage(prev, userMessage.id as string, (msg) => {
           if (msg.role !== 'user') return msg;
@@ -1486,9 +1493,7 @@ export function useChatMessages(
       );
       const newAssistantId = `assistant-${Date.now()}`;
       demotedAssistantId = newAssistantId;
-      contentOrderCounterRef.current = 0;
-      currentReasoningIdRef.current = null;
-      currentToolCallIdRef.current = null;
+      beginRun(agentMode, pendingRunIdFromHeader);
       const assistantMessage = createAssistantMessage(newAssistantId);
       setMessages((prev) => appendMessage(prev, assistantMessage));
       currentMessageRef.current = newAssistantId;
@@ -1781,15 +1786,7 @@ export function useChatMessages(
 
     // Create assistant message placeholder
     const assistantMessageId = `assistant-${Date.now()}`;
-    // Reset counters for this new message
-    contentOrderCounterRef.current = 0;
-    currentReasoningIdRef.current = null;
-    currentToolCallIdRef.current = null;
-    // Clear the active run_id; the new turn's metadata frame will repopulate
-    // it. Prevents a stale run_id from biasing a reconnect into an older
-    // ``workflow:stream:{tid}:{rid}`` key.
-    currentRunIdRef.current = null;
-    runAgentModeRef.current = agentMode;
+    beginRun(agentMode);
     // Fresh AbortController so stopWorkflow can abort this stream's reader.
     const abortController = new AbortController();
     mainStreamAbortRef.current = abortController;
@@ -2024,9 +2021,8 @@ export function useChatMessages(
    * on it, and has to use the current runtime, callbacks and model options.
    */
   const resumeWithHitlResponse = useStableHandler(async (hitlResponse: HitlResponseBody, planMode: boolean = false) => {
-    const resumeAgentMode = runAgentModeRef.current ?? agentMode;
     // The resume opens the next run, in the same mode.
-    runAgentModeRef.current = resumeAgentMode;
+    const resumeAgentMode = runAgentModeRef.current ?? agentMode;
     // Ahead of beginResume, so the settler's fence captures this run's own
     // epoch rather than the previous one (which it would already fail).
     sessionEpochRef.current += 1;
@@ -2038,13 +2034,9 @@ export function useChatMessages(
 
     // Create assistant message placeholder
     const assistantMessageId = `assistant-hitl-${Date.now()}`;
-    contentOrderCounterRef.current = 0;
-    currentReasoningIdRef.current = null;
-    currentToolCallIdRef.current = null;
     // HITL resume always opens a fresh run on the backend (1:1 with
-    // ``conversation_response_id``); clear the stale ref so the new turn's
-    // metadata frame is the source of truth.
-    currentRunIdRef.current = null;
+    // ``conversation_response_id``).
+    beginRun(resumeAgentMode);
 
     const assistantMessage = createAssistantMessage(assistantMessageId);
     setMessages((prev) => appendMessage(prev, assistantMessage));
@@ -2492,15 +2484,10 @@ export function useChatMessages(
 
     // Truncate messages and add new user message (if editing) + assistant placeholder
     const assistantMessageId = `assistant-${Date.now()}`;
-    contentOrderCounterRef.current = 0;
-    currentReasoningIdRef.current = null;
-    currentToolCallIdRef.current = null;
-    // Edit/regenerate opens a fresh backend run; clear the prior run_id so
-    // the new metadata frame becomes the source of truth.
-    currentRunIdRef.current = null;
-    // The retry route takes no agent_mode, so the server starts it from its
-    // default; answering in that same default resolves to the same graph.
-    runAgentModeRef.current = viaRetryEndpoint ? 'ptc' : agentMode;
+    // Edit/regenerate opens a fresh backend run. The retry route takes no
+    // agent_mode, so the server starts it from its default; answering in that
+    // same default resolves to the same graph.
+    beginRun(viaRetryEndpoint ? 'ptc' : agentMode);
     // A fork truncates persisted turns > forkFromTurn server-side; pin the
     // rendered-turn watermark to the fork turn so the reactivation staleness
     // check compares against the post-truncation reality (a stale-high

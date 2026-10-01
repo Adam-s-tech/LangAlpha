@@ -1,18 +1,12 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { isNearBottom } from '../../utils/scrollHelpers';
+import { AT_BOTTOM_PX, NEAR_BOTTOM_PX, isNearBottom } from '../../utils/scrollHelpers';
 import { findMessageElement, resolveScrollContent, resolveScrollViewport } from '../../utils/scrollDom';
 import { scrollMemory } from '@/lib/scrollMemory';
 import { ANCHORED_TOGGLE_EVENT } from '../../utils/anchoredToggle';
 import { useLatestRef } from '@/hooks/useLatestRef';
 
-// Scroll/pin tuning. Distance from the bottom (px) still counted as "at bottom";
-// settle window the pin re-applies through as async media expands; fallback for
-// engines without a `scrollend` event.
-const NEAR_BOTTOM_PX = 120;
-/** "At the bottom" for an upward scroll. Not 0: scrollHeight and clientHeight
- *  are rounded and scrollTop is not, and under browser zoom a container at
- *  its maximum reads a residual of a pixel or two. */
-const AT_BOTTOM_PX = 4;
+// Scroll/pin tuning: settle window the pin re-applies through as async media
+// expands; fallback for engines without a `scrollend` event.
 const SETTLE_QUIET_MS = 1500;
 const SETTLE_HARD_CAP_MS = 8000;
 const SCROLLEND_FALLBACK_MS = 600;

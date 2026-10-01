@@ -34,6 +34,7 @@ const h = vi.hoisted(() => ({
   insertNotification: vi.fn(),
   setIsCompacting: vi.fn(),
   stopWorkflow: vi.fn(),
+  isLoading: false, // set per-test while a turn streams
   threadId: 'thread-xyz', // mutated per-test to exercise the new-chat case
   pendingInterrupt: null as unknown, // mutated per-test to exercise input gating
 }));
@@ -58,7 +59,7 @@ vi.mock('@/pages/ChatAgent/hooks/useChatMessages', () => ({
   useChatMessages: () => ({
     messages: h.messages, // non-empty → MessageList renders
     liveMessages: { get: () => h.messages, set: () => {}, subscribe: () => () => {} },
-    isLoading: false,
+    isLoading: h.isLoading,
     isLoadingHistory: false,
     messageError: null,
     threadId: h.threadId,
@@ -192,12 +193,104 @@ describe('MarketChatPanel', () => {
   beforeEach(() => {
     h.threadId = 'thread-xyz';
     h.pendingInterrupt = null;
+    h.isLoading = false;
     ml.props = null;
     ml.actions = null;
     ci.props = null;
     localStorage.clear();
   });
   afterEach(() => vi.clearAllMocks());
+
+  it('follows a streaming reply, lets a reader scroll away from it, and stops when the turn ends', () => {
+    h.isLoading = true;
+    const observers: { cb: ResizeObserverCallback; targets: Element[] }[] = [];
+    vi.stubGlobal('ResizeObserver', class {
+      targets: Element[] = [];
+      constructor(cb: ResizeObserverCallback) {
+        observers.push({ cb, targets: this.targets });
+      }
+      observe(el: Element) {
+        this.targets.push(el);
+      }
+      unobserve() {}
+      disconnect() {}
+    });
+    const original = HTMLElement.prototype.scrollTo;
+    const scrollTo = vi.fn();
+    HTMLElement.prototype.scrollTo = scrollTo as HTMLElement['scrollTo'];
+    try {
+      const { rerender } = renderPanel();
+      const transcript = screen.getByTestId('message-list').parentElement!;
+      const container = transcript.parentElement!;
+      const observer = observers.find((o) => o.targets.includes(transcript))!;
+      let top = 0;
+      let height = 0;
+      Object.defineProperties(container, {
+        scrollTop: { get: () => top, configurable: true },
+        scrollHeight: { get: () => height, configurable: true },
+        clientHeight: { get: () => 400, configurable: true },
+      });
+      // A follow moves at once; its scroll event comes with the next frame.
+      scrollTo.mockImplementation(({ top: to }: ScrollToOptions) => {
+        top = to!;
+      });
+      const grow = (to: number) => {
+        height = to;
+        observer.cb([{ contentRect: { height: to } } as ResizeObserverEntry], {} as ResizeObserver);
+      };
+      const nextFrame = () => fireEvent.scroll(container);
+      const userScroll = (to: number) => {
+        top = to;
+        fireEvent.scroll(container);
+      };
+
+      grow(1000);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 600 });
+      nextFrame();
+
+      // A chart lands between a follow and its scroll event.
+      grow(1100);
+      height = 1400;
+      nextFrame();
+      grow(1400);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 });
+      nextFrame();
+
+      // A notch up, still inside the band a downward scroll rejoins at.
+      scrollTo.mockClear();
+      userScroll(990);
+      grow(1500);
+      expect(scrollTo).not.toHaveBeenCalled();
+
+      userScroll(1050);
+      grow(1600);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 1200 });
+
+      // A notch up before that follow's scroll event arrives.
+      scrollTo.mockClear();
+      userScroll(1190);
+      grow(1700);
+      expect(scrollTo).not.toHaveBeenCalled();
+
+      // Back at the end, the turn settles with one more line, followed in
+      // the commit that ends it.
+      userScroll(1300);
+      height = 1750;
+      h.isLoading = false;
+      rerender({ quickQueries: [] });
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 1350 });
+      nextFrame();
+
+      // A row opened at the end of the settled turn stays where it opened.
+      scrollTo.mockClear();
+      grow(1750);
+      grow(2000);
+      expect(scrollTo).not.toHaveBeenCalled();
+    } finally {
+      HTMLElement.prototype.scrollTo = original;
+      vi.unstubAllGlobals();
+    }
+  });
 
   it('reads the PTC folder from the workspace detail, which a turn re-reads after a settle', async () => {
     api.getWorkspace.mockResolvedValueOnce({

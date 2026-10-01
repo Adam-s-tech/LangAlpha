@@ -18,6 +18,7 @@ import { WorkspaceProvider } from '../../ChatAgent/contexts/WorkspaceContext';
 import { useChatMessages } from '../../ChatAgent/hooks/useChatMessages';
 import { DispatchStatusProvider } from '../../ChatAgent/hooks/usePTCDispatchStatus';
 import { useLiveMessages } from '../../ChatAgent/session/stream/liveMessages';
+import { useStreamFollow } from '../../ChatAgent/components/chatView/streamFollow';
 import { useActiveThreadPublisher } from '@/lib/threadLifecycle/useActiveThreadPublisher';
 import { flashWorkspaceQuery } from '@/hooks/useFlashWorkspace';
 import { appendPathSuffix, getPreviewUrl, summarizeThread, offloadThread } from '../../ChatAgent/utils/api';
@@ -265,26 +266,14 @@ interface ChatBodyProps extends MarketChatPanelProps {
 
 type LiveTranscriptProps = Omit<React.ComponentProps<typeof MessageList>, 'messages'> & {
   store: ReturnType<typeof useChatMessages>['liveMessages'];
-  containerRef: React.RefObject<HTMLDivElement | null>;
-  isNearBottomRef: React.RefObject<boolean>;
 };
 
 /**
  * The transcript, rendered from every streamed chunk on its own, so a chunk
- * renders it and not the panel. It carries the panel's follow: on new
- * messages or streamed text, a reader parked near the bottom is scrolled down.
+ * renders it and not the panel.
  */
-function LiveTranscript({ store, containerRef, isNearBottomRef, ...listProps }: LiveTranscriptProps): React.ReactElement {
+function LiveTranscript({ store, ...listProps }: LiveTranscriptProps): React.ReactElement {
   const messages = useLiveMessages(store);
-  useEffect(() => {
-    if (!isNearBottomRef.current) return;
-    const el = containerRef.current;
-    if (!el || messages.length === 0) return;
-    const id = setTimeout(() => {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-    }, 80);
-    return () => clearTimeout(id);
-  }, [messages, containerRef, isNearBottomRef]);
   return <MessageList messages={messages as never[]} {...listProps} />;
 }
 
@@ -644,24 +633,9 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     }
   }, [threadId, setIsCompacting, insertNotification, t]);
 
-  // Track whether the user is currently parked near the bottom of the
-  // message list. Auto-scroll only fires while this is true, so a user
-  // who has scrolled up to read earlier content during an active stream
-  // isn't yanked back down on every SSE chunk.
-  const isNearBottomRef = useRef(true);
-  useEffect(() => {
-    const el = messagesContainerRef.current;
-    if (!el) return;
-    const onScroll = () => {
-      const threshold = 120;
-      isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-    };
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
-  }, []);
-
-  // Auto-scroll to bottom on new messages and streamed text, only while the
-  // user is near the bottom (see isNearBottomRef above): LiveTranscript.
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const showTranscript = messages.length > 0 || isLoading || isLoadingHistory;
+  useStreamFollow(messagesContainerRef, transcriptRef, showTranscript, isLoading || isLoadingHistory);
 
   // Subagent navigation — chips deep-link to ChatAgent for full subagent view.
   const handleOpenSubagentTask = useCallback((info: SubagentInfo) => {
@@ -866,7 +840,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
         ref={messagesContainerRef}
         style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}
       >
-        {messages.length === 0 && !isLoading && !isLoadingHistory ? (
+        {!showTranscript ? (
           <div className="market-chat-empty-state" style={{ height: '100%' }}>
             <LogoLoading size={60} color="var(--color-accent-overlay)" />
             <p className="market-chat-empty-text" style={{ marginTop: 16 }}>
@@ -879,15 +853,13 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
             )}
           </div>
         ) : (
-          <div style={{ padding: '16px 24px', maxWidth: '100%' }}>
+          <div ref={transcriptRef} style={{ padding: '16px 24px', maxWidth: '100%' }}>
             <ChartSurfaceContext value={chartSurface}>
               <SubagentTelemetryContext value={resolveSubagentTelemetry}>
                 <MessageActionsProvider actions={messageActions}>
                   <DispatchStatusProvider>
                     <LiveTranscript
                       store={liveMessages}
-                      containerRef={messagesContainerRef}
-                      isNearBottomRef={isNearBottomRef}
                       isLoading={isLoading}
                       isLoadingHistory={isLoadingHistory}
                       feedbackByTurn={feedbackByTurn}

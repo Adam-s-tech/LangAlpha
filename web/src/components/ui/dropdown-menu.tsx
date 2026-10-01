@@ -2,7 +2,7 @@ import * as React from "react"
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 
 import { cn } from "@/lib/utils"
-import { lastInputWasPointer } from "@/lib/inputModality"
+import { closeAutoFocus } from "@/lib/inputModality"
 
 const DropdownMenu = DropdownMenuPrimitive.Root
 
@@ -25,16 +25,7 @@ function DropdownMenuContent({
       <DropdownMenuPrimitive.Content
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
-        onCloseAutoFocus={(event) => {
-          onCloseAutoFocus?.(event)
-          // Radix hands focus back to the trigger on close so a keyboard user
-          // keeps their place. Chromium carries :focus-visible across that
-          // programmatic move, so a menu opened and dismissed with the mouse
-          // leaves the trigger ringed until the next click. Skip the restore
-          // when no key was pressed: focus falls to <body>, which is where
-          // clicking anywhere else would have put it anyway.
-          if (!event.defaultPrevented && lastInputWasPointer()) event.preventDefault()
-        }}
+        onCloseAutoFocus={closeAutoFocus(onCloseAutoFocus)}
         className={cn(
           // Radix measures the space left to the collision boundary and publishes
           // it as --radix-…-available-height; capping there is what keeps a long

@@ -3,7 +3,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { lastInputWasPointer } from "@/lib/inputModality"
+import { closeAutoFocus } from "@/lib/inputModality"
 import { useIsMobile } from "@/hooks/useIsMobile"
 
 // A sheet whose gesture fails to load still opens and closes, it just does not
@@ -59,20 +59,6 @@ function DialogContent({
   const isMobile = useIsMobile();
   const swipeEnabled = isMobile && variant === 'default';
 
-  // Radix hands focus back to whatever opened the dialog so a keyboard user
-  // keeps their place. Chromium carries :focus-visible across that programmatic
-  // move, so a dialog opened and dismissed with the mouse leaves that control
-  // ringed until the next click. Skip the restore when no key was pressed:
-  // focus falls to <body>, which is where clicking anywhere else would have put
-  // it anyway. Held in one place because this component renders two Contents.
-  const closeAutoFocus = React.useCallback(
-    (event: Event) => {
-      onCloseAutoFocus?.(event);
-      if (!event.defaultPrevented && lastInputWasPointer()) event.preventDefault();
-    },
-    [onCloseAutoFocus],
-  );
-
   // Hidden close button ref — clicking it triggers Radix's onOpenChange(false)
   const closeRef = React.useRef<HTMLButtonElement>(null);
   const dismiss = React.useCallback(() => closeRef.current?.click(), []);
@@ -100,7 +86,7 @@ function DialogContent({
           aria-describedby={undefined}
           ref={containerRefCb}
           className={cn(DIALOG_MOBILE_SHEET_CLASSES, className)}
-          onCloseAutoFocus={closeAutoFocus}
+          onCloseAutoFocus={closeAutoFocus(onCloseAutoFocus)}
           {...props}
         >
           {/* Drag handle */}
@@ -149,7 +135,7 @@ function DialogContent({
           DIALOG_CENTERED_CLASSES,
           className
         )}
-        onCloseAutoFocus={closeAutoFocus}
+        onCloseAutoFocus={closeAutoFocus(onCloseAutoFocus)}
         {...props}>
         {children}
         <DialogPrimitive.Close

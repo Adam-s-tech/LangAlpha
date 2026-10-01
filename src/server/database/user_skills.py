@@ -25,6 +25,7 @@ un-owned tells a later plugin update to skip the row rather than overwrite
 the customization.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
@@ -32,7 +33,9 @@ from typing import Any
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from src.server.database import pool
 from src.server.database.pool import get_db_connection
+from src.server.database.session_lock import await_settled
 from src.server.database.user_lock import lock_user_writes
 
 logger = logging.getLogger(__name__)
@@ -103,16 +106,28 @@ class SkillSyncLockBusy(Exception):
 
 
 @asynccontextmanager
+async def _own_session():
+    """A connection outside the pool, closed on exit, which releases every
+    lock taken on it however the holder ends."""
+    conn = await pool.open_session_connection()
+    try:
+        yield conn
+    finally:
+        await await_settled(asyncio.ensure_future(conn.close()))
+
+
+@asynccontextmanager
 async def workspace_skill_sync_lock(workspace_id: str):
     """Session-level advisory lock held across one full reconcile pass.
 
-    Pins one pooled connection for the duration; released in ``finally`` and
-    by Postgres automatically if the connection dies mid-pass. Acquisition is
-    try-only: a pass is periodic, so waiting behind a stuck holder would park
-    a second pooled connection for as long as that holder lives, and a queue
-    of waiters is how one hung sandbox exhausts the pool.
+    Held on a session of its own, not a pooled connection: the pass spans
+    sandbox calls while it reads and writes through the pool, so as many
+    passes as the pool has slots would each keep one and wait on another.
+    Closing the session is the release, so a cancelled pass cannot leave the
+    lock behind. Acquisition is try-only: a pass is periodic, and a queue of
+    waiters behind one hung sandbox would hold a connection each.
     """
-    async with get_db_connection() as conn:
+    async with _own_session() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 "SELECT pg_try_advisory_lock(hashtext(%s), hashtext(%s::text))",
@@ -121,14 +136,8 @@ async def workspace_skill_sync_lock(workspace_id: str):
             row = await cur.fetchone()
         if not (row and row[0]):
             raise SkillSyncLockBusy(workspace_id)
-        try:
-            yield
-        finally:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "SELECT pg_advisory_unlock(hashtext(%s), hashtext(%s::text))",
-                    (_SKILL_SYNC_NS, workspace_id),
-                )
+        yield
+
 
 # Hard cap on skills per user. Defined here (not in
 # services/user_skills/limits.py, which re-exports them) so the database layer

@@ -10,7 +10,7 @@ import './PdfViewer.css';
 import pdfjsWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
-// Runtime data the build emits beside the worker (vite.config.js `pdfjsData`).
+// Runtime data the build emits beside the worker (scripts/vite-plugins/pdfjsData.ts).
 // With all of these set pdf.js lets the worker fetch for itself, which it also
 // requires before color-managing ICC content. Module-level so react-pdf sees
 // one options object and never reloads over it.

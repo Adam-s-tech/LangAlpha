@@ -160,7 +160,7 @@ try {
   version = JSON.parse(readFileSync(join(outDir, 'version.json'), 'utf8'))
 } catch {
   console.error(`\n✗ ${outDir}/version.json missing or unparseable`)
-  console.error('  emitVersionManifest (vite.config.js) did not run. The version poll')
+  console.error('  versionManifest (scripts/vite-plugins) did not run. The version poll')
   console.error('  fails closed, so stale-build detection is dead with no signal.\n')
   process.exit(1)
 }
@@ -177,7 +177,7 @@ if (version.build !== entryFile) {
 // No lazy import may list the entry among the chunks to preload: it is already
 // running, Firefox 146 fails a modulepreload for it, and index.html reads that
 // failure as a dead build, so every route chunk that imports shared code raised
-// the "new version" toast. skipEntryPreload (vite.config.js) filters it through
+// the "new version" toast. skipEntryPreload (scripts/vite-plugins) filters it through
 // `resolveDependencies`, which Vite marks experimental, so an upgrade could
 // quietly turn the filter into a no-op; this is where that shows.
 const entryAsDep = ['"', "'", '`'].map((q) => `${q}assets/${entryFile}${q}`)
@@ -191,7 +191,7 @@ if (preloadingEntry.length) {
   console.error(`  e.g. ${preloadingEntry.slice(0, 3).join(', ')}`)
   console.error('  Firefox 146 fails that modulepreload and the stale-build listener in')
   console.error('  index.html turns it into a false "new version" toast. Check that')
-  console.error('  skipEntryPreload in vite.config.js still runs.\n')
+  console.error('  skipEntryPreload (scripts/vite-plugins) still runs.\n')
   process.exit(1)
 }
 

@@ -22,6 +22,7 @@
     "playwright.config.js",
     "eslint.config.js",
     "scripts/*.ts",
+    "scripts/vite-plugins/*.ts",
     "scripts/check-critical-path.mjs",
     "e2e/global-setup.js"
   ]

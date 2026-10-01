@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from '@/lib/framer';
 import { useBackdropDismiss } from '@/hooks/useDialogA11y';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
+import { createDateFormatter } from '@/lib/format';
 import { localDateStr } from '@/lib/utils';
 import { getEarningsCalendar } from '../utils/api';
 
@@ -57,9 +58,14 @@ function LogoFallback({ symbol }: LogoFallbackProps) {
   );
 }
 
+const shortDay = createDateFormatter({ month: 'short', day: 'numeric' });
+const shortWeekday = createDateFormatter({ weekday: 'short' });
+const shortMonth = createDateFormatter({ month: 'short' });
+
 function formatDate(dateStr: string | undefined, locale: string): string {
   if (!dateStr) return '';
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString(locale, { month: 'short', day: 'numeric' });
+  const d = new Date(dateStr + 'T00:00:00');
+  return Number.isNaN(d.getTime()) ? '' : shortDay(d, locale);
 }
 
 function EarningsItem({ item, index: _index, isPast }: EarningsItemProps) {
@@ -122,10 +128,8 @@ function SectionLabel({ label }: SectionLabelProps) {
 function formatDateTab(dateStr: string | undefined, locale: string): DateTabInfo {
   if (!dateStr) return { weekday: '', label: '' };
   const d = new Date(dateStr + 'T00:00:00');
-  const weekday = d.toLocaleDateString(locale, { weekday: 'short' });
-  const month = d.toLocaleDateString(locale, { month: 'short' });
-  const day = d.getDate();
-  return { weekday, label: `${month} ${day}` };
+  if (Number.isNaN(d.getTime())) return { weekday: '', label: '' };
+  return { weekday: shortWeekday(d, locale), label: `${shortMonth(d, locale)} ${d.getDate()}` };
 }
 
 function EarningsModal({ earnings, onClose }: EarningsModalProps) {

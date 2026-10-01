@@ -135,6 +135,22 @@ describe('WorkspaceCard, machine line', () => {
     expect(within(cards[1]).queryByText('live-beta-1d6d')).toBeNull();
   });
 
+  it('reads an unreadable update time as recent instead of failing the card', async () => {
+    const listed = mockUseWorkspaces.getMockImplementation();
+    mockUseWorkspaces.mockImplementation(() => ({
+      data: { workspaces: [{ ...WORKSPACES[0], updated_at: 'not a date' }, WORKSPACES[1]], total: 2 },
+      isLoading: false,
+      error: null,
+    }));
+    try {
+      renderWithProviders(<WorkspaceGallery onWorkspaceSelect={vi.fn()} />);
+      const cards = await screen.findAllByTestId('workspace-card');
+      expect(within(cards[0]).getByText('Updated recently')).toBeInTheDocument();
+    } finally {
+      mockUseWorkspaces.mockImplementation(listed!);
+    }
+  });
+
   it('shows the machine\'s state as words, on every card that shares it', async () => {
     renderWithProviders(<WorkspaceGallery onWorkspaceSelect={vi.fn()} />);
     const cards = await screen.findAllByTestId('workspace-card');

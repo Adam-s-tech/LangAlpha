@@ -8,7 +8,7 @@ import { getTodayInsights, getInsightDetail, generatePersonalizedInsight } from 
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
-import { relativeTime } from '@/lib/format';
+import { createDateFormatter, relativeTime } from '@/lib/format';
 import { RowAttachButton } from './RowAttachButton';
 
 interface InsightTopic {
@@ -57,11 +57,13 @@ const TYPE_CONFIG: Record<string, TypeConfigEntry> = {
   personalized: { labelKey: 'dashboard.brief.typeLabel.personalized', accent: '#f59e0b' },
 };
 
+const clockTime = createDateFormatter({ hour: 'numeric', minute: '2-digit' });
+
 function formatTime(timestamp: string | undefined, locale: string): string {
   if (!timestamp) return '';
   try {
     const d = new Date(timestamp);
-    return d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
+    return clockTime(d, locale);
   } catch {
     return '';
   }

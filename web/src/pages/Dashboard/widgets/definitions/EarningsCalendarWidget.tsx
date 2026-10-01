@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
+import { createDateFormatter } from '@/lib/format';
 import { localDateStr } from '@/lib/utils';
 import { CalendarDays } from 'lucide-react';
 import { getEarningsCalendar } from '../../utils/api';
@@ -54,14 +55,16 @@ function bucketFor(dateStr: string, now: number): BucketKey {
   return 'later';
 }
 
+const shortWeekday = createDateFormatter({ weekday: 'short' });
+const shortDay = createDateFormatter({ month: 'short', day: 'numeric' });
+
 function formatDateRight(dateStr: string, bucket: BucketKey, locale: string): string {
   const d = toDate(dateStr);
   if (bucket === 'today') return 'Today';
   if (bucket === 'tomorrow') return 'Tomorrow';
-  if (bucket === 'week') {
-    return d.toLocaleDateString(locale, { weekday: 'short' });
-  }
-  return d.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
+  if (Number.isNaN(d.getTime())) return '';
+  if (bucket === 'week') return shortWeekday(d, locale);
+  return shortDay(d, locale);
 }
 
 function serializeEarningsToMarkdown(items: EarningsEntry[]): string {

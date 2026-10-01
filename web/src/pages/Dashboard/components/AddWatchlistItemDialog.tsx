@@ -8,6 +8,7 @@ import { getStockPrices } from '../utils/api';
 import type { StockSearchHit } from '@/lib/marketUtils';
 import { useSymbolSearch } from '@/hooks/useSymbolSearch';
 import { useLocale } from '@/hooks/useLocale';
+import { grouped2 } from '@/lib/format';
 
 interface WatchlistItemData {
   symbol: string;
@@ -247,7 +248,7 @@ function AddWatchlistItemDialog({
                         <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>...</div>
                       ) : currentPrice !== null ? (
                         <div className="text-lg font-bold tabular-nums" style={{ color: 'var(--color-text-primary)' }}>
-                          ${currentPrice.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ${grouped2(currentPrice, locale)}
                         </div>
                       ) : (
                         <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>{t('dashboard.addWatchlistDialog.priceNA')}</div>

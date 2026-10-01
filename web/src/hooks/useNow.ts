@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 
+import { onPageReturn } from '@/lib/pageVisibility';
+
 type Listener = (now: number) => void;
 
 interface Clock {
   listeners: Set<Listener>;
   timer?: ReturnType<typeof setTimeout>;
+  offReturn?: () => void;
 }
 
 const clocks = new Map<number, Clock>();
@@ -23,19 +26,16 @@ function schedule(interval: number, clock: Clock): void {
   }, interval - (Date.now() % interval));
 }
 
-// A hidden tab's timers are throttled to a minute or more, so a tab coming back
-// catches up at once rather than showing stale times until its next tick.
-function onVisibilityChange(): void {
-  if (document.visibilityState === 'visible') clocks.forEach(publish);
-}
-
 function subscribe(interval: number, listener: Listener): () => void {
   let clock = clocks.get(interval);
   if (!clock) {
     clock = { listeners: new Set() };
     clocks.set(interval, clock);
     schedule(interval, clock);
-    if (clocks.size === 1) document.addEventListener('visibilitychange', onVisibilityChange);
+    // A hidden tab's timers are throttled to a minute or more, so a tab coming
+    // back catches up at once rather than showing stale times until its next tick.
+    const caught = clock;
+    clock.offReturn = onPageReturn(() => publish(caught));
   }
   const joined = clock;
   joined.listeners.add(listener);
@@ -43,8 +43,8 @@ function subscribe(interval: number, listener: Listener): () => void {
     joined.listeners.delete(listener);
     if (joined.listeners.size) return;
     clearTimeout(joined.timer);
+    joined.offReturn?.();
     clocks.delete(interval);
-    if (!clocks.size) document.removeEventListener('visibilitychange', onVisibilityChange);
   };
 }
 

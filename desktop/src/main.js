@@ -784,12 +784,12 @@ function registerIpc() {
     // the mismatched resize band this exists to prevent.
     const reporting = BrowserWindow.fromWebContents(event.sender)
     if (reporting && !reporting.isDestroyed()) reporting.setBackgroundColor(theme.backgroundFor(value))
-    // Unchanged is the common case, not the rare one: this is sendSync, so the
-    // renderer blocks on it, and the effect that calls it runs on ordinary
-    // renders rather than only on a real theme change. Writing anyway put a
-    // synchronous mkdir and a synchronous file write on the main event loop of
-    // every one of them, which is the whole app — menus, both windows — waiting
-    // on a disk for a value that already had that value.
+    // Unchanged is the common case, not the rare one: every page load reports
+    // the theme it resolved, nearly always the stored one, and this is
+    // sendSync, so the renderer blocks on it. Writing anyway put a synchronous
+    // mkdir and a synchronous file write on the main event loop of every load,
+    // which is the whole app — menus, both windows — waiting on a disk for a
+    // value that already had that value.
     if (store.get('theme') !== value) store.set('theme', value)
     // Acknowledged only so a renderer can tell an old shell from a new one.
     event.returnValue = true

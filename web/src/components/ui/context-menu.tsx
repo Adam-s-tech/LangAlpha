@@ -2,6 +2,7 @@ import * as React from "react"
 import * as ContextMenuPrimitive from "@radix-ui/react-context-menu"
 
 import { cn } from "@/lib/utils"
+import { DESTRUCTIVE_ITEM } from "./dropdown-menu"
 
 const ContextMenu = ContextMenuPrimitive.Root
 
@@ -27,17 +28,17 @@ function ContextMenuContent({
   )
 }
 
-const itemVariants: Record<string, string> = {
+const itemVariants = {
   default: "data-highlighted:bg-accent/15",
-  destructive: "text-destructive data-highlighted:bg-destructive/10 data-highlighted:text-destructive",
-}
+  destructive: DESTRUCTIVE_ITEM,
+} as const
 
 function ContextMenuItem({
   className,
   variant = "default",
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Item> & {
-  variant?: "default" | "destructive"
+  variant?: keyof typeof itemVariants
 }) {
   return (
     <ContextMenuPrimitive.Item

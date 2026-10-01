@@ -56,18 +56,22 @@ const SETTING_ROW = "justify-between text-[0.8125rem]"
 // plain rows around it.
 const ITEM_BOX = "relative flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2.5 py-1.5 text-sm transition-colors data-disabled:pointer-events-none data-disabled:opacity-50"
 
-const itemVariants: Record<string, string> = {
+export const DESTRUCTIVE_ITEM = "text-destructive data-highlighted:bg-destructive/10 data-highlighted:text-destructive"
+
+const itemVariants = {
   default: ITEM_HIGHLIGHT,
-  destructive: "text-destructive data-highlighted:bg-destructive/10 data-highlighted:text-destructive",
+  destructive: DESTRUCTIVE_ITEM,
   setting: `${SETTING_ROW} ${ITEM_HIGHLIGHT}`,
-}
+} as const
+
+type ItemVariant = keyof typeof itemVariants
 
 function DropdownMenuItem({
   className,
   variant = "default",
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Item> & {
-  variant?: "default" | "destructive" | "setting"
+  variant?: ItemVariant
 }) {
   return (
     <DropdownMenuPrimitive.Item

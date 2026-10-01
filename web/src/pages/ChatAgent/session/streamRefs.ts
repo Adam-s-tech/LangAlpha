@@ -6,7 +6,7 @@
 import type { MessageRecord } from '../hooks/utils/types';
 
 /** Callback to update a subagent card by task ID. */
-type UpdateSubagentCard = (taskId: string, patch: Record<string, unknown>) => void;
+type UpdateSubagentCard = (taskId: string, patch: Record<string, unknown>, options?: { nextFrame?: boolean }) => void;
 
 /** Per-task ref state created by getOrCreateTaskRefs. */
 interface TaskRefs {

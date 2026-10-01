@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { type SubagentTokenUsage, ZERO_USAGE } from '../utils/tokenUsage';
 import { isTerminalStatus } from '../session/subagents/subagentStatus';
+import { createFrameQueue } from '../session/stream/frameQueue';
 
 // --- Card-level types ---
 
@@ -63,13 +64,23 @@ type CardsMap = Record<string, Card>;
 export interface UseCardStateResult {
   cards: CardsMap;
   updateTodoListCard: (todoData: TodoData) => void;
-  updateSubagentCard: (agentId: string, subagentDataUpdate: SubagentData) => void;
+  updateSubagentCard: (agentId: string, subagentDataUpdate: SubagentData, options?: { nextFrame?: boolean }) => void;
   finalizePendingTodos: () => void;
   clearSubagentCards: () => void;
 }
 
 export function useCardState(initialCards: CardsMap = {}): UseCardStateResult {
-  const [cards, setCards] = useState<CardsMap>(initialCards);
+  const [cards, setCardsState] = useState<CardsMap>(initialCards);
+  // A subagent's streamed chunks reach its card on the next frame, like the
+  // main transcript's (see createFrameQueue): every chunk was a render of the
+  // whole chat view, and parallel subagents stream at once. Every other write
+  // applies them first, so it can neither overtake a chunk nor be overtaken.
+  const [chunkQueue] = useState(() => createFrameQueue<CardsMap>(setCardsState));
+  useEffect(() => () => chunkQueue.cancel(), [chunkQueue]);
+  const setCards = (update: (prev: CardsMap) => CardsMap) => {
+    const queued = chunkQueue.take();
+    setCardsState(queued ? (prev) => update(queued(prev)) : update);
+  };
 
   const updateTodoListCard = (todoData: TodoData) => {
     const cardId = 'todo-list-card';
@@ -95,7 +106,7 @@ export function useCardState(initialCards: CardsMap = {}): UseCardStateResult {
     });
   };
 
-  const updateSubagentCard = (agentId: string, subagentDataUpdate: SubagentData) => {
+  const updateSubagentCard = (agentId: string, subagentDataUpdate: SubagentData, { nextFrame = false } = {}) => {
     const cardId = `subagent-${agentId}`;
 
     // An explicit terminal status write (a per-task chan_close) is authoritative:
@@ -104,7 +115,7 @@ export function useCardState(initialCards: CardsMap = {}): UseCardStateResult {
     // is left free to be re-activated by a stale-liveness signal.
     const isTerminalWrite = isTerminalStatus(subagentDataUpdate.status);
 
-    setCards((prev) => {
+    const apply = (prev: CardsMap): CardsMap => {
       if (prev[cardId]) {
         const existingCard = prev[cardId];
         const existingSubagentData = existingCard.subagentData || {};
@@ -247,7 +258,9 @@ export function useCardState(initialCards: CardsMap = {}): UseCardStateResult {
           },
         };
       }
-    });
+    };
+    if (nextFrame) chunkQueue.queue(apply);
+    else setCards(apply);
   };
 
   const finalizePendingTodos = () => {

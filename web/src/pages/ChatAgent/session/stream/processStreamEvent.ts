@@ -31,7 +31,7 @@ import {
   handleSubagentToolCalls, handleSubagentToolCallResult, handleTaskSteeringAccepted,
   handleWorkflowLifecycle,
 } from '../subagents/liveEventHandlers';
-import { getOrCreateTaskRefs } from '../streamRefs';
+import { getOrCreateTaskRefs, type UpdateSubagentCard } from '../streamRefs';
 import { handleMarketWatchUpdate, type MarketWatchState } from '../marketWatchEvents';
 import type {
   MessageRecord, SSEEvent, HistoryInterruptInfo, StreamProcessorRefs, ModelOptions, ModelStatus,
@@ -495,6 +495,12 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
         // so the card shows a unified conversation across resume boundaries.
         const taskRefs = getOrCreateTaskRefs(refs, taskId);
         const subagentAssistantMessageId = `subagent-${taskId}-assistant-${taskRefs.runIndex}`;
+        // A chunk reaches the card on the next frame, as the main transcript's
+        // do; a reconnect's backlog replays in one task and applies at once.
+        const { updateSubagentCard } = rt;
+        const chunkCardWriter: UpdateSubagentCard = refs.isReconnect
+          ? updateSubagentCard
+          : (id, patch) => updateSubagentCard(id, patch, { nextFrame: true });
 
         if (eventType === 'message_chunk') {
           const contentType = (event.content_type || 'text') as string;
@@ -506,7 +512,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
             finishReason: event.finish_reason,
             elapsedMs: typeof event.elapsed_ms === 'number' ? event.elapsed_ms : undefined,
             refs,
-            updateSubagentCard: rt.updateSubagentCard,
+            updateSubagentCard: chunkCardWriter,
           });
         } else if (eventType === 'tool_call_chunks') {
           handleSubagentToolCallChunks({
@@ -514,7 +520,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
             assistantMessageId: subagentAssistantMessageId,
             chunks: (event.tool_call_chunks || []) as unknown as Record<string, unknown>[],
             refs,
-            updateSubagentCard: rt.updateSubagentCard,
+            updateSubagentCard: chunkCardWriter,
           });
         } else if (eventType === 'tool_calls') {
           handleSubagentToolCalls({

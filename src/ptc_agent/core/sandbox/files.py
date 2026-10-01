@@ -50,9 +50,9 @@ _INLINE_TEXT_MARKER = "__LANGALPHA_TEXT_PAYLOAD__"
 # idle sandbox by deleting it and rebuilding from the last backup — losing
 # everything written since. Only an unrecoverable state counts as absence.
 #
-# ERROR belongs here for that same reason: ``reconnect`` answers an error-state
-# sandbox with a recovery ``start`` rather than giving up on it, so calling it
-# absence here would destroy a sandbox that path would have revived.
+# ERROR belongs here for that same reason: ``reconnect`` asks the runtime to
+# recover an error-state sandbox, and only the provider can say it will not come
+# back, so calling it absence here would abandon one that path would revive.
 _RECOVERABLE_STATES = frozenset(
     {
         RuntimeState.RUNNING,

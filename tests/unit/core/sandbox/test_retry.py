@@ -15,6 +15,7 @@ import pytest
 
 from ptc_agent.core.sandbox.ptc_sandbox import SandboxTransientError
 from ptc_agent.core.sandbox.retry import RetryPolicy, async_retry_with_backoff
+from ptc_agent.core.sandbox.runtime import SandboxGoneError
 
 
 class TestAsyncRetryWithBackoff:
@@ -49,6 +50,24 @@ class TestAsyncRetryWithBackoff:
         )
         assert result == "ok"
         assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_gone_is_raised_even_when_its_reason_reads_transient(self):
+        call_count = 0
+
+        async def gone():
+            nonlocal call_count
+            call_count += 1
+            raise SandboxGoneError("sb-1", "container start timed out")
+
+        with pytest.raises(SandboxGoneError):
+            await async_retry_with_backoff(
+                gone,
+                retry_policy=RetryPolicy.SAFE,
+                is_transient=lambda e: "timed out" in str(e),
+                initial_delay_s=0.01,
+            )
+        assert call_count == 1
 
     @pytest.mark.asyncio
     async def test_unsafe_policy_no_retry(self):

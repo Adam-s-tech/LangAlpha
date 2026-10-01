@@ -21,6 +21,7 @@ from ptc_agent.core.sandbox.runtime import (
     CodeRunResult,
     ExecResult,
     RuntimeState,
+    SandboxGoneError,
 )
 
 
@@ -149,6 +150,47 @@ class TestDaytonaRuntime:
         mock_sdk_sandbox.state = "restoring"
         state = await runtime.get_state()
         assert state == RuntimeState.STARTING
+
+    @pytest.mark.asyncio
+    async def test_recoverable_error_recovers(self, runtime, mock_sdk_sandbox):
+        mock_sdk_sandbox.state = "error"
+        mock_sdk_sandbox.recoverable = True
+        await runtime.recover_from_error(timeout=90)
+        mock_sdk_sandbox.recover.assert_awaited_once_with(timeout=90)
+        mock_sdk_sandbox.start.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unrecoverable_error_is_gone(self, runtime, mock_sdk_sandbox):
+        """Daytona refuses start and recover alike, so a restart fails every open."""
+        mock_sdk_sandbox.state = "error"
+        mock_sdk_sandbox.recoverable = False
+        mock_sdk_sandbox.error_reason = "error starting container: timed out"
+        with pytest.raises(SandboxGoneError) as gone:
+            await runtime.recover_from_error()
+        assert "starting" not in str(gone.value)
+        mock_sdk_sandbox.recover.assert_not_awaited()
+        mock_sdk_sandbox.start.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        ("state", "recoverable"),
+        [("archiving", False), ("resizing", False), ("error", None)],
+    )
+    @pytest.mark.asyncio
+    async def test_no_verdict_restarts(self, runtime, mock_sdk_sandbox, state, recoverable):
+        """Unlisted states read as error and a healthy sandbox reads not recoverable."""
+        mock_sdk_sandbox.state = state
+        mock_sdk_sandbox.recoverable = recoverable
+        await runtime.recover_from_error(timeout=90)
+        mock_sdk_sandbox.start.assert_awaited_once_with(timeout=90)
+        mock_sdk_sandbox.recover.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_retry_after_a_recovery_that_landed_is_a_no_op(self, runtime, mock_sdk_sandbox):
+        mock_sdk_sandbox.state = "started"
+        mock_sdk_sandbox.recoverable = False
+        await runtime.recover_from_error()
+        mock_sdk_sandbox.start.assert_not_awaited()
+        mock_sdk_sandbox.recover.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_archive_delegates(self, runtime, mock_sdk_sandbox):

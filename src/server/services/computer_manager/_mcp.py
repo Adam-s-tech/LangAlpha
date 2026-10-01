@@ -601,19 +601,21 @@ class McpSecretsMixin:
         sandbox: Any,
         *,
         source: str,
-    ) -> None:
+    ) -> bool:
         """Reconcile after asset sync and restore so skills see the final disk state.
 
-        Never raises; anonymous sessions have no skill rows. The pass writes
-        into the folder read under the folder hold, as the asset sync does, and
-        not at all while it is staged: the pass's first script creates its skill
-        directory, and a staging folder that exists is what the next settle
-        lands in place of the content still at the old name."""
+        Never raises; anonymous sessions have no skill rows. Says whether a
+        pass ran to the end and linked the folder, for a caller that retries
+        one that did not. The pass writes into the folder read under the
+        folder hold, as the asset sync does, and not at all while it is
+        staged: the pass's first script creates its skill directory, and a
+        staging folder that exists is what the next settle lands in place of
+        the content still at the old name."""
         if not user_id or sandbox is None:
-            return
+            return True
         try:
             async with self._held_workspace_folder(workspace_id) as dir_name:
-                await reconcile_workspace_skills(
+                stats = await reconcile_workspace_skills(
                     sandbox,
                     user_id=user_id,
                     workspace_id=workspace_id,
@@ -623,10 +625,12 @@ class McpSecretsMixin:
                     # every sibling.
                     project=ProjectContext(workspace_id, dir_name) if dir_name else None,
                 )
+            return stats is not None and not stats.link_failed
         except WorkspaceFolderMoving:
             logger.info(f"[skill_sync] {source} pass for {workspace_id} waits for its folder to land")
         except Exception as e:
             logger.warning(f"[skill_sync] {source} pass for {workspace_id} skipped: {e}")
+        return False
 
     # Strong refs prevent task GC; never consult this set as state.
     _skill_reconcile_tasks: set[asyncio.Task] = set()

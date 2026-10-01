@@ -114,6 +114,8 @@ class ReconcileStats:
     #: Links into the computer's shared tier created/repointed and removed.
     linked: int = 0
     unlinked: int = 0
+    #: The link step raised, so the folder may still lack its shared skills.
+    link_failed: bool = False
 
     @property
     def changed(self) -> bool:
@@ -372,6 +374,7 @@ async def _link_shared(ctx: _Pass) -> None:
         )
     except Exception:
         ctx.stats.failures += 1
+        ctx.stats.link_failed = True
         logger.exception(
             "[skill_sync] shared link pass failed (ws=%s)", ctx.workspace_id
         )

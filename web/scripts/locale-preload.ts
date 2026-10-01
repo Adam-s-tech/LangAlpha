@@ -29,6 +29,13 @@ export function catalogLocales(dir: string): string[] {
     .sort();
 }
 
+/**
+ * How the inline script spells a locale's chunk, one capture group each for the
+ * locale and the file. scripts/check-critical-path.mjs reads the catalogs back
+ * out of index.html with it.
+ */
+export const CATALOG_URL = /"([A-Za-z]{2,3}-[A-Za-z0-9]+)":"[^"]*\/assets\/([^"]+\.js)"/g;
+
 // Stands in for the JSON map while the script is minified, so the map keeps
 // the double-quoted shape CATALOG_URL reads.
 const URLS = '__LOCALE_URLS__';

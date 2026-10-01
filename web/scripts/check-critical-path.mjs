@@ -17,6 +17,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
+import { CATALOG_URL } from './locale-preload.ts'
 
 // `rolldown-runtime` is the bundler's shared module runtime (under 1 kB gz).
 // Rolldown emits it whenever the build has more than one chunk, and no config
@@ -28,67 +29,13 @@ import { join } from 'node:path'
 // An eager framer-motion or dnd-kit import puts them back here.
 const EXPECTED = ['index', 'rolldown-runtime', 'vendor-react']
 
-// Measured against platform mode, which is what ships (oss builds land ~60 kB
-// lower). Headroom is deliberately thin — routine growth should be visible here,
-// not quietly absorbed.
-//
-// Raised 450 -> 460 for per-model tuning: the composer resolves the selected
-// model's profile to label its trigger before first paint, which puts
-// modelPreferences.ts, useUpdatePreferences.ts and the dropdown primitive on the
-// critical path for +1.9 kB gz. Nothing moved chunks; the eager set is unchanged.
-//
-// Raised 460 -> 465 for the Orders page. The nav decides before first paint
-// whether to offer it, and i18n.ts bundles every locale's JSON into the entry,
-// so that check and the page's en-US and zh-CN strings ride the critical path
-// for about +5 kB gz, 4 of it strings. Nothing moved chunks; the eager set is
-// unchanged.
-//
-// Raised 465 -> 470 for header-authenticated MCP servers. The probe verdicts,
-// the one-field add form and the import placeholder step each carry copy in
-// both locales, and i18n.ts still bundles every locale into the entry, so
-// about 4 kB gz of strings ride the critical path; the dialog and sheet
-// keyframes in styles/animations.css add 0.6 kB to the entry stylesheet.
-// Nothing moved chunks; the eager set is unchanged.
-//
-// Raised 470 -> 475 for the workspace tab strip, chart tab and Excel range
-// context. The strip, the chart header and the Excel viewer each carry copy in
-// both locales, so about 1.8 kB gz of strings ride the critical path; the
-// search helpers in lib/marketUtils add a little more. The CI runner's gzip
-// reads about 1.8 kB above a local build of the same tree, so the margin
-// here is read against CI, not a laptop. Nothing moved chunks; the eager set
-// is unchanged.
-//
-// Raised 475 -> 480 for short share links. The share dialog, the link page and
-// the app card carry copy in both locales, and i18n.ts still bundles every
-// locale into the entry, so about 0.9 kB gz of strings ride the critical path;
-// the share-link query keys, formatBytes and retryUnlessClientError add 0.5 kB.
-// CI read 475.2 against 473.8 on main. Nothing moved chunks; the eager set is
-// unchanged.
-//
-// Raised 480 -> 485 for the automations run feed. The feed, the manage view,
-// the attention rail and the timezone picker carry copy in both locales, and
-// i18n.ts still bundles every locale into the entry, so about 3.8 kB gz of
-// strings ride the critical path; the entry stylesheet grows 0.5 kB, and the
-// device-zone read in lib/deviceTimezone, the automations query keys and the
-// lifecycle feed's invalidation add about 0.7 kB. A local build read +4.8 kB
-// against main. Nothing moved chunks; the eager set is unchanged.
-//
-// Raised 485 -> 490 for user-level MCP servers and secrets. The Plugins scope
-// control, the MCP server dialog and list, and the vault's security copy carry
-// strings in both locales, and i18n.ts still bundles every locale into the
-// entry, so about 0.5 kB gz of strings ride the critical path. CI read 485.3
-// against 484.6 on main. The every-workspace list helpers that change had put
-// in useWorkspaces.ts, which the entry imports, moved to useAllWorkspaces.ts
-// for 0.1 kB back; the strings alone still clear 485. Nothing moved chunks;
-// the eager set is unchanged.
-//
-// Raised 490 -> 500 for the dependency majors. No feature moved onto the
-// critical path; the libraries already on it grew. react-dom 19.3 adds 7.2 kB
-// gz, and react-router 8, one package where react-router-dom 6 was three, adds
-// 5.3 kB. Tailwind CSS 4 adds 2 kB to the entry stylesheet and motion-dom 1.8
-// kB. In the entry, axios 1.20's 5.4 kB is mostly paid back by zod/mini on the
-// two eager schemas. A local build read +11.9 kB against main, 496.0 kB. The eager set
-// gains only rolldown-runtime; nothing else moved chunks.
+// The gzipped first-load payload: the entry and its preloads, index.html, the
+// entry stylesheet and the largest locale catalog. Measured against platform
+// mode, which is what ships (oss builds land ~60 kB lower), and read against CI's
+// gzip, which runs about 1.8 kB above a local build of the same tree. Headroom is
+// deliberately thin, so routine growth shows up here instead of being quietly
+// absorbed. Raise it only for a measured cause, and put that cause in the commit
+// message that raises it; the line's history is the record of why it moved.
 const MAX_EAGER_KB = 500
 
 const outDir = process.argv[2] || 'dist'
@@ -222,7 +169,7 @@ const zlib = `zlib ${process.versions.zlib}`
 // alongside the entry. The largest counts, since that is what some visitor
 // pays. A build without the preload fails here rather than reading light while
 // every visitor waits on a request that only starts once the entry has run.
-const catalogs = [...html.matchAll(/"([A-Za-z]{2,3}-[A-Za-z0-9]+)":"[^"]*\/assets\/([^"]+\.js)"/g)]
+const catalogs = [...html.matchAll(CATALOG_URL)]
   .map(([, locale, file]) => ({ locale, bytes: gz(file) }))
 
 if (!catalogs.length) {

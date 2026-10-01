@@ -8,17 +8,18 @@ import { AT_BOTTOM_PX, NEAR_BOTTOM_PX, isNearBottom } from '../../utils/scrollHe
  * leave, and when a block landed mid-animation it stopped short, read as
  * "left", and never followed again. Direction decides intent: an upward scroll
  * leaves unless it ends at the very bottom, so a notch at a time gets away, and
- * a downward one rejoins inside the band.
+ * a downward one rejoins inside the band. A fold that clamps scrollTop moves up
+ * too, but lands on the bottom, so it keeps following.
  */
 export interface StreamFollow {
-  /** Reads a scroll event. False for a follow's own, which decides nothing. */
-  scrolled(): boolean;
+  /** Reads a scroll event. False for a follow's own, which decides nothing.
+   *  `judge` false leaves the flag alone, for a landing something else chose. */
+  scrolled(judge?: boolean): boolean;
   /** Moves a following reader to the new bottom, for growth. */
   follow(): void;
 }
 
-export function createStreamFollow(c: HTMLElement): StreamFollow {
-  let following = true;
+export function createStreamFollow(c: HTMLElement, following: { current: boolean }): StreamFollow {
   let lastTop = c.scrollTop;
   // The scroll event of a follow arrives a frame after it. A block that lands
   // in between, a chart or a table, leaves the bottom further away than the
@@ -27,18 +28,19 @@ export function createStreamFollow(c: HTMLElement): StreamFollow {
   // up from there would read as a move down and be pulled back.
   let followTop: number | null = null;
   return {
-    scrolled() {
+    scrolled(judge = true) {
       const from = followTop ?? lastTop;
       const own = followTop !== null && Math.abs(c.scrollTop - followTop) < 1;
       followTop = null;
       lastTop = c.scrollTop;
       if (own) return false;
+      if (!judge) return true;
       const metrics = { scrollTop: c.scrollTop, scrollHeight: c.scrollHeight, clientHeight: c.clientHeight };
-      following = isNearBottom(metrics, c.scrollTop < from ? AT_BOTTOM_PX : NEAR_BOTTOM_PX);
+      following.current = isNearBottom(metrics, c.scrollTop < from ? AT_BOTTOM_PX : NEAR_BOTTOM_PX);
       return true;
     },
     follow() {
-      if (!following) return;
+      if (!following.current) return;
       const bottom = c.scrollHeight - c.clientHeight;
       if (bottom <= c.scrollTop) return;
       followTop = bottom;
@@ -73,7 +75,7 @@ export function useStreamFollow(
     const c = scroller.current;
     const el = content.current;
     if (!c || !el) return;
-    const stream = createStreamFollow(c);
+    const stream = createStreamFollow(c, { current: true });
     streamRef.current = stream;
     let lastHeight = -1;
     const ro = new ResizeObserver((entries) => {

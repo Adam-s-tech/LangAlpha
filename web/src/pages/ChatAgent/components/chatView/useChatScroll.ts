@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AT_BOTTOM_PX, NEAR_BOTTOM_PX, isNearBottom } from '../../utils/scrollHelpers';
+import { createStreamFollow } from './streamFollow';
 import { findMessageElement, resolveScrollContent, resolveScrollViewport } from '../../utils/scrollDom';
 import { scrollMemory } from '@/lib/scrollMemory';
 import { ANCHORED_TOGGLE_EVENT } from '../../utils/anchoredToggle';
@@ -205,12 +206,6 @@ export function useChatScroll({
   // pending scroll instead of yanking a now-stale view.
   const entryRestoreRafRef = useRef<number | null>(null);
   const visibilityRafRef = useRef<number | null>(null);
-  // The last scrollTop the streaming follow set. Its scroll event is recognised
-  // by position rather than by the programmatic flag: a follow runs on every
-  // growth frame, and a flag re-armed that often never clears, which would
-  // swallow a keyboard or scrollbar scroll for the whole turn. The flag stays
-  // for smooth scrolls, which fire many events at positions nobody can predict.
-  const followTopRef = useRef<number | null>(null);
 
   /** The entry restore for this thread has landed, so an automatic scroll may move the view. */
   const entryRestoreSettled = useCallback(
@@ -433,7 +428,12 @@ export function useChatScroll({
     // Reset to near-bottom when switching tabs
     nearBottomRef.current = true;
 
-    let lastTop = c.scrollTop;
+    // The streaming follow's own scrolls are recognised by position rather than
+    // by the programmatic flag: a follow runs on every growth frame, and a flag
+    // re-armed that often never clears, which would swallow a keyboard or
+    // scrollbar scroll for the whole turn. The flag stays for smooth scrolls,
+    // which fire many events at positions nobody can predict.
+    const stream = createStreamFollow(c, nearBottomRef);
     const handleScroll = () => {
       // The band is how a *user* scroll re-joins the stream. A pin that chose a
       // position must not get to answer it: pinToMessage already decided whether
@@ -453,18 +453,7 @@ export function useChatScroll({
       // screen.
       const pinMode = pinTargetRef.current?.mode;
       const pinOwnsPosition = programmaticScrollRef.current && (pinMode === 'anchor' || pinMode === 'reveal');
-      if (!pinOwnsPosition) {
-        const metrics = { scrollTop: c.scrollTop, scrollHeight: c.scrollHeight, clientHeight: c.clientHeight };
-        // The band answers a downward scroll. An upward one is a reader
-        // leaving, by wheel, key, drag or touch, and only the bottom itself
-        // re-arms: inside the band the follow would put them back on the next
-        // growth frame, and each frame grows, so a notch at a time they could
-        // never get out. A fold that clamps scrollTop moves up too, but lands
-        // on the bottom, so it keeps following.
-        const movedUp = c.scrollTop < lastTop;
-        nearBottomRef.current = isNearBottom(metrics, movedUp ? AT_BOTTOM_PX : NEAR_BOTTOM_PX);
-      }
-      lastTop = c.scrollTop;
+      const own = !stream.scrolled(!pinOwnsPosition);
       if (!isMain) return;
       // Record every settle (user scrolls AND pins/follows) so the cross-unmount
       // store always reflects where the transcript actually is — a bottom pin
@@ -482,12 +471,7 @@ export function useChatScroll({
         const place = atBottom ? null : readPlace(c);
         readerPlaceRef.current = place && { tid: memoryTidRef.current, ...place };
       }
-      if (programmaticScrollRef.current) return; // ignore our own scrolls
-      if (followTopRef.current != null && Math.abs(c.scrollTop - followTopRef.current) < 1) {
-        followTopRef.current = null;
-        return;
-      }
-      followTopRef.current = null;
+      if (programmaticScrollRef.current || own) return; // ignore our own scrolls
       // A genuine user scroll takes control away from the pin controller.
       pinTargetRef.current = null;
       clearSettleTimers();
@@ -577,11 +561,7 @@ export function useChatScroll({
           reapplyPin();
           return;
         }
-        if (!grew || !isFollowing()) return;
-        const top = c.scrollHeight - c.clientHeight;
-        if (top - c.scrollTop <= 0) return;
-        followTopRef.current = top;
-        c.scrollTo({ top });
+        if (grew && isFollowing()) stream.follow();
       });
       ro.observe(getScrollContent(c));
     }

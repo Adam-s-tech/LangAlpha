@@ -34,6 +34,31 @@
   overflow: hidden;
 }
 
+.market-titlebar {
+  flex-shrink: 0;
+  background-color: var(--color-bg-card);
+}
+
+/* First rows sit at the shared page depth (--page-top, tokens.css) in every
+   build: the offsets below are what each panel's own first row needs on top of
+   its normal padding to centre at --page-top + 14px. */
+.market-titlebar .stock-header {
+  padding-top: calc(var(--page-top) - 1px);
+}
+
+.market-content-wrapper > .market-right-panel {
+  padding-top: calc(var(--page-top) - 7px);
+}
+
+/* The watchlist / portfolio tab strip and the collapsed strip's toggle. */
+.market-content-wrapper > .market-sidebar {
+  padding-top: calc(var(--page-top) - 6px);
+}
+
+.market-content-wrapper > .market-sidebar--collapsed {
+  padding-top: calc(var(--page-top) - 3px);
+}
+
 .market-right-panel {
   flex-shrink: 0;
   display: flex;

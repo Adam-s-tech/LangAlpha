@@ -372,8 +372,11 @@ function WorkspaceGallery({ onWorkspaceSelect, prefetchThreads }: WorkspaceGalle
           hand the window -- a drag region over prose is text you cannot select. */}
       <div className="chrome-drag-strip" aria-hidden="true" />
       {/* Header (desktop only) */}
-      <header className="hidden md:flex w-full h-24 items-end mx-auto max-w-4xl flex-shrink-0 px-8 enter-fade-up">
-        <div className="flex w-full items-center justify-between gap-4">
+      <header
+        className="hidden md:flex w-full items-start mx-auto max-w-4xl flex-shrink-0 px-8 pb-2 enter-fade-up"
+        style={{ paddingTop: 'calc(var(--page-top) - 4px)' }}
+      >
+        <div className="flex w-full items-center justify-between gap-4" style={{ minHeight: 36 }}>
           <h1 className="text-2xl font-semibold title-font" style={{ color: 'var(--color-text-primary)' }}>
             {t('workspace.workspaces')}
           </h1>

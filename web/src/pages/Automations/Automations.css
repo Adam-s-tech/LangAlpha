@@ -44,7 +44,7 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 16px;
-  padding: 28px 0 22px;
+  padding: var(--page-top) 0 22px;
 }
 
 .automations-title {

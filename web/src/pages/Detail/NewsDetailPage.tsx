@@ -108,7 +108,7 @@ function NewsArticleView() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6 max-w-4xl mx-auto" style={{ color: 'var(--color-text-primary)' }}>
+    <div className="flex flex-col gap-6 p-6 max-w-4xl mx-auto" style={{ color: 'var(--color-text-primary)', paddingTop: 'calc(var(--page-top) - 3px)' }}>
       {/* Back button */}
       <button
         onClick={handleBack}

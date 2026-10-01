@@ -744,23 +744,25 @@ function MarketViewInner() {
         </div>
       ) : (
         <>
-          {/* The dashboard header used to sit here and double as the titlebar in
-              the desktop shell. The row below is three columns, so one strip
-              above them is the drag region rather than three marked bars. */}
-          <div className="chrome-drag-strip" aria-hidden="true" />
           <div className="market-content-wrapper">
             <div className="market-left-panel">
-              <StockHeader
-                symbol={selectedStock}
-                quote={quote}
-                chartMeta={chartMeta}
-                onToggleOverview={() => setShowOverview(v => !v)}
-                onSwitchSymbol={handleStockSearch}
-                wsStatus={wsStatus}
-                wsHasData={wsHasData}
-                wsDataLevel={wsDataLevel}
-                ginlixDataEnabled={ginlixDataEnabled}
-              />
+              {/* The header is the page's titlebar in the desktop shell: it donates
+                  the drag region, and the wrapper reserves the titlebar's height
+                  inside the header's own surface so its title lines up with the
+                  sidebar logo (market-titlebar, MarketView.css). */}
+              <div className="market-titlebar" data-chrome="drag">
+                <StockHeader
+                  symbol={selectedStock}
+                  quote={quote}
+                  chartMeta={chartMeta}
+                  onToggleOverview={() => setShowOverview(v => !v)}
+                  onSwitchSymbol={handleStockSearch}
+                  wsStatus={wsStatus}
+                  wsHasData={wsHasData}
+                  wsDataLevel={wsDataLevel}
+                  ginlixDataEnabled={ginlixDataEnabled}
+                />
+              </div>
               <div className="market-chart-area">
                 {showOverview && (
                   <CompanyOverviewPanel

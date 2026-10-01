@@ -109,6 +109,8 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({ onScrollToTop, layout
         className="sticky top-0 z-30 flex items-center justify-between px-4 sm:px-6 py-3"
         style={{
           backgroundColor: 'var(--color-bg-canvas)',
+          // The 40px search row centres at the shared first-row depth (--page-top).
+          paddingTop: 'calc(var(--page-top) - 6px)',
           borderBottom: '1px solid var(--color-border-muted)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',

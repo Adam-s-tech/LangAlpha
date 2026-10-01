@@ -29,8 +29,6 @@ export interface UseNavTreePropsOptions {
    * a default that would silently drift from the other.
    */
   onNewThread: (wsId: string) => void;
-  /** False parks the whole data layer for a drawer that is mounted but never shown (desktop ChatViews). */
-  enabled?: boolean;
   /** Route-state name to fall back on before the tree has loaded the workspace row. */
   fallbackWorkspaceName?: string;
 }
@@ -43,7 +41,6 @@ export function useNavTreeProps({
   currentThreadId,
   agents,
   onNewThread,
-  enabled = true,
   fallbackWorkspaceName,
 }: UseNavTreePropsOptions) {
   const navigate = useNavigate();
@@ -60,7 +57,7 @@ export function useNavTreeProps({
     renameWorkspace,
     pinThread,
     archiveThread,
-  } = useNavigationData(currentWorkspaceId || '', { enabled });
+  } = useNavigationData(currentWorkspaceId || '');
 
   const findWorkspace = useCallback(
     (wsId: string): NavWorkspace | undefined => workspaces.find((ws) => ws.workspace_id === wsId),

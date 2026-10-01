@@ -68,9 +68,6 @@ export function resetStableNavOrder() {
   _lastWorkspaceArrangement.clear();
 }
 
-/** Parked subscription for a hook instance running with `enabled: false`. */
-const subscribeNever = (): (() => void) => () => {};
-
 // Drop a deleted workspace from the frozen-order stores so they don't retain
 // ghost ids for the rest of the session. Deleted ids are already filtered out
 // of the rendered list (applyStableOrderBy drops map-misses), so this is
@@ -201,21 +198,11 @@ export function partitionPinnedFirst(threads: ThreadRecord[]): ThreadRecord[] {
   return [...pinned, ...rest];
 }
 
-export interface UseNavigationDataOptions {
-  /** Desktop ChatViews keep a mobile-only nav drawer mounted but never shown;
-   *  `false` parks this hook's queries and store subscriptions so five cached
-   *  views stop paying for a tree nobody renders. */
-  enabled?: boolean;
-}
-
-export function useNavigationData(currentWorkspaceId: string, { enabled = true }: UseNavigationDataOptions = {}) {
+export function useNavigationData(currentWorkspaceId: string) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   const { workspaceLimit, threadPageSize, orderBy } = useNavPrefs();
-  const orderVersion = useSyncExternalStore(
-    enabled ? navOrderEmitter.subscribe : subscribeNever,
-    () => _navOrderVersion,
-  );
+  const orderVersion = useSyncExternalStore(navOrderEmitter.subscribe, () => _navOrderVersion);
 
   // Pure: assembles the frozen order without writing it. The commit-phase
   // effect below owns every write to the snapshot (see absorbThreadOrder).
@@ -230,7 +217,7 @@ export function useNavigationData(currentWorkspaceId: string, { enabled = true }
 
   // Workspace list via React Query. sortBy mirrors the gallery's order-by
   // selection; changing it swaps the query key and refetches in the new order.
-  const wsParams = useMemo(() => ({ ...NAV_WS_PARAMS, sortBy: orderBy, enabled }), [orderBy, enabled]);
+  const wsParams = useMemo(() => ({ ...NAV_WS_PARAMS, sortBy: orderBy }), [orderBy]);
   const { data: wsData, isLoading } = useWorkspaces(wsParams);
   // Memoized so the `|| []` fallback doesn't hand every dependent memo/callback
   // a fresh array identity on each render.
@@ -243,10 +230,7 @@ export function useNavigationData(currentWorkspaceId: string, { enabled = true }
   // Loaded thread lists, read from the session-global shared store so every
   // cached panel sees the same data (see lib/navThreadsStore). Writes go
   // through setSharedWorkspaceThreads, which notifies all subscribed panels.
-  const workspaceThreads = useSyncExternalStore(
-    enabled ? subscribeNavThreads : subscribeNever,
-    getNavThreadsSnapshot,
-  );
+  const workspaceThreads = useSyncExternalStore(subscribeNavThreads, getNavThreadsSnapshot);
   // "Load all" clicked this session — overrides a numeric workspaceLimit pref.
   const [showAllWorkspaces, setShowAllWorkspaces] = useState(false);
   const showAll = workspaceLimit === 'all' || showAllWorkspaces;
@@ -259,7 +243,7 @@ export function useNavigationData(currentWorkspaceId: string, { enabled = true }
   // before the await, so two rapid taps would otherwise fetch the same page.
   const loadMoreInflightRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!enabled || !showAll || isLoading) return;
+    if (!showAll || isLoading) return;
     if (!totalCount || allFetched.length >= totalCount) return;
     if (wsFetchRef.current.inflight || wsFetchRef.current.failed) return;
     wsFetchRef.current.inflight = true;
@@ -279,7 +263,7 @@ export function useNavigationData(currentWorkspaceId: string, { enabled = true }
       .finally(() => {
         wsFetchRef.current.inflight = false;
       });
-  }, [enabled, showAll, isLoading, allFetched.length, totalCount, queryClient, orderBy]);
+  }, [showAll, isLoading, allFetched.length, totalCount, queryClient, orderBy]);
 
   // Workspace list in server order (pinned first, then manual sort_order, then
   // recency), frozen to its first-session arrangement so the active workspace's
@@ -501,18 +485,17 @@ export function useNavigationData(currentWorkspaceId: string, { enabled = true }
 
   const { isLoading: currentWsThreadsLoading } = useQuery({
     ...workspaceThreadsQuery(currentWorkspaceId, threadPageSize),
-    enabled: enabled && !!currentWorkspaceId,
+    enabled: !!currentWorkspaceId,
   });
 
   // Every workspace whose page-0 rows this tree renders: the current one plus
   // whatever the shared "Show more" store retains. Sorted so the observer list
   // is stable across renders.
   const observedWsIds = useMemo(() => {
-    if (!enabled) return [];
     const ids = new Set(Object.keys(workspaceThreads));
     if (currentWorkspaceId) ids.add(currentWorkspaceId);
     return [...ids].sort();
-  }, [enabled, workspaceThreads, currentWorkspaceId]);
+  }, [workspaceThreads, currentWorkspaceId]);
 
   // Cache-ONLY observers over those exact page-0 keys. A patch to a row this
   // panel isn't otherwise subscribed to (a generated title landing for another

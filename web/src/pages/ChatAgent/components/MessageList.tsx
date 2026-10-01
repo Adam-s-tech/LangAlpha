@@ -8,6 +8,8 @@ import { projectMessageContent } from './messageList/contentProjection';
 import { useMessageActions } from './messageList/MessageActionsContext';
 import { isSteeringUserMessage } from './messageList/messagePredicates';
 import { computeTurnTails, projectTurns, visibleProjection } from './messageList/turnProjection';
+import { useLiveMessages, type LiveMessages } from '../session/stream/liveMessages';
+import type { ChatMessage } from '@/types/chat';
 import { turnFilesByTurn } from '../utils/turnFiles';
 import type { FeedbackResult, FoldState, MessageRecord } from './messageList/types';
 
@@ -314,6 +316,16 @@ function MessageList({ messages, isLoading, isLoadingHistory, isSubagentView, re
       })}
     </div>
   );
+}
+
+/**
+ * The list as of the latest streamed chunk. A component of its own so that a
+ * chunk renders the list and not the view that placed it.
+ */
+export function LiveMessageList({ store, ...props }: Omit<MessageListProps, 'messages'> & { store: LiveMessages<ChatMessage[]> }) {
+  const messages = useLiveMessages(store);
+  // The session types its messages; the list reads them as records.
+  return <MessageList messages={messages as unknown as MessageRecord[]} {...props} />;
 }
 
 export default MessageList;

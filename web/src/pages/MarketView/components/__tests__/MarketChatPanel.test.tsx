@@ -106,7 +106,10 @@ vi.mock('@/pages/ChatAgent/components/MessageList', async () => {
     ml.actions = useMessageActions() as unknown as Record<string, unknown>;
     return <div data-testid="message-list" />;
   }
-  return { default: MessageListStub };
+  function LiveMessageListStub({ store, ...props }: { store: { get: () => unknown } } & Record<string, unknown>) {
+    return <MessageListStub messages={store.get()} {...props} />;
+  }
+  return { default: MessageListStub, LiveMessageList: LiveMessageListStub };
 });
 
 vi.mock('@/components/ui/chat-input', () => ({

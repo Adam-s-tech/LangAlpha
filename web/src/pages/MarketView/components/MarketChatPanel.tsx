@@ -10,14 +10,13 @@ import LogoLoading from '@/components/ui/logo-loading';
 import ChatInput, { type ChatInputHandle } from '@/components/ui/chat-input';
 import { useStableHandler } from '@/hooks/useStableHandler';
 import { useWorkspace } from '@/hooks/useWorkspace';
-import MessageList from '../../ChatAgent/components/MessageList';
+import { LiveMessageList } from '../../ChatAgent/components/MessageList';
 import { MessageActionsProvider, type MessageActions } from '../../ChatAgent/components/messageList/MessageActionsContext';
 import { SubagentTelemetryContext } from '../../ChatAgent/components/SubagentTelemetryContext';
 import { ChartSurfaceContext, type ChartSurface } from '../../ChatAgent/contexts/ChartSurfaceContext';
 import { WorkspaceProvider } from '../../ChatAgent/contexts/WorkspaceContext';
 import { useChatMessages } from '../../ChatAgent/hooks/useChatMessages';
 import { DispatchStatusProvider } from '../../ChatAgent/hooks/usePTCDispatchStatus';
-import { useLiveMessages } from '../../ChatAgent/session/stream/liveMessages';
 import { useStreamFollow } from '../../ChatAgent/components/chatView/streamFollow';
 import { useActiveThreadPublisher } from '@/lib/threadLifecycle/useActiveThreadPublisher';
 import { flashWorkspaceQuery } from '@/hooks/useFlashWorkspace';
@@ -262,19 +261,6 @@ interface ChatBodyProps extends MarketChatPanelProps {
   ptcWorkspaces: Workspace[];
   onSelectThread: (threadId: string) => void;
   onStartNewChat: () => void;
-}
-
-type LiveTranscriptProps = Omit<React.ComponentProps<typeof MessageList>, 'messages'> & {
-  store: ReturnType<typeof useChatMessages>['liveMessages'];
-};
-
-/**
- * The transcript, rendered from every streamed chunk on its own, so a chunk
- * renders it and not the panel.
- */
-function LiveTranscript({ store, ...listProps }: LiveTranscriptProps): React.ReactElement {
-  const messages = useLiveMessages(store);
-  return <MessageList messages={messages as never[]} {...listProps} />;
 }
 
 function ChatBody(props: ChatBodyProps): React.ReactElement {
@@ -858,7 +844,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
               <SubagentTelemetryContext value={resolveSubagentTelemetry}>
                 <MessageActionsProvider actions={messageActions}>
                   <DispatchStatusProvider>
-                    <LiveTranscript
+                    <LiveMessageList
                       store={liveMessages}
                       isLoading={isLoading}
                       isLoadingHistory={isLoadingHistory}

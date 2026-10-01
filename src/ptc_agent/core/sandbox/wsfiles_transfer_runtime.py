@@ -15,6 +15,7 @@ import base64
 import codecs
 import contextlib
 import errno
+import functools
 import hashlib
 import http.client
 import json
@@ -160,6 +161,23 @@ def _resolve_under_root(root: str, rel: str) -> str | None:
     if ".." in parts:
         return None
     return os.path.join(root, norm)
+
+
+@functools.lru_cache(maxsize=65536)
+def _inside(root: str, path: str) -> bool:
+    """Whether ``path`` resolves inside ``root`` with links followed.
+
+    ``_resolve_under_root`` checks the name only. A pull that finds a link
+    where its manifest recorded a directory would write through it: a
+    workspace folder links the shared skills from the computer root, so the
+    bytes would land in every sibling's copy. The link is newer than the
+    row, so the row loses. Cached for one pull's steps 1 and 2, which ask
+    about the same few parents thousands of times before any link exists.
+    Step 3 asks uncached: each link it places can be the next one's parent.
+    """
+    real_root = os.path.realpath(root)
+    real = os.path.realpath(path)
+    return real == real_root or real.startswith(real_root.rstrip(os.sep) + os.sep)
 
 
 def _pack_base(spec: dict[str, Any], root: str) -> str:
@@ -1206,6 +1224,8 @@ def _pull_symlink(root: str, item: dict[str, Any]) -> dict[str, Any]:
     final = _resolve_under_root(root, item.get("path", ""))
     if final is None:
         return _result("failed", error="path escapes root")
+    if not _inside.__wrapped__(root, os.path.dirname(final)):
+        return _result("failed", error="path leaves root through a link")
     target = item.get("symlink_target")
     if not target:
         return _result("failed", error="missing symlink_target")
@@ -1233,6 +1253,8 @@ def _extract_member(root: str, chunk: Any, member: dict[str, Any], http_status: 
     final = _resolve_under_root(root, member.get("path", ""))
     if final is None:
         return _result("failed", error="path escapes root")
+    if not _inside(root, os.path.dirname(final)):
+        return _result("failed", error="path leaves root through a link")
     if _populated_directory(final):
         return _result("failed", error="target is a populated directory")
     size = int(member.get("size") or 0)
@@ -1386,6 +1408,7 @@ def pull(spec: dict[str, Any]) -> dict[str, Any]:
     )
     results: dict[str, dict[str, Any]] = {}
     _sweep_orphan_staging(root, items)
+    _inside.cache_clear()
 
     files: list[dict[str, Any]] = []
     packs: list[dict[str, Any]] = []
@@ -1405,6 +1428,9 @@ def pull(spec: dict[str, Any]) -> dict[str, Any]:
             results[path] = _result("failed", error="path escapes root")
             continue
         kind = item.get("kind", "file")
+        if not _inside(root, final if kind == "dir" else os.path.dirname(final)):
+            results[path] = _result("failed", error="path leaves root through a link")
+            continue
         try:
             os.makedirs(os.path.dirname(final), exist_ok=True)
             if kind == "dir":

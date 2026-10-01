@@ -83,16 +83,11 @@ const monthDayYear = createDateFormatter({ year: 'numeric', month: 'short', day:
 
 function formatDate(iso: string | null, now: number, locale: string): string {
   if (!iso) return '';
-  try {
-    const d = new Date(iso);
-    const today = new Date(now);
-    const sameYear = d.getFullYear() === today.getFullYear();
-    const sameDay = d.toDateString() === today.toDateString();
-    if (sameDay) return clockTime(d, locale);
-    return sameYear ? monthDay(d, locale) : monthDayYear(d, locale);
-  } catch {
-    return '';
-  }
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const today = new Date(now);
+  if (d.toDateString() === today.toDateString()) return clockTime(d, locale);
+  return d.getFullYear() === today.getFullYear() ? monthDay(d, locale) : monthDayYear(d, locale);
 }
 
 function mimeToLabel(mime: string | null | undefined, key: string): string {

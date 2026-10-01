@@ -183,6 +183,19 @@ describe('MemoPanel — list rendering', () => {
     await waitFor(() => expect(screen.getByText('broken.md')).toBeInTheDocument());
     expect(screen.getByText('memoPanel.status.failed')).toBeInTheDocument();
   });
+
+  it('leaves the date cell empty for an unparseable created_at', async () => {
+    mockList.mockResolvedValue({
+      entries: [{ ...baseEntry, key: 'odd-1', original_filename: 'odd.md', created_at: 'not-a-date' }],
+      truncated: false,
+    });
+
+    renderWithProviders(<MemoPanel />);
+
+    const row = (await screen.findByText('odd.md')).closest('tr');
+    expect(row?.textContent).not.toContain('Invalid Date');
+    expect(row?.querySelector('td:last-child')?.textContent).toBe('');
+  });
 });
 
 // ---------------------------------------------------------------------------

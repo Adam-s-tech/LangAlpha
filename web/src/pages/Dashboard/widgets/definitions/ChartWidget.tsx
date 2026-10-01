@@ -53,7 +53,7 @@ import { chartSecToDateStr, dateStrInTz } from '@/lib/utils';
 import { createValueStore, type ValueStore } from '@/lib/valueStore';
 import { useMarketDataWSContext } from '@/pages/MarketView/contexts/MarketDataWSContext';
 import { useTheme } from '@/contexts/ThemeContext';
-import { createFormatter, createDateFormatter } from '@/lib/format';
+import { createDateFormatter, createFormatter, grouped2, integer } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import type { WidgetRenderProps, WidgetSettingsProps } from '../types';
 import { useWidgetContextExport } from '../framework/contextSnapshot';
@@ -63,12 +63,10 @@ import {
   wrapWidgetContext,
 } from '../framework/snapshotSerializers';
 
-const fmt2 = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
 // Compact volumes ("1.23B", "1.23M", "1.2K"). Intl.NumberFormat with
 // notation: 'compact' produces locale-appropriate scale suffixes — `1.23亿`
 // instead of `123M` for zh-CN, `1.23 Mio.` for de-DE.
 const fmtVolumeCompact = createFormatter({ notation: 'compact', compactDisplay: 'short', maximumFractionDigits: 2 });
-const fmtVolumeRound = createFormatter({ maximumFractionDigits: 0 });
 // Hover labels use the venue-wall-clock-as-UTC convention shared across the
 // chart; timeZone: 'UTC' keeps the formatter from reapplying any regional
 // shift while month/day names still respect the user's locale.
@@ -130,7 +128,7 @@ function formatHoverTime(timeSec: number, daily: boolean, locale: string): strin
 function formatHoverVolume(v: number, locale: string): string {
   // Round-only for sub-1K values matches the prior `String(Math.round(v))`
   // shape (no decimals on small volumes); compact format kicks in above.
-  if (v < 1e3) return fmtVolumeRound(v, locale);
+  if (v < 1e3) return integer(v, locale);
   return fmtVolumeCompact(v, locale);
 }
 
@@ -161,18 +159,18 @@ const HoverReadout = memo(function HoverReadout({
       {hover.open != null && hover.high != null && hover.low != null && (
         <>
           <span>
-            O <span style={{ color: 'var(--color-text-primary)' }}>{fmt2(hover.open, locale)}</span>
+            O <span style={{ color: 'var(--color-text-primary)' }}>{grouped2(hover.open, locale)}</span>
           </span>
           <span>
-            H <span style={{ color: 'var(--color-text-primary)' }}>{fmt2(hover.high, locale)}</span>
+            H <span style={{ color: 'var(--color-text-primary)' }}>{grouped2(hover.high, locale)}</span>
           </span>
           <span>
-            L <span style={{ color: 'var(--color-text-primary)' }}>{fmt2(hover.low, locale)}</span>
+            L <span style={{ color: 'var(--color-text-primary)' }}>{grouped2(hover.low, locale)}</span>
           </span>
         </>
       )}
       <span>
-        C <span style={{ color: 'var(--color-text-primary)' }}>{fmt2(hover.close, locale)}</span>
+        C <span style={{ color: 'var(--color-text-primary)' }}>{grouped2(hover.close, locale)}</span>
       </span>
       {hover.volume != null && hover.volume > 0 && (
         <span>
@@ -1201,13 +1199,13 @@ function ChartWidget({ instance, updateConfig }: WidgetRenderProps<ChartConfig>)
                   className="text-sm tabular-nums"
                   style={{ color: 'var(--color-text-primary)' }}
                 >
-                  {currencySymbol(displayCurrency.code)}{fmt2(headerLast, locale)}
+                  {currencySymbol(displayCurrency.code)}{grouped2(headerLast, locale)}
                 </span>
               )}
             </div>
           )}
           <div className="text-[0.6875rem] tabular-nums" style={{ color: changeColor }}>
-            {positive ? '+' : ''}{fmt2(change, locale)} ({positive ? '+' : ''}{fmt2(pct, locale)}%)
+            {positive ? '+' : ''}{grouped2(change, locale)} ({positive ? '+' : ''}{grouped2(pct, locale)}%)
           </div>
           {editingSymbol && symbolDraft.trim() && (
             <div

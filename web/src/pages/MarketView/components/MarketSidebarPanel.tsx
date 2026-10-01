@@ -8,7 +8,7 @@ import AddWatchlistItemDialog from '../../Dashboard/components/AddWatchlistItemD
 import AddPortfolioHoldingDialog from '../../Dashboard/components/AddPortfolioHoldingDialog';
 import ConfirmDialog from '../../Dashboard/components/ConfirmDialog';
 import { getExtendedHoursInfo } from '@/lib/marketUtils';
-import { createFormatter } from '@/lib/format';
+import { grouped2 } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import { EXT_COLOR_PRE, EXT_COLOR_POST } from '../utils/chartConstants';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -37,7 +37,6 @@ interface DeleteConfirmState {
   onConfirm: (() => Promise<void>) | null;
 }
 
-const price2 = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 interface MarketSidebarPanelProps {
   activeSymbol: string | null;
@@ -94,7 +93,7 @@ function MarketSidebarPanel({ activeSymbol, onSymbolClick, marketStatus }: Marke
 
   const formatPrice = (price: number | null | undefined): string => {
     if (price == null || price === 0) return '--';
-    return price2(Number(price), locale);
+    return grouped2(Number(price), locale);
   };
 
   const formatChange = (val: number | null | undefined): string => {

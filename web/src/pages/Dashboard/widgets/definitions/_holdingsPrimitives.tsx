@@ -14,7 +14,7 @@ import {
   EyeOff,
 } from 'lucide-react';
 import { getExtendedHoursInfo } from '@/lib/marketUtils';
-import { createFormatter } from '@/lib/format';
+import { createFormatter, grouped2, integer } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import {
   ContextMenu,
@@ -32,9 +32,7 @@ import {
 
 type MarketStatusData = Parameters<typeof getExtendedHoursInfo>[0];
 
-const fmt2 = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt1 = createFormatter({ minimumFractionDigits: 1, maximumFractionDigits: 1 });
-const fmtInt = createFormatter({ maximumFractionDigits: 0 });
 
 interface WatchlistRowItemProps {
   item: WatchlistRow;
@@ -49,7 +47,7 @@ export function WatchlistRowItem({ item, index, marketStatus, onDelete }: Watchl
   const navigate = useNavigate();
   const hasQuote = item.quoteAvailable !== false;
   const pos = hasQuote ? item.isPositive ?? true : true;
-  const pctStr = hasQuote ? (pos ? '+' : '') + fmt2(Number(item.changePercent), locale) + '%' : 'N/A';
+  const pctStr = hasQuote ? (pos ? '+' : '') + grouped2(Number(item.changePercent), locale) + '%' : 'N/A';
   const hasId = !!item.watchlist_item_id;
 
   const { extPct, extType } = getExtendedHoursInfo(marketStatus, item, { shortLabels: true });
@@ -86,7 +84,7 @@ export function WatchlistRowItem({ item, index, marketStatus, onDelete }: Watchl
             style={{ color: 'var(--color-text-primary)' }}
           >
             {hasQuote
-              ? fmt2(Number(extType && item.previousClose != null ? item.previousClose : item.price), locale)
+              ? grouped2(Number(extType && item.previousClose != null ? item.previousClose : item.price), locale)
               : 'N/A'}
           </div>
           <div
@@ -97,7 +95,7 @@ export function WatchlistRowItem({ item, index, marketStatus, onDelete }: Watchl
                 : 'var(--color-text-secondary)',
             }}
           >
-            {hasQuote ? (pos ? '+' : '') + fmt2(Number(item.change), locale) : 'N/A'}
+            {hasQuote ? (pos ? '+' : '') + grouped2(Number(item.change), locale) : 'N/A'}
           </div>
         </div>
         <div className="text-right">
@@ -120,8 +118,8 @@ export function WatchlistRowItem({ item, index, marketStatus, onDelete }: Watchl
               style={{ color: extColor }}
             >
               {extType === 'pre' ? <Sunrise size={10} /> : <Sunset size={10} />}
-              {fmt2(Number(item.price), locale)} {extPct >= 0 ? '+' : ''}
-              {fmt2(extPct, locale)}%
+              {grouped2(Number(item.price), locale)} {extPct >= 0 ? '+' : ''}
+              {grouped2(extPct, locale)}%
             </div>
           )}
         </div>
@@ -170,7 +168,7 @@ export function PortfolioRowItem({
   const currency = normalizePortfolioCurrency(item.currency);
   const plStr =
     hasQuote && item.unrealizedPlPercent != null
-      ? (pos ? '+' : '') + fmt2(Number(item.unrealizedPlPercent), locale) + '%'
+      ? (pos ? '+' : '') + grouped2(Number(item.unrealizedPlPercent), locale) + '%'
       : 'N/A';
   const hasId = !!item.user_portfolio_id;
 
@@ -213,7 +211,7 @@ export function PortfolioRowItem({
           {valuesHidden
             ? t('dashboard.widgets.holdings.sharesHidden')
             : item.quantity != null
-              ? t('dashboard.widgets.holdings.shares', { n: fmtInt(Number(item.quantity), locale) })
+              ? t('dashboard.widgets.holdings.shares', { n: integer(Number(item.quantity), locale) })
               : ''}
         </div>
       </div>
@@ -254,7 +252,7 @@ export function PortfolioRowItem({
             >
               {extType === 'pre' ? <Sunrise size={10} /> : <Sunset size={10} />}
               {formatPortfolioMoney(item.price, currency, locale)} {extPct >= 0 ? '+' : ''}
-              {fmt2(extPct, locale)}%
+              {grouped2(extPct, locale)}%
             </div>
           )}
         </div>

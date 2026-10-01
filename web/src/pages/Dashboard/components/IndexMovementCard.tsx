@@ -5,11 +5,10 @@ import { motion, AnimatePresence, type PanInfo } from '@/lib/framer';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
-import { createFormatter } from '@/lib/format';
+import { grouped2 } from '@/lib/format';
 import { cn, utcMsToETDate } from '@/lib/utils';
 import type { IndexData } from '@/types/market';
 
-const fmt2 = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 interface SparklineDataPoint {
   time?: string;
@@ -50,8 +49,8 @@ function IndexCardContent({ index }: { index: IndexData }) {
   const pos = index.isPositive;
   const ch = Number(index.change);
   const pct = Number(index.changePercent);
-  const changeStr = fmt2(ch, locale);
-  const pctStr = '(' + (pos ? '+' : '') + fmt2(pct, locale) + '%)';
+  const changeStr = grouped2(ch, locale);
+  const pctStr = '(' + (pos ? '+' : '') + grouped2(pct, locale) + '%)';
   const chartData: SparklineDataPoint[] = (index.sparklineData || []).map((pt, i) =>
     typeof pt === 'object' ? { ...pt, i } : { val: pt as unknown as number, i },
   );
@@ -98,7 +97,7 @@ function IndexCardContent({ index }: { index: IndexData }) {
               className="text-lg font-bold tracking-tight dashboard-mono"
               style={{ color: 'var(--color-text-primary)' }}
             >
-              {hasQuote ? fmt2(Number(index.price), locale) : 'N/A'}
+              {hasQuote ? grouped2(Number(index.price), locale) : 'N/A'}
             </div>
             <div
               className="text-xs dashboard-mono"
@@ -147,7 +146,7 @@ function IndexCardContent({ index }: { index: IndexData }) {
                       <div style={{ color: 'var(--color-text-secondary)' }}>{d.time}</div>
                     )}
                     <div className="font-semibold dashboard-mono">
-                      {fmt2(Number(d.val), locale)}
+                      {grouped2(Number(d.val), locale)}
                     </div>
                   </div>
                 );

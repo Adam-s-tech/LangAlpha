@@ -2,7 +2,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useLocale } from '@/hooks/useLocale';
-import { createFormatter, createDateFormatter } from '@/lib/format';
+import { createDateFormatter, grouped2 } from '@/lib/format';
 import {
   GREEN,
   RED,
@@ -87,9 +87,8 @@ const TABULAR: React.CSSProperties = { fontVariantNumeric: 'tabular-nums' };
 
 // No currency symbol — quotes can be non-USD and the artifact has no currency
 // field. Locale-aware via lib/format; the caller passes `useLocale()`.
-const quotePriceFormat = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
 function fmtQuotePrice(price: number, locale: string): string {
-  return quotePriceFormat(price, locale);
+  return grouped2(price, locale);
 }
 
 function fmtSigned(value: number): string {

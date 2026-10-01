@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { utcMsToETDate } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useLocale } from '@/hooks/useLocale';
-import { createFormatter } from '@/lib/format';
+import { grouped, grouped2 } from '@/lib/format';
 import { InlineAutomationCard } from './InlineAutomationCards';
 import { InlinePreviewCard } from './InlinePreviewCard';
 import { InlineChartAnnotationCard } from './InlineChartAnnotationCard';
@@ -206,10 +206,6 @@ export function InlineStockPriceCard({ artifact, onClick }: InlineCardProps): Re
 
 // ─── InlineCompanyOverviewCard ───────────────────────────────────────
 
-// Number#toLocaleString()'s defaults, in the app's language rather than the browser's.
-const grouped = createFormatter({ maximumFractionDigits: 3 });
-const grouped2dp = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
 function formatMarketCap(num: number | null | undefined, locale: string): string {
   if (num == null) return 'N/A';
   if (Math.abs(num) >= 1e12) return `$${(num / 1e12).toFixed(2)}T`;
@@ -390,7 +386,7 @@ export function InlineMarketIndicesCard({ artifact, onClick }: InlineCardProps):
               <div style={{ display: 'flex', alignItems: 'center', gap: sz.gap, flexShrink: 0 }}>
                 {lastClose != null && (
                   <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>
-                    {grouped2dp(lastClose, locale)}
+                    {grouped2(lastClose, locale)}
                   </span>
                 )}
                 {changePct != null && (

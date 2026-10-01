@@ -13,7 +13,7 @@ import { Sunrise, Sunset } from 'lucide-react';
 import { useTheme } from '../../../../contexts/ThemeContext';
 import { createThemeResolver, useThemeTokens } from '@/lib/themeTokens';
 import { useTranslation } from 'react-i18next';
-import { createFormatter } from '@/lib/format';
+import { grouped, grouped2 } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import { buildMarketViewUrl } from '@/pages/MarketView/utils/marketRoute';
 import { useRouteLeaveGuard } from '../../contexts/RouteLeaveGuardContext';
@@ -81,8 +81,6 @@ const ANALYST_COLORS: Record<string, string> = {
   'Strong Sell': 'var(--color-loss)',
 };
 
-const plainNumber = createFormatter({});
-const price2 = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const formatNumber = (num: number | null | undefined): string => {
   if (num == null) return 'N/A';
@@ -1045,7 +1043,7 @@ export const CompanyOverviewCard = memo(function CompanyOverviewCard({ data, scr
             {hasSI && (
               <QuoteStat
                 label={`${t('toolArtifact.shortInterest', 'Short Interest')}${(latestSI!.settlement_date as string | undefined) ? ` (${latestSI!.settlement_date as string})` : ''}`}
-                value={plainNumber(latestSI!.short_interest as number, locale)}
+                value={grouped(latestSI!.short_interest as number, locale)}
               />
             )}
             {siPctOfFloat != null && (
@@ -1158,7 +1156,7 @@ export function MarketIndicesChart({ data }: DataProps): React.ReactElement {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem', flexShrink: 0 }}>
                 {lastClose != null && (
                   <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>
-                    {price2(lastClose, locale)}
+                    {grouped2(lastClose, locale)}
                   </span>
                 )}
                 {changePct != null && (

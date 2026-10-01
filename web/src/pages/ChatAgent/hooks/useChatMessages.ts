@@ -57,6 +57,7 @@ import { PROPOSAL_INTERRUPT_TYPES, SECRETARY_ACTION_TYPES, setCardFields, setCar
 import { createAnswerBoard, type AnswerBoard } from '../session/interrupts/answerBoard';
 export type { ModelStatus, FallbackSuggestion } from '../session/types';
 import type { ChatSessionRuntime } from '../session/runtime';
+import type { CardUpdater } from '../session/streamRefs';
 import { projectSubagentHistory } from '../session/subagents/projectHistory';
 import { createSubagentMuxController, getTaskIdFromEvent } from '../session/subagents/muxSink';
 import {
@@ -84,7 +85,7 @@ export function useChatMessages(
   workspaceId: string,
   initialThreadId: string | null = null,
   updateTodoListCard: ((todoData: Record<string, unknown>, isNew?: boolean) => void) | null = null,
-  updateSubagentCard: ((agentId: string, data: Record<string, unknown>) => void) | null = null,
+  updateSubagentCard: CardUpdater | null = null,
   finalizePendingTodos: (() => void) | null = null,
   onOnboardingRelatedToolComplete: (() => void) | null = null,
   onFileArtifact: ((event: SSEEvent) => void) | null = null,

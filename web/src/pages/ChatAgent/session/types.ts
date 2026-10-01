@@ -9,7 +9,7 @@ import type { ChatMessage } from '@/types/chat';
 import type { ActionRequest, ToolCallData } from '@/types/sse';
 import type { SubagentTokenUsage } from '../utils/tokenUsage';
 import type { DecisionTarget } from './interrupts/toolApprovalCard';
-import type { StreamRefs } from './streamRefs';
+import type { StreamRefs, UpdateSubagentCard } from './streamRefs';
 
 // --- Internal types for useChatMessages ---
 
@@ -248,7 +248,7 @@ interface SubagentHistoryData {
  *  the handler-facing bag plus the fields only the main stream carries. */
 interface StreamProcessorRefs extends StreamRefs {
   steeringAtOrderRef?: { current: number | null };
-  updateSubagentCard?: ((agentId: string, data: Record<string, unknown>) => void);
+  updateSubagentCard?: UpdateSubagentCard;
   unresolvedHistoryInterruptRef?: React.MutableRefObject<HistoryInterruptInfo[]>;
 }
 

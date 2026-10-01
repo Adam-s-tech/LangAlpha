@@ -33,7 +33,7 @@ import type {
   MessageRecord, SetMessages, TokenUsage, PendingInterrupt, OffloadBatch, SSEEvent,
   TaskRefs, HistoryInterruptInfo, FallbackSuggestion,
 } from './types';
-import type { UpdateSubagentCard } from './streamRefs';
+import type { CardUpdater } from './streamRefs';
 import type { SubagentHistoryStore } from './subagents/historyStore';
 import type { SubagentTokenUsage } from '../utils/tokenUsage';
 import type { RecentlySentTracker } from '../hooks/utils/recentlySentTracker';
@@ -54,7 +54,7 @@ export interface SubagentRuntime {
   // render-current
   workspaceId: string;
   t: Translate;
-  updateSubagentCard: UpdateSubagentCard | null;
+  updateSubagentCard: CardUpdater | null;
   // stable (setters)
   setMessages: SetMessages;
   setHasActiveSubagents: React.Dispatch<React.SetStateAction<boolean>>;
@@ -122,7 +122,7 @@ export interface StreamRuntime {
   workspaceId: string;
   threadId: string;
   t: Translate;
-  updateSubagentCard: UpdateSubagentCard | null;
+  updateSubagentCard: CardUpdater | null;
   onWorkspaceCreated: ((info: { workspaceId: string; question: string }) => void) | null;
   onFileArtifact: ((event: SSEEvent) => void) | null;
   onPreviewUrl: ((data: PreviewData) => void) | null;
@@ -172,7 +172,7 @@ export interface StreamRuntime {
  */
 export interface RecoveryRuntime {
   // render-current
-  updateSubagentCard: UpdateSubagentCard | null;
+  updateSubagentCard: CardUpdater | null;
   // stable (setters)
   setMessages: SetMessages;
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;

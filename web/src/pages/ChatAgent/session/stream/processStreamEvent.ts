@@ -72,7 +72,15 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
   const setMessagesForHandlers = rt.setMessages as unknown as (
     updater: (prev: Record<string, unknown>[]) => Record<string, unknown>[]
   ) => void;
-  const queueMessagesForHandlers = rt.queueMessages as unknown as typeof setMessagesForHandlers;
+  const queueMessages = rt.queueMessages as unknown as typeof setMessagesForHandlers;
+  // A streamed chunk waits for the next frame. A reconnect's backlog skips the
+  // wait: it replays in one task, so the reconnected turn appears in a single
+  // render, already typed. Read per call: the bag goes live once the backlog
+  // is applied, and a mux frame can flip it for its own dispatch.
+  const queueMessagesForHandlers: typeof setMessagesForHandlers = (update) =>
+    refs.isReconnect ? setMessagesForHandlers(update) : queueMessages(update);
+  const queueCardForHandlers: UpdateSubagentCard = (taskId, patch) =>
+    rt.updateSubagentCard?.(taskId, patch, { nextFrame: !refs.isReconnect });
   // Snapshot of the old assistant message's content order at the time the user
   // sent a steering message.  Used to roll back any content that leaked into the
   // old bubble due to stream-mode multiplexing (custom events can arrive after
@@ -495,12 +503,6 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
         // so the card shows a unified conversation across resume boundaries.
         const taskRefs = getOrCreateTaskRefs(refs, taskId);
         const subagentAssistantMessageId = `subagent-${taskId}-assistant-${taskRefs.runIndex}`;
-        // A chunk reaches the card on the next frame, as the main transcript's
-        // do; a reconnect's backlog replays in one task and applies at once.
-        const { updateSubagentCard } = rt;
-        const chunkCardWriter: UpdateSubagentCard = refs.isReconnect
-          ? updateSubagentCard
-          : (id, patch) => updateSubagentCard(id, patch, { nextFrame: true });
 
         if (eventType === 'message_chunk') {
           const contentType = (event.content_type || 'text') as string;
@@ -512,7 +514,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
             finishReason: event.finish_reason,
             elapsedMs: typeof event.elapsed_ms === 'number' ? event.elapsed_ms : undefined,
             refs,
-            updateSubagentCard: chunkCardWriter,
+            updateSubagentCard: queueCardForHandlers,
           });
         } else if (eventType === 'tool_call_chunks') {
           handleSubagentToolCallChunks({
@@ -520,7 +522,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
             assistantMessageId: subagentAssistantMessageId,
             chunks: (event.tool_call_chunks || []) as unknown as Record<string, unknown>[],
             refs,
-            updateSubagentCard: chunkCardWriter,
+            updateSubagentCard: queueCardForHandlers,
           });
         } else if (eventType === 'tool_calls') {
           handleSubagentToolCalls({
@@ -638,9 +640,6 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
       deps.clearModelStatus();
       const contentType = event.content_type || 'text';
       const eventId = event._eventId as number | undefined;
-      // A replayed backlog skips the queue: it is applied in one synchronous
-      // pass so the reconnected turn appears in a single render, already typed.
-      const chunkSetter = refs.isReconnect ? setMessagesForHandlers : queueMessagesForHandlers;
 
       // Handle reasoning_signal events
       if (contentType === 'reasoning_signal') {
@@ -663,7 +662,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
           assistantMessageId,
           content: event.content as string,
           refs,
-          setMessages: chunkSetter,
+          setMessages: queueMessagesForHandlers,
         })) {
           return;
         }
@@ -676,7 +675,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
           content: event.content as string,
           finishReason: event.finish_reason,
           refs,
-          setMessages: chunkSetter,
+          setMessages: queueMessagesForHandlers,
           eventId,
           phase: event.phase,
         })) {
@@ -758,7 +757,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
       handleToolCallChunks({
         assistantMessageId,
         chunks: (event.tool_call_chunks || []) as unknown as Record<string, unknown>[],
-        setMessages: refs.isReconnect ? setMessagesForHandlers : queueMessagesForHandlers,
+        setMessages: queueMessagesForHandlers,
       });
       return;
     } else if (eventType === 'artifact') {

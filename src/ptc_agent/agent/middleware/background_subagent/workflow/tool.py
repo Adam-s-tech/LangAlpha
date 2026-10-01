@@ -26,8 +26,10 @@ from ptc_agent.agent.middleware.background_subagent.task import (
 )
 from ptc_agent.agent.middleware.background_subagent.spawn import (
     SpawnError,
+    SpawnStoppedError,
     TaskRunRefused,
     spawn_task_writer,
+    stopped_launch_artifact,
 )
 from ptc_agent.agent.middleware.background_subagent.workflow.driver import (
     WorkflowDriver,
@@ -167,6 +169,19 @@ def _reply_with_artifact(
                 "workflow": workflow_name,
             }
         },
+    )
+
+
+def _stopped_reply(run_task: Any, tool_call_id: str) -> str | ToolMessage:
+    """A launch a stop refused mid-setup, which settles its card as stopped."""
+    reply = f"Workflow run {run_task.display_id} was stopped before it started."
+    if not tool_call_id:
+        return reply
+    return ToolMessage(
+        content=reply,
+        tool_call_id=tool_call_id,
+        name="RunWorkflow",
+        artifact=stopped_launch_artifact(),
     )
 
 
@@ -396,7 +411,9 @@ def create_run_workflow_tool(
         tool_call_id: str,
     ) -> str | ToolMessage:
         """Every path that starts a run, raising ``_Refused`` for those that
-        do not — so the caller turns a refusal into a reply exactly once."""
+        do not — so the caller turns a refusal into a reply exactly once. A
+        stop that lands mid-setup is a cancellation, not a refusal, and
+        replies stopped instead."""
         sources = (script, script_path, workflow)
         if sum(source is not None for source in sources) != 1:
             raise _Refused(
@@ -539,6 +556,8 @@ def create_run_workflow_tool(
                 name=f"workflow_run_{run_task.display_id}",
                 action="init",
             )
+        except SpawnStoppedError:
+            return _stopped_reply(run_task, tool_call_id)
         except SpawnError as error:
             raise _Refused(
                 f"could not start {run_task.display_id} — {error}."

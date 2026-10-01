@@ -66,6 +66,17 @@ class SpawnStoppedError(SpawnError):
     """A stop stamped the task mid-setup, so the publish fence refused it."""
 
 
+def stopped_launch_artifact() -> dict[str, str]:
+    """The reply artifact that settles a stopped launch's card as cancelled.
+
+    A stop is a cancellation, not a failure, so the reply keeps its success
+    status. The reply carries no task artifact, so the card never binds to the
+    cancelled run and this marker is its only settle signal. Artifacts never
+    reach the model.
+    """
+    return {"launch": "cancelled"}
+
+
 def settle_never_started(task: BackgroundTask, exc: Exception) -> None:
     """Default pre-spawn settle: the entry goes inert and is not retried."""
     task.mark_never_started(f"setup failed before spawn: {exc}")

@@ -4,6 +4,9 @@
 the frontend reads it. A refused launch opens no run and no channel, so nothing
 will ever arrive to settle its card: an unstamped failure leaves the card
 spinning for the life of the thread.
+
+A launch a stop refused mid-setup is the exception: a stop is a cancellation,
+so its reply stays a success and settles the card through its artifact.
 """
 
 from __future__ import annotations
@@ -16,9 +19,13 @@ import pytest
 
 from ptc_agent.agent.middleware.background_subagent import task_actions
 from ptc_agent.agent.middleware.background_subagent.registry import (
+    BackgroundTask,
     BackgroundTaskRegistry,
 )
-from ptc_agent.agent.middleware.background_subagent.spawn import TaskRunRefused
+from ptc_agent.agent.middleware.background_subagent.spawn import (
+    SpawnStoppedError,
+    TaskRunRefused,
+)
 
 
 class _RefusingMiddleware:
@@ -50,6 +57,83 @@ async def test_a_refused_task_launch_is_stamped_an_error():
 
     assert message.content.startswith("Error: could not start ")
     assert message.status == "error"
+
+
+def _task() -> BackgroundTask:
+    return BackgroundTask(
+        tool_call_id="call-1",
+        task_id="k7Xm2p",
+        description="d",
+        prompt="p",
+        subagent_type="research",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action, ending",
+    [
+        ("init", "was stopped before it started."),
+        ("resume", "was stopped before the resume started."),
+    ],
+)
+async def test_a_stopped_launch_settles_as_stopped_not_failed(
+    monkeypatch: pytest.MonkeyPatch, action: str, ending: str
+):
+    """A stop mid-setup refuses the writer, and the run settles cancelled.
+
+    The reply carries no task artifact, so nothing else settles the launch
+    card. The frontend settles the record cancelled from this artifact, which
+    an init card shows as "Stopped"; without it the card spins "Running", and
+    an error status shows "Failed". A resume card reads "Resumed" either way.
+    """
+
+    async def _stopped(*_args: Any, **_kwargs: Any) -> None:
+        raise SpawnStoppedError("Task-k7Xm2p was stopped before it started")
+
+    monkeypatch.setattr(task_actions, "spawn_task_writer", _stopped)
+
+    message = await task_actions._spawn_writer(
+        _RefusingMiddleware(),
+        _task(),
+        None,
+        None,
+        prompt="p",
+        description="d",
+        tool_call_id="call-1",
+        action=action,
+    )
+
+    assert message is not None
+    assert message.content == f"Background subagent {_task().display_id} {ending}"
+    assert message.status == "success"
+    assert message.artifact == {"launch": "cancelled"}
+
+
+@pytest.mark.asyncio
+async def test_a_completed_spawn_carries_no_refusal_message(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Control: a spawn that completes hands the writer off with no message."""
+
+    async def _spawned(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(task_actions, "spawn_task_writer", _spawned)
+
+    assert (
+        await task_actions._spawn_writer(
+            _RefusingMiddleware(),
+            _task(),
+            None,
+            None,
+            prompt="p",
+            description="d",
+            tool_call_id="call-1",
+            action="init",
+        )
+        is None
+    )
 
 
 _SWEPT_FILES = ("task_actions.py", "middleware.py")

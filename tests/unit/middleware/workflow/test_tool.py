@@ -9,7 +9,10 @@ import pytest
 from ptc_agent.agent.middleware.background_subagent.registry import (
     BackgroundTaskRegistry,
 )
-from ptc_agent.agent.middleware.background_subagent.spawn import NamespaceUnfenced
+from ptc_agent.agent.middleware.background_subagent.spawn import (
+    NamespaceUnfenced,
+    SpawnStoppedError,
+)
 from ptc_agent.agent.middleware.background_subagent.workflow import tool as tool_module
 from ptc_agent.agent.middleware.background_subagent.workflow.engine import (
     MAX_DESCRIPTION_CHARS,
@@ -191,6 +194,32 @@ async def test_an_unknown_workflow_refusal_is_stamped_an_error() -> None:
 
     assert "Unknown workflow 'nope'" in message.content
     assert message.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_a_launch_stopped_mid_setup_settles_as_stopped_not_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stop that wins the publish fence is a cancellation, not a refusal.
+
+    The run settles cancelled and the reply carries no task artifact, so the
+    card settles from this artifact alone: it reads "Stopped", where an
+    "Error" reply would read "Failed".
+    """
+
+    async def _stopped(mw: Any, task: Any, runner: Any, **kwargs: Any) -> None:
+        raise SpawnStoppedError(f"{task.display_id} was stopped before it started")
+
+    monkeypatch.setattr(tool_module, "spawn_task_writer", _stopped)
+    workflow_tool = _make_tool(FakeBackend())
+
+    message = await workflow_tool.coroutine(script=_script(), tool_call_id="tc-stopped")
+
+    assert message.content.startswith("Workflow run Task-")
+    assert message.content.endswith(" was stopped before it started.")
+    assert message.status == "success"
+    assert message.artifact == {"launch": "cancelled"}
+    assert "task_artifact" not in message.additional_kwargs
 
 
 @pytest.mark.asyncio

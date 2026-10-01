@@ -98,9 +98,22 @@ class FinalizeResult:
 
 @asynccontextmanager
 async def _lifecycle_connection(conn=None):
-    """Yield the caller-pinned session as-is, or a pool connection."""
+    """Yield the caller-pinned session, or a pool connection.
+
+    The pinned session prepares its checkpoint writes, but this SQL reads
+    ``SELECT *`` / ``RETURNING *``: prepared, a migration that changes those
+    columns during a deploy fails the old version's finalize with "cached plan
+    must not change result type", and the turn is left for recovery. It runs
+    once per turn, so preparing it saves nothing. The caller holds the guard
+    mutex, so no checkpoint write runs while preparation is off.
+    """
     if conn is not None:
-        yield conn
+        threshold = conn.prepare_threshold
+        conn.prepare_threshold = None
+        try:
+            yield conn
+        finally:
+            conn.prepare_threshold = threshold
         return
     async with pool.get_db_connection() as pool_conn:
         yield pool_conn

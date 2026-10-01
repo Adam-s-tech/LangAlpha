@@ -1,5 +1,5 @@
 import { flushSync } from 'react-dom';
-import { onPageReturn } from '@/lib/pageVisibility';
+import { onPageReturn, onPageUnseenChange } from '@/lib/pageVisibility';
 
 type Update<T> = (prev: T) => T;
 
@@ -30,7 +30,6 @@ export interface FrameQueue<T> {
 // One frame callback for every queue, so two streaming views cost one render.
 const waiting = new Set<() => void>();
 let frame = 0;
-let listening = false;
 
 function flushWaiting(): void {
   const flushes = [...waiting];
@@ -76,18 +75,18 @@ function onHiddenTimer(): void {
 
 // A hidden document runs no frame callbacks: hand over what is waiting now
 // rather than when the page comes back.
-function onVisibilityChange(): void {
-  if (document.visibilityState !== 'visible') flushWaiting();
-}
+onPageUnseenChange(() => {
+  if (document.hidden) flushWaiting();
+});
 
 // What the hidden page held renders synchronously, while the page still counts
 // as unseen (lib/pageVisibility), so the first frame back is as current as if
 // every read had rendered, and nothing it brings animates in.
-function onReturn(): void {
+onPageReturn(() => {
   clearTimeout(hiddenTimer);
   hiddenTimer = undefined;
   if (waiting.size) flushSync(flushWaiting);
-}
+});
 
 export function createFrameQueue<T>(apply: (update: Update<T>) => void): FrameQueue<T> {
   let pending: Update<T>[] = [];
@@ -103,12 +102,7 @@ export function createFrameQueue<T>(apply: (update: Update<T>) => void): FrameQu
   function queue(update: Update<T>): void {
     pending.push(update);
     waiting.add(flush);
-    if (!listening) {
-      listening = true;
-      document.addEventListener('visibilitychange', onVisibilityChange);
-      onPageReturn(onReturn);
-    }
-    if (document.visibilityState !== 'visible') {
+    if (document.hidden) {
       hiddenTimer ??= setTimeout(onHiddenTimer, HIDDEN_FLUSH_MS);
       return;
     }

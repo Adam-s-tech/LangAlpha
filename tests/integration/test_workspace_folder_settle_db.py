@@ -859,6 +859,8 @@ async def test_concurrent_cold_attach_fits_the_pool(
         ))
         for workspace_id in ids
     }
+    # These sandboxes have no runtime, which no pass can link through.
+    link_pass = AsyncMock(return_value=True)
 
     with (
         patch(_SKILL_PARAMS, AsyncMock(return_value={})),
@@ -866,6 +868,7 @@ async def test_concurrent_cold_attach_fits_the_pool(
             manager, "_acquire_session",
             AsyncMock(side_effect=lambda workspace_id, **_kw: sessions[workspace_id]),
         ),
+        patch.object(manager, "_reconcile_skills", link_pass),
         patch.object(manager, "_apply_session_mcp", AsyncMock()),
         patch.object(manager, "_workspace_tool_view", MagicMock(return_value=object())),
         patch.object(manager, "_mint_sandbox_tokens", AsyncMock(return_value={})),
@@ -882,6 +885,7 @@ async def test_concurrent_cold_attach_fits_the_pool(
 
     assert got == [sessions[workspace_id] for workspace_id in ids]
     assert sorted(synced) == ["Macro", "Research"]
+    assert link_pass.await_count == len(ids)
     assert manager._projects_attached == {(w, f"sb-{w}") for w in ids}
 
 

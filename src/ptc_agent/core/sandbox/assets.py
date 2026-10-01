@@ -488,7 +488,9 @@ async def _read_unified_manifest(sandbox: "PTCSandbox") -> dict[str, Any] | None
 
     Bypasses path validation for ``_internal/``.
     Returns None if missing, corrupt, or wrong ``schema_version``
-    (triggers full refresh in the caller).
+    (triggers full refresh in the caller). A module that is not a mapping
+    is corrupt: the diff reads each one as a mapping, and a sync that raised
+    on it would never write the file again.
     """
     assert sandbox.runtime is not None
     try:
@@ -500,11 +502,40 @@ async def _read_unified_manifest(sandbox: "PTCSandbox") -> dict[str, Any] | None
         if raw:
             text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
             parsed = json.loads(text)
-            if isinstance(parsed, dict) and parsed.get("schema_version") == 1:
+            if (
+                isinstance(parsed, dict)
+                and parsed.get("schema_version") == 1
+                and isinstance(modules := parsed.get("modules", {}), dict)
+                and all(isinstance(m, dict) for m in modules.values())
+            ):
                 return parsed
     except Exception:
         pass  # Missing file, decode error, or JSON error → full refresh
     return None
+
+
+async def delivered_skill_names(sandbox: "PTCSandbox") -> set[str] | None:
+    """The skills the last completed sync delivered to the shared tier.
+
+    Read from the manifest, which a sync writes only once it finishes, not
+    from the tier: a sync in flight deletes and re-uploads each skill it
+    refreshes, and a failed one can leave the tier partial. A name a
+    collision kept from upload was not delivered. None when the manifest
+    cannot be read, or holds a shape no sync writes: the file sits where
+    sandbox code can rewrite it.
+    """
+    manifest = await sandbox._read_unified_manifest()
+    if manifest is None:
+        return None
+    # The reader vouches for the modules being mappings, not for their fields.
+    skills = manifest.get("modules", {}).get("skills") or {}
+    files = skills.get("files") or {}
+    collisions = skills.get("collisions") or []
+    if not isinstance(files, dict) or not (
+        isinstance(collisions, list) and all(isinstance(c, str) for c in collisions)
+    ):
+        return None
+    return {rel.partition("/")[0] for rel in files} - set(collisions)
 
 
 async def _write_unified_manifest(

@@ -25,14 +25,18 @@ un-owned tells a later plugin update to skip the row rather than overwrite
 the customization.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
+from psycopg.errors import LockNotAvailable
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from src.server.database import pool
 from src.server.database.pool import get_db_connection
+from src.server.database.session_lock import await_settled
 from src.server.database.user_lock import lock_user_writes
 
 logger = logging.getLogger(__name__)
@@ -73,8 +77,10 @@ class SkillNotOwned(ValueError):
 # Namespace for the per-workspace skill-sync advisory lock (two-arg form).
 # The reconciler holds the session-level variant across a whole pass;
 # workspace-scoped content mutations (upsert/move/delete) take the xact-level
-# variant so they serialize against it. Lock order is always SKILL_SYNC →
-# per-user lock; for cross-workspace moves, both workspace locks sorted by id.
+# variant so they serialize against it, and a file restore holds it while it
+# fills the folder. Lock order is always SKILL_SYNC → workspace sync, and
+# SKILL_SYNC → per-user lock; for cross-workspace moves, both workspace locks
+# sorted by id.
 _SKILL_SYNC_NS = "SKILL_SYNC"
 
 # Rows of a soft-deleted workspace survive so restoring the workspace brings
@@ -103,16 +109,28 @@ class SkillSyncLockBusy(Exception):
 
 
 @asynccontextmanager
+async def _own_session():
+    """A connection outside the pool, closed on exit, which releases every
+    lock taken on it however the holder ends."""
+    conn = await pool.open_session_connection()
+    try:
+        yield conn
+    finally:
+        await await_settled(asyncio.ensure_future(conn.close()))
+
+
+@asynccontextmanager
 async def workspace_skill_sync_lock(workspace_id: str):
     """Session-level advisory lock held across one full reconcile pass.
 
-    Pins one pooled connection for the duration; released in ``finally`` and
-    by Postgres automatically if the connection dies mid-pass. Acquisition is
-    try-only: a pass is periodic, so waiting behind a stuck holder would park
-    a second pooled connection for as long as that holder lives, and a queue
-    of waiters is how one hung sandbox exhausts the pool.
+    Held on a session of its own, not a pooled connection: the pass spans
+    sandbox calls while it reads and writes through the pool, so as many
+    passes as the pool has slots would each keep one and wait on another.
+    Closing the session is the release, so a cancelled pass cannot leave the
+    lock behind. Acquisition is try-only: a pass is periodic, and a queue of
+    waiters behind one hung sandbox would hold a connection each.
     """
-    async with get_db_connection() as conn:
+    async with _own_session() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 "SELECT pg_try_advisory_lock(hashtext(%s), hashtext(%s::text))",
@@ -121,14 +139,37 @@ async def workspace_skill_sync_lock(workspace_id: str):
             row = await cur.fetchone()
         if not (row and row[0]):
             raise SkillSyncLockBusy(workspace_id)
+        yield
+
+
+@asynccontextmanager
+async def hold_workspace_skill_sync(workspace_id: str, *, wait_s: float):
+    """Wait out a pass in flight, then hold the reconcile lock; yields the session.
+
+    For a writer that fills a workspace's skill folder over many transactions,
+    as a restore does, and so cannot take the transaction-level form. The wait
+    runs on a session of its own and before any other lock: the pass it waits
+    on needs pool slots to finish, so waiters each pinning one could take them
+    all, and a waiter holding its workspace's sync lock would queue that
+    workspace's backups behind the pass too.
+    """
+    async with _own_session() as conn:
         try:
-            yield
-        finally:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "SELECT pg_advisory_unlock(hashtext(%s), hashtext(%s::text))",
-                    (_SKILL_SYNC_NS, workspace_id),
-                )
+            # SET LOCAL scopes the timeout to this transaction; the session
+            # lock itself outlives the commit.
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        f"SET LOCAL lock_timeout = '{int(wait_s * 1000)}ms'"
+                    )
+                    await cur.execute(
+                        "SELECT pg_advisory_lock(hashtext(%s), hashtext(%s::text))",
+                        (_SKILL_SYNC_NS, workspace_id),
+                    )
+        except LockNotAvailable as e:
+            raise SkillSyncLockBusy(workspace_id) from e
+        yield conn
+
 
 # Hard cap on skills per user. Defined here (not in
 # services/user_skills/limits.py, which re-exports them) so the database layer
@@ -215,11 +256,11 @@ def _row_to_dict(row: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 async def list_user_skills(
-    user_id: str, *, workspace_id: str | None = None
+    user_id: str, *, workspace_id: str | None = None, conn=None
 ) -> list[dict[str, Any]]:
     """Every skill in one scope (user tier or one workspace), ordered by name."""
-    async with get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
+    async with get_db_connection(conn) as db:
+        async with db.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 f"SELECT {_SKILL_COLUMNS_JOINED} FROM user_skills {_PLUGIN_JOIN} "
                 "WHERE user_skills.user_id = %s "
@@ -1123,10 +1164,10 @@ async def delete_user_skill_cas(
             return row
 
 
-async def list_workspace_skill_disables(workspace_id: str) -> set[str]:
+async def list_workspace_skill_disables(workspace_id: str, *, conn=None) -> set[str]:
     """Names of inherited skills this workspace has switched off."""
-    async with get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
+    async with get_db_connection(conn) as db:
+        async with db.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 "SELECT name FROM workspace_skill_disables WHERE workspace_id = %s",
                 (workspace_id,),

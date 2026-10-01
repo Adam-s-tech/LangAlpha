@@ -46,12 +46,17 @@ def _sync_lock():
     """Sync and restore serialize on a Postgres advisory lock; there is no DB here."""
 
     @asynccontextmanager
-    async def _lock(_workspace_id):
+    async def _lock(_workspace_id, *, conn=None):
+        yield None
+
+    @asynccontextmanager
+    async def _hold(_workspace_id, *, wait_s):
         yield None
 
     with (
         patch.object(backup, "workspace_sync_lock", _lock),
         patch.object(restore, "workspace_sync_lock", _lock),
+        patch.object(restore, "hold_workspace_skill_sync", _hold),
     ):
         yield
 

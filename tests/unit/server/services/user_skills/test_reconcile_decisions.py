@@ -11,6 +11,8 @@ decided against (``expectTreeHash`` / ``expectAbsent``), and content beats
 deletion on both sides.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from ptc_agent.agent.middleware.skills.lock import MANAGED_SOURCE_TYPE
@@ -310,6 +312,95 @@ async def test_dir_deleted_with_a_clean_row_propagates_the_deletion(ctx, monkeyp
     assert deleted == [("u-1", "sk-1", "db-1")]
     assert dropped == ["user-skills/u/abc.zip"]
     assert _ops(ctx) == ["remove_entry"]
+
+
+@pytest.mark.asyncio
+async def test_dir_missing_while_a_restore_is_unfinished_deletes_nothing(ctx, monkeypatch):
+    """A restore that failed a skill's files leaves its ledger entry and no
+    dir, which reads as a deletion until the restore completes."""
+
+    async def _cas(user_id, skill_id, expect):
+        raise AssertionError("a restore gap must not delete the row")
+
+    monkeypatch.setattr(reconcile, "delete_user_skill_cas", _cas)
+    ctx.restore_incomplete = True
+    ctx.report["demo"] = _rep(present=False, tree_hash=None, entry=_linked_entry())
+    ctx.ws_rows["demo"] = _row()
+
+    await reconcile._decide(ctx, "demo")
+
+    assert _ops(ctx) == []
+    assert ctx.stats.skipped == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op", ["_pull_up", "_import_new", "_absorb_user_shadow"])
+async def test_an_unfinished_restore_sends_nothing_to_the_db(monkeypatch, op):
+    """A half-restored tree reads as an agent's edit, and pulled up it would
+    truncate the row the restore is about to match."""
+
+    async def _download(ctx, name):
+        raise AssertionError("an unfinished restore's tree must not be read")
+
+    monkeypatch.setattr(reconcile, "_download_validated", _download)
+    ctx = reconcile._Pass(
+        sandbox=object(),
+        user_id="u-1",
+        workspace_id="ws-1",
+        report={},
+        ws_rows={},
+        user_rows={},
+        base="/home/workspace/acme-ab12/.agents/skills",
+        restore_incomplete=True,
+    )
+    args = {"_pull_up": (_row(),), "_import_new": (), "_absorb_user_shadow": (_row(),)}
+    kwargs = {"conflict": False} if op == "_pull_up" else {}
+
+    await getattr(reconcile, op)(ctx, "demo", *args[op], **kwargs)
+
+    assert ctx.actions == []
+    assert ctx.stats.skipped == 1
+
+
+@pytest.mark.asyncio
+async def test_a_restore_waiting_on_the_pass_freezes_it(monkeypatch):
+    """A restore raises the flag before it waits on this pass's lock, so the
+    tree the report read is about to be replaced; the flag is read after the
+    report, where that restore already shows."""
+    flag = {"up": False}
+
+    async def _report(sandbox, *, base):
+        flag["up"] = True
+        return {"demo": _rep(tree_hash="tree-2", entry=_linked_entry(tree="tree-1"))}
+
+    async def _flag(workspace_id):
+        return flag["up"]
+
+    async def _rows(user_id, *, workspace_id=None):
+        return [_row()] if workspace_id else []
+
+    async def _download(ctx, name):
+        raise AssertionError("a half-restored tree must not be read")
+
+    async def _noop(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(reconcile.skill_sync, "report", _report)
+    monkeypatch.setattr(reconcile.skill_sync, "apply_actions", _noop)
+    monkeypatch.setattr(reconcile, "files_restore_incomplete", _flag)
+    monkeypatch.setattr(reconcile, "list_user_skills", _rows)
+    monkeypatch.setattr(reconcile, "_download_validated", _download)
+    monkeypatch.setattr(reconcile, "_link_shared", _noop)
+
+    stats = await reconcile._run_pass(
+        object(),
+        "u-1",
+        "ws-1",
+        "test",
+        SimpleNamespace(skills="/home/workspace/acme-ab12/.agents/skills"),
+    )
+
+    assert (stats.pulled, stats.skipped, stats.failures) == (0, 1, 0)
 
 
 # ---------------------------------------------------------------------------

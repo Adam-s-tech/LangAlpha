@@ -33,6 +33,7 @@ from src.server.services.persistence.sync_result import (
     SyncResult,
     UnsavedFile,
 )
+from src.server.services.user_skills.reconcile import ReconcileStats
 from src.server.services.workspace_manager import WorkspaceManager
 from tests.computer_manager_patch import cm_patch
 from tests.unit.server.services.conftest import (
@@ -6309,6 +6310,40 @@ class TestRestoreGuard:
         restore.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_a_restore_that_gave_up_on_its_lock_is_not_a_restored_folder(self):
+        """It placed nothing, so the attachment has to stay unrecorded for the
+        next acquisition to retry; the flag alone only stops backups pruning."""
+        from src.server.database.user_skills import SkillSyncLockBusy
+
+        manager = WorkspaceManager.get_instance(config=_make_config())
+        sandbox = MagicMock()
+        sandbox.adownload_file_bytes = AsyncMock(return_value=None)
+        restore = "src.server.services.persistence.restore"
+
+        @asynccontextmanager
+        async def hold(_workspace_id):
+            yield
+
+        with (
+            patch(f"{_PROVISIONING}.workspace_folder_in_use", hold),
+            patch(
+                f"{_PROVISIONING}.db_get_workspace_dir_name",
+                AsyncMock(return_value="Research"),
+            ),
+            patch(
+                f"{restore}.get_files_for_workspace",
+                AsyncMock(return_value=[{"file_path": "a.txt"}]),
+            ),
+            patch(
+                f"{restore}.restore_to_sandbox",
+                AsyncMock(side_effect=SkillSyncLockBusy("ws-1")),
+            ),
+        ):
+            assert not await manager._maybe_restore_files(
+                _binding("ws-1", dir_name="Research"), sandbox
+            )
+
+    @pytest.mark.asyncio
     @patch(f"{_LIFECYCLE}.update_workspace_status", new_callable=AsyncMock)
     @cm_patch("SessionManager")
     @cm_patch("db_get_workspace")
@@ -6659,12 +6694,21 @@ class TestGeneratedContentGoesToTheHeldFolder:
         return hold, read, restore
 
     @pytest.mark.asyncio
-    async def test_cold_attach_reads_each_folder_under_a_stacked_hold(self):
-        """After a deploy every attach is cold, so the restore and the overlay
-        both run, each reading its folder under a hold of its own inside the
-        acquisition's. Holds share the process's lock session, so a stacked one
-        takes no pooled connection from concurrent attaches."""
+    @pytest.mark.parametrize("link_failed", [False, True])
+    async def test_cold_attach_reads_each_folder_under_a_stacked_hold(self, link_failed):
+        """After a deploy every attach is cold, so the restore, the overlay and
+        the skill pass all run, each reading its folder under a hold of its own
+        inside the acquisition's. Holds share the process's lock session, so a
+        stacked one takes no pooled connection from concurrent attaches. The
+        pass follows the overlay, whose asset sync can deliver skills it has to
+        link, and one whose link step failed leaves the attach to the next
+        acquisition."""
         events = []
+
+        async def reconcile(_sandbox, *, user_id, workspace_id, source, project=None):
+            events.append(f"reconcile {project.dir_name if project else None}")
+            return ReconcileStats(failures=int(link_failed), link_failed=link_failed)
+
         manager, sandbox = self._asset_sync(events)
         sandbox.runtime = None
         sandbox.sandbox_id = "sandbox-abc"
@@ -6686,6 +6730,12 @@ class TestGeneratedContentGoesToTheHeldFolder:
             stack.enter_context(
                 patch(f"{_PROVISIONING}.FilePersistenceService.maybe_restore", restore)
             )
+            stack.enter_context(
+                patch(
+                    "src.server.services.computer_manager._mcp.reconcile_workspace_skills",
+                    reconcile,
+                )
+            )
             got = await manager.get_session_for_workspace("ws-1", user_id="user-1")
 
         assert got is session
@@ -6693,9 +6743,10 @@ class TestGeneratedContentGoesToTheHeldFolder:
             "hold ws-1 x1",
             "hold ws-1 x2", "read", "restore Macro", "release",
             "hold ws-1 x2", "read", "sync Macro (owner Macro)", "release",
+            "hold ws-1 x2", "read", "reconcile Macro", "release",
             "release",
         ]
-        assert ("ws-1", "sandbox-abc") in manager._projects_attached
+        assert (("ws-1", "sandbox-abc") in manager._projects_attached) is not link_failed
 
     @pytest.mark.asyncio
     async def test_unheld_helpers_still_take_their_own_hold(self):

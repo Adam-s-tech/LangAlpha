@@ -149,6 +149,7 @@ def _attaching(manager, session, *, folder="joiner-6c06", resolve_lands=True):
         ("resolve_binding", _resolving(folder)),
         ("_ensure_workspace_dirs", AsyncMock()),
         ("_maybe_restore_files", AsyncMock(return_value=True)),
+        ("_reconcile_skills", AsyncMock(return_value=True)),
         ("_apply_session_mcp", reached.resolve),
         ("_sync_sandbox_assets", reached.sync),
     )
@@ -2945,6 +2946,24 @@ async def test_transient_restore_failure_is_retried_before_attach_is_remembered(
     assert restore.await_count == 2
     assert manager._projects_attached
     assert reached.sync.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_an_unfinished_skill_pass_is_retried_before_attach_is_remembered():
+    """The attach pass is the only one that links a sibling's folder before
+    its first turn; remembered after a pass that gave up, the folder runs
+    without its shared skills until some later lifecycle event."""
+    manager = _make_manager()
+    manager._projects_attached.clear()
+    session = TestEveryProjectsToolOverlay._joining()
+    with _attaching(manager, session):
+        manager._reconcile_skills.side_effect = [False, True]
+        await manager.get_session_for_workspace("ws-joiner", user_id="user-1")
+        assert not manager._projects_attached
+        await manager.get_session_for_workspace("ws-joiner", user_id="user-1")
+
+        assert manager._reconcile_skills.await_count == 2
+    assert manager._projects_attached
 
 @pytest.mark.asyncio
 async def test_layout_failure_is_not_downgraded_to_best_effort_asset_sync():

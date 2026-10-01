@@ -858,30 +858,40 @@ class ProvisioningMixin:
     ) -> None:
         """Machine startup prepares only its starter project, not every sibling.
 
-        Every project on a machine needs the same three things regardless of
-        which one provisioned it: a folder, its files, and its own tool
-        overlay. Recheck the generated configuration on every acquire so a
-        deleted or damaged file is repaired even on a warm computer."""
+        Every project on a machine needs the same things regardless of which
+        one provisioned it: a folder, its files, links to the shared skills,
+        and its own tool overlay. Recheck the generated configuration on every
+        acquire so a deleted or damaged file is repaired even on a warm
+        computer."""
         sandbox = getattr(session, "sandbox", None)
         if sandbox is None:
             return
         workspace_id = binding.workspace_id
         key = (workspace_id, self._session_sandbox_id(session))
-        if key not in self._projects_attached:
+        first = key not in self._projects_attached
+        ready = True
+        if first:
             # Restore files before rebuilding the generated tool configuration.
             await self._ensure_workspace_dirs(workspace_id, sandbox, binding.dir_name)
-            restored = await self._maybe_restore_files(binding, sandbox)
-        else:
-            restored = True
+            ready = await self._maybe_restore_files(binding, sandbox)
         if not await self._ensure_project_tool_overlay(
             binding, session, user_id=user_id
         ):
             # Retry on the next acquire; MCP calls refuse an absent config.
             return
-        if not restored:
+        if first and ready:
+            # A folder reaches the shared skills only through links, and a
+            # machine start or a sibling's lifecycle links no folder but its
+            # own. After the overlay, whose asset refresh can deliver skills
+            # the pass has to link. A full pass, once per sandbox per process.
+            ready = await self._reconcile_skills(
+                workspace_id, user_id, sandbox, source="attach_project"
+            )
+        if not ready:
             # The tool config can be healthy while the project's durable files
-            # are still absent. Leave the attachment unrecorded so the next
-            # acquisition retries the restore before trusting this project.
+            # or its skill links are still absent. Leave the attachment
+            # unrecorded so the next acquisition retries both before trusting
+            # this project.
             return
         if len(self._projects_attached) >= _PROJECTS_ATTACHED_CAP:
             self._projects_attached.clear()

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.server.database import user_skills as us
 from src.server.database import workspace_file as wf
 
 
@@ -63,3 +64,22 @@ async def test_a_cancellation_during_the_grant_releases_the_session():
 
     assert any("pg_advisory_unlock" in s for s in conn.executed)
     assert not conn.closed
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_restore_hold_on_the_skill_lock_closes_its_session():
+    """Left held, every later restore of the workspace waits it out and fails."""
+    conn = _Conn()
+
+    async def _hold():
+        async with us.hold_workspace_skill_sync("ws-1", wait_s=1):
+            pass  # pragma: no cover
+
+    with patch.object(us.pool, "open_session_connection", AsyncMock(return_value=conn)):
+        task = asyncio.create_task(_hold())
+        await conn.granted.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert conn.closed

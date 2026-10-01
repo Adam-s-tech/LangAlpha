@@ -42,7 +42,23 @@ def is_linked(entry: SkillLockEntry) -> bool:
     and never touch them.
     """
     sync = entry.get("sync")
-    return bool(sync and sync.get("linkedSkillId"))
+    return isinstance(sync, dict) and bool(sync.get("linkedSkillId"))
+
+
+def is_shared_tier(entry: SkillLockEntry) -> bool:
+    """A copy of a skill the computer's shared tier serves: platform, or a
+    user-tier skill the server delivers.
+
+    A workspace folder reaches these through links, so a real directory under
+    such an entry there is a stale pin, never the workspace's own skill.
+    Anything unrecognised reads as the workspace's own, which is kept.
+    """
+    if is_linked(entry):
+        return False
+    return (
+        entry.get("owner") == "platform"
+        or entry.get("sourceType") == MANAGED_SOURCE_TYPE
+    )
 
 
 # --- Types ---

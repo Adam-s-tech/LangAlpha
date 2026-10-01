@@ -232,17 +232,30 @@ async def test_restore_holds_the_same_lock_across_the_flag_and_the_transfer():
     its stale scan never saw arrive. Restore therefore takes the sync lock for
     its whole run, and its manifest read and the clearing of the flag ride
     that session; the flag is raised before the lock is requested, so a wait
-    that times out has already recorded the sandbox as unfilled."""
+    that times out has already recorded the sandbox as unfilled. The skill
+    reconcile's lock comes first, on a session of its own that the sync lock
+    then joins, and is held until the flag is cleared: no pass reads the skill
+    folder half-filled, and the wait for one holds neither a pool slot, which
+    the pass needs to finish, nor the sync lock, which backups queue on."""
     order: list[str] = []
     seen_conns: list = []
 
     @asynccontextmanager
-    async def _lock(workspace_id: str):
+    async def _lock(workspace_id: str, *, conn=None):
         order.append("lock")
+        seen_conns.append(conn)
         try:
-            yield "held-conn"
+            yield conn
         finally:
             order.append("unlock")
+
+    @asynccontextmanager
+    async def _hold_skills(workspace_id: str, *, wait_s: float):
+        order.append("skills-lock")
+        try:
+            yield "own-session"
+        finally:
+            order.append("skills-unlock")
 
     async def _flag(workspace_id, incomplete, *, conn=None, sandbox_id=None):
         order.append(f"flag={incomplete}")
@@ -269,6 +282,7 @@ async def test_restore_holds_the_same_lock_across_the_flag_and_the_transfer():
 
     with (
         patch.object(restore, "workspace_sync_lock", _lock),
+        patch.object(restore, "hold_workspace_skill_sync", _hold_skills),
         patch.object(restore, "set_files_restore_incomplete", _flag),
         patch.object(restore, "get_files_for_workspace", _rows),
         patch.object(restore, "workspace_owner", _owner),
@@ -277,5 +291,15 @@ async def test_restore_holds_the_same_lock_across_the_flag_and_the_transfer():
         result = await restore.restore_to_sandbox("ws-1", sandbox, layout=LAYOUT)
 
     assert result == {"restored": 1, "errors": 0}
-    assert order == ["flag=True", "lock", "read", "owner", "pull", "flag=False", "unlock"]
-    assert seen_conns == [None] + ["held-conn"] * 3
+    assert order == [
+        "flag=True",
+        "skills-lock",
+        "lock",
+        "read",
+        "owner",
+        "pull",
+        "flag=False",
+        "unlock",
+        "skills-unlock",
+    ]
+    assert seen_conns == [None] + ["own-session"] * 4

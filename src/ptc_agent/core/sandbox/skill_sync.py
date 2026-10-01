@@ -25,7 +25,9 @@ Four operations:
 - :func:`download_tree` — bounded, no-follow, regular-files-only zip of one
   skill dir for pull-up validation on the server.
 - :func:`link_shared_skills` (one exec): point a workspace tier at the shared
-  skills it should see, and prune the links it should not.
+  skills it should see, and prune the links it should not. First it drops the
+  tier's own copies of skills the shared tier serves, with no tree-hash guard:
+  those bytes are server-owned, so a copy can only be older.
 
 The tree hash is defined over exactly the validator/upload projection
 (``__pycache__`` dirs and ``LICENSE.txt`` excluded) so ignored files can
@@ -45,7 +47,10 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from ptc_agent.agent.middleware.skills.lock import LOCK_FILE_VERSION
+from ptc_agent.agent.middleware.skills.lock import (
+    LOCK_FILE_VERSION,
+    MANAGED_SOURCE_TYPE,
+)
 
 from ..paths import SandboxLayout
 from .retry import RetryPolicy
@@ -98,6 +103,7 @@ ARGS = json.loads(base64.b64decode("__ARGS_B64__").decode())
 BASE = ARGS["base"]
 MODE = ARGS["mode"]
 LOCK_VERSION = ARGS["lockVersion"]
+MANAGED_SOURCE_TYPE = ARGS["managedSourceType"]
 ORPHAN_TTL = ARGS["orphanTtl"]
 LOCK_PATH = os.path.join(BASE, "skills-lock.json")
 FLOCK_PATH = os.path.join(BASE, ".skills-sync.flock")
@@ -509,6 +515,59 @@ def linkable_dirs(path):
     return out
 
 
+def is_linked_entry(entry):
+    # Mirrors lock.py is_linked.
+    sync = entry.get("sync")
+    return isinstance(sync, dict) and bool(sync.get("linkedSkillId"))
+
+
+def shared_tier(entry):
+    # Mirrors lock.py is_shared_tier.
+    if is_linked_entry(entry):
+        return False
+    return entry.get("owner") == "platform" or entry.get("sourceType") == MANAGED_SOURCE_TYPE
+
+
+def unpin_shared_copies(served, own):
+    """Drop this tier's copies of skills the shared tier serves, entries and
+    dirs alike.
+
+    They arrive with a backup taken while the workspace lived at the computer
+    root, where the shared tier was its own. Left as real dirs they would
+    outrank the shared skill below and never update again. A name the shared
+    tier does not serve yet keeps its copy: a skill just promoted to the user
+    tier is ledgered as delivered before the asset sync delivers it. A name
+    in ``own`` is a workspace skill whatever its entry says, and the skill
+    sync, not this pass, decides its bytes.
+    """
+    lock_data = read_lock()
+    entries = lock_data["skills"]
+    unpinned = []
+    for name in sorted(entries):
+        entry = entries[name]
+        # Served names are real directory names, so they are safe to join.
+        if (
+            name not in served
+            or name in own
+            or not isinstance(entry, dict)
+            or not shared_tier(entry)
+        ):
+            continue
+        p = os.path.join(BASE, name)
+        if os.path.isdir(p) and not os.path.islink(p):
+            trash = os.path.join(BASE, ".trash-unpin-%s-%d" % (name, time.time_ns()))
+            try:
+                os.rename(p, trash)
+            except OSError:
+                continue
+            shutil.rmtree(trash, ignore_errors=True)
+        del entries[name]
+        unpinned.append(name)
+    if unpinned:
+        write_lock(lock_data)
+    return unpinned
+
+
 def run_link():
     """Reconcile this tier's links into the computer's shared skill dir.
 
@@ -519,9 +578,15 @@ def run_link():
     user_base = ARGS["userBase"]
     prefix = ARGS["targetPrefix"]
     disabled = set(ARGS.get("disabled") or [])
+    own = set(ARGS.get("own") or [])
     fh = acquire_flock()
+    served = linkable_dirs(user_base)
+    # The shared tier's own copies are the ones being linked to.
+    same_tier = os.path.realpath(BASE) == os.path.realpath(user_base)
+    unpinned = [] if same_tier else unpin_shared_copies(served, own)
     # A real dir here is the workspace's own skill, which outranks anything
-    # it shares a name with in the shared tier.
+    # it shares a name with in the shared tier. So does a workspace row whose
+    # dir is not here: a link would take the name its restore brings back.
     owned = set()
     for name in (os.listdir(BASE) if os.path.isdir(BASE) else []):
         if name.startswith("."):
@@ -529,7 +594,7 @@ def run_link():
         p = os.path.join(BASE, name)
         if os.path.isdir(p) and not os.path.islink(p):
             owned.add(name)
-    want = linkable_dirs(user_base) - owned - disabled
+    want = served - owned - own - disabled
     linked, relinked, pruned, blocked = [], [], [], []
     for name in sorted(want):
         link = os.path.join(BASE, name)
@@ -557,6 +622,7 @@ def run_link():
         "relinked": relinked,
         "pruned": sorted(pruned),
         "blocked": blocked,
+        "unpinned": unpinned,
     }))
 
 
@@ -608,7 +674,12 @@ else:
 
 
 def _build_command(args: dict[str, Any]) -> str:
-    args = {"lockVersion": LOCK_FILE_VERSION, "orphanTtl": ORPHAN_TTL_SECONDS, **args}
+    args = {
+        "lockVersion": LOCK_FILE_VERSION,
+        "managedSourceType": MANAGED_SOURCE_TYPE,
+        "orphanTtl": ORPHAN_TTL_SECONDS,
+        **args,
+    }
     args_b64 = base64.b64encode(json.dumps(args).encode()).decode()
     script_b64 = base64.b64encode(
         _SCRIPT.replace("__ARGS_B64__", args_b64).encode()
@@ -708,6 +779,7 @@ async def link_shared_skills(
     base: str,
     user_base: str,
     disabled: Iterable[str] = (),
+    own: Iterable[str] = (),
 ) -> dict[str, list[str]]:
     """Make ``base`` a complete view of the skills this workspace may use.
 
@@ -715,8 +787,10 @@ async def link_shared_skills(
     relative symlink rather than a copy, so the skill corpus's relative
     ``.agents/skills/<name>/...`` cross-references resolve from a workspace
     cwd exactly as they do from the computer root. Returns the names
-    ``linked``, ``relinked``, ``pruned``, and ``blocked`` (a non-directory
-    already holds the name).
+    ``linked``, ``relinked``, ``pruned``, ``blocked`` (a non-directory
+    already holds the name), and ``unpinned`` (a shared skill the tier's
+    ledger still claimed, whose entry and any stale copy were dropped). A
+    name in ``own``, the workspace's skill rows, is never unpinned or linked.
 
     A no-op when the two tiers are the same directory, which is what a
     computer holding a single workspace at its root looks like.
@@ -726,6 +800,7 @@ async def link_shared_skills(
         "relinked": [],
         "pruned": [],
         "blocked": [],
+        "unpinned": [],
     }
     if base.rstrip("/") == user_base.rstrip("/"):
         return empty
@@ -737,6 +812,7 @@ async def link_shared_skills(
             "userBase": user_base,
             "targetPrefix": shared_link_target(base, user_base),
             "disabled": sorted(disabled),
+            "own": sorted(own),
         },
         retry_policy=RetryPolicy.SAFE,
     )

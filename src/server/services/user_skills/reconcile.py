@@ -357,7 +357,11 @@ async def _link_shared(ctx: _Pass) -> None:
     try:
         disabled = await list_workspace_skill_disables(ctx.workspace_id)
         result = await skill_sync.link_shared_skills(
-            ctx.sandbox, base=ctx.base, user_base=user_base, disabled=disabled
+            ctx.sandbox,
+            base=ctx.base,
+            user_base=user_base,
+            disabled=disabled,
+            own=ctx.ws_rows,
         )
     except Exception:
         ctx.stats.failures += 1
@@ -367,6 +371,12 @@ async def _link_shared(ctx: _Pass) -> None:
         return
     ctx.stats.linked = len(result["linked"]) + len(result["relinked"])
     ctx.stats.unlinked = len(result["pruned"])
+    if result["unpinned"]:
+        logger.info(
+            "[skill_sync] handed back to the shared tier (ws=%s): %s",
+            ctx.workspace_id,
+            ", ".join(result["unpinned"]),
+        )
     if result["blocked"]:
         logger.warning(
             "[skill_sync] shared skills blocked by a non-directory (ws=%s): %s",

@@ -11,13 +11,16 @@
  * region of the page (the file panel), counted apart from the transcript's.
  */
 export function installSmoothProbe() {
+  // Declared in here: the function is serialised into the page, so a helper
+  // outside it would not exist there.
+  const zeroChurn = () => ({ mutations: 0, nodesAdded: 0, nodesRemoved: 0, charDataChanges: 0, attrChanges: 0 });
   const S = (window.__smooth = {
     running: false, t0: 0, t1: 0,
     frameGaps: [], loaf: [], longTasks: [],
-    mutations: 0, nodesAdded: 0, nodesRemoved: 0, charDataChanges: 0, attrChanges: 0,
+    ...zeroChurn(),
     commits: 0,
     countRenders: false, scope: null, renders: {}, scopeRenders: {},
-    region: { mutations: 0, nodesAdded: 0, nodesRemoved: 0, charDataChanges: 0, attrChanges: 0 },
+    region: zeroChurn(),
   });
 
   // Which components a commit rendered, read off its fiber tree the way React
@@ -132,12 +135,11 @@ export function installSmoothProbe() {
     regionMo?.disconnect();
     S.frameGaps = []; S.loaf = []; S.longTasks = [];
     S.commits = 0;
-    const totals = { mutations: 0, nodesAdded: 0, nodesRemoved: 0, charDataChanges: 0, attrChanges: 0 };
-    Object.assign(S, totals);
+    Object.assign(S, zeroChurn());
     mo = new MutationObserver(churn(S));
     mo.observe(root || document.body, OBSERVE);
     S.scope = scope; S.countRenders = renders; S.renders = {}; S.scopeRenders = {};
-    S.region = { ...totals };
+    S.region = zeroChurn();
     const regionRoot = scope && document.querySelector(scope);
     if (regionRoot) {
       regionMo = new MutationObserver(churn(S.region));

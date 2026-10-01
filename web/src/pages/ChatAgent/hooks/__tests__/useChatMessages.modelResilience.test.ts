@@ -289,7 +289,9 @@ describe('useChatMessages — model retry/fallback resilience', () => {
 
     await waitFor(() => expect(result.current.modelStatus).toBeNull());
     // The content actually rendered (real handlers ran).
-    await waitFor(() => expect(assistantOf(result)?.content).toContain('hi there'));
+    await waitFor(() => expect(
+      result.current.liveMessages.get().find((m) => m.role === 'assistant')?.content,
+    ).toContain('hi there'));
 
     await releaseHungSend(hang, send);
   });

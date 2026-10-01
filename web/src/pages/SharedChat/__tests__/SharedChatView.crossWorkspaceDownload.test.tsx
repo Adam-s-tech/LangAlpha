@@ -20,6 +20,12 @@ vi.mock('react-router', () => ({
 vi.mock('../../../contexts/AuthContext', () => ({ useAuth: () => ({ isLoggedIn: false }) }));
 vi.mock('../../../contexts/ThemeContext', () => ({ useTheme: () => ({ theme: 'light' }) }));
 
+// MessageList is mocked, so nothing registers with the dispatch-status
+// provider the view hosts above it.
+vi.mock('../../ChatAgent/hooks/usePTCDispatchStatus', () => ({
+  DispatchStatusProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 vi.mock('../../ChatAgent/components/MessageList', async () => {
   const { useMessageActions } = await import(
     '../../ChatAgent/components/messageList/MessageActionsContext'

@@ -127,9 +127,16 @@ const baseChatState = () => ({
 
 let chatState: ReturnType<typeof baseChatState>;
 
+// The live transcript is whatever `chatState.messages` holds when it is read.
+const liveMessages = {
+  get: () => chatState.messages,
+  set: () => {},
+  subscribe: () => () => {},
+};
+
 vi.mock('../../hooks/useChatMessages', async (importOriginal) => ({
   ...(await importOriginal() as Record<string, unknown>),
-  useChatMessages: () => chatState,
+  useChatMessages: () => ({ ...chatState, liveMessages }),
 }));
 
 vi.mock('../../hooks/useWorkspaceFiles', () => ({

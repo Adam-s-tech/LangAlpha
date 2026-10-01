@@ -65,6 +65,7 @@ import {
 import { loadConversationHistory as replayConversationHistory } from '../session/history/replayHistory';
 import { createStreamEventProcessor, type StreamRouterDeps } from '../session/stream/processStreamEvent';
 import { createFrameQueue } from '../session/stream/frameQueue';
+import { createLiveMessages } from '../session/stream/liveMessages';
 import {
   EMPTY_SUBAGENT_HISTORY, createSubagentHistoryStore, readSubagentHistory, type SubagentHistoryView,
 } from '../session/subagents/historyStore';
@@ -104,15 +105,28 @@ export function useChatMessages(
 
   // State
   const [messages, setMessagesState] = useState<MessageRecord[]>([]);
-  // Streamed chunks wait for the next frame (see createFrameQueue). Every
-  // other write carries them along in the same update, so it can neither
-  // overtake a chunk nor be overtaken by one.
-  const [chunkQueue] = useState(() => createFrameQueue<MessageRecord[]>(setMessagesState));
+  // Streamed chunks wait for the next frame (see createFrameQueue) and then
+  // land in `liveMessages` alone, which only the transcript's readers render
+  // from: `messages` holds the structure and lags on the text. Every other
+  // write carries the queued chunks along and is computed on the live value,
+  // never on `messages`: nearly every updater copies the streaming message
+  // whole, and on a lagging copy it would put the old text back.
+  const [liveMessages] = useState(() => createLiveMessages<MessageRecord[]>([]));
+  const [chunkQueue] = useState(() => createFrameQueue<MessageRecord[]>(
+    (update) => liveMessages.set(update(liveMessages.get())),
+  ));
   const setMessages = useCallback<React.Dispatch<React.SetStateAction<MessageRecord[]>>>((next) => {
     const queued = chunkQueue.take();
-    if (queued && typeof next === 'function') setMessagesState((prev) => next(queued(prev)));
-    else setMessagesState(next);
-  }, [chunkQueue]);
+    let value: MessageRecord[];
+    if (typeof next === 'function') {
+      const live = liveMessages.get();
+      value = next(queued ? queued(live) : live);
+    } else {
+      value = next;
+    }
+    liveMessages.set(value);
+    setMessagesState(value);
+  }, [chunkQueue, liveMessages]);
   useEffect(() => () => chunkQueue.cancel(), [chunkQueue]);
   // Subagent history (replayed per-task transcripts and the tool-call id to
   // task id index) as a snapshot with a new identity per change, so the
@@ -2669,14 +2683,15 @@ export function useChatMessages(
   const handleEditMessage = useCallback(async (messageId: string, newContent: string, modelOptions: ModelOptions = {}) => {
     if (!newContent?.trim()) return;
 
-    const msgIndex = messages.findIndex((m) => m.id === messageId);
+    const transcript = liveMessages.get();
+    const msgIndex = transcript.findIndex((m) => m.id === messageId);
     if (msgIndex === -1) return;
 
     // Steering bubbles are mid-turn injections with no boundary in /turns —
     // an edit fork would land on the NEXT turn and leave the original
     // steering text in the agent's context. The UI hides the pencil for
     // them; this guards every other caller.
-    const editTarget = messages[msgIndex];
+    const editTarget = transcript[msgIndex];
     if (isSteeringUserMessage(editTarget)) {
       setMessageError("Steering messages can't be edited");
       return;
@@ -2684,13 +2699,13 @@ export function useChatMessages(
 
     // Count non-steering assistant messages before this user message to get turn_index.
     // Excludes steering assistant messages (mid-turn continuations) which don't map to backend turns.
-    const turnIndex = messages.slice(0, msgIndex).filter((m) => m.role === 'assistant' && !isSteeringContinuation(m)).length;
+    const turnIndex = transcript.slice(0, msgIndex).filter((m) => m.role === 'assistant' && !isSteeringContinuation(m)).length;
 
     if (!claimForkPreflight()) return;
 
     // Immediate visual feedback: truncate, show edited message + loading placeholder.
     // Save snapshot so we can restore on failure.
-    const snapshotMessages = messages;
+    const snapshotMessages = transcript;
     setIsLoading(true);
     setMessageError(null);
     setFallbackSuggestion(null);
@@ -2719,22 +2734,23 @@ export function useChatMessages(
       return;
     }
 
-    await streamFromCheckpoint(newContent, checkpointId, msgIndex, messages, turnIndex, modelOptions);
+    await streamFromCheckpoint(newContent, checkpointId, msgIndex, transcript, turnIndex, modelOptions);
   // The slot helpers reach only refs and threadId.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, threadId, getTurnCheckpoints, streamFromCheckpoint, setMessages]);
+  }, [liveMessages, threadId, getTurnCheckpoints, streamFromCheckpoint, setMessages]);
 
   /**
    * Regenerate an assistant response: truncate the assistant message,
    * re-run from the checkpoint that has the user message but before AI response.
    */
   const handleRegenerate = useCallback(async (messageId: string, modelOptions: ModelOptions = {}) => {
-    const msgIndex = messages.findIndex((m) => m.id === messageId);
+    const transcript = liveMessages.get();
+    const msgIndex = transcript.findIndex((m) => m.id === messageId);
     if (msgIndex === -1) return;
 
     // Count non-steering assistant messages up to and including this one to get turn_index.
     // Excludes steering assistant messages (mid-turn continuations) which don't map to backend turns.
-    const turnIndex = messages.slice(0, msgIndex + 1).filter((m) => m.role === 'assistant' && !isSteeringContinuation(m)).length - 1;
+    const turnIndex = transcript.slice(0, msgIndex + 1).filter((m) => m.role === 'assistant' && !isSteeringContinuation(m)).length - 1;
 
     // A steered turn renders as several bubbles (pre-steering half + isSteering
     // continuations) but has only one regenerate: the whole turn re-runs from
@@ -2742,10 +2758,10 @@ export function useChatMessages(
     // back to the turn's first bubble so the stale halves and the steering
     // bubbles leave the transcript together with the re-run.
     let truncateIndex = msgIndex;
-    const regenTarget = messages[msgIndex];
+    const regenTarget = transcript[msgIndex];
     if (isSteeringContinuation(regenTarget)) {
       for (let i = msgIndex - 1; i >= 0; i--) {
-        const m = messages[i];
+        const m = transcript[i];
         if (m.role === 'assistant' && !isSteeringContinuation(m)) {
           truncateIndex = i;
           break;
@@ -2757,7 +2773,7 @@ export function useChatMessages(
 
     // Immediate visual feedback: truncate at the assistant message, show loading placeholder.
     // Save snapshot so we can restore on failure.
-    const snapshotMessages = messages;
+    const snapshotMessages = transcript;
     setIsLoading(true);
     setMessageError(null);
     setFallbackSuggestion(null);
@@ -2777,10 +2793,10 @@ export function useChatMessages(
 
     const checkpointId = turnsData.turns[turnIndex].regenerate_checkpoint_id;
     // Truncate at the turn's first assistant bubble (keep everything before it, including user msg)
-    await streamFromCheckpoint(null, checkpointId, truncateIndex, messages, turnIndex, modelOptions);
+    await streamFromCheckpoint(null, checkpointId, truncateIndex, transcript, turnIndex, modelOptions);
   // Same as handleEditMessage: the slot helpers reach only refs and threadId.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, threadId, getTurnCheckpoints, streamFromCheckpoint, setMessages]);
+  }, [liveMessages, threadId, getTurnCheckpoints, streamFromCheckpoint, setMessages]);
 
   /**
    * Retry the last failed turn as a new attempt on the same turn (v4 attempt
@@ -2791,10 +2807,11 @@ export function useChatMessages(
    */
   const handleRetry = useCallback(async (modelOptions: ModelOptions = {}) => {
     if (isStreamingRef.current) return;
-    const lastErrorIndex = messages.findLastIndex((m) => m.role === 'assistant' && (m as AssistantMessage).error);
-    const truncateIndex = lastErrorIndex !== -1 ? lastErrorIndex : messages.length;
-    await streamFromCheckpoint(null, null, truncateIndex, messages, null, modelOptions, true);
-  }, [messages, streamFromCheckpoint]);
+    const transcript = liveMessages.get();
+    const lastErrorIndex = transcript.findLastIndex((m) => m.role === 'assistant' && (m as AssistantMessage).error);
+    const truncateIndex = lastErrorIndex !== -1 ? lastErrorIndex : transcript.length;
+    await streamFromCheckpoint(null, null, truncateIndex, transcript, null, modelOptions, true);
+  }, [liveMessages, streamFromCheckpoint]);
 
   // A PTC run's sandbox acquisition settles every folder on its computer, which
   // rewrites the dir_name and previous_dir_names that agent paths fold
@@ -2861,7 +2878,10 @@ export function useChatMessages(
   );
 
   return {
+    // Which messages there are; the text as of the last write that was not a
+    // chunk. Render the text from `liveMessages` (useLiveMessages).
     messages,
+    liveMessages,
     threadId,
     threadModels,
     isLoading,

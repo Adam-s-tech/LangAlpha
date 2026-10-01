@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // forwarded at all (dead Accept/Decline buttons); the parity pass also wires the
 // message-action + stop + action-command handlers.
 const h = vi.hoisted(() => ({
+  messages: [{ id: 'm1', role: 'assistant' }],
   handleSendMessage: vi.fn(),
   handleApproveInterrupt: vi.fn(),
   handleRejectInterrupt: vi.fn(),
@@ -55,7 +56,8 @@ const ci = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }))
 
 vi.mock('@/pages/ChatAgent/hooks/useChatMessages', () => ({
   useChatMessages: () => ({
-    messages: [{ id: 'm1', role: 'assistant' }], // non-empty → MessageList renders
+    messages: h.messages, // non-empty → MessageList renders
+    liveMessages: { get: () => h.messages, set: () => {}, subscribe: () => () => {} },
     isLoading: false,
     isLoadingHistory: false,
     messageError: null,

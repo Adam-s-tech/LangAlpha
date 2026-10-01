@@ -16,6 +16,8 @@ import { SubagentTelemetryContext } from '../../ChatAgent/components/SubagentTel
 import { ChartSurfaceContext, type ChartSurface } from '../../ChatAgent/contexts/ChartSurfaceContext';
 import { WorkspaceProvider } from '../../ChatAgent/contexts/WorkspaceContext';
 import { useChatMessages } from '../../ChatAgent/hooks/useChatMessages';
+import { DispatchStatusProvider } from '../../ChatAgent/hooks/usePTCDispatchStatus';
+import { useLiveMessages } from '../../ChatAgent/session/stream/liveMessages';
 import { useActiveThreadPublisher } from '@/lib/threadLifecycle/useActiveThreadPublisher';
 import { flashWorkspaceQuery } from '@/hooks/useFlashWorkspace';
 import { appendPathSuffix, getPreviewUrl, summarizeThread, offloadThread } from '../../ChatAgent/utils/api';
@@ -261,6 +263,31 @@ interface ChatBodyProps extends MarketChatPanelProps {
   onStartNewChat: () => void;
 }
 
+type LiveTranscriptProps = Omit<React.ComponentProps<typeof MessageList>, 'messages'> & {
+  store: ReturnType<typeof useChatMessages>['liveMessages'];
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  isNearBottomRef: React.RefObject<boolean>;
+};
+
+/**
+ * The transcript, rendered from every streamed chunk on its own, so a chunk
+ * renders it and not the panel. It carries the panel's follow: on new
+ * messages or streamed text, a reader parked near the bottom is scrolled down.
+ */
+function LiveTranscript({ store, containerRef, isNearBottomRef, ...listProps }: LiveTranscriptProps): React.ReactElement {
+  const messages = useLiveMessages(store);
+  useEffect(() => {
+    if (!isNearBottomRef.current) return;
+    const el = containerRef.current;
+    if (!el || messages.length === 0) return;
+    const id = setTimeout(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }, 80);
+    return () => clearTimeout(id);
+  }, [messages, containerRef, isNearBottomRef]);
+  return <MessageList messages={messages as never[]} {...listProps} />;
+}
+
 function ChatBody(props: ChatBodyProps): React.ReactElement {
   const {
     symbol,
@@ -403,6 +430,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
 
   const {
     messages,
+    liveMessages,
     isLoading,
     isLoadingHistory,
     messageError,
@@ -632,17 +660,8 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
 
-  // Auto-scroll to bottom on new messages / streaming — only when the
-  // user is already near the bottom (see isNearBottomRef above).
-  useEffect(() => {
-    if (!isNearBottomRef.current) return;
-    const el = messagesContainerRef.current;
-    if (!el || messages.length === 0) return;
-    const id = setTimeout(() => {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-    }, 80);
-    return () => clearTimeout(id);
-  }, [messages]);
+  // Auto-scroll to bottom on new messages and streamed text, only while the
+  // user is near the bottom (see isNearBottomRef above): LiveTranscript.
 
   // Subagent navigation — chips deep-link to ChatAgent for full subagent view.
   const handleOpenSubagentTask = useCallback((info: SubagentInfo) => {
@@ -864,15 +883,19 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
             <ChartSurfaceContext value={chartSurface}>
               <SubagentTelemetryContext value={resolveSubagentTelemetry}>
                 <MessageActionsProvider actions={messageActions}>
-                  <MessageList
-                    messages={messages as never[]}
-                    isLoading={isLoading}
-                    isLoadingHistory={isLoadingHistory}
-                    feedbackByTurn={feedbackByTurn}
-                    flashContext={flashContext}
-                    workspaceDirName={workspaceDirName}
-                    previousDirNames={previousDirNames}
-                  />
+                  <DispatchStatusProvider>
+                    <LiveTranscript
+                      store={liveMessages}
+                      containerRef={messagesContainerRef}
+                      isNearBottomRef={isNearBottomRef}
+                      isLoading={isLoading}
+                      isLoadingHistory={isLoadingHistory}
+                      feedbackByTurn={feedbackByTurn}
+                      flashContext={flashContext}
+                      workspaceDirName={workspaceDirName}
+                      previousDirNames={previousDirNames}
+                    />
+                  </DispatchStatusProvider>
                 </MessageActionsProvider>
               </SubagentTelemetryContext>
             </ChartSurfaceContext>

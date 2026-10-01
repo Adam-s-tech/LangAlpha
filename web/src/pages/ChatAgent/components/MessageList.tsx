@@ -1,7 +1,6 @@
 import React from 'react';
 import { motion } from '@/lib/framer';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { DispatchStatusProvider } from '../hooks/usePTCDispatchStatus';
 import { NotificationDivider } from './messageList/NotificationDivider';
 import { MessageBubble } from './messageList/MessageBubble';
 import { TurnFold } from './messageList/TurnFold';
@@ -240,13 +239,12 @@ function MessageList({ messages, isLoading, isLoadingHistory, isSubagentView, re
     );
   }
 
-  // Render message list. One DispatchStatusProvider for the whole list so every
-  // PTCAgentCard in the turn shares a single batched dispatch-liveness query +
-  // timer instead of each card polling /status on its own.
+  // The host renders DispatchStatusProvider above the list, so every
+  // PTCAgentCard in it shares one batched dispatch-liveness query and timer.
+  // Here it re-rendered, and re-ran its query hook, on every streamed frame.
+  // sibling-space-y, not space-y: NotificationDivider's own my-1 would
+  // otherwise replace the gap below it.
   return (
-    <DispatchStatusProvider>
-    {/* sibling-space-y, not space-y: NotificationDivider's own my-1 would
-        otherwise replace the gap below it. */}
     <div className={`font-content ${isMobile ? 'sibling-space-y-4' : 'sibling-space-y-6'}`}>
       {visible.map(({ message, turnIndex }, i) => {
         if ((message.role as string) === 'notification') {
@@ -315,7 +313,6 @@ function MessageList({ messages, isLoading, isLoadingHistory, isSubagentView, re
         );
       })}
     </div>
-    </DispatchStatusProvider>
   );
 }
 

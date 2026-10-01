@@ -57,6 +57,8 @@ import { WORKFLOW_TASK_TYPE } from '../session/subagents/workflowRunState';
 import { deriveSubagentStatus, isTerminalStatus } from '../session/subagents/subagentStatus';
 import Markdown from './Markdown';
 import ChatMinimap from './ChatMinimap';
+import { WithLiveMessages } from './WithLiveMessages';
+import { DispatchStatusProvider } from '../hooks/usePTCDispatchStatus';
 import JumpToLatestPill from './JumpToLatestPill';
 import ShareButton from './ShareButton';
 import { WorkspaceProvider } from '../contexts/WorkspaceContext';
@@ -266,6 +268,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   // Chat messages management - receives updateTodoListCard and updateSubagentCard from floating cards hook
   const {
     messages,
+    liveMessages,
     isLoading,
     hasActiveSubagents,
     awaitingReportBack,
@@ -1395,15 +1398,24 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                   <div className={`${isMobile ? 'px-3 py-3' : 'px-6 py-4'} flex justify-center`}>
                     <div className="w-full max-w-3xl overflow-x-hidden">
                       <MessageActionsProvider actions={messageActions}>
-                        <MessageList
-                          messages={messages as unknown as MessageRecord[]}
-                          isLoading={isLoading}
-                          isLoadingHistory={isLoadingHistory}
-                          feedbackByTurn={feedbackByTurn}
-                          flashContext={flashContext}
-                          workspaceDirName={workspaceRecord?.dir_name}
-                          previousDirNames={workspaceRecord?.previous_dir_names}
-                        />
+                        {/* Above the list's chunk boundary: one batched
+                            dispatch-liveness query for every PTC card in the
+                            list, which a streamed frame does not re-render. */}
+                        <DispatchStatusProvider>
+                          <WithLiveMessages store={liveMessages}>
+                            {(live) => (
+                              <MessageList
+                                messages={live as unknown as MessageRecord[]}
+                                isLoading={isLoading}
+                                isLoadingHistory={isLoadingHistory}
+                                feedbackByTurn={feedbackByTurn}
+                                flashContext={flashContext}
+                                workspaceDirName={workspaceRecord?.dir_name}
+                                previousDirNames={workspaceRecord?.previous_dir_names}
+                              />
+                            )}
+                          </WithLiveMessages>
+                        </DispatchStatusProvider>
                       </MessageActionsProvider>
                     </div>
                   </div>
@@ -1476,14 +1488,15 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                             {/* Keyed per agent: which folds are open is one
                                 transcript's state, and every subagent numbers
                                 its turns from 0. */}
-                            <MessageList
-                              key={activeAgentId}
-                              messages={activeAgent.messages as MessageRecord[]}
-                              isSubagentView={true}
-                              isLoading={subagentTurnLive}
-                              workspaceDirName={workspaceRecord?.dir_name}
-                              previousDirNames={workspaceRecord?.previous_dir_names}
-                            />
+                            <DispatchStatusProvider key={activeAgentId}>
+                              <MessageList
+                                messages={activeAgent.messages as MessageRecord[]}
+                                isSubagentView={true}
+                                isLoading={subagentTurnLive}
+                                workspaceDirName={workspaceRecord?.dir_name}
+                                previousDirNames={workspaceRecord?.previous_dir_names}
+                              />
+                            </DispatchStatusProvider>
                           </MessageActionsProvider>
                         </div>
                       )}
@@ -1500,13 +1513,17 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
               )}
               {/* Minimap TOC — desktop only, when no right panel open */}
               {isActive && !isMobile && !rightPanelType && activeAgentId === 'main' && (
-                <ChatMinimap
-                  messages={messages as unknown as MessageRecord[]}
-                  scrollAreaRef={scrollAreaRef}
-                  turnInFlight={isLoading}
-                  pinToMessage={pinToMessage}
-                  pinTargetRef={pinTargetRef}
-                />
+                <WithLiveMessages store={liveMessages}>
+                  {(live) => (
+                    <ChatMinimap
+                      messages={live as unknown as MessageRecord[]}
+                      scrollAreaRef={scrollAreaRef}
+                      turnInFlight={isLoading}
+                      pinToMessage={pinToMessage}
+                      pinTargetRef={pinTargetRef}
+                    />
+                  )}
+                </WithLiveMessages>
               )}
               {/* Jump-to-latest pill — coexists with the minimap (centered vs
                   right edge): the pill is the quick way down + new-message

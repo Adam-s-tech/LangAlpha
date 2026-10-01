@@ -96,7 +96,7 @@ const Tick = memo(function Tick({
 });
 
 export default function ChatMinimap({ store, scrollAreaRef, turnInFlight, pinToMessage, pinTargetRef }: ChatMinimapProps) {
-  const messages = useLiveMessages(store) as unknown as MessageRecord[];
+  const messages: MessageRecord[] = useLiveMessages(store);
   const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement>(null);
   const railRef = useRef<HTMLDivElement>(null);

@@ -30,7 +30,7 @@
 
 import type React from 'react';
 import type {
-  MessageRecord, SetMessages, TokenUsage, PendingInterrupt, OffloadBatch, SSEEvent,
+  SetMessages, TokenUsage, PendingInterrupt, OffloadBatch, SSEEvent,
   TaskRefs, HistoryInterruptInfo, FallbackSuggestion,
 } from './types';
 import type { CardUpdater } from './streamRefs';
@@ -39,6 +39,7 @@ import type { SubagentTokenUsage } from '../utils/tokenUsage';
 import type { RecentlySentTracker } from '../hooks/utils/recentlySentTracker';
 import type { PreviewData } from '../hooks/utils/types';
 import type { StructuredError } from '@/utils/rateLimitError';
+import type { ChatMessage } from '@/types/chat';
 
 /** Mutable ref container (matches both useRef cells and hand-built refs). */
 type Ref<T> = { current: T };
@@ -130,7 +131,7 @@ export interface StreamRuntime {
   // stable (setters)
   setMessages: SetMessages;
   /** Per-token writes, applied on the next frame (`frameQueue.ts`). */
-  queueMessages: (update: (prev: MessageRecord[]) => MessageRecord[]) => void;
+  queueMessages: (update: (prev: ChatMessage[]) => ChatMessage[]) => void;
   /** Apply the queued per-token writes now. */
   flushMessages: () => void;
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;

@@ -188,8 +188,8 @@ export function projectSubagentHistory(
             if (msgIdx !== -1) {
               const taskMsg = taskRefsLocal.messages[msgIdx];
               if (taskMsg.role === 'assistant') {
-                const aMsg = taskMsg as unknown as AssistantMessage;
-                taskRefsLocal.messages[msgIdx] = { ...aMsg, contentSegments: [...(aMsg.contentSegments || []), { type: 'notification' as const, content: text, order, detail }] } as unknown as Record<string, unknown>;
+                const aMsg = taskMsg as AssistantMessage;
+                taskRefsLocal.messages[msgIdx] = { ...aMsg, contentSegments: [...(aMsg.contentSegments || []), { type: 'notification' as const, content: text, order, detail }] };
               }
             }
           }
@@ -214,7 +214,7 @@ export function projectSubagentHistory(
     // processes on the last assistant message so SubagentStatusBar shows 'completed'.
     const finalMessages = rawMessages.map((msg) => {
       if (msg.role !== 'assistant') return msg;
-      const aMsg = msg as unknown as AssistantMessage;
+      const aMsg = msg as AssistantMessage;
       // Only finalize the last assistant message (or all, to be safe)
       const m = { ...aMsg, isStreaming: false as const };
       if (m.toolCallProcesses) {

@@ -16,7 +16,7 @@
  * lost its receipt.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 
 const api = vi.hoisted(() => ({ replayThreadHistory: vi.fn() }));
 
@@ -25,7 +25,6 @@ vi.mock('../../../utils/api', () => ({
 }));
 
 import { loadConversationHistory } from '../replayHistory';
-import type { MessageRecord } from '../../types';
 import { isInlineArtifactReady } from '../../../components/charts/InlineArtifactCards';
 import { orderReceiptOf } from '../../../components/mcp/useOrderReceipt';
 import { buildRuntime, makeDeps, replayOf } from './replayHarness';
@@ -147,7 +146,7 @@ const GATED_EVENTS = [
   },
 ];
 
-function processOf(messages: MessageRecord[], toolCallId: string) {
+function processOf(messages: ChatMessage[], toolCallId: string) {
   const assistants = messages.filter((m) => m.role === 'assistant') as unknown as AssistantMessage[];
   for (const message of assistants) {
     const proc = (message.toolCallProcesses || {})[toolCallId];

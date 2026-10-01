@@ -12,9 +12,9 @@
 import type { MutableRefObject } from 'react';
 import type { HitlDecisionBody, HitlResponseBody, HitlResumeEntry } from '@/types/api';
 import type {
-  AssistantMessage, CreditPauseStatus, ToolApprovalPosition, ToolApprovalState,
+  AssistantMessage, ChatMessage, CreditPauseStatus, ToolApprovalPosition, ToolApprovalState,
 } from '@/types/chat';
-import type { MessageRecord, SetMessages } from '../types';
+import type { SetMessages } from '../types';
 import { setCardFields, setCardStatus } from './buckets';
 import type { DecisionTarget } from './toolApprovalCard';
 
@@ -57,9 +57,9 @@ export function buildToolApprovalResumeEntry(
  * the answer came from, so every assistant message is searched.
  */
 export function restoreToolApprovalsPending(
-  messages: MessageRecord[],
+  messages: ChatMessage[],
   interruptIds: Set<string>,
-): MessageRecord[] {
+): ChatMessage[] {
   return messages.map((m) => {
     if (m.role !== 'assistant') return m;
     const msg = m as AssistantMessage;

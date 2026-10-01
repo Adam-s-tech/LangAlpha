@@ -7,7 +7,7 @@
 import { finalizeAssistantMessage } from './finalizeMessage';
 import { isUpstreamHint, type StructuredError } from '@/utils/rateLimitError';
 import { applyAnnotationArtifact } from '@/pages/MarketView/stores/chartAnnotationStore';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 import { CREDIT_STOP_ERROR_TYPE } from '@/types/sse';
 import { setStoredThreadId } from '../../hooks/utils/threadStorage';
 import { createAssistantMessage, appendMessage, updateMessage } from '../../hooks/utils/messageHelpers';
@@ -34,7 +34,7 @@ import {
 import { getOrCreateTaskRefs, type UpdateSubagentCard } from '../streamRefs';
 import { handleMarketWatchUpdate, type MarketWatchState } from '../marketWatchEvents';
 import type {
-  MessageRecord, SSEEvent, HistoryInterruptInfo, StreamProcessorRefs, ModelOptions, ModelStatus,
+  SSEEvent, HistoryInterruptInfo, StreamProcessorRefs, ModelOptions, ModelStatus,
 } from '../types';
 import { PROPOSAL_INTERRUPT_TYPES, PROPOSAL_DATA_KEY_MAP } from '../interrupts/buckets';
 import { projectLiveInterrupt } from '../interrupts/fromLiveEvent';
@@ -333,7 +333,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
         // Reconnect path: create user bubbles from event payload
         const steeringMsgs = (event.messages || []).filter((qMsg) => qMsg.content);
         if (steeringMsgs.length === 0) return prev;
-        const newUserMessages: MessageRecord[] = steeringMsgs.map((qMsg) => ({
+        const newUserMessages: ChatMessage[] = steeringMsgs.map((qMsg) => ({
           id: `steering-user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           role: 'user' as const,
           content: qMsg.content as string,

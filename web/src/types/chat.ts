@@ -428,7 +428,7 @@ export interface CreditPauseState {
 
 // --- Chat Messages ---
 
-export interface UserMessage {
+export type UserMessage = {
   id: string;
   role: 'user';
   content: string;
@@ -460,9 +460,9 @@ export interface UserMessage {
    * and dropped if the user stops the compaction.
    */
   queued?: boolean;
-}
+};
 
-export interface AssistantMessage {
+export type AssistantMessage = {
   id: string;
   role: 'assistant';
   content: string;
@@ -503,11 +503,11 @@ export interface AssistantMessage {
   /** Local observation of completion, stop, or failure. Not set on transport
    * loss or a paused turn; replay's completedAt takes precedence. */
   completionObservedAt?: number;
-}
+};
 
 export type NotificationVariant = 'info' | 'success' | 'warning';
 
-export interface NotificationMessage {
+export type NotificationMessage = {
   id: string;
   role: 'notification';
   content: string;
@@ -517,7 +517,7 @@ export interface NotificationMessage {
    *  notification's expand toggle. */
   detail?: string;
   isHistory?: boolean;
-}
+};
 
 export type ChatMessage = UserMessage | AssistantMessage | NotificationMessage;
 

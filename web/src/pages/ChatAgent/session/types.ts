@@ -13,11 +13,8 @@ import type { StreamRefs, UpdateSubagentCard } from './streamRefs';
 
 // --- Internal types for useChatMessages ---
 
-/** Message record — now properly typed as ChatMessage. */
-type MessageRecord = ChatMessage;
-
 /** React state setter for messages array. */
-type SetMessages = React.Dispatch<React.SetStateAction<MessageRecord[]>>;
+type SetMessages = React.Dispatch<React.SetStateAction<ChatMessage[]>>;
 
 /** Token usage state for context window progress ring. */
 interface TokenUsage {
@@ -264,7 +261,7 @@ interface PairState {
 
 
 export type {
-  MessageRecord, SetMessages, TokenUsage, PendingInterrupt, PendingRejection,
+  SetMessages, TokenUsage, PendingInterrupt, PendingRejection,
   SSEEvent, ModelOptions, OffloadBatch, ContextWindowCallbacks,
   SubagentHistoryEntry, TaskRefs, HistoryInterruptInfo, SubagentHistoryData,
   StreamProcessorRefs, PairState,

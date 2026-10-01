@@ -8,7 +8,7 @@
  * against N cards rather than one.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 
 const api = vi.hoisted(() => ({ replayThreadHistory: vi.fn() }));
 
@@ -17,7 +17,6 @@ vi.mock('../../../utils/api', () => ({
 }));
 
 import { loadConversationHistory } from '../replayHistory';
-import type { MessageRecord } from '../../types';
 import { buildRuntime, makeDeps, replayOf } from './replayHarness';
 
 const ARGS = { acc_id: '12345678', code: 'US.AAPL', side: 'BUY', qty: '1' };
@@ -49,14 +48,14 @@ const TAIL_INTERRUPT = {
   data: { thread_id: 'thread-1', interrupt_id: 'int-1', action_requests: ACTION_REQUESTS },
 };
 
-function allCards(messages: MessageRecord[]) {
+function allCards(messages: ChatMessage[]) {
   return Object.fromEntries(
     (messages.filter((m) => m.role === 'assistant') as unknown as AssistantMessage[])
       .flatMap((b) => Object.entries(b.toolApprovals || {})),
   ) as Record<string, { status?: string }>;
 }
 
-function approvalSegments(messages: MessageRecord[]) {
+function approvalSegments(messages: ChatMessage[]) {
   return (messages.filter((m) => m.role === 'assistant') as unknown as AssistantMessage[])
     .flatMap((b) => (b.contentSegments || []).filter((sg) => sg.type === 'tool_approval'));
 }

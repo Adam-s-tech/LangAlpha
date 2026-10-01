@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLatestRef } from '@/hooks/useLatestRef';
 import { getCompletedRowTitle } from '../toolDisplayConfig';
+import type { MessageRecord } from './types';
 
 /** Screen-reader announcer for tool-call completions (carved out of ChatView,
  * 5.9c). Returns the string for ChatView's polite aria-live region. */
-export function useToolCallAnnouncer(messages: unknown[]): string {
+export function useToolCallAnnouncer(messages: readonly MessageRecord[]): string {
   const { t } = useTranslation();
 
   // --- Aria-live announcement for screen readers ---
@@ -52,7 +53,7 @@ export function useToolCallAnnouncer(messages: unknown[]): string {
     const seen = announcedToolCallIdsRef.current;
     let enqueued = 0;
 
-    for (const m of messages as unknown as Array<Record<string, unknown>>) {
+    for (const m of messages) {
       if (m?.role !== 'assistant') continue;
       const procs = m.toolCallProcesses as Record<string, Record<string, unknown>> | undefined;
       if (!procs) continue;

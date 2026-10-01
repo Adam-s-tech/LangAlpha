@@ -325,7 +325,7 @@ function MessageList({ messages, isLoading, isLoadingHistory, isSubagentView, re
 export function LiveMessageList({ store, ...props }: Omit<MessageListProps, 'messages'> & { store: LiveMessages<ChatMessage[]> }) {
   const messages = useLiveMessages(store);
   // The session types its messages; the list reads them as records.
-  return <MessageList messages={messages as unknown as MessageRecord[]} {...props} />;
+  return <MessageList messages={messages} {...props} />;
 }
 
 export default MessageList;

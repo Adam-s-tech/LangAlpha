@@ -49,12 +49,7 @@ import { collectRecentWritePaths, downloadTarget, type TurnMessage } from '../Ch
 import { useStableHandler } from '@/hooks/useStableHandler';
 import { DispatchStatusProvider } from '../ChatAgent/hooks/usePTCDispatchStatus';
 import { useIsMobile } from '@/hooks/useIsMobile';
-
-// Message record type compatible with historyEventHandlers
-type MessageRecord = Record<string, unknown>;
-
-/** SetMessages type matching historyEventHandlers' signature */
-type SetMessages = (updater: (prev: MessageRecord[]) => MessageRecord[]) => void;
+import type { MessageRecord, SetMessages } from '../ChatAgent/hooks/utils/types';
 
 
 function updateMessage(messages: MessageRecord[], messageId: string, updater: (m: MessageRecord) => MessageRecord): MessageRecord[] {

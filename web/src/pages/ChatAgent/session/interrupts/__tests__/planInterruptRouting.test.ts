@@ -5,13 +5,13 @@
  * writes nothing into the tool-approval bucket on the way.
  */
 import { describe, it, expect, vi } from 'vitest';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 
 import { projectLiveInterrupt } from '../fromLiveEvent';
 import { projectHistoryInterrupt, type HistoryInterruptContext } from '../fromHistoryEvent';
 import { createApprovalEvidence } from '../claims';
 import type { StreamRuntime, HistoryRuntime } from '../../runtime';
-import type { MessageRecord, SSEEvent, StreamProcessorRefs, PairState } from '../../types';
+import type { SSEEvent, StreamProcessorRefs, PairState } from '../../types';
 
 type Ref<T> = { current: T };
 const ref = <T,>(current: T): Ref<T> => ({ current });
@@ -24,14 +24,14 @@ function planEvent(): SSEEvent {
   } as unknown as SSEEvent;
 }
 
-const bubble = (id: string): MessageRecord =>
-  ({ id, role: 'assistant', content: '', contentSegments: [] }) as unknown as MessageRecord;
+const bubble = (id: string): ChatMessage =>
+  ({ id, role: 'assistant', content: '', contentSegments: [] }) as unknown as ChatMessage;
 
 describe('plan interrupt routing', () => {
   it('routes a SubmitPlan interrupt to the plan card on the live path', () => {
     let current = [bubble('a-1')];
     const rt = {
-      setMessages: ((updater: (prev: MessageRecord[]) => MessageRecord[]) => {
+      setMessages: ((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
         current = updater(current);
       }) as StreamRuntime['setMessages'],
       setPendingInterrupt: vi.fn(),
@@ -52,7 +52,7 @@ describe('plan interrupt routing', () => {
   it('routes a SubmitPlan interrupt to the plan card on the history path', () => {
     let current = [bubble('a-1')];
     const rt = {
-      setMessages: ((updater: (prev: MessageRecord[]) => MessageRecord[]) => {
+      setMessages: ((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
         current = updater(current);
       }) as HistoryRuntime['setMessages'],
       renderedInterruptIdsRef: ref(new Set<string>()),

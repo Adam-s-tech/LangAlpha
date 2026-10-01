@@ -34,7 +34,7 @@ import { ensureThreadId } from '../session/threadCreation';
 export { removeStoredThreadId } from './utils/threadStorage';
 import { createUserMessage, createAssistantMessage, createNotificationMessage, appendMessage, updateMessage, type AttachmentMeta } from './utils/messageHelpers';
 import type { HitlResponseBody, HitlResumeEntry } from '@/types/api';
-import type { AssistantMessage, ToolApprovalPosition, UserMessage } from '@/types/chat';
+import type { AssistantMessage, ToolApprovalPosition, UserMessage, ChatMessage } from '@/types/chat';
 import type { PreviewData } from './utils/types';
 import { createRecentlySentTracker } from './utils/recentlySentTracker';
 import { createRequestKeyTracker } from './utils/requestKey';
@@ -48,7 +48,7 @@ import { refreshComputersAfterTurn } from './useComputers';
 
 // --- Module scope extracted to session/types + utils (W1) ---
 import type {
-  MessageRecord, TokenUsage, PendingInterrupt, PendingRejection,
+  TokenUsage, PendingInterrupt, PendingRejection,
   SSEEvent, ModelOptions, OffloadBatch, TaskRefs,
   HistoryInterruptInfo, StreamProcessorRefs,
   ModelStatus, FallbackSuggestion,
@@ -99,18 +99,18 @@ export function useChatMessages(
   const userTimezone = useHomeTimezone();
 
   // State
-  const [messages, setMessagesState] = useState<MessageRecord[]>([]);
+  const [messages, setMessagesState] = useState<ChatMessage[]>([]);
   // Streamed chunks wait for the next frame and then land in `liveMessages`
   // alone, which only the transcript's readers render from: `messages` holds
   // the structure and lags on the text. Every other write goes through
   // `setMessages`, computed on the live value, never on `messages`: nearly
   // every updater copies the streaming message whole, and on a lagging copy it
   // would put the old text back.
-  const [liveMessages] = useState(() => createLiveTranscript<MessageRecord[]>([], setMessagesState));
+  const [liveMessages] = useState(() => createLiveTranscript<ChatMessage[]>([], setMessagesState));
   const setMessages = liveMessages.write;
   useEffect(() => liveMessages.dispose, [liveMessages]);
   // What the views get: read-only, since a write from there would skip `messages`.
-  const liveView: LiveMessages<MessageRecord[]> = liveMessages;
+  const liveView: LiveMessages<ChatMessage[]> = liveMessages;
   const [threadId, setThreadId] = useState<string>(() => {
     // If threadId is provided from URL, use it; otherwise use localStorage
     if (initialThreadId) {
@@ -1444,7 +1444,7 @@ export function useChatMessages(
     // context cards (widget snapshots / chart selections) so a message queued
     // during compaction keeps them when the flush routes through steering.
     const userMsg = createUserMessage(message, attachmentMeta as AttachmentMeta[] | null, widgetSnapshots ?? null, chartSelections ?? null);
-    const userMessage: MessageRecord = { ...userMsg, steering: true };
+    const userMessage: ChatMessage = { ...userMsg, steering: true };
     recentlySentTrackerRef.current.track(message.trim(), userMessage.timestamp, userMessage.id);
     setMessages((prev) => appendMessage(prev,userMessage));
 
@@ -1670,7 +1670,7 @@ export function useChatMessages(
         widgetSnapshots ?? null,
         chartSelections ?? null,
       );
-      const queuedMessage: MessageRecord = { ...queuedMsg, queued: true };
+      const queuedMessage: ChatMessage = { ...queuedMsg, queued: true };
       queuedSendRef.current = {
         message,
         planMode,
@@ -2452,7 +2452,7 @@ export function useChatMessages(
    * current platform, locale, timezone and runtime. `snapshot` is the render
    * the caller computed `truncateIndex` against.
    */
-  const streamFromCheckpoint = useStableHandler(async (message: string | null, checkpointId: string | null, truncateIndex: number, snapshot: readonly MessageRecord[], forkFromTurn: number | null = null, modelOptions: ModelOptions = {}, viaRetryEndpoint: boolean = false) => {
+  const streamFromCheckpoint = useStableHandler(async (message: string | null, checkpointId: string | null, truncateIndex: number, snapshot: readonly ChatMessage[], forkFromTurn: number | null = null, modelOptions: ModelOptions = {}, viaRetryEndpoint: boolean = false) => {
     // Callers check the slot is free: an edit or regenerate already holds it
     // for its checkpoint read, and takes it again below with the same result.
 

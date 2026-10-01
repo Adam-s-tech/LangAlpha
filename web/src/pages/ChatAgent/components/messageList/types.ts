@@ -5,8 +5,7 @@ export const EMPTY_OBJ = {} as Record<string, never>;
 
 // --- Shared Types ---
 
-/** Loosely typed message record from SSE/API */
-export type MessageRecord = Record<string, unknown>;
+export type { MessageRecord } from '../../hooks/utils/types';
 
 /** A turn without foldable work is `unfolded`. Both preferences use `live`
  * while running, `collapsed` for a settled answer, and `expanded` on request.

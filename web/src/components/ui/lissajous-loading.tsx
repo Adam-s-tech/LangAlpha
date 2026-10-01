@@ -11,8 +11,10 @@ const AX = 3;
 const BY = 4;
 const PHASE = 1.57;
 const Y_SCALE = 0.92;
-// Outlasts a caller's opacity fade, so the dots never freeze while still seen.
-const SETTLE_MS = 250;
+/** The caller's opacity fade, which it sets as its `transitionDuration`. */
+export const FADE_MS = 200;
+// Outlasts that fade, so the dots never freeze while still seen.
+const SETTLE_MS = FADE_MS + 50;
 
 function normalizeProgress(p: number) {
   return ((p % 1) + 1) % 1;

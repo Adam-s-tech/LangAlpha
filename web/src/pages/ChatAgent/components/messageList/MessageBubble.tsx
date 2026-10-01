@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, Copy, FileSearch, Info, Pencil, RefreshCw, RotateCcw, StopCircle, ThumbsDown, ThumbsUp } from 'lucide-react';
 import ThumbDownModal from '../ThumbDownModal';
-import LissajousLoading from '@/components/ui/lissajous-loading';
+import LissajousLoading, { FADE_MS } from '@/components/ui/lissajous-loading';
 import { AnimatePresence, motion } from '@/lib/framer';
 import { EXIT_TWEEN } from './liveZoneTiming';
 import { visibleParagraphPrefix } from '@/lib/paragraphGate';
@@ -532,8 +532,8 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
             return (
               <motion.div
                 key="streaming-indicator"
-                className="transition-opacity duration-200"
-                style={{ opacity: quiet ? 1 : 0, height: size + gap, paddingTop: gap, overflow: 'hidden' }}
+                className="transition-opacity"
+                style={{ opacity: quiet ? 1 : 0, transitionDuration: `${FADE_MS}ms`, height: size + gap, paddingTop: gap, overflow: 'hidden' }}
                 exit={{ height: 0, paddingTop: 0, opacity: 0, transition: EXIT_TWEEN }}
                 aria-hidden={!quiet}
                 data-testid="streaming-indicator"

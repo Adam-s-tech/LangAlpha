@@ -40,15 +40,15 @@ export const EMPTY_SUBAGENT_HISTORY: SubagentHistorySnapshot = {
   agentIdByToolCallId: new Map(),
 };
 
-export function resolveHistoryAgentId(snapshot: SubagentHistorySnapshot, subagentId: string): string {
-  return snapshot.agentIdByToolCallId.get(subagentId) || subagentId;
+export function resolveHistoryAgentId(index: SubagentHistorySnapshot['agentIdByToolCallId'], subagentId: string): string {
+  return index.get(subagentId) || subagentId;
 }
 
 export function readSubagentHistory(
   snapshot: SubagentHistorySnapshot,
   subagentId: string,
 ): SubagentHistoryView | null {
-  const agentId = resolveHistoryAgentId(snapshot, subagentId);
+  const agentId = resolveHistoryAgentId(snapshot.agentIdByToolCallId, subagentId);
   const entry = snapshot.entries[agentId];
   return entry ? { ...entry, agentId } : null;
 }

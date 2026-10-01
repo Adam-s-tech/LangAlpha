@@ -35,9 +35,10 @@ describe('hydrateTaskTranscript', () => {
     const ghostEntry = ghost.entries['task:ch1'];
     const rt = { t: (k: string) => k, subagentHistory, subagentStateRefsRef: { current: {} } };
 
-    await expect(hydrateTaskTranscript(rt, 'thread-1', 'task:ch1')).resolves.toBe(true);
+    const view = await hydrateTaskTranscript(rt, 'thread-1', 'task:ch1');
 
     const landed = subagentHistory.get().entries['task:ch1'];
+    expect(view).toEqual({ ...landed, agentId: 'task:ch1' });
     expect(landed.messages.length).toBeGreaterThan(0);
     expect(landed.ownerTaskId).toBe('task:wf1');
     // The ghost snapshot and the hydrated one; neither was edited after it went out.

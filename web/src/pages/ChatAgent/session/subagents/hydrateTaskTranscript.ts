@@ -10,7 +10,7 @@ import { taskIdFromAgentId } from '../../utils/agentId';
 import type { SSEEvent } from '../types';
 import type { SubagentRuntime } from '../runtime';
 import { projectSubagentHistory } from './projectHistory';
-import { resolveHistoryAgentId } from './historyStore';
+import { resolveHistoryAgentId, type SubagentHistoryView } from './historyStore';
 import { isTerminalStatus } from './subagentStatus';
 import { deriveChildIdentity, findWorkflowChildOwner } from './workflowRunState';
 
@@ -20,17 +20,17 @@ export interface TaskTranscriptMeta {
   status?: string;
 }
 
-/** Resolves true when an entry landed in the history. */
+/** Resolves to the entry in the history, or null when none landed. */
 export async function hydrateTaskTranscript(
   rt: Pick<SubagentRuntime, 't' | 'subagentHistory' | 'subagentStateRefsRef'>,
   threadId: string,
   subagentId: string,
   meta?: TaskTranscriptMeta,
-): Promise<boolean> {
-  const agentId = resolveHistoryAgentId(rt.subagentHistory.get(), subagentId);
-  if (!threadId || threadId === '__default__') return false;
+): Promise<SubagentHistoryView | null> {
+  const agentId = resolveHistoryAgentId(rt.subagentHistory.get().agentIdByToolCallId, subagentId);
+  if (!threadId || threadId === '__default__') return null;
   const prior = rt.subagentHistory.get().entries[agentId];
-  if (prior?.messages?.length) return true;
+  if (prior?.messages?.length) return { ...prior, agentId };
   const shortId = taskIdFromAgentId(agentId) ?? agentId;
 
   // A state ref with content is a live stream's write surface — never stomp
@@ -39,7 +39,7 @@ export async function hydrateTaskTranscript(
   // child that hasn't emitted yet; only a terminal task is safe to re-read
   // from the checkpoint, since terminal means no live writer.
   const stateRef = rt.subagentStateRefsRef.current[agentId];
-  if (stateRef?.messages?.length) return false;
+  if (stateRef?.messages?.length) return null;
 
   let status: string | undefined = [meta?.status, prior?.status].find(isTerminalStatus);
   // Applies with or without a lane: a deep link to a still-running child has
@@ -50,7 +50,7 @@ export async function hydrateTaskTranscript(
       const res = await getSubagentTaskStatus(threadId, shortId);
       if (isTerminalStatus(res?.status)) status = res.status as string;
     } catch { /* unreachable ledger reads as non-terminal */ }
-    if (!status) return false;
+    if (!status) return null;
   }
 
   // A workflow child is anonymous in its own transcript — the dispatching
@@ -67,7 +67,7 @@ export async function hydrateTaskTranscript(
     const events = (res?.items || []).map(
       (item) => ({ ...(item.data || {}), event: item.event }),
     ) as SSEEvent[];
-    if (!events.length) return false;
+    if (!events.length) return null;
     projectSubagentHistory(
       rt,
       new Map([
@@ -86,8 +86,9 @@ export async function hydrateTaskTranscript(
         ],
       ]),
     );
-    return !!rt.subagentHistory.get().entries[agentId];
+    const landed = rt.subagentHistory.get().entries[agentId];
+    return landed ? { ...landed, agentId } : null;
   } catch {
-    return false;
+    return null;
   }
 }

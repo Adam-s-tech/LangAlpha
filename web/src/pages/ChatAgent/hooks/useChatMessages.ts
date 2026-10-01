@@ -60,15 +60,10 @@ import type { ChatSessionRuntime } from '../session/runtime';
 import type { CardUpdater } from '../session/streamRefs';
 import { projectSubagentHistory } from '../session/subagents/projectHistory';
 import { createSubagentMuxController, getTaskIdFromEvent } from '../session/subagents/muxSink';
-import {
-  hydrateTaskTranscript, type TaskTranscriptMeta,
-} from '../session/subagents/hydrateTaskTranscript';
 import { loadConversationHistory as replayConversationHistory } from '../session/history/replayHistory';
 import { createStreamEventProcessor, type StreamRouterDeps } from '../session/stream/processStreamEvent';
 import { createLiveTranscript, type LiveMessages } from '../session/stream/liveMessages';
-import {
-  EMPTY_SUBAGENT_HISTORY, createSubagentHistoryStore, readSubagentHistory, type SubagentHistoryView,
-} from '../session/subagents/historyStore';
+import { useSubagentHistory } from '../session/subagents/useSubagentHistory';
 import {
   acquireStreamOwnership as acquireOwnership,
   releaseStreamOwnership as releaseOwnership,
@@ -116,16 +111,6 @@ export function useChatMessages(
   useEffect(() => liveMessages.dispose, [liveMessages]);
   // What the views get: read-only, since a write from there would skip `messages`.
   const liveView: LiveMessages<MessageRecord[]> = liveMessages;
-  // Subagent history (replayed per-task transcripts and the tool-call id to
-  // task id index) as a snapshot with a new identity per change, so the
-  // getters below change exactly when it does. Each publish applies the queued
-  // chunks first, like any non-chunk write, and batches with the setState
-  // calls of the same task.
-  const [historyView, setHistoryView] = useState(EMPTY_SUBAGENT_HISTORY);
-  const [subagentHistory] = useState(() => createSubagentHistoryStore((next) => {
-    liveMessages.flush();
-    setHistoryView(next);
-  }));
   const [threadId, setThreadId] = useState<string>(() => {
     // If threadId is provided from URL, use it; otherwise use localStorage
     if (initialThreadId) {
@@ -505,6 +490,11 @@ export function useChatMessages(
   // Persistent subagent state refs — survives across turns so resumed subagents
   // retain messages from previous runs. Keyed by taskId (e.g., "task:k7Xm2p").
   const subagentStateRefsRef = useRef<Record<string, TaskRefs>>({});
+  // Replayed per-task transcripts and the tool-call id to task id index. A
+  // publish applies the queued chunks first, like any write that is not one.
+  const {
+    store: subagentHistory, resolveSubagentIdToAgentId, getSubagentHistory, hydrateTaskTranscript,
+  } = useSubagentHistory(liveMessages.flush, { t, threadId, subagentStateRefsRef });
 
   /**
    * Handler-refs bag shared by every stream entry point. One construction
@@ -2821,29 +2811,6 @@ export function useChatMessages(
     reportBackWatch,
   };
 
-  // Resolve subagentId (e.g. toolCallId from segment) to stable agent_id for card operations.
-  const resolveSubagentIdToAgentId = useCallback(
-    (subagentId: string) => historyView.agentIdByToolCallId.get(subagentId) || subagentId,
-    [historyView.agentIdByToolCallId],
-  );
-  // Expose subagent history for lazy loading, as { ...entry, agentId } under
-  // the id the tool-call index resolves, so the caller can drive card operations.
-  const getSubagentHistory = useCallback(
-    (subagentId: string) => readSubagentHistory(historyView, subagentId),
-    [historyView],
-  );
-  // Resolves to the landed entry itself: a caller continuing after the await
-  // holds getters from before the fetch, which cannot see it yet.
-  const hydrateTranscript = useCallback(
-    async (subagentId: string, meta?: TaskTranscriptMeta): Promise<SubagentHistoryView | null> => {
-      const landed = await hydrateTaskTranscript(
-        { t, subagentHistory, subagentStateRefsRef }, threadId, subagentId, meta,
-      );
-      return landed ? readSubagentHistory(subagentHistory.get(), subagentId) : null;
-    },
-    [t, subagentHistory, threadId],
-  );
-
   return {
     // Which messages there are; the text as of the last write that was not a
     // chunk. Render the text from `liveMessages` (useLiveMessages).
@@ -2904,6 +2871,6 @@ export function useChatMessages(
     feedbackByTurn,
     resolveSubagentIdToAgentId,
     getSubagentHistory,
-    hydrateTaskTranscript: hydrateTranscript,
+    hydrateTaskTranscript,
   };
 }

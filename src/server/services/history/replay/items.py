@@ -220,6 +220,22 @@ def _error_item(
     return {"event": "error", "data": data}
 
 
+def terminal_items(
+    thread_id: str,
+    response: dict[str, Any] | None,
+    turn_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """The closing events a turn's response row owes its replay, in wire order.
+
+    Neither is in the stored events (both are yielded live after the persist
+    snapshot). The stop close reads ``turn_items``, so it is computed before
+    the error item is appended by the caller.
+    """
+    stop = stopped.stop_close_item(thread_id, response, turn_items)
+    error = _error_item(thread_id, response)
+    return [item for item in (stop, error) if item]
+
+
 def _enrich(
     item: dict[str, Any],
     thread_id: str,
@@ -262,12 +278,7 @@ def _stub_turn_items(
         turn_items = stored_merge._merge_stored_payloads(
             [], stored_merge._stored_events(response), resurrect_lanes
         )
-    for terminal in (
-        stopped.stop_close_item(thread_id, response, turn_items),
-        _error_item(thread_id, response),
-    ):
-        if terminal:
-            turn_items.append(terminal)
+    turn_items += terminal_items(thread_id, response, turn_items)
     for item in turn_items:
         _enrich(item, thread_id, turn_index, response_id)
     return items + turn_items

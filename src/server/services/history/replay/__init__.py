@@ -350,12 +350,7 @@ async def _build_and_backfill(
         # Terminal error: never in stored events (persisted before it is
         # yielded live), so it appends after the merge on every turn. A user
         # stop's close is read off the same row (see stopped.stop_close_item).
-        for terminal in (
-            stopped.stop_close_item(thread_id, response, turn_items),
-            items._error_item(thread_id, response),
-        ):
-            if terminal:
-                turn_items.append(terminal)
+        turn_items += items.terminal_items(thread_id, response, turn_items)
 
         # After the stored-events merge so both projected and stored-copy
         # artifacts are covered, and before caching: the watermark is a fact
@@ -550,13 +545,10 @@ def build_sse_replay_items(
             if stored_merge._valid_stored(event)
         ]
         if response_id and response_id not in terminals_emitted:
-            for terminal in (
-                stopped.stop_close_item(thread_id, response, turn_items),
-                items._error_item(thread_id, response),
-            ):
-                if terminal:
-                    terminals_emitted.add(response_id)
-                    turn_items.append(terminal)
+            terminals = items.terminal_items(thread_id, response, turn_items)
+            if terminals:
+                terminals_emitted.add(response_id)
+                turn_items += terminals
         for item in turn_items:
             items._enrich(item, thread_id, turn_index, response_id)
         out.extend(turn_items)

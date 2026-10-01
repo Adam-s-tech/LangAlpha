@@ -6,11 +6,15 @@ type Update = (prev: string[]) => string[];
 
 let frames: FrameRequestCallback[] = [];
 let visibility: DocumentVisibilityState = 'visible';
+// Frame times as a display reports them: a 60 Hz one unless a test says
+// otherwise, never going back across tests.
+let clock = 0;
 
-const runFrame = () => {
+const runFrame = (interval = 1000 / 60) => {
+  clock += interval;
   const due = frames;
   frames = [];
-  for (const cb of due) cb(performance.now());
+  for (const cb of due) cb(clock);
 };
 
 function setup() {
@@ -112,6 +116,20 @@ describe('createFrameQueue', () => {
     runFrame();
     expect(one.read()).toEqual(['a']);
     expect(two.read()).toEqual(['b']);
+  });
+
+  it('drains at most once per 60 Hz frame on a faster screen', () => {
+    const { q, push, applied, read } = setup();
+    q.queue(push('a'));
+    runFrame();
+    expect(read()).toEqual(['a']);
+
+    q.queue(push('b'));
+    runFrame(1000 / 120);
+    expect(applied).toHaveLength(1);
+    expect(frames).toHaveLength(1);
+    runFrame(1000 / 120);
+    expect(read()).toEqual(['a', 'b']);
   });
 
   it('cancel drops what is queued', () => {

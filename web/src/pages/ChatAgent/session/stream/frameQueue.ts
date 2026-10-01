@@ -9,8 +9,8 @@ type Update<T> = (prev: T) => T;
  * A model streams one SSE event per chunk, and each one rendered the whole
  * transcript, although the screen can only show one state per frame. Queued
  * here, every chunk that lands between two frames is composed into a single
- * update. The batch follows the display: a 120 Hz screen drains it twice as
- * often as a 60 Hz one, and a main thread too busy to produce frames drains
+ * update. The batch follows the display up to 60 Hz (see
+ * MIN_FLUSH_INTERVAL_MS), and a main thread too busy to produce frames drains
  * it less often, which is when batching saves the most. A hidden page paints
  * nothing, so there it drains on a timer, about once a second, and all at
  * once when the page comes back.
@@ -44,8 +44,22 @@ function flushWaiting(): void {
 // pass as the typewriter's own per-frame update. Forced to render inside the
 // frame callback, the two always rendered apart, and a stream slower than the
 // display took 44% more commits and 38% more script time than no queue at all.
-function onFrame(): void {
+//
+// At most once per 60 Hz frame, though: on a 120 Hz screen every other frame
+// rendered the transcript again for text the typewriter reveals at the same
+// pace on both. The bound sits between one 120 Hz frame and two, so a 60 Hz
+// screen still drains every frame and a 120 Hz one every other.
+const MIN_FLUSH_INTERVAL_MS = 12;
+let lastFlush = -Infinity;
+
+function onFrame(now: number): void {
   frame = 0;
+  if (!waiting.size) return;
+  if (now - lastFlush < MIN_FLUSH_INTERVAL_MS) {
+    frame = requestAnimationFrame(onFrame);
+    return;
+  }
+  lastFlush = now;
   flushWaiting();
 }
 

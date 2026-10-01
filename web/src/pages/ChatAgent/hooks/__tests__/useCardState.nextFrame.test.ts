@@ -16,10 +16,13 @@ const AGENT_ID = 'task:Q81mZx';
 const CARD_ID = `subagent-${AGENT_ID}`;
 
 let frames: FrameRequestCallback[] = [];
+// A 60 Hz display's frame times.
+let clock = 0;
 const runFrame = () => {
+  clock += 1000 / 60;
   const due = frames;
   frames = [];
-  for (const cb of due) cb(performance.now());
+  for (const cb of due) cb(clock);
 };
 
 beforeEach(() => {

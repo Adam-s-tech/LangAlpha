@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { LayoutGrid, PanelLeftClose, PanelLeftOpen, Plus, SquarePen } from 'lucide-react';
+import { ArrowLeft, ArrowRight, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plus, SquarePen } from 'lucide-react';
 import logoLight from '../../assets/img/logo.svg';
 import logoDark from '../../assets/img/logo-dark.svg';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -20,6 +20,31 @@ import { useSidebarAgents } from '@/pages/ChatAgent/components/sidebarAgentsBrid
 import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth } from './sidebarWidth';
 import './Sidebar.css';
 
+/** Back/forward for the desktop titlebar row; hidden elsewhere by CSS. */
+function HistoryButtons() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const [can, setCan] = useState({ back: true, forward: false });
+  useEffect(() => {
+    const nav = (window as unknown as { navigation?: { canGoBack: boolean; canGoForward: boolean; addEventListener: (e: string, f: () => void) => void; removeEventListener: (e: string, f: () => void) => void } }).navigation;
+    if (!nav) return;
+    const sync = () => setCan({ back: nav.canGoBack, forward: nav.canGoForward });
+    sync();
+    nav.addEventListener('currententrychange', sync);
+    return () => nav.removeEventListener('currententrychange', sync);
+  }, []);
+  return (
+    <div className="sidebar-history">
+      <button type="button" className="sidebar-collapse-btn" disabled={!can.back} onClick={() => navigate(-1)} aria-label={t('sidebar.back', 'Back')} title={t('sidebar.back', 'Back')}>
+        <ArrowLeft className="h-4 w-4" />
+      </button>
+      <button type="button" className="sidebar-collapse-btn" disabled={!can.forward} onClick={() => navigate(1)} aria-label={t('sidebar.forward', 'Forward')} title={t('sidebar.forward', 'Forward')}>
+        <ArrowRight className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
 // Off the entry chunk: the modal is only needed once the button is pressed.
 const CreateWorkspaceModal = lazy(() => import('@/pages/ChatAgent/components/CreateWorkspaceModal'));
 
@@ -36,7 +61,7 @@ interface AppSidebarProps {
  * App-shell sidebar combining the old icon rail and the chat-only overlay
  * thread panel into one Codex-style panel: primary nav up top, the
  * workspace/thread tree below, account row at the bottom. Collapses back to
- * the 80px icon rail (state owned by AuthenticatedShell, which also drives
+ * the icon rail (state owned by AuthenticatedShell, which also drives
  * --sidebar-width so the content column follows).
  */
 function AppSidebar({ collapsed, onToggleCollapse, width, onWidthChange }: AppSidebarProps) {
@@ -228,6 +253,7 @@ function AppSidebar({ collapsed, onToggleCollapse, width, onWidthChange }: AppSi
         >
           <PanelLeftClose className="h-4 w-4" />
         </button>
+        <HistoryButtons />
       </div>
 
       <nav className="sidebar-panel-nav">

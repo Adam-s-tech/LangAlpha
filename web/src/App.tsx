@@ -203,6 +203,10 @@ function LegacyAppPathRedirect() {
  * Redirects to the setup wizard if the user hasn't configured API keys.
  */
 const SIDEBAR_COLLAPSED_KEY = 'app-sidebar-collapsed';
+// The macOS window buttons float over the rail and reach ~73px, so the desktop
+// shell keeps a rail that clears them; everywhere else the rail hugs its icons.
+const sidebarRailWidth = () =>
+  document.documentElement.classList.contains('desktop-mac') ? '76px' : '64px';
 const SIDEBAR_WIDTH_KEY = 'app-sidebar-width';
 
 function AuthenticatedShell() {
@@ -275,7 +279,7 @@ function AuthenticatedShell() {
   // is viewport-anchored — some of them portalled clean out of the layout
   // subtree. Off the root they'd read the collapsed default from tokens.css and
   // sit under the sidebar. 0 on mobile, where no sidebar renders at all.
-  const sidebarWidthVar = isMobile ? '0px' : sidebarCollapsed ? '80px' : `${sidebarWidth}px`;
+  const sidebarWidthVar = isMobile ? '0px' : sidebarCollapsed ? sidebarRailWidth() : `${sidebarWidth}px`;
   useLayoutEffect(() => {
     const root = document.documentElement;
     root.style.setProperty('--sidebar-width', sidebarWidthVar);

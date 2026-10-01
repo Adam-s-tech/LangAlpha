@@ -6309,6 +6309,40 @@ class TestRestoreGuard:
         restore.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_a_restore_that_gave_up_on_its_lock_is_not_a_restored_folder(self):
+        """It placed nothing, so the attachment has to stay unrecorded for the
+        next acquisition to retry; the flag alone only stops backups pruning."""
+        from src.server.database.user_skills import SkillSyncLockBusy
+
+        manager = WorkspaceManager.get_instance(config=_make_config())
+        sandbox = MagicMock()
+        sandbox.adownload_file_bytes = AsyncMock(return_value=None)
+        restore = "src.server.services.persistence.restore"
+
+        @asynccontextmanager
+        async def hold(_workspace_id):
+            yield
+
+        with (
+            patch(f"{_PROVISIONING}.workspace_folder_in_use", hold),
+            patch(
+                f"{_PROVISIONING}.db_get_workspace_dir_name",
+                AsyncMock(return_value="Research"),
+            ),
+            patch(
+                f"{restore}.get_files_for_workspace",
+                AsyncMock(return_value=[{"file_path": "a.txt"}]),
+            ),
+            patch(
+                f"{restore}.restore_to_sandbox",
+                AsyncMock(side_effect=SkillSyncLockBusy("ws-1")),
+            ),
+        ):
+            assert not await manager._maybe_restore_files(
+                _binding("ws-1", dir_name="Research"), sandbox
+            )
+
+    @pytest.mark.asyncio
     @patch(f"{_LIFECYCLE}.update_workspace_status", new_callable=AsyncMock)
     @cm_patch("SessionManager")
     @cm_patch("db_get_workspace")

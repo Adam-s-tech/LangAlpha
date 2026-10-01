@@ -30,6 +30,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
+from psycopg.errors import LockNotAvailable
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
@@ -76,8 +77,10 @@ class SkillNotOwned(ValueError):
 # Namespace for the per-workspace skill-sync advisory lock (two-arg form).
 # The reconciler holds the session-level variant across a whole pass;
 # workspace-scoped content mutations (upsert/move/delete) take the xact-level
-# variant so they serialize against it. Lock order is always SKILL_SYNC →
-# per-user lock; for cross-workspace moves, both workspace locks sorted by id.
+# variant so they serialize against it, and a file restore holds it while it
+# fills the folder. Lock order is always SKILL_SYNC → workspace sync, and
+# SKILL_SYNC → per-user lock; for cross-workspace moves, both workspace locks
+# sorted by id.
 _SKILL_SYNC_NS = "SKILL_SYNC"
 
 # Rows of a soft-deleted workspace survive so restoring the workspace brings
@@ -137,6 +140,35 @@ async def workspace_skill_sync_lock(workspace_id: str):
         if not (row and row[0]):
             raise SkillSyncLockBusy(workspace_id)
         yield
+
+
+@asynccontextmanager
+async def hold_workspace_skill_sync(workspace_id: str, *, wait_s: float):
+    """Wait out a pass in flight, then hold the reconcile lock; yields the session.
+
+    For a writer that fills a workspace's skill folder over many transactions,
+    as a restore does, and so cannot take the transaction-level form. The wait
+    runs on a session of its own and before any other lock: the pass it waits
+    on needs pool slots to finish, so waiters each pinning one could take them
+    all, and a waiter holding its workspace's sync lock would queue that
+    workspace's backups behind the pass too.
+    """
+    async with _own_session() as conn:
+        try:
+            # SET LOCAL scopes the timeout to this transaction; the session
+            # lock itself outlives the commit.
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        f"SET LOCAL lock_timeout = '{int(wait_s * 1000)}ms'"
+                    )
+                    await cur.execute(
+                        "SELECT pg_advisory_lock(hashtext(%s), hashtext(%s::text))",
+                        (_SKILL_SYNC_NS, workspace_id),
+                    )
+        except LockNotAvailable as e:
+            raise SkillSyncLockBusy(workspace_id) from e
+        yield conn
 
 
 # Hard cap on skills per user. Defined here (not in
@@ -224,11 +256,11 @@ def _row_to_dict(row: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 async def list_user_skills(
-    user_id: str, *, workspace_id: str | None = None
+    user_id: str, *, workspace_id: str | None = None, conn=None
 ) -> list[dict[str, Any]]:
     """Every skill in one scope (user tier or one workspace), ordered by name."""
-    async with get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
+    async with get_db_connection(conn) as db:
+        async with db.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 f"SELECT {_SKILL_COLUMNS_JOINED} FROM user_skills {_PLUGIN_JOIN} "
                 "WHERE user_skills.user_id = %s "
@@ -1132,10 +1164,10 @@ async def delete_user_skill_cas(
             return row
 
 
-async def list_workspace_skill_disables(workspace_id: str) -> set[str]:
+async def list_workspace_skill_disables(workspace_id: str, *, conn=None) -> set[str]:
     """Names of inherited skills this workspace has switched off."""
-    async with get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
+    async with get_db_connection(conn) as db:
+        async with db.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 "SELECT name FROM workspace_skill_disables WHERE workspace_id = %s",
                 (workspace_id,),

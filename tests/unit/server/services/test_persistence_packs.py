@@ -293,7 +293,12 @@ def _row(path, data, *, pack=None, offset=None, blob=None, perms="0644"):
 
 
 @asynccontextmanager
-async def _no_lock(_workspace_id):
+async def _no_lock(_workspace_id, *, conn=None):
+    yield conn
+
+
+@asynccontextmanager
+async def _no_hold(_workspace_id, *, wait_s):
     yield None
 
 
@@ -310,6 +315,7 @@ def restore_db():
         patch.object(restore, "get_signed_url", side_effect=lambda key, exp: f"https://get/{key}") as sign,
         patch.object(restore, "pull_direct", new=AsyncMock(return_value={})) as pull,
         patch.object(restore, "workspace_sync_lock", _no_lock),
+        patch.object(restore, "hold_workspace_skill_sync", _no_hold),
     ):
         yield {"rows": rows, "flag": flag, "sign": sign, "pull": pull}
 

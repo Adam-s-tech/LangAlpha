@@ -24,7 +24,13 @@ body > :first-child {
 (function(){
   var _p=JSON.parse;
   JSON.parse=function(t,r){
-    if(typeof t==='string')t=t.replace(/\bNaN\b/g,'null').replace(/(?<![A-Za-z_])-?Infinity\b/g,'null');
+    if(typeof t==='string'&&(t.indexOf('NaN')!==-1||t.indexOf('Infinity')!==-1)){
+      var inString=false;
+      t=t.replace(/\\[\s\S]|"|(?<!\w)(?:NaN|-?Infinity)\b/g,function(token){
+        if(token==='"'){inString=!inString;return token;}
+        return inString||token.charAt(0)==='\\'?token:'null';
+      });
+    }
     return _p.call(this,t,r);
   };
   var shown={},count=0,rendering=false;

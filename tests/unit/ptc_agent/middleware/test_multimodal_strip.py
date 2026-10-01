@@ -255,7 +255,7 @@ class TestResolveModalities:
     """
 
     def test_reads_the_stamped_model_not_the_configured_one(self):
-        mw = MultimodalStripMiddleware(model_name="gpt-5.5")
+        mw = MultimodalStripMiddleware(model_name="gpt-6.1-sol")
         # Configured for a vision model, but resilience substituted a text-only
         # client; judging on the configured name would replay image blocks at it.
         assert mw._resolve_target(_request("glm-5.2"))[1] == ["text"]
@@ -271,12 +271,12 @@ class TestResolveModalities:
         carries no stamp. Lending it the configured model's modalities let a
         vision parent replay image blocks into a text-only subagent — the exact
         400 this strip exists to prevent."""
-        mw = MultimodalStripMiddleware(model_name="claude-sonnet-4-6")
-        assert "image" in get_input_modalities("claude-sonnet-4-6")  # parent sees images
+        mw = MultimodalStripMiddleware(model_name="claude-sonnet-5-5")
+        assert "image" in get_input_modalities("claude-sonnet-5-5")  # parent sees images
         assert mw._resolve_target(_request(None))[1] == ["text"]
 
     def test_a_client_with_no_metadata_at_all_is_text_only(self):
-        mw = MultimodalStripMiddleware(model_name="claude-sonnet-4-6")
+        mw = MultimodalStripMiddleware(model_name="claude-sonnet-5-5")
         no_metadata = types.SimpleNamespace(model=types.SimpleNamespace())
         assert mw._resolve_target(no_metadata)[1] == ["text"]
 
@@ -330,7 +330,7 @@ class TestAwrapModelCall:
             seen["request"] = request
             return "ok"
 
-        request = _ModelCallRequest("claude-sonnet-4-6", self._image_history())
+        request = _ModelCallRequest("claude-sonnet-5-5", self._image_history())
         assert await MultimodalStripMiddleware().awrap_model_call(request, handler) == "ok"
         assert seen["request"] is request, "vision target must not be cloned or stripped"
 
@@ -372,8 +372,8 @@ class TestManifestModelStampRoundTrip:
     rename on either cannot pass."""
 
     def test_the_key_the_producer_writes_is_the_key_the_middleware_reads(self):
-        client = LLM("claude-sonnet-4-6", api_key="unused-offline").get_llm()
-        assert client.metadata["manifest_model"] == "claude-sonnet-4-6"
+        client = LLM("claude-sonnet-5-5", api_key="unused-offline").get_llm()
+        assert client.metadata["manifest_model"] == "claude-sonnet-5-5"
 
         # Configured for a text-only model, handed a vision client: the stamp is
         # what must win, which only works if both sides name the same key.
@@ -384,7 +384,7 @@ class TestManifestModelStampRoundTrip:
     def test_the_stamp_is_the_manifest_key_not_the_provider_model_id(self):
         """``get_input_modalities`` looks up models.json keys; the API model id
         would silently resolve to text-only for every renamed model."""
-        client = LLM("claude-sonnet-4-6", api_key="unused-offline").get_llm()
+        client = LLM("claude-sonnet-5-5", api_key="unused-offline").get_llm()
         stamped = client.metadata["manifest_model"]
         assert get_input_modalities(stamped) != ["text"]
 
@@ -480,7 +480,7 @@ class TestToolResultsPrecedeInjectedMedia:
             _media(),
             ToolMessage(content="file1", tool_call_id="toolu_B"),
         )
-        request = _ModelCallRequest("claude-sonnet-4-6", history)
+        request = _ModelCallRequest("claude-sonnet-5-5", history)
         await MultimodalStripMiddleware().awrap_model_call(request, handler)
 
         kinds = [type(m).__name__ for m in seen["request"].messages]
@@ -606,24 +606,32 @@ class TestPDFPageCeilingIsPerTarget:
 
     @pytest.mark.asyncio
     async def test_a_long_pdf_survives_to_a_1m_context_route(self):
-        blocks, _ = await _blocks_reaching("claude-sonnet-5", _pdf_block(300))
+        blocks, _ = await _blocks_reaching("claude-sonnet-5-5", _pdf_block(300))
         assert [b["type"] for b in blocks] == ["text", "file"]
+
+    def test_the_200k_route_is_still_one(self):
+        """An unknown model fails closed to the same 100 pages, so the tests
+        below would pass against a retired key while proving nothing."""
+        from src.llms.llm import LLM
+
+        entry = LLM.get_model_config().get_model_config("claude-haiku-4-5")
+        assert entry is not None and entry["context"] < 1_000_000
 
     @pytest.mark.asyncio
     async def test_the_same_pdf_is_stripped_for_a_200k_route(self):
-        blocks, request = await _blocks_reaching("claude-sonnet-4-6", _pdf_block(300))
+        blocks, request = await _blocks_reaching("claude-haiku-4-5", _pdf_block(300))
         assert [b["type"] for b in blocks] == ["text", "text"]
         assert "300 pages" in blocks[1]["text"]
         assert _STRIP.placeholder_guidance in blocks[1]["text"]
 
     @pytest.mark.asyncio
     async def test_a_pdf_inside_the_200k_ceiling_still_reaches_it(self):
-        blocks, _ = await _blocks_reaching("claude-sonnet-4-6", _pdf_block(80))
+        blocks, _ = await _blocks_reaching("claude-haiku-4-5", _pdf_block(80))
         assert [b["type"] for b in blocks] == ["text", "file"]
 
     @pytest.mark.asyncio
     async def test_a_provider_documenting_no_page_limit_keeps_the_block(self):
-        blocks, _ = await _blocks_reaching("gpt-5.5", _pdf_block(900))
+        blocks, _ = await _blocks_reaching("gpt-6.1-sol", _pdf_block(900))
         assert [b["type"] for b in blocks] == ["text", "file"]
 
     @pytest.mark.asyncio
@@ -636,7 +644,7 @@ class TestPDFPageCeilingIsPerTarget:
             {"type": "file", "base64": "abc", "mime_type": "application/pdf",
              "filename": "old.pdf"},
         ])
-        blocks, _ = await _blocks_reaching("claude-sonnet-4-6", legacy)
+        blocks, _ = await _blocks_reaching("claude-haiku-4-5", legacy)
         assert [b["type"] for b in blocks] == ["text", "file"]
 
 

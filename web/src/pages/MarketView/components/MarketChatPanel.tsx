@@ -9,6 +9,7 @@ import { Loader } from '@/components/ui/loader';
 import LogoLoading from '@/components/ui/logo-loading';
 import ChatInput, { type ChatInputHandle } from '@/components/ui/chat-input';
 import { useStableHandler } from '@/hooks/useStableHandler';
+import { useWorkspace } from '@/hooks/useWorkspace';
 import MessageList from '../../ChatAgent/components/MessageList';
 import { MessageActionsProvider, type MessageActions } from '../../ChatAgent/components/messageList/MessageActionsContext';
 import { SubagentTelemetryContext } from '../../ChatAgent/components/SubagentTelemetryContext';
@@ -16,7 +17,8 @@ import { ChartSurfaceContext, type ChartSurface } from '../../ChatAgent/contexts
 import { WorkspaceProvider } from '../../ChatAgent/contexts/WorkspaceContext';
 import { useChatMessages } from '../../ChatAgent/hooks/useChatMessages';
 import { useActiveThreadPublisher } from '@/lib/threadLifecycle/useActiveThreadPublisher';
-import { appendPathSuffix, getFlashWorkspace, getPreviewUrl, summarizeThread, offloadThread } from '../../ChatAgent/utils/api';
+import { flashWorkspaceQuery } from '@/hooks/useFlashWorkspace';
+import { appendPathSuffix, getPreviewUrl, summarizeThread, offloadThread } from '../../ChatAgent/utils/api';
 import { attachmentsToContexts } from '../../ChatAgent/utils/fileUpload';
 import {
   resolveSubagentTelemetry as resolveSubagentTelemetryPure,
@@ -113,22 +115,23 @@ export default function MarketChatPanel(props: MarketChatPanelProps): React.Reac
     selectedWorkspaceId,
   } = props;
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
 
   // Flash workspace: lazily fetched once, cached forever.
-  const { data: flashWs } = useQuery({
-    queryKey: queryKeys.workspaces.flash(),
-    queryFn: getFlashWorkspace,
-    staleTime: Infinity,
-  });
+  const { data: flashWs } = useQuery(flashWorkspaceQuery(queryClient));
 
   // Active workspace per mode. Flash mode uses the shared flash workspace.
   const activeWorkspaceId = mode === 'fast'
     ? (flashWs as { workspace_id?: string } | undefined)?.workspace_id ?? null
     : selectedWorkspaceId;
-  // The folder the workspace lives in on a shared computer, which the turn
-  // file deck needs to tell the workspace's own notes file from a deliverable.
-  const activeWorkspace = mode === 'fast' ? flashWs : workspaces.find((w) => w.workspace_id === selectedWorkspaceId);
+  // The folder the workspace lives in on a shared computer, and any a rename
+  // moved it out of, which the turn file deck needs to tell the workspace's
+  // own notes file from a deliverable. Read through the detail query, which a
+  // turn re-reads once the folder has settled; the page's list never does.
+  const { data: ptcWorkspace } = useWorkspace(mode === 'fast' ? null : selectedWorkspaceId);
+  const activeWorkspace = mode === 'fast' ? flashWs : ptcWorkspace;
   const workspaceDirName = activeWorkspace?.dir_name;
+  const previousDirNames = activeWorkspace?.previous_dir_names;
 
   // Initial thread resolution. URL `?thread=` wins, then localStorage keyed by
   // (workspace, symbol), then a new chat. This state determines which thread
@@ -224,6 +227,7 @@ export default function MarketChatPanel(props: MarketChatPanelProps): React.Reac
         {...props}
         activeWorkspaceId={activeWorkspaceId}
         workspaceDirName={workspaceDirName}
+        previousDirNames={previousDirNames}
         initialThreadId={activeThreadInit.split('#')[0]}
         ptcWorkspaces={workspaces}
         onSelectThread={handleSelectThread}
@@ -236,6 +240,7 @@ export default function MarketChatPanel(props: MarketChatPanelProps): React.Reac
 interface ChatBodyProps extends MarketChatPanelProps {
   activeWorkspaceId: string;
   workspaceDirName?: string | null;
+  previousDirNames?: readonly string[] | null;
   initialThreadId: string;
   ptcWorkspaces: Workspace[];
   onSelectThread: (threadId: string) => void;
@@ -251,6 +256,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     ptcWorkspaces,
     selectedWorkspaceId,
     workspaceDirName,
+    previousDirNames,
     onWorkspaceChange,
     chartImage,
     chartImageDesc,
@@ -851,6 +857,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
                     feedbackByTurn={feedbackByTurn}
                     flashContext={flashContext}
                     workspaceDirName={workspaceDirName}
+                    previousDirNames={previousDirNames}
                   />
                 </MessageActionsProvider>
               </SubagentTelemetryContext.Provider>

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  serverNameError,
   validateMcpServer,
   validateRemoteUrl,
   validateArg,
@@ -34,6 +35,48 @@ describe('mcpSchemas — name shape', () => {
     ['too long', 'a'.repeat(65)],
   ])('rejects invalid name (%s)', (_label, name) => {
     expect(validateMcpServer(stdio({ name })).ok).toBe(false);
+  });
+
+  // The name becomes a Python module in the sandbox, so the shape rule alone
+  // admits names that cannot hold that role. Same matrix as the backend.
+  it.each([
+    ['mcp_client', 'runtimeModule'],
+    ['__init__', 'dunder'],
+    ['__private', 'dunder'],
+    ['class', 'keyword'],
+    ['None', 'keyword'],
+    ['await', 'keyword'],
+  ])('rejects %s, which the sandbox reserves, and says why', (name, reason) => {
+    expect(serverNameError(name)).toBe(reason);
+    const result = validateMcpServer(stdio({ name }));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toMatchObject({ path: 'name' });
+  });
+
+  it.each(['match', 'type', 'case', '_', 'class_server', 'mcp_client_v2', '_private', 'Type'])(
+    'accepts %s, a soft keyword or a name that only resembles a reserved one',
+    (name) => {
+      expect(validateMcpServer(stdio({ name })).ok).toBe(true);
+    },
+  );
+
+  it('keeps a reserved name the edited row is already saved under', () => {
+    // The backend checks reserved names only where a name is introduced, so an
+    // edit of a row saved before its name was reserved has to stay savable.
+    expect(validateMcpServer(stdio({ name: 'class' }), { keepName: 'class' }).ok).toBe(true);
+    expect(validateMcpServer(stdio({ name: 'class' }), { keepName: 'other' }).ok).toBe(false);
+  });
+
+  it('reports a malformed name once, with the shape message', () => {
+    expect(serverNameError('__has-dash')).toBe('shape');
+    const result = validateMcpServer(stdio({ name: '__has-dash' }));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.map((e) => e.message)).toEqual([
+      'name must be 1-64 chars: letter/underscore then letters/digits/underscores',
+    ]);
   });
 });
 

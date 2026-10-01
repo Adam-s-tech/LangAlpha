@@ -10,7 +10,7 @@ import ShellHandoff from './ShellHandoff';
 import PasswordInput from './PasswordInput';
 import PasswordStrength from './PasswordStrength';
 import { validatePasswordPair, MIN_PASSWORD_LENGTH } from './passwordRequirements';
-import WavesBackground from './WavesBackground';
+import EdgeGrain from './EdgeGrain';
 import './LoginPage.css';
 
 /**
@@ -147,7 +147,7 @@ function ResetPassword() {
 
   return (
     <div className="login-page owns-its-edge">
-      <WavesBackground />
+      <EdgeGrain centered />
       <div className="login-page__card">{body}</div>
     </div>
   );

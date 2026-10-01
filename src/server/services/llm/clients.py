@@ -727,10 +727,18 @@ async def _resolve_role_clients(
         if rc.client is not None:
             _stamp(config, rc.client, config.role_prompt_guidance[role.key])
             config.subsidiary_llm_clients[role.key] = rc.client
-        elif rc.model_source is not None and rc.model_source != ModelSource.SYSTEM:
+        elif rc.model_source == ModelSource.CUSTOM:
             logger.warning(
                 "[CHAT] Role '%s' model '%s' is a custom model without a usable "
                 "BYOK key — falling back to default.",
+                role.key, role.model,
+            )
+        elif rc.model_source == ModelSource.UNKNOWN:
+            # ``resolve_llm_config`` already dropped a missing saved model, so
+            # this is deployment config or a custom-provider slug with no key.
+            logger.warning(
+                "[CHAT] Role '%s' model '%s' is in neither the model manifest "
+                "nor the user's custom models.",
                 role.key, role.model,
             )
 
@@ -818,10 +826,16 @@ async def _resolve_fallback_clients(
             merged_fallback_names.append(model_name)
             if fc.credential_source in (CredentialSource.OAUTH, CredentialSource.BYOK):
                 byok_count += 1
-        elif fc.model_source is not None and fc.model_source != ModelSource.SYSTEM:
+        elif fc.model_source == ModelSource.CUSTOM:
             logger.warning(
                 "[CHAT] Fallback model '%s' is a custom model without a "
                 "usable BYOK key — skipping. Add a key in Settings to enable.",
+                model_name,
+            )
+        elif fc.model_source == ModelSource.UNKNOWN:
+            logger.warning(
+                "[CHAT] Fallback model '%s' is in neither the model manifest nor "
+                "the user's custom models — skipping.",
                 model_name,
             )
         # else: SYSTEM with no client (shouldn't happen with platform fallback

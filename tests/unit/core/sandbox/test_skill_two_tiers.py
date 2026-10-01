@@ -20,6 +20,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from ptc_agent.agent.middleware.skills.lock import (
+    MANAGED_SOURCE_TYPE,
+    is_shared_tier,
+)
 from ptc_agent.core.paths import SandboxLayout
 from ptc_agent.core.sandbox import skill_sync
 
@@ -65,12 +69,12 @@ def _skill(base: Path, name: str, body: str = "do the thing") -> Path:
 def _entries(path: Path) -> dict[str, str]:
     """``{name: 'link:<target>' | 'dir' | 'file'}`` for one tier's skills.
 
-    Dot-names are the tier's own bookkeeping (flock, staging, trash), never a
-    skill, so they are left out.
+    Dot-names and the ledger are the tier's own bookkeeping (flock, staging,
+    trash), never a skill, so they are left out.
     """
     out: dict[str, str] = {}
     for name in sorted(os.listdir(path)):
-        if name.startswith("."):
+        if name.startswith(".") or name == "skills-lock.json":
             continue
         p = path / name
         if p.is_symlink():
@@ -100,13 +104,14 @@ def tiers(tmp_path):
     )
 
 
-def _link(tiers, disabled=()):
+def _link(tiers, disabled=(), own=()):
     return asyncio.run(
         skill_sync.link_shared_skills(
             tiers.sandbox,
             base=tiers.ws_base,
             user_base=tiers.user_base,
             disabled=disabled,
+            own=own,
         )
     )
 
@@ -260,7 +265,13 @@ class TestWorkspaceTierMaterialisation:
 
         result = _link(tiers)
 
-        assert result == {"linked": [], "relinked": [], "pruned": [], "blocked": []}
+        assert result == {
+            "linked": [],
+            "relinked": [],
+            "pruned": [],
+            "blocked": [],
+            "unpinned": [],
+        }
         assert _entries(tiers.ws) == before
 
     def test_a_file_holding_the_name_is_reported_not_clobbered(self, tiers):
@@ -281,9 +292,218 @@ class TestWorkspaceTierMaterialisation:
             )
         )
 
-        assert result == {"linked": [], "relinked": [], "pruned": [], "blocked": []}
+        assert result == {
+            "linked": [],
+            "relinked": [],
+            "pruned": [],
+            "blocked": [],
+            "unpinned": [],
+        }
         assert tiers.sandbox.runtime.commands == []
         assert _entries(tiers.user) == {"pdf": "dir"}
+
+
+# --------------------------------------------------------------------------
+# Stale copies of shared skills
+# --------------------------------------------------------------------------
+
+_PLATFORM = {"owner": "platform", "sourceType": "platform"}
+
+
+def _ledger(base: Path, entries: dict) -> None:
+    (base / "skills-lock.json").write_text(
+        json.dumps({"version": 1, "skills": entries})
+    )
+
+
+def _ledgered(base: Path) -> set[str]:
+    return set(json.loads((base / "skills-lock.json").read_text())["skills"])
+
+
+class TestStaleSharedCopies:
+    """A folder restored from a backup taken at the computer root holds real
+    copies of the shared skills, ledgered as the root's were. Left in place,
+    each copy outranks the shared skill and never updates again."""
+
+    def test_a_platform_copy_gives_way_to_a_link(self, tiers):
+        _skill(tiers.user, "pdf", body="current")
+        _skill(tiers.ws, "pdf", body="stale")
+        _ledger(tiers.ws, {"pdf": _PLATFORM})
+
+        result = _link(tiers)
+
+        assert result["unpinned"] == ["pdf"]
+        assert result["linked"] == ["pdf"]
+        assert (tiers.ws / "pdf" / "SKILL.md").read_text().endswith("current\n")
+        assert _ledgered(tiers.ws) == set()
+
+    def test_a_delivered_user_skill_copy_gives_way_to_a_link(self, tiers):
+        _skill(tiers.user, "house-style")
+        _skill(tiers.ws, "house-style")
+        _ledger(
+            tiers.ws,
+            {"house-style": {"owner": "user", "sourceType": "langalpha-user"}},
+        )
+
+        result = _link(tiers)
+
+        assert result["unpinned"] == ["house-style"]
+        assert _entries(tiers.ws) == {
+            "house-style": "link:../../../.agents/skills/house-style"
+        }
+
+    def test_the_workspace_s_own_skills_keep_their_names(self, tiers):
+        for name in ("mine", "synced", "unledgered"):
+            _skill(tiers.user, name, body="shared")
+            _skill(tiers.ws, name, body="own")
+        _ledger(
+            tiers.ws,
+            {
+                "mine": {"owner": "user", "sourceType": "local"},
+                "synced": {
+                    "owner": "user",
+                    "sourceType": "langalpha-user",
+                    "sync": {"linkedSkillId": "row-1"},
+                },
+            },
+        )
+
+        result = _link(tiers)
+
+        assert result["unpinned"] == []
+        assert _entries(tiers.ws) == {
+            "mine": "dir",
+            "synced": "dir",
+            "unledgered": "dir",
+        }
+        assert _ledgered(tiers.ws) == {"mine", "synced"}
+
+    def test_a_copy_waits_until_the_shared_tier_serves_its_name(self, tiers):
+        """A skill promoted to the user tier is ledgered as delivered before the
+        asset sync delivers it; dropping the copy then leaves neither."""
+        _skill(tiers.ws, "house-style")
+        _skill(tiers.ws, "retired")
+        _ledger(
+            tiers.ws,
+            {
+                "house-style": {"owner": "user", "sourceType": "langalpha-user"},
+                "retired": _PLATFORM,
+            },
+        )
+
+        result = _link(tiers)
+
+        assert result["unpinned"] == []
+        assert _entries(tiers.ws) == {"house-style": "dir", "retired": "dir"}
+        assert _ledgered(tiers.ws) == {"house-style", "retired"}
+
+    def test_a_disabled_shared_skill_s_copy_is_dropped_unlinked(self, tiers):
+        _skill(tiers.user, "pdf")
+        _skill(tiers.user, "xlsx")
+        _skill(tiers.ws, "xlsx")
+        _ledger(tiers.ws, {"xlsx": _PLATFORM})
+
+        result = _link(tiers, disabled=["xlsx"])
+
+        assert result["unpinned"] == ["xlsx"]
+        assert _entries(tiers.ws) == {"pdf": "link:../../../.agents/skills/pdf"}
+
+    def test_a_workspace_row_keeps_its_copy_whatever_its_entry_says(self, tiers):
+        _skill(tiers.user, "house-style", body="shared")
+        _skill(tiers.ws, "house-style", body="own")
+        _ledger(
+            tiers.ws,
+            {"house-style": {"owner": "user", "sourceType": "langalpha-user"}},
+        )
+
+        result = _link(tiers, own=["house-style"])
+
+        assert result["unpinned"] == []
+        assert _entries(tiers.ws) == {"house-style": "dir"}
+        assert _ledgered(tiers.ws) == {"house-style"}
+
+    def test_a_workspace_row_without_its_copy_is_never_linked(self, tiers):
+        """While a restore is still bringing the copy back, a link at the name
+        would turn the retry away and let the shared skill stand in for it."""
+        _skill(tiers.user, "house-style")
+        _skill(tiers.user, "pdf")
+        _link(tiers)
+
+        result = _link(tiers, own=["house-style"])
+
+        assert result["pruned"] == ["house-style"]
+        assert _entries(tiers.ws) == {"pdf": "link:../../../.agents/skills/pdf"}
+
+    def test_a_copy_that_cannot_move_aside_keeps_its_entry(self, tiers):
+        """Dropped alone, the entry would leave the copy unledgered, which the
+        next pass adopts as the workspace's own skill."""
+        name = "p" * 240  # too long to take the trash prefix
+        _skill(tiers.user, name)
+        _skill(tiers.ws, name)
+        _ledger(tiers.ws, {name: _PLATFORM})
+
+        result = _link(tiers)
+
+        assert result["unpinned"] == []
+        assert _entries(tiers.ws) == {name: "dir"}
+        assert _ledgered(tiers.ws) == {name}
+
+    def test_the_script_unpins_exactly_what_the_server_calls_shared(self, tiers):
+        """The restore filter and the in-sandbox heal each classify the ledger;
+        where they disagree, one of them deletes a workspace's own skill."""
+        table = {
+            "plat": _PLATFORM,
+            "managed": {"owner": "user", "sourceType": MANAGED_SOURCE_TYPE},
+            "linked": {
+                "owner": "user",
+                "sourceType": MANAGED_SOURCE_TYPE,
+                "sync": {"linkedSkillId": "row-1"},
+            },
+            "odd-sync": {"owner": "platform", "sync": "not-a-ref"},
+            "local": {"owner": "user", "sourceType": "local"},
+            "other": {"owner": "someone", "sourceType": "git"},
+        }
+        for name in table:
+            _skill(tiers.user, name)
+            _skill(tiers.ws, name)
+        _ledger(tiers.ws, table)
+
+        result = _link(tiers)
+
+        assert result["unpinned"] == sorted(
+            name for name, entry in table.items() if is_shared_tier(entry)
+        )
+
+    def test_an_entry_over_a_link_is_dropped_and_the_shared_skill_kept(self, tiers):
+        """A restore leaves out a shared skill's files but not the ledger that
+        names it, so the folder already reaches the skill through a link."""
+        _skill(tiers.user, "pdf")
+        _link(tiers)
+        _ledger(tiers.ws, {"pdf": _PLATFORM})
+
+        result = _link(tiers)
+
+        assert result["unpinned"] == ["pdf"]
+        assert result["linked"] == []
+        assert _entries(tiers.ws) == {"pdf": "link:../../../.agents/skills/pdf"}
+        assert _ledgered(tiers.ws) == set()
+        assert (tiers.user / "pdf" / "SKILL.md").is_file()
+
+    def test_the_shared_tier_never_unpins_itself(self, tiers):
+        """The wrapper skips coincident tiers by name; the script compares real
+        paths too, since there the copies are the shared skills."""
+        _skill(tiers.user, "pdf")
+        _ledger(tiers.user, {"pdf": _PLATFORM})
+
+        result = asyncio.run(
+            skill_sync.link_shared_skills(
+                tiers.sandbox, base=f"{tiers.user_base}/.", user_base=tiers.user_base
+            )
+        )
+
+        assert result["unpinned"] == []
+        assert _entries(tiers.user) == {"pdf": "dir"}
+        assert _ledgered(tiers.user) == {"pdf"}
 
 
 # --------------------------------------------------------------------------

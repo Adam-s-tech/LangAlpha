@@ -11,8 +11,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from ptc_agent.agent.middleware.skills.lock import (
+    LOCK_FILENAME,
+    is_shared_tier,
+    parse_skills_lock,
+)
 from ptc_agent.core.paths import WorkspaceLayout
-from ptc_agent.core.sandbox.runtime import SandboxGoneError, SandboxTransientError
+from ptc_agent.core.sandbox.assets import delivered_skill_names
 from src.server.database.workspace_file import (
     WorkspaceSyncBusy,
     datetime_to_micros,
@@ -26,6 +31,12 @@ from src.server.database.workspace import (
     workspace_owner,
 )
 from src.server.database.blob_keys import RELAY_MAX_BYTES, blob_key
+from src.server.database.user_skills import (
+    SkillSyncLockBusy,
+    hold_workspace_skill_sync,
+    list_user_skills,
+    list_workspace_skill_disables,
+)
 from src.server.database.workspace_file_blobs import fetch_blob
 from src.server.services.persistence._rows import (
     _has_inline_bytes,
@@ -35,6 +46,7 @@ from src.server.services.persistence.resolve import (
     FileBytesUnavailable,
     resolve_file_bytes,
 )
+from src.server.services.user_skills.reconcile import RECONCILE_TIMEOUT_SECONDS
 from src.server.services.persistence.transfer import (
     SYNC_MARKER_NAME,
     transfer_mode,
@@ -112,6 +124,11 @@ async def _clear_restore_flag(workspace_id: str, sandbox: Any, *, conn=None) -> 
     )
 
 
+# Past the longest a reconcile pass can hold the skill lock, so a restore
+# waits out any pass that is still running rather than failing behind it.
+_SKILL_SYNC_WAIT_S = RECONCILE_TIMEOUT_SECONDS + 30
+
+
 async def restore_to_sandbox(
     workspace_id: str,
     sandbox: Any,
@@ -132,13 +149,15 @@ async def restore_to_sandbox(
     Serialized with ``sync_to_db`` on the workspace's lock: a sync that
     scanned the sandbox while a restore was still filling it, then read
     the completeness flag after the restore cleared it, would prune every
-    row its stale scan had not seen arrive.
+    row its stale scan had not seen arrive. The skill reconcile is held off
+    the same way, for the same reason: a pass that read the skill folder
+    half-filled would delete the rows whose dirs had not landed yet.
 
     Returns:
         Restore result summary
     """
     # Raised before the lock is even requested, cleared only once the whole
-    # restore came back clean. Both callers swallow every raise as a warning,
+    # restore came back clean. Both restore paths end every raise in a warning,
     # a lock wait that times out included, and an unflagged sandbox is then
     # an empty mirror of a full manifest, which the next sync prunes. Raising
     # it after the timeout instead would let it land on top of a restore
@@ -164,10 +183,22 @@ async def restore_to_sandbox(
     if not landed:
         raise RestoreIdentityLost(workspace_id)
     try:
-        async with workspace_sync_lock(workspace_id) as conn:
-            return await _restore_locked(workspace_id, sandbox, conn, layout)
+        # The skill lock first, on a session of its own that the sync lock
+        # then joins: the restore waits on a pass without a pool slot and
+        # without the sync lock that this workspace's backups queue on.
+        async with hold_workspace_skill_sync(
+            workspace_id, wait_s=_SKILL_SYNC_WAIT_S
+        ) as session:
+            async with workspace_sync_lock(workspace_id, conn=session) as conn:
+                return await _restore_locked(workspace_id, sandbox, conn, layout)
     except WorkspaceSyncBusy:
         logger.warning(f"File restore for workspace {workspace_id} timed out waiting for the sync lock")
+        raise
+    except SkillSyncLockBusy:
+        logger.warning(
+            f"File restore for workspace {workspace_id} timed out waiting for "
+            f"a skill reconcile pass"
+        )
         raise
     except Exception as e:
         logger.error(f"File restore failed for workspace {workspace_id}: {e}")
@@ -189,10 +220,13 @@ async def _restore_locked(
         await _clear_restore_flag(workspace_id, sandbox, conn=conn)
         return result
 
-    logger.info(f"Restoring {len(rows)} entries for workspace {workspace_id}")
-
     # Object keys are scoped to the owner; read once for the whole restore.
     user_id = await workspace_owner(workspace_id, conn=conn)
+    rows = await _without_shared_skill_copies(
+        workspace_id, rows, user_id, sandbox, conn=conn
+    )
+
+    logger.info(f"Restoring {len(rows)} entries for workspace {workspace_id}")
 
     mode = transfer_mode(sandbox)
     structural: list[dict[str, Any]] = []
@@ -306,6 +340,127 @@ async def _restore_locked(
     )
 
     return result
+
+
+# A skill ledger runs to a few kilobytes, and the filter reads it whole into
+# this process. One past this is not read at all.
+_LEDGER_MAX_BYTES = 1 << 20
+
+
+async def _without_shared_skill_copies(
+    workspace_id: str,
+    rows: list[dict[str, Any]],
+    user_id: str,
+    sandbox: Any,
+    *,
+    conn: Any,
+) -> list[dict[str, Any]]:
+    """Leave out the skills the computer's shared tier serves.
+
+    A backup from when the workspace lived at the computer root carries the
+    platform and user-tier skills it was served there. The server delivers
+    those, so a restored copy can only be older, and left as a real dir in a
+    workspace folder it outranks the shared skill for good. The backup's own
+    ledger says which skills those were. A name it says nothing about, or
+    all of them when it cannot be read, is shared if the computer's last
+    asset sync delivered it and the workspace has not switched it off: an
+    agent-installed skill is ledgered as ``local`` the first time a turn
+    discovers it, so an unledgered copy under a name the folder is linked to
+    is a delivery that lost its entry. With no record of the
+    sync, such a copy is restored: a stale copy pinned in the folder costs
+    less than a lost one. A name the workspace owns as a row is never left
+    out: the skill sync decides its bytes, and its linked entry over a
+    missing copy would read to the reconcile as the workspace deleting it.
+    """
+    names = {n for r in rows if (n := _skill_copy(r))} - {LOCK_FILENAME}
+    if not names:
+        return rows
+    lock_path = f"{WorkspaceLayout.SKILLS_DIR}/{LOCK_FILENAME}"
+    lock_row = next(
+        (
+            r
+            for r in rows
+            if r["file_path"] == lock_path and r.get("kind", "file") == "file"
+        ),
+        None,
+    )
+    entries = (
+        await _backup_ledger(workspace_id, lock_row, user_id) if lock_row else {}
+    )
+    shared = {
+        n
+        for n in names
+        if isinstance(entries.get(n), dict) and is_shared_tier(entries[n])
+    }
+    unledgered = {n for n in names if not isinstance(entries.get(n), dict)}
+    if unledgered:
+        delivered = await delivered_skill_names(sandbox)
+        if delivered is None:
+            logger.warning(
+                f"Restore for workspace {workspace_id} cannot read what the "
+                f"shared tier was delivered; restoring {len(unledgered)} "
+                f"unledgered skill(s) as the workspace's own"
+            )
+        elif linked := unledgered & delivered:
+            shared |= linked - await list_workspace_skill_disables(
+                workspace_id, conn=conn
+            )
+    if shared:
+        shared -= {
+            r["name"]
+            for r in await list_user_skills(
+                user_id, workspace_id=workspace_id, conn=conn
+            )
+        }
+    if not shared:
+        return rows
+    kept = [r for r in rows if _skill_copy(r) not in shared]
+    logger.info(
+        f"Restore for workspace {workspace_id} leaves out {len(rows) - len(kept)} "
+        f"entries under {len(shared)} shared skill(s)"
+    )
+    return kept
+
+
+def _skill_copy(row: dict[str, Any]) -> str | None:
+    """The skill whose copy ``row`` is part of, if any.
+
+    A link at a skill's own path is the folder's view of the shared tier, not
+    a copy of it, and restoring one is harmless.
+    """
+    prefix = f"{WorkspaceLayout.SKILLS_DIR}/"
+    path = row["file_path"]
+    if not path.startswith(prefix):
+        return None
+    name, _, below = path[len(prefix):].partition("/")
+    if not below and row.get("kind") == "symlink":
+        return None
+    return name or None
+
+
+async def _backup_ledger(
+    workspace_id: str, lock_row: dict[str, Any], user_id: str
+) -> dict[str, Any]:
+    """The backup's skill ledger entries, empty when they cannot be read.
+
+    A ledger too large to be the skill sync's is not read at all, and names
+    no skill, like a corrupt or unfetchable one.
+    """
+    if int(lock_row.get("file_size") or 0) > _LEDGER_MAX_BYTES:
+        logger.warning(
+            f"Skill ledger for workspace {workspace_id} is "
+            f"{lock_row.get('file_size')} bytes; not read"
+        )
+        return {}
+    try:
+        raw = await resolve_file_bytes(lock_row, user_id=user_id) or b""
+    except FileBytesUnavailable as e:
+        logger.warning(f"Could not read the skill ledger for workspace {workspace_id}: {e}")
+        return {}
+    if len(raw) > _LEDGER_MAX_BYTES:
+        # A legacy row can understate its own size.
+        return {}
+    return parse_skills_lock(raw.decode("utf-8", errors="replace"))
 
 
 async def _signed_pull_items(
@@ -634,70 +789,56 @@ async def maybe_restore(
     Restore files from DB if sandbox was recreated (files lost).
 
     Checks for sync marker file. If absent, files were lost and need restore.
+    Every failure reaches the caller as itself: flattened into a warning here,
+    a restore that never ran reads downstream as checked with nothing to do,
+    and the caller records the workspace as attached over missing files.
     """
+    sync_marker = _sync_marker_path(layout)
+    marker = await sandbox.adownload_file_bytes(sync_marker)
+    if marker is not None:
+        # The marker is written only by a restore that came back clean
+        # and then clears the flag; a flag still standing beside it is
+        # a restore that died between those two writes, and left alone
+        # it would withhold pruning on every backup from here on.
+        await _reconcile_flag_beside_marker(workspace_id, sandbox)
+        return
+
+    # Every kind, not just ``kind='file'``: a workspace of directories
+    # and symlinks is not an empty one, and reading it as empty writes
+    # the marker and clears the flag, after which the next backup prunes
+    # the structural rows it never saw restored.
     try:
-        sync_marker = _sync_marker_path(layout)
-        marker = await sandbox.adownload_file_bytes(sync_marker)
-        if marker is not None:
-            # The marker is written only by a restore that came back clean
-            # and then clears the flag; a flag still standing beside it is
-            # a restore that died between those two writes, and left alone
-            # it would withhold pruning on every backup from here on.
-            await _reconcile_flag_beside_marker(workspace_id, sandbox)
-            return
-
-        # Every kind, not just ``kind='file'``: a workspace of directories
-        # and symlinks is not an empty one, and reading it as empty writes
-        # the marker and clears the flag, after which the next backup prunes
-        # the structural rows it never saw restored.
-        try:
-            files = await get_files_for_workspace(
-                workspace_id, include_content=False, all_kinds=True
-            )
-        except Exception as e:
-            # Not knowing the manifest is the same hazard as not raising the
-            # flag: the sandbox is empty, nothing marks it as unrestored,
-            # and the next backup reads the emptiness as deletions.
-            raise RestoreGuardUnavailable(
-                f"Could not read the manifest for workspace {workspace_id}: {e}"
-            ) from e
-        if not files:
-            # Nothing to restore, so the sandbox trivially matches the
-            # manifest — record it, or every start repeats this check.
-            # The flag goes first: it is the half that gates deletion, and
-            # an empty manifest has nothing left to protect either way,
-            # whereas a sandbox failure on the marker write belongs to the
-            # caller and is left to propagate.
-            await _clear_restore_flag(workspace_id, sandbox)
-            await sandbox.aupload_file_bytes(
-                sync_marker,
-                datetime.now(timezone.utc).isoformat().encode("utf-8"),
-            )
-            return
-
-        logger.info(
-            f"Sync marker missing for workspace {workspace_id}. "
-            f"Restoring {len(files)} files from DB."
+        files = await get_files_for_workspace(
+            workspace_id, include_content=False, all_kinds=True
         )
-        await restore_to_sandbox(
-            workspace_id,
-            sandbox,
-            expected_sandbox_id=_identity_of(sandbox),
-            layout=layout,
-        )
-
-    except RestoreGuardUnavailable:
-        # The caller aborts provisioning on this one; on the lazy-start and
-        # reconnect paths this is the only restore, and swallowing it here
-        # would publish an empty, unflagged sandbox for the next sync to
-        # read as an emptied workspace.
-        raise
-    except (SandboxGoneError, SandboxTransientError):
-        # Let a sandbox condition reach the caller as itself. The marker
-        # probe answering with a failure means we never learned whether the
-        # files are there, and flattening that into a generic warning here
-        # reads downstream as "checked, nothing to do" — which is how a
-        # recreated sandbox stays empty with no attributable reason.
-        raise
     except Exception as e:
-        logger.warning(f"Error in maybe_restore for workspace {workspace_id}: {e}")
+        # Not knowing the manifest is the same hazard as not raising the
+        # flag: the sandbox is empty, nothing marks it as unrestored,
+        # and the next backup reads the emptiness as deletions.
+        raise RestoreGuardUnavailable(
+            f"Could not read the manifest for workspace {workspace_id}: {e}"
+        ) from e
+    if not files:
+        # Nothing to restore, so the sandbox trivially matches the
+        # manifest — record it, or every start repeats this check.
+        # The flag goes first: it is the half that gates deletion, and
+        # an empty manifest has nothing left to protect either way,
+        # whereas a sandbox failure on the marker write belongs to the
+        # caller and is left to propagate.
+        await _clear_restore_flag(workspace_id, sandbox)
+        await sandbox.aupload_file_bytes(
+            sync_marker,
+            datetime.now(timezone.utc).isoformat().encode("utf-8"),
+        )
+        return
+
+    logger.info(
+        f"Sync marker missing for workspace {workspace_id}. "
+        f"Restoring {len(files)} files from DB."
+    )
+    await restore_to_sandbox(
+        workspace_id,
+        sandbox,
+        expected_sandbox_id=_identity_of(sandbox),
+        layout=layout,
+    )

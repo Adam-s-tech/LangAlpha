@@ -56,22 +56,13 @@ async def capture_and_rewrite_images(
         return 0
 
     if project is None and workspace_id:
-        from src.server.services.workspace_layout import resolve_project_placement
-
-        try:
-            placement = await resolve_project_placement(
-                workspace_id, root=sandbox.working_dir
-            )
-        except Exception:
-            logger.warning("[IMAGE_CAPTURE] Workspace placement unavailable", exc_info=True)
-            return 0
-        project = ProjectContext(
-            workspace_id, placement.dir_name,
-            placement.sibling_dir_names, placement.layout_origin,
+        path_to_url = await _capture_from_held_folder(
+            sandbox, image_paths, thread_id, workspace_id
         )
-    path_to_url = await capture_sandbox_images(
-        sandbox, image_paths, thread_id, project=project
-    )
+    else:
+        path_to_url = await capture_sandbox_images(
+            sandbox, image_paths, thread_id, project=project
+        )
     if not path_to_url:
         return 0
 
@@ -102,3 +93,40 @@ async def capture_and_rewrite_images(
             data["content"] = rewrite_image_paths(content, path_to_url)
 
     return len(path_to_url)
+
+
+async def _capture_from_held_folder(
+    sandbox, image_paths: set[str], thread_id: str, workspace_id: str
+) -> dict[str, str]:
+    """Late, the run is terminal and a settle may move the folder: the images
+    are read from the one the row names under the folder hold, and a folder
+    mid-move gives none rather than whatever holds its old name."""
+    from src.server.database.workspace_folders import (
+        WorkspaceFolderMoving,
+        is_top_level,
+        workspace_folder_in_use,
+    )
+    from src.server.services.workspace_layout import resolve_project_placement
+
+    try:
+        async with workspace_folder_in_use(workspace_id):
+            try:
+                placement = await resolve_project_placement(
+                    workspace_id, root=sandbox.working_dir
+                )
+            except Exception:
+                logger.warning("[IMAGE_CAPTURE] Workspace placement unavailable", exc_info=True)
+                return {}
+            if placement.dir_name and not is_top_level(placement.dir_name):
+                return {}
+            project = ProjectContext(
+                workspace_id, placement.dir_name,
+                placement.sibling_dir_names, placement.layout_origin,
+                placement.previous_dir_names,
+            )
+            return await capture_sandbox_images(
+                sandbox, image_paths, thread_id, project=project
+            )
+    except WorkspaceFolderMoving:
+        logger.info(f"[IMAGE_CAPTURE] Folder of {workspace_id} is moving; images left as paths")
+        return {}

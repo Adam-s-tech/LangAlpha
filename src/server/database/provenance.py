@@ -268,7 +268,7 @@ async def insert_provenance_records(
     OUTER turn-persist commit (not released when the savepoint releases), so a
     concurrent same-response drain waits for that commit, not just this write.
     Rows are written as one multi-row INSERT (single parse + round-trip) rather
-    than executemany, which re-parses per row on this prepare_threshold=0 pool.
+    than executemany, which re-parses per row because finalize SQL is never prepared.
     Every TEXT bind is NUL-stripped and the JSONB ``args_fingerprint`` / ``args``
     binds are wrapped in ``SafeJson``. Returns the number of rows inserted.
     """

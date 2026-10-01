@@ -2,17 +2,11 @@
  * Login page. Two layouts share this file:
  *  - LoginPage: split screen (.login-page--split) — market chart visual left,
  *    auth pane right.
- *  - AuthConfirm / ResetPassword: centered card over the waves background
- *    (the base .login-page + .login-page__card rules).
- *
- * TO CHANGE WAVE COLORS: edit the two variables below inside .login-page
- *
- *   --login-waves-bg:     background color behind the lines
- *   --login-waves-stroke: color of the wavy lines
+ *  - Centered-card pages (e.g. AuthConfirm, ResetPassword): a card over the
+ *    edge grain, run in from both sides (the base .login-page +
+ *    .login-page__card rules).
  */
 .login-page {
-  --login-waves-bg: var(--color-bg-page);
-  --login-waves-stroke: var(--color-border-muted);
   /* The only accent on the auth side: the ember the chart ball burns with.
      Single source of truth — MarketScanlines and EdgeGrain read this variable
      at runtime (via derivePalette in loginPaper), so the canvases and the CSS
@@ -36,6 +30,8 @@
   justify-content: center;
   padding: 1.5rem;
   overflow: hidden;
+  /* The grain prints onto this, not onto whatever the host app's body paints. */
+  background-color: var(--color-bg-page);
   /* Pinned here so the login renders the same face in every host app —
      without it, text inherits whatever body font the app's tokens set. */
   font-family: 'Sora', 'Geist', 'Noto Sans SC', -apple-system, system-ui, sans-serif;
@@ -634,7 +630,8 @@
 
 /* The page's only background texture: a static dot field condensing toward
    the frame's right border, thinning right to left (see EdgeGrain). Sits
-   above the wash, below both panes - opaque form surfaces stop it. */
+   above the wash, below both panes - opaque form surfaces stop it. Behind a
+   centered card it condenses toward both side edges instead. */
 .login-page__edge-grain {
   position: absolute;
   inset: 0;

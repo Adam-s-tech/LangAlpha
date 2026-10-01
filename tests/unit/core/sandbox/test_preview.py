@@ -8,6 +8,7 @@ Part 2: preview URL resolution, and the legacy preview redirect to the
 """
 
 import asyncio
+from contextlib import ExitStack, asynccontextmanager
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -523,39 +524,103 @@ class TestWorkspaceScopedPreviewCommands:
             owner="ws-test-001",
         )
 
+    @staticmethod
+    def _held_folder(sandbox, events, dir_name="project-a"):
+        """The folder hold and the row read under it, each recorded, with every
+        launch recorded by the folder it starts in."""
+
+        @asynccontextmanager
+        async def hold(_workspace_id):
+            events.append("hold")
+            try:
+                yield
+            finally:
+                events.append("release")
+
+        async def read(_workspace_id):
+            events.append("read")
+            return _make_workspace(dir_name=dir_name)
+
+        def launched(returns=None):
+            async def launch(cmd, *_args, **_kwargs):
+                events.append(f"launch {cmd.split(' && ')[0]}")
+                return returns
+            return launch
+
+        sandbox.start_preview_server.side_effect = launched()
+        sandbox.start_and_get_preview_url.side_effect = launched(
+            sandbox.start_and_get_preview_url.return_value
+        )
+        return (
+            patch("src.server.app.workspace_sandbox._get_sandbox",
+                  AsyncMock(return_value=(MagicMock(), sandbox))),
+            patch("src.server.app.workspace_sandbox._set_cached_signed_url", AsyncMock()),
+            patch("src.server.app.workspace_files._shared.workspace_folder_in_use", hold),
+            patch("src.server.app.workspace_files._shared.db_get_workspace", read),
+            # A read outside the hold is recorded the same way, so it shows as
+            # out of order rather than missing.
+            patch("src.server.app.workspace_sandbox.db_get_workspace", read),
+        )
+
     @pytest.mark.asyncio
-    async def test_explicit_restart_runs_inside_the_workspace_folder(
-        self, mock_sandbox_for_endpoint
+    @pytest.mark.parametrize("route", ["restart", "open"])
+    async def test_a_launch_starts_in_the_folder_read_under_the_hold(
+        self, mock_sandbox_for_endpoint, route
     ):
+        """A settle on any worker moves only a folder it can hold. Read before
+        the hold, the folder could move and a sibling land on its old name,
+        and the server would start in the sibling's folder."""
+        from src.server.app.workspace_sandbox import (
+            PreviewRestartRequest,
+            owner_preview_url,
+            restart_preview_server,
+        )
+
+        events = []
+        patches = self._held_folder(mock_sandbox_for_endpoint, events)
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            if route == "restart":
+                response = await restart_preview_server(
+                    "ws-test-001",
+                    "test-user-123",
+                    PreviewRestartRequest(port=8080, command="python -m http.server 8080"),
+                )
+                assert response.success is True
+            else:
+                await owner_preview_url(
+                    "ws-test-001", "test-user-123", 8080,
+                    command="python -m http.server 8080", force=True,
+                )
+
+        assert events == ["hold", "read", "launch cd /home/workspace/project-a", "release"]
+
+    @pytest.mark.asyncio
+    async def test_no_launch_starts_in_a_folder_left_mid_move(self, mock_sandbox_for_endpoint):
+        from fastapi import HTTPException
+
         from src.server.app.workspace_sandbox import (
             PreviewRestartRequest,
             restart_preview_server,
         )
 
-        with (
-            patch(
-                "src.server.app.workspace_sandbox._get_sandbox",
-                AsyncMock(return_value=(MagicMock(), mock_sandbox_for_endpoint)),
-            ),
-            patch(
-                "src.server.app.workspace_sandbox.db_get_workspace",
-                AsyncMock(return_value=_make_workspace()),
-            ),
-        ):
-            response = await restart_preview_server(
-                "ws-test-001",
-                "test-user-123",
-                PreviewRestartRequest(
-                    port=8080, command="python -m http.server 8080"
-                ),
-            )
-
-        assert response.success is True
-        mock_sandbox_for_endpoint.start_preview_server.assert_awaited_once_with(
-            "cd /home/workspace/project-a && python -m http.server 8080",
-            8080,
-            owner="ws-test-001",
+        events = []
+        patches = self._held_folder(
+            mock_sandbox_for_endpoint, events, dir_name="_internal/moving/ws-test-001"
         )
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            with pytest.raises(HTTPException) as raised:
+                await restart_preview_server(
+                    "ws-test-001",
+                    "test-user-123",
+                    PreviewRestartRequest(port=8080, command="python -m http.server 8080"),
+                )
+
+        assert raised.value.status_code == 503
+        assert events == ["hold", "read", "release"]
 
     @pytest.mark.asyncio
     async def test_cache_miss_reuses_owned_preview_from_another_worker(

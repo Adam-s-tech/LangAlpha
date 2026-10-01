@@ -185,11 +185,22 @@ def linker(monkeypatch):
     """Capture the link call the pass makes, with a settled empty result."""
     calls: list[dict] = []
 
-    async def _link(sandbox, *, base, user_base, disabled=()):
+    async def _link(sandbox, *, base, user_base, disabled=(), own=()):
         calls.append(
-            {"base": base, "user_base": user_base, "disabled": list(disabled)}
+            {
+                "base": base,
+                "user_base": user_base,
+                "disabled": list(disabled),
+                "own": sorted(own),
+            }
         )
-        return {"linked": [], "relinked": [], "pruned": [], "blocked": []}
+        return {
+            "linked": [],
+            "relinked": [],
+            "pruned": [],
+            "blocked": [],
+            "unpinned": [],
+        }
 
     monkeypatch.setattr(R.skill_sync, "link_shared_skills", _link)
     return calls
@@ -219,6 +230,7 @@ class TestLinkShared:
                 "base": f"{ROOT}/acme-ab12/.agents/skills",
                 "user_base": f"{ROOT}/.agents/skills",
                 "disabled": [],
+                "own": [],
             }
         ]
 
@@ -231,6 +243,20 @@ class TestLinkShared:
         await R._link_shared(_ctx(sandbox, f"{ROOT}/acme-ab12/.agents/skills"))
 
         assert linker[0]["disabled"] == ["xlsx"]
+
+    @pytest.mark.asyncio
+    async def test_the_workspaces_own_rows_are_never_handed_back(
+        self, sandbox, linker, disables
+    ):
+        """A workspace skill with a pre-sync managed entry reads as shared by
+        its entry alone; its bytes are the skill sync's to decide."""
+        disables([])
+        ctx = _ctx(sandbox, f"{ROOT}/acme-ab12/.agents/skills")
+        ctx.ws_rows["house-style"] = {"name": "house-style"}
+
+        await R._link_shared(ctx)
+
+        assert linker[0]["own"] == ["house-style"]
 
     @pytest.mark.asyncio
     async def test_a_workspace_at_the_computer_root_links_nothing(
@@ -246,12 +272,13 @@ class TestLinkShared:
     async def test_link_counts_reach_the_stats(self, sandbox, monkeypatch, disables):
         disables([])
 
-        async def _link(sandbox, *, base, user_base, disabled=()):
+        async def _link(sandbox, *, base, user_base, disabled=(), own=()):
             return {
                 "linked": ["pdf"],
                 "relinked": ["xlsx"],
                 "pruned": ["docx", "pptx"],
                 "blocked": [],
+                "unpinned": [],
             }
 
         monkeypatch.setattr(R.skill_sync, "link_shared_skills", _link)

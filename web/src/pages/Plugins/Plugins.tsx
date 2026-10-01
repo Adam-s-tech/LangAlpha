@@ -17,6 +17,7 @@ import { McpServers } from './components/McpServers';
 import { SkillsList } from './components/SkillsList';
 import { PluginSecrets } from './components/PluginSecrets';
 import { PluginsList } from './components/PluginsList';
+import { WorkspacesLoadNote } from './components/WorkspacesLoadNote';
 import { ADD_INTENT_TAB, ADD_PARAM, type AddIntent } from './utils/addParam';
 import { DETAIL_KIND_TAB, parseDetail } from './utils/detailParam';
 import './Plugins.css';
@@ -39,6 +40,8 @@ import { useConnectReturn } from './connectReturn';
 
 const TABS = ['plugins', 'brokerages', 'mcp', 'skills', 'secrets'] as const;
 type Tab = (typeof TABS)[number];
+// Tabs whose rows carry a per-workspace scope control.
+const SCOPED_TABS: ReadonlySet<Tab> = new Set(['brokerages', 'mcp', 'skills']);
 
 /**
  * The custom payload is the slide direction and nothing else: +1 for a tab to
@@ -268,6 +271,7 @@ function Plugins() {
                   : { duration: 0 }
               }
             >
+              {SCOPED_TABS.has(activeTab) && <WorkspacesLoadNote />}
               {activeTab === 'plugins' && <PluginsList />}
               {activeTab === 'brokerages' && <Brokerages />}
               {activeTab === 'mcp' && <McpServers />}

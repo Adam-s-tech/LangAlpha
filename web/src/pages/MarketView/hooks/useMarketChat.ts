@@ -10,6 +10,8 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '@/lib/queryKeys';
 import { buildRateLimitError, type ErrorLinkSpec, type StructuredError } from '@/utils/rateLimitError';
 import { sendFlashChatMessage } from '../utils/api';
 import { applyAnnotationArtifact } from '../stores/chartAnnotationStore';
@@ -131,6 +133,7 @@ function appendMessage(messages: MarketChatMessage[], newMessage: MarketChatMess
 const BATCH_FLUSH_INTERVAL_MS = 150;
 
 export function useMarketChat(): UseMarketChatReturn {
+  const queryClient = useQueryClient();
   const [messages, setMessages] = useState<MarketChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | StructuredError | null>(null);
@@ -608,6 +611,11 @@ export function useMarketChat(): UseMarketChatReturn {
           // Build structured error with link when backend provides one
           const errorInfo = streamErr.errorInfo;
           if (errorInfo?.link) {
+            // The server just cleared the dead model from the saved prefs;
+            // refetch them so the picker stops resending it on every retry.
+            if (errorInfo.type === 'model_removed') {
+              void queryClient.invalidateQueries({ queryKey: queryKeys.user.preferences() });
+            }
             setError({
               message: (errorInfo.message as string) || streamErr.message || 'An error occurred.',
               links: [errorInfo.link as ErrorLinkSpec],

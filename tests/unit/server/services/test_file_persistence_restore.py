@@ -16,15 +16,19 @@ budget are visible in CI.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from ptc_agent.core.paths import SandboxLayout
+from ptc_agent.core.sandbox.assets import _read_unified_manifest
 from src.server.database.workspace_file import WorkspaceSyncBusy
 from src.server.services.persistence import restore
+from src.server.services.persistence.resolve import FileBytesUnavailable
 from src.server.services.persistence.transfer import TransferRuntimeError
 
 import hashlib
@@ -71,10 +75,17 @@ def sync_lock():
     """Restore serializes on a Postgres advisory lock; unit tests have no DB."""
 
     @asynccontextmanager
-    async def _lock(_workspace_id):
+    async def _lock(_workspace_id, *, conn=None):
         yield "conn"
 
-    with patch("src.server.services.persistence.restore.workspace_sync_lock", _lock):
+    @asynccontextmanager
+    async def _hold(_workspace_id, *, wait_s):
+        yield "conn"
+
+    with (
+        patch("src.server.services.persistence.restore.workspace_sync_lock", _lock),
+        patch("src.server.services.persistence.restore.hold_workspace_skill_sync", _hold),
+    ):
         yield
 
 
@@ -110,13 +121,33 @@ def _file(path: str, text: str = "hello") -> dict:
     }
 
 
-def _mock_sandbox() -> MagicMock:
+def _mock_sandbox(manifest: dict | None = None) -> MagicMock:
     sandbox = MagicMock()
     sandbox.working_dir = ROOT
     sandbox.acreate_directories = AsyncMock(return_value=True)
     sandbox.acreate_directory = AsyncMock(return_value=True)
     sandbox.aupload_file_bytes = AsyncMock(return_value=True)
+    # Through the real reader: the lookup sees only what it lets through.
+    sandbox._runtime_call = AsyncMock(
+        return_value=None if manifest is None else json.dumps(manifest).encode()
+    )
+    sandbox._read_unified_manifest = lambda: _read_unified_manifest(sandbox)
     return sandbox
+
+
+def _synced(*names: str, collisions: tuple[str, ...] = ()) -> dict:
+    """The manifest of an asset sync that delivered ``names`` to the tier."""
+    return {
+        "schema_version": 1,
+        "modules": {
+            "skills": {
+                "version": "v",
+                "files": {f"{n}/SKILL.md": "h" for n in (*names, *collisions)},
+                "skills": {n: {} for n in (*names, *collisions)},
+                "collisions": list(collisions),
+            }
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -344,13 +375,283 @@ async def test_a_clean_restore_raises_the_flag_then_clears_it(mock_get, restore_
     assert [c.args for c in restore_flag.await_args_list] == [("ws-1", True), ("ws-1", False)]
 
 
+@pytest.fixture
+def served(monkeypatch):
+    """``scopes["ws-1"]`` is the workspace's own rows and ``disabled["ws-1"]``
+    the inherited names it switched off, both read on the restore's lock
+    connection."""
+    scopes = {"ws-1": []}
+    disabled = {"ws-1": set()}
+    calls = []
+    disable_calls = []
+
+    async def _list(user_id, *, workspace_id=None, conn=None):
+        calls.append((user_id, workspace_id, conn))
+        return scopes[workspace_id]
+
+    async def _disables(workspace_id, *, conn=None):
+        disable_calls.append((workspace_id, conn))
+        return disabled[workspace_id]
+
+    monkeypatch.setattr(restore, "list_user_skills", _list)
+    monkeypatch.setattr(restore, "list_workspace_skill_disables", _disables)
+    return SimpleNamespace(
+        scopes=scopes, disabled=disabled, calls=calls, disable_calls=disable_calls
+    )
+
+
+@pytest.mark.asyncio
+@patch("src.server.services.persistence.restore.get_files_for_workspace", new_callable=AsyncMock)
+async def test_skills_the_shared_tier_serves_are_left_out(mock_get, no_runtime, served):
+    """A backup taken while the workspace lived at the computer root carries
+    the skills the shared tier served it there, and a copy restored into a
+    folder outranks the shared skill for good. The backup's own ledger names
+    them; a name it says nothing about is shared when the sync delivered it."""
+    ledger = {
+        "pdf": {"owner": "platform", "sourceType": "platform"},
+        "house-style": {"owner": "user", "sourceType": "langalpha-user"},
+        "mine": {"owner": "user", "sourceType": "local"},
+        "docx": {"owner": "user", "sourceType": "local"},
+        "synced": {
+            "owner": "user",
+            "sourceType": "langalpha-user",
+            "sync": {"linkedSkillId": "row-1"},
+        },
+    }
+    mock_get.return_value = [
+        _file(
+            ".agents/skills/skills-lock.json",
+            json.dumps({"version": 1, "skills": ledger}),
+        ),
+        {"file_path": ".agents/skills/pdf", "kind": "dir", "permissions": "0755"},
+        _file(".agents/skills/pdf/SKILL.md"),
+        _file(".agents/skills/house-style/SKILL.md"),
+        _file(".agents/skills/mine/SKILL.md"),
+        _file(".agents/skills/docx/SKILL.md"),
+        _file(".agents/skills/synced/SKILL.md"),
+        _file(".agents/skills/unledgered/SKILL.md"),
+        _file(".agents/skills/team-voice/SKILL.md"),
+        {
+            "file_path": ".agents/skills/xlsx",
+            "kind": "symlink",
+            "symlink_target": "../../../.agents/skills/xlsx",
+        },
+        _file(".agents/skills-archive/pdf/SKILL.md"),
+        _file("work/notes.md"),
+    ]
+    sandbox = _mock_sandbox(_synced("docx", "pdf", "xlsx", "team-voice"))
+
+    result = await restore.restore_to_sandbox("ws-1", sandbox, layout=LAYOUT)
+
+    placed = {i["path"] for c in no_runtime.await_args_list for i in c.args[1]}
+    assert placed == {
+        ".agents/skills/skills-lock.json",
+        ".agents/skills/mine/SKILL.md",
+        ".agents/skills/docx/SKILL.md",
+        ".agents/skills/synced/SKILL.md",
+        ".agents/skills/unledgered/SKILL.md",
+        ".agents/skills/xlsx",
+        ".agents/skills-archive/pdf/SKILL.md",
+        "work/notes.md",
+    }
+    assert result == {"restored": 8, "errors": 0}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unreadable", ["unfetchable", "oversized"])
+@patch("src.server.services.persistence.restore.get_files_for_workspace", new_callable=AsyncMock)
+async def test_without_a_ledger_the_delivered_names_are_left_out(
+    mock_get, no_runtime, served, unreadable
+):
+    """A ledger the store cannot hand back, or one too large for the server to
+    read whole, names no skill. Holding every skill back would wait forever on
+    a lost blob, and restoring them all pins stale copies, so what the last
+    sync delivered stands in for it."""
+    ledger_row = _file(
+        ".agents/skills/skills-lock.json",
+        json.dumps({"version": 1, "skills": {"mine": {"owner": "platform"}}}),
+    )
+    if unreadable == "oversized":
+        ledger_row["file_size"] = restore._LEDGER_MAX_BYTES + 1
+    mock_get.return_value = [
+        ledger_row,
+        _file(".agents/skills/docx/SKILL.md"),
+        _file(".agents/skills/team-voice/SKILL.md"),
+        _file(".agents/skills/mine/SKILL.md"),
+    ]
+    real_resolve = restore.resolve_file_bytes
+
+    async def _resolve(row, *, user_id):
+        if unreadable == "unfetchable" and row is ledger_row:
+            raise FileBytesUnavailable("store unreachable")
+        return await real_resolve(row, user_id=user_id)
+
+    with patch.object(restore, "resolve_file_bytes", _resolve):
+        await restore.restore_to_sandbox(
+            "ws-1", _mock_sandbox(_synced("docx", "team-voice")), layout=LAYOUT
+        )
+
+    placed = {i["path"] for c in no_runtime.await_args_list for i in c.args[1]}
+    assert placed - {".agents/skills/skills-lock.json"} == {
+        ".agents/skills/mine/SKILL.md"
+    }
+    assert served.calls == [("user-restore", "ws-1", "conn")]
+
+
+@pytest.mark.asyncio
+@patch("src.server.services.persistence.restore.get_files_for_workspace", new_callable=AsyncMock)
+async def test_an_unledgered_name_the_sync_did_not_deliver_is_kept(
+    mock_get, no_runtime, served
+):
+    """Only what the sync delivered stands in for a lost entry. A user-tier
+    skill whose archive it could not fetch, a disabled or Flash-only skill,
+    and a name a collision kept from upload never reached the tier as a
+    delivery, so a copy under that name may be the only one there is."""
+    mock_get.return_value = [
+        _file(".agents/skills/docx/SKILL.md"),
+        _file(".agents/skills/broken-archive/SKILL.md"),
+        _file(".agents/skills/pdf/SKILL.md"),
+        _file(".agents/skills/collided/SKILL.md"),
+    ]
+    sandbox = _mock_sandbox(_synced("docx", collisions=("collided",)))
+
+    await restore.restore_to_sandbox("ws-1", sandbox, layout=LAYOUT)
+
+    placed = {i["path"] for c in no_runtime.await_args_list for i in c.args[1]}
+    assert placed == {
+        ".agents/skills/broken-archive/SKILL.md",
+        ".agents/skills/pdf/SKILL.md",
+        ".agents/skills/collided/SKILL.md",
+    }
+
+
+@pytest.mark.asyncio
+@patch("src.server.services.persistence.restore.get_files_for_workspace", new_callable=AsyncMock)
+async def test_an_unledgered_name_the_workspace_switched_off_is_kept(
+    mock_get, no_runtime, served
+):
+    """The shared tier holds a skill the workspace switched off for its
+    siblings, but no pass links it into this folder, so a copy under that
+    name is no delivery that lost its entry, and nothing replaces it."""
+    served.disabled["ws-1"] = {"docx"}
+    mock_get.return_value = [
+        _file(".agents/skills/docx/SKILL.md"),
+        _file(".agents/skills/pdf/SKILL.md"),
+    ]
+
+    await restore.restore_to_sandbox(
+        "ws-1", _mock_sandbox(_synced("docx", "pdf")), layout=LAYOUT
+    )
+
+    placed = {i["path"] for c in no_runtime.await_args_list for i in c.args[1]}
+    assert placed == {".agents/skills/docx/SKILL.md"}
+    assert served.disable_calls == [("ws-1", "conn")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        None,
+        {"schema_version": 1, "modules": ["skills"]},
+        {"schema_version": 1, "modules": {"skills": ["docx"]}},
+        {"schema_version": 1, "modules": {"skills": {"files": [1]}}},
+        {
+            "schema_version": 1,
+            "modules": {
+                "skills": {"files": {"docx/SKILL.md": "x"}, "collisions": [["pdf"]]}
+            },
+        },
+        {"schema_version": 1, "modules": {"skills": {"files": ["docx/SKILL.md"]}}},
+        {
+            "schema_version": 1,
+            "modules": {
+                "skills": {"files": {"docx/SKILL.md": "x"}, "collisions": "pdf"}
+            },
+        },
+    ],
+    ids=[
+        "unreadable",
+        "modules-list",
+        "skills-list",
+        "file-not-a-path",
+        "collision-list",
+        "files-list",
+        "collisions-string",
+    ],
+)
+@patch("src.server.services.persistence.restore.get_files_for_workspace", new_callable=AsyncMock)
+async def test_with_no_record_of_the_sync_unledgered_copies_are_restored(
+    mock_get, no_runtime, served, manifest
+):
+    """A sandbox whose manifest cannot be read, or holds a shape no sync
+    writes, says nothing about what it was delivered. The ledger still decides
+    the names it covers; the rest are restored, since a stale copy pinned in
+    the folder costs less than a lost one."""
+    ledger = {"pdf": {"owner": "platform", "sourceType": "platform"}}
+    mock_get.return_value = [
+        _file(
+            ".agents/skills/skills-lock.json",
+            json.dumps({"version": 1, "skills": ledger}),
+        ),
+        _file(".agents/skills/pdf/SKILL.md"),
+        _file(".agents/skills/docx/SKILL.md"),
+    ]
+
+    await restore.restore_to_sandbox("ws-1", _mock_sandbox(manifest), layout=LAYOUT)
+
+    placed = {i["path"] for c in no_runtime.await_args_list for i in c.args[1]}
+    assert placed == {
+        ".agents/skills/skills-lock.json",
+        ".agents/skills/docx/SKILL.md",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ledger", ["shared entry", "unfetchable"])
+@patch("src.server.services.persistence.restore.get_files_for_workspace", new_callable=AsyncMock)
+async def test_a_skill_the_workspace_owns_is_never_left_out(
+    mock_get, no_runtime, served, ledger
+):
+    """A workspace row shadowing a user-tier skill keeps its copy whatever the
+    ledger says or fails to say. Left out, its linked entry would come back
+    over a missing directory, which the reconcile reads as a deletion."""
+    served.scopes["ws-1"] = [{"name": "team-voice"}]
+    entry = {"owner": "user", "sourceType": "langalpha-user"}
+    ledger_row = _file(
+        ".agents/skills/skills-lock.json",
+        json.dumps({"version": 1, "skills": {"team-voice": entry, "docx": entry}}),
+    )
+    mock_get.return_value = [
+        ledger_row,
+        _file(".agents/skills/team-voice/SKILL.md"),
+        _file(".agents/skills/docx/SKILL.md"),
+    ]
+    real_resolve = restore.resolve_file_bytes
+
+    async def _resolve(row, *, user_id):
+        if ledger == "unfetchable" and row is ledger_row:
+            raise FileBytesUnavailable("store unreachable")
+        return await real_resolve(row, user_id=user_id)
+
+    with patch.object(restore, "resolve_file_bytes", _resolve):
+        await restore.restore_to_sandbox(
+            "ws-1", _mock_sandbox(_synced("docx", "team-voice")), layout=LAYOUT
+        )
+
+    placed = {i["path"] for c in no_runtime.await_args_list for i in c.args[1]}
+    assert placed - {".agents/skills/skills-lock.json"} == {
+        ".agents/skills/team-voice/SKILL.md"
+    }
+
+
 @pytest.mark.asyncio
 @patch("src.server.services.persistence.restore.pull_direct", new_callable=AsyncMock)
 @patch("src.server.services.persistence.restore.get_files_for_workspace", new_callable=AsyncMock)
 async def test_a_transfer_that_raises_leaves_the_workspace_flagged(
     mock_get, mock_pull, restore_flag
 ):
-    """``maybe_restore`` and the workspace manager swallow a TransferRuntimeError
+    """The workspace manager swallows a TransferRuntimeError from a restore
     as a warning. If the flag were written after the transfers, the sandbox would
     be left a partial mirror with nothing recording it, and the next sync would
     prune the manifest rows for every file that never arrived."""
@@ -365,12 +666,12 @@ async def test_a_transfer_that_raises_leaves_the_workspace_flagged(
 
 @pytest.mark.asyncio
 async def test_a_lock_wait_that_times_out_still_flags_the_workspace(restore_flag):
-    """The lock wait is the one step before the flag is raised. Both callers
-    swallow ``WorkspaceSyncBusy`` as a warning, so without the flag the sandbox
+    """The lock wait is the one step before the flag is raised. Both restore
+    paths end ``WorkspaceSyncBusy`` in a warning, so without the flag the sandbox
     starts as an empty mirror of a full manifest and the next sync prunes it."""
 
     @asynccontextmanager
-    async def _busy(_workspace_id):
+    async def _busy(_workspace_id, *, conn=None):
         raise WorkspaceSyncBusy("held")
         yield  # pragma: no cover
 
@@ -470,7 +771,7 @@ async def test_the_flag_is_raised_before_the_lock_is_requested(restore_flag):
     restore_flag.side_effect = lambda *a, **k: order.append(f"flag={a[1]}") or True
 
     @asynccontextmanager
-    async def _busy(_workspace_id):
+    async def _busy(_workspace_id, *, conn=None):
         order.append("lock")
         raise WorkspaceSyncBusy("held")
         yield  # pragma: no cover
@@ -541,7 +842,7 @@ async def test_a_flag_write_that_fails_aborts_before_the_lock(restore_flag):
     requested = []
 
     @asynccontextmanager
-    async def _lock(_workspace_id):
+    async def _lock(_workspace_id, *, conn=None):
         requested.append(True)
         yield "conn"
 
@@ -583,7 +884,7 @@ async def test_a_raise_that_lands_nowhere_aborts_as_identity_lost(restore_flag):
     requested = []
 
     @asynccontextmanager
-    async def _lock(_workspace_id):
+    async def _lock(_workspace_id, *, conn=None):
         requested.append(True)
         yield "conn"
 

@@ -239,6 +239,15 @@ def _get_cash_flows(symbol: str, period: str, limit: int) -> list[dict[str, Any]
     return [_remap_keys(r, _CASHFLOW_KEY_MAP) for r in _dataframe_to_records(df, limit)]
 
 
+def _percent_to_fraction(val: Any) -> float | None:
+    """Yahoo reports debtToEquity and dividendYield as percents (154.0, 0.41)."""
+    val = _clean_value(val)
+    return val / 100 if isinstance(val, (int, float)) else None
+
+
+# These two stand in for FMP's stable key-metrics-ttm and ratios-ttm, so each
+# carries the names and fraction units of its FMP counterpart; the TTM overview
+# table reads one shape whichever provider served it.
 def _get_key_metrics(symbol: str) -> list[dict[str, Any]]:
     ticker = yf.Ticker(symbol)
     fi = ticker.fast_info
@@ -247,24 +256,13 @@ def _get_key_metrics(symbol: str) -> list[dict[str, Any]]:
         return []
     metrics = {
         "symbol": symbol,
-        "peRatio": info.get("trailingPE"),
-        "forwardPERatio": info.get("forwardPE"),
-        "priceToBookRatio": info.get("priceToBook"),
-        "priceToSalesRatio": info.get("priceToSalesTrailing12Months"),
-        "enterpriseValueOverEBITDA": info.get("enterpriseToEbitda"),
-        "enterpriseValue": info.get("enterpriseValue"),
         "marketCap": fi.get("marketCap"),
-        "beta": info.get("beta"),
-        "dividendYield": info.get("dividendYield"),
-        "payoutRatio": info.get("payoutRatio"),
-        "returnOnEquity": info.get("returnOnEquity"),
-        "returnOnAssets": info.get("returnOnAssets"),
-        "debtToEquity": info.get("debtToEquity"),
-        "currentRatio": info.get("currentRatio"),
-        "quickRatio": info.get("quickRatio"),
-        "revenuePerShare": info.get("revenuePerShare"),
-        "bookValuePerShare": info.get("bookValue"),
-        "earningsYield": (
+        "enterpriseValueTTM": info.get("enterpriseValue"),
+        "evToEBITDATTM": info.get("enterpriseToEbitda"),
+        "returnOnEquityTTM": info.get("returnOnEquity"),
+        "returnOnAssetsTTM": info.get("returnOnAssets"),
+        "currentRatioTTM": info.get("currentRatio"),
+        "earningsYieldTTM": (
             (1.0 / info["trailingPE"]) if info.get("trailingPE") else None
         ),
     }
@@ -277,19 +275,20 @@ def _get_financial_ratios(symbol: str) -> list[dict[str, Any]]:
         return []
     ratios = {
         "symbol": symbol,
-        "grossProfitMargin": info.get("grossMargins"),
-        "operatingProfitMargin": info.get("operatingMargins"),
-        "netProfitMargin": info.get("profitMargins"),
-        "returnOnEquity": info.get("returnOnEquity"),
-        "returnOnAssets": info.get("returnOnAssets"),
-        "debtToEquity": info.get("debtToEquity"),
-        "currentRatio": info.get("currentRatio"),
-        "quickRatio": info.get("quickRatio"),
-        "dividendYield": info.get("dividendYield"),
-        "payoutRatio": info.get("payoutRatio"),
-        "peRatio": info.get("trailingPE"),
-        "priceToBookRatio": info.get("priceToBook"),
-        "priceToSalesRatio": info.get("priceToSalesTrailing12Months"),
+        "grossProfitMarginTTM": info.get("grossMargins"),
+        "operatingProfitMarginTTM": info.get("operatingMargins"),
+        "netProfitMarginTTM": info.get("profitMargins"),
+        "debtToEquityRatioTTM": _percent_to_fraction(info.get("debtToEquity")),
+        "currentRatioTTM": info.get("currentRatio"),
+        "quickRatioTTM": info.get("quickRatio"),
+        "dividendYieldTTM": _percent_to_fraction(info.get("dividendYield")),
+        "dividendPayoutRatioTTM": info.get("payoutRatio"),
+        "priceToEarningsRatioTTM": info.get("trailingPE"),
+        "priceToEarningsGrowthRatioTTM": info.get("trailingPegRatio"),
+        "priceToBookRatioTTM": info.get("priceToBook"),
+        "priceToSalesRatioTTM": info.get("priceToSalesTrailing12Months"),
+        "revenuePerShareTTM": info.get("revenuePerShare"),
+        "bookValuePerShareTTM": info.get("bookValue"),
     }
     return [{k: _clean_value(v) for k, v in ratios.items()}]
 

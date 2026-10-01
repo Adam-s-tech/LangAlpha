@@ -1,6 +1,6 @@
 import pytest
 
-from src.llms.llm import get_max_pdf_pages
+from src.llms.llm import LLM, get_max_pdf_pages
 
 
 class TestGetMaxPdfPages:
@@ -15,24 +15,29 @@ class TestGetMaxPdfPages:
 
     @pytest.mark.parametrize(
         "model",
-        ["claude-sonnet-5", "claude-opus-5", "claude-opus-4-8-oauth-1m"],
+        ["claude-sonnet-5-5", "claude-opus-5-5", "claude-opus-5-5-oauth"],
     )
     def test_a_1m_context_anthropic_route_gets_the_higher_ceiling(self, model):
         assert get_max_pdf_pages(model) == 600
 
     @pytest.mark.parametrize(
         "model",
-        ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-sonnet-4-6-oauth"],
+        ["claude-haiku-4-5", "claude-haiku-4-5-oauth"],
     )
     def test_a_sub_1m_anthropic_route_gets_the_tighter_one(self, model):
         """The pair that makes a single global cap impossible: same vendor, same
-        modality support, six-fold difference in what a request may carry."""
+        modality support, six-fold difference in what a request may carry.
+
+        An unknown model also gets 100, so a retired target would still pass
+        here while testing nothing; the entry has to exist below 1M."""
+        entry = LLM.get_model_config().get_model_config(model)
+        assert entry is not None and entry["context"] < 1_000_000
         assert get_max_pdf_pages(model) == 100
 
     def test_a_provider_with_no_documented_page_limit_reports_none(self):
         """None means 'not bounded by pages', which is a different claim from
         'we don't know' — the latter has to fail closed instead."""
-        assert get_max_pdf_pages("gpt-5.5") is None
+        assert get_max_pdf_pages("gpt-6.1-sol") is None
 
     def test_an_unknown_model_fails_closed(self):
         """This gates transmission, so an over-generous guess becomes a 400 the

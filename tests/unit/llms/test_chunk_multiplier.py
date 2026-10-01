@@ -35,8 +35,8 @@ def test_a_pricier_model_buys_a_bigger_budget():
     """The ordering is the whole product. Sonnet over Haiku, Opus over Sonnet:
     if this inverts, a premium turn is reserving less than a cheap one."""
     haiku = chunk_multiplier("claude-haiku-4-5")
-    sonnet = chunk_multiplier("claude-sonnet-5")
-    opus = chunk_multiplier("claude-opus-5")
+    sonnet = chunk_multiplier("claude-sonnet-5-5")
+    opus = chunk_multiplier("claude-opus-5-5")
     assert haiku is not None and sonnet is not None and opus is not None
     assert haiku < sonnet < opus
 
@@ -53,13 +53,13 @@ def test_the_mix_weights_reads_far_above_input():
     mean the mix was being ignored."""
     from src.llms.pricing_utils import find_model_pricing
 
-    card = find_model_pricing("claude-sonnet-5", "anthropic")
-    rate = blended_rate("claude-sonnet-5")
+    card = find_model_pricing("claude-sonnet-5-5", "anthropic")
+    rate = blended_rate("claude-sonnet-5-5")
     assert rate is not None and card is not None
     assert card["cached_input"] < rate < card["input"]
 
 
-@pytest.mark.parametrize("model", ["claude-opus-5", "deepseek-flash", "gpt-5.6-sol"])
+@pytest.mark.parametrize("model", ["claude-opus-5-5", "deepseek-flash", "gpt-6.1-sol"])
 def test_a_multiplier_is_a_coarse_figure(model):
     """Snapped, because a budget is read by people. Anything below the baseline
     lands on a tenth, anything above on a half — a rate that drifts by a cent

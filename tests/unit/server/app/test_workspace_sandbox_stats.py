@@ -5,6 +5,7 @@ canonicalizes that one synonym and passes everything else through.
 """
 
 import uuid
+from contextlib import asynccontextmanager, nullcontext
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,9 +14,73 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from ptc_agent.core.paths import WorkspaceLayout
 from tests.conftest import create_test_app
 
 NOW = datetime.now(timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _folder_hold_is_free():
+    """The skills listing holds the workspace's folder against a settle, an
+    advisory lock these database-free tests cannot take."""
+    with (
+        patch(
+            "src.server.app.workspace_sandbox.workspace_folder_in_use",
+            lambda _workspace_id: nullcontext(),
+        ),
+        patch(
+            "src.server.app.workspace_sandbox.db_get_workspace_dir_name",
+            AsyncMock(return_value="Research"),
+        ),
+    ):
+        yield
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("folder", ["Macro", "_internal/moving/ws"])
+async def test_skills_are_listed_from_the_folder_read_under_the_hold(folder):
+    """A settle on another worker can move the folder after the acquisition.
+    Listed at the old path, the skills read as none, or as those of a sibling
+    that took it; mid-move there is no folder to list."""
+    from src.server.app.workspace_sandbox import _get_full_sandbox_stats
+
+    workspace = _ws()
+    session, sandbox = _sandbox_with_metadata({"state": "running"})
+    manager = MagicMock()
+    manager.tool_view.return_value = SimpleNamespace(mcp_registry=None)
+    events = []
+
+    @asynccontextmanager
+    async def hold(_workspace_id):
+        events.append("hold")
+        try:
+            yield
+        finally:
+            events.append("release")
+
+    async def read(_workspace_id):
+        events.append("read")
+        return folder
+
+    async def bash(cmd, **_kw):
+        if "SKILL.md" in cmd:
+            events.append(f"list {cmd.split()[3]}")
+        return {"success": False}
+
+    sandbox.execute_bash_command.side_effect = bash
+    with (
+        patch("src.server.app.workspace_sandbox._get_sandbox", AsyncMock(return_value=(session, sandbox))),
+        patch("src.server.app.workspace_sandbox._provider_kind", AsyncMock(return_value="docker")),
+        patch("src.server.app.workspace_sandbox.WorkspaceManager.get_instance", return_value=manager),
+        patch("src.server.app.workspace_sandbox.workspace_folder_in_use", hold),
+        patch("src.server.app.workspace_sandbox.db_get_workspace_dir_name", read),
+    ):
+        stats = await _get_full_sandbox_stats(workspace["workspace_id"], "test-user-123", workspace)
+
+    listed = [f"list {WorkspaceLayout('/home/workspace', folder).skills}/*/;"]
+    assert events == ["hold", "read", *(listed if folder == "Macro" else []), "release"]
+    assert stats.skills == []
 
 
 @pytest.mark.asyncio

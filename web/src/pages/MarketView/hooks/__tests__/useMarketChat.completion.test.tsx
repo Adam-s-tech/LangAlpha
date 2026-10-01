@@ -5,7 +5,8 @@
  * turn showed a bare `Worked` with no duration.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { act, waitFor } from '@testing-library/react';
+import { renderHookWithProviders } from '@/test/utils';
 
 const sendFlashChatMessage = vi.fn();
 vi.mock('../../utils/api', () => ({
@@ -27,7 +28,7 @@ async function settledAssistant(impl: (emit: Emit) => Promise<void>) {
   sendFlashChatMessage.mockImplementation(async (...args: unknown[]) => {
     await impl(args[ON_EVENT] as Emit);
   });
-  const { result } = renderHook(() => useMarketChat());
+  const { result } = renderHookWithProviders(() => useMarketChat());
   await act(async () => {
     await result.current.handleSendMessage('What is AAPL doing?').catch(() => {});
   });

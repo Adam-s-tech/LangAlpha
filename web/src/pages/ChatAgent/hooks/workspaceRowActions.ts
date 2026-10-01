@@ -31,6 +31,19 @@ export function invalidateWorkspaceMembership(queryClient: QueryClient): void {
 }
 
 /**
+ * Refresh after a workspace is created or duplicated. Besides membership, the
+ * new workspace starts with every account server new workspaces start without
+ * switched off, and a duplicate also copies what its source switched off,
+ * built-ins included. The Plugins scope badges read those switches off both
+ * the catalog and the built-in list.
+ */
+export function invalidateNewWorkspace(queryClient: QueryClient): void {
+  invalidateWorkspaceMembership(queryClient);
+  void queryClient.invalidateQueries({ queryKey: queryKeys.mcp.catalog() });
+  void queryClient.invalidateQueries({ queryKey: queryKeys.mcp.builtins() });
+}
+
+/**
  * Optimistically patch one workspace across every cached list. Returns the
  * snapshot so the caller can roll back on error.
  */
@@ -58,12 +71,14 @@ export function rollbackCachedWorkspaces(queryClient: QueryClient, previous: Wor
 
 /**
  * Optimistically patch one workspace, persist it, then invalidate so the
- * server's re-sort lands. Rolls the caches back on failure.
+ * server's re-sort lands. Rolls the caches back on failure and hands the error
+ * to `onError`, which is how a surface tells the user why.
  */
 export async function patchWorkspaceRow(
   queryClient: QueryClient,
   wsId: string,
   patch: Record<string, unknown>,
+  { onError }: { onError?: (err: unknown) => void } = {},
 ): Promise<boolean> {
   const previous = patchCachedWorkspace(queryClient, wsId, patch);
   try {
@@ -76,6 +91,7 @@ export async function patchWorkspaceRow(
   } catch (e) {
     rollbackCachedWorkspaces(queryClient, previous);
     console.warn('[workspaceRowActions] Failed to update workspace:', e);
+    onError?.(e);
     return false;
   }
 }
@@ -108,6 +124,11 @@ export async function pinWorkspaceRow(
 }
 
 /** Rename a workspace. A blank/unchanged name is the caller's guard. */
-export function renameWorkspaceRow(queryClient: QueryClient, wsId: string, name: string): Promise<boolean> {
-  return patchWorkspaceRow(queryClient, wsId, { name });
+export function renameWorkspaceRow(
+  queryClient: QueryClient,
+  wsId: string,
+  name: string,
+  options: { onError?: (err: unknown) => void } = {},
+): Promise<boolean> {
+  return patchWorkspaceRow(queryClient, wsId, { name }, options);
 }

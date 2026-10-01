@@ -7,8 +7,8 @@
 
 llm:
   # Model name from src/llms/manifest/models.json
-  name: "claude-opus-4-8"
-  flash: "claude-sonnet-5"
+  name: "claude-opus-5-5"
+  flash: "claude-sonnet-5-5"
   compaction: "" # blank → same model as flash
   fetch: ""         # blank → same model as flash
   fallback:

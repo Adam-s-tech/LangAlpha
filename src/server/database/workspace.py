@@ -8,7 +8,7 @@ rows (flash and shared-sandbox backfill losers) retain single-table behavior.
 
 import logging
 import uuid
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -17,13 +17,33 @@ from psycopg.rows import dict_row
 from ptc_agent.core.sandbox.runtime import SandboxTransientError
 from src.server.database.computer import (
     COMPUTER_STATUSES,
+    get_computer,
 )
+from src.server.database.mcp_servers import start_new_workspace_selection
 from src.server.database.pool import get_db_connection
 from src.server.database.sql_fences import (
     FENCE_LIVE_WORKSPACE,
     FENCE_NOT_DELETED,
-    workspace_dir_name,
     shadowed_write,
+)
+from src.server.database.user_lock import lock_user_writes
+from src.server.database.workspace_folders import (
+    MOVING_DIR,
+    WorkspaceFolderMoving,
+    folder_allocation,
+    moving_path,
+    recorded_landings,
+    release_former_folder,
+    takes_name_folders,
+)
+from src.server.database.workspace_names import (
+    WorkspaceNameInvalid,
+    WorkspaceNameTaken,
+    candidate_dir_name,
+    candidate_dir_names,
+    checked_workspace_name,
+    workspace_folder_name,
+    workspace_name_key,
 )
 from src.server.services.workspace_status_pubsub import publish_status_change
 from src.server.utils.pg_sanitize import normalize_uuid
@@ -41,6 +61,7 @@ _WS_COLUMNS: tuple[str, ...] = (
     "sandbox_id",
     "computer_id",
     "dir_name",
+    "previous_dir_names",
     "layout_origin",
     "status",
     "created_at",
@@ -97,12 +118,29 @@ async def _ws_cursor(conn=None):
             yield cur
 
 
+@asynccontextmanager
+async def _ws_transaction(conn=None):
+    """A cursor in a transaction of its own, or in a savepoint of the caller's.
+
+    The pool's connections are autocommit, and a workspace INSERT has to
+    commit with the MCP selection it starts with.
+    """
+    async with get_db_connection(conn) as owned, owned.transaction():
+        async with owned.cursor(row_factory=dict_row) as cur:
+            yield cur
+
+
 def get_flash_workspace_id(user_id: str) -> str:
     return str(uuid.uuid5(FLASH_WORKSPACE_NAMESPACE, user_id))
 
 
 async def get_or_create_flash_workspace(user_id: str, conn=None) -> Dict[str, Any]:
-    """Deterministic identity and ON CONFLICT make concurrent creation idempotent."""
+    """Deterministic identity and ON CONFLICT make concurrent creation idempotent.
+
+    Every Flash turn lands here, so a row that exists is touched in one
+    statement with no lock. Only a miss opens a transaction and takes the
+    lock, so the workspace commits with the MCP selection it starts with.
+    """
     from psycopg.types.json import Json
 
     workspace_id = get_flash_workspace_id(user_id)
@@ -112,21 +150,37 @@ async def get_or_create_flash_workspace(user_id: str, conn=None) -> Dict[str, An
         async with _ws_cursor(conn) as cur:
             await cur.execute(
                 f"""
-                INSERT INTO workspaces (workspace_id, user_id, name, description, config, status, is_pinned)
-                VALUES (%s, %s, %s, %s, %s, %s, TRUE)
-                ON CONFLICT (workspace_id) DO UPDATE SET updated_at = NOW(), is_pinned = TRUE
+                UPDATE workspaces SET updated_at = NOW(), is_pinned = TRUE
+                WHERE workspace_id = %s
                 RETURNING {_WS_COLS}
                 """,
-                (
-                    workspace_id,
-                    user_id,
-                    "Flash",
-                    "Flash mode conversations",
-                    config_json,
-                    "flash",
-                ),
+                (workspace_id,),
             )
             result = await cur.fetchone()
+        if result is None:
+            async with _ws_transaction(conn) as cur:
+                await lock_user_writes(cur, user_id)
+                await cur.execute(
+                    f"""
+                    INSERT INTO workspaces (workspace_id, user_id, name, description, config, status, is_pinned)
+                    VALUES (%s, %s, %s, %s, %s, %s, TRUE)
+                    ON CONFLICT (workspace_id) DO UPDATE SET updated_at = NOW(), is_pinned = TRUE
+                    RETURNING {_WS_COLS}, (xmax = 0) AS inserted
+                    """,
+                    (
+                        workspace_id,
+                        user_id,
+                        "Flash",
+                        "Flash mode conversations",
+                        config_json,
+                        "flash",
+                    ),
+                )
+                result = dict(await cur.fetchone())
+                # False when a concurrent first turn inserted it while this
+                # one waited on the lock; that one started the selection.
+                if result.pop("inserted"):
+                    await start_new_workspace_selection(cur, user_id, workspace_id)
 
         logger.info(f"Upserted flash workspace: {workspace_id} for user: {user_id}")
         return dict(result)
@@ -147,30 +201,39 @@ async def create_workspace(
 ) -> Dict[str, Any]:
     from psycopg.types.json import Json
 
+    # Flash rows sit outside the name index: they have no folder to collide.
+    name_key = None
+    if status != "flash":
+        name = checked_workspace_name(name)
+        name_key = workspace_name_key(name)
     try:
         config_json = Json(config) if config else Json({})
 
-        async with _ws_cursor(conn) as cur:
+        async with _ws_transaction(conn) as cur:
+            await lock_user_writes(cur, user_id)
             if workspace_id:
                 # Flash mode may supply thread_id as workspace_id.
                 await cur.execute(
                     f"""
-                    INSERT INTO workspaces (workspace_id, user_id, name, description, config, status)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO workspaces (workspace_id, user_id, name, name_key, description, config, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     RETURNING {_WS_COLS}
                     """,
-                    (workspace_id, user_id, name, description, config_json, status),
+                    (workspace_id, user_id, name, name_key, description, config_json, status),
                 )
             else:
                 await cur.execute(
                     f"""
-                    INSERT INTO workspaces (user_id, name, description, config, status)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO workspaces (user_id, name, name_key, description, config, status)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING {_WS_COLS}
                     """,
-                    (user_id, name, description, config_json, status),
+                    (user_id, name, name_key, description, config_json, status),
                 )
             result = await cur.fetchone()
+            await start_new_workspace_selection(
+                cur, user_id, str(result["workspace_id"])
+            )
 
         logger.info(f"Created workspace: {result['workspace_id']} for user: {user_id}")
         return dict(result)
@@ -247,6 +310,52 @@ async def get_workspace_identity(workspace_id: str) -> Optional[Dict[str, Any]]:
 
 # Match migration 046's constraint_name to distinguish folder collisions.
 _COMPUTER_DIR_INDEX = "idx_workspaces_computer_dir"
+# Migration 054's per-user name index.
+_USER_NAME_INDEX = "idx_workspaces_user_name_key"
+
+
+def _violated_index(error: Exception) -> str | None:
+    return getattr(getattr(error, "diag", None), "constraint_name", None)
+
+
+async def find_workspace_by_name_key(user_id: str, key: str) -> Optional[Dict[str, Any]]:
+    """The live workspace holding a name, read on a fresh connection.
+
+    Callers reach this after a UniqueViolation, when their own transaction is
+    already aborted.
+    """
+    async with _ws_cursor() as cur:
+        await cur.execute(
+            """
+            SELECT workspace_id, name FROM workspaces
+            WHERE user_id = %s AND name_key = %s
+              AND status NOT IN ('deleted', 'flash')
+            """,
+            (user_id, key),
+        )
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def _name_taken(user_id: str, name: str) -> WorkspaceNameTaken:
+    holder = await find_workspace_by_name_key(user_id, workspace_name_key(name))
+    if holder is None:
+        return WorkspaceNameTaken(name)
+    return WorkspaceNameTaken(holder["name"], str(holder["workspace_id"]))
+
+
+async def get_workspace_name_keys(user_id: str) -> set[str]:
+    """Every name key this user's live workspaces hold, for picking a free name."""
+    async with _ws_cursor() as cur:
+        await cur.execute(
+            """
+            SELECT name_key FROM workspaces
+            WHERE user_id = %s AND name_key IS NOT NULL
+              AND status NOT IN ('deleted', 'flash')
+            """,
+            (user_id,),
+        )
+        return {row["name_key"] for row in await cur.fetchall()}
 
 
 class WorkspaceDirNameTaken(Exception):
@@ -292,7 +401,9 @@ async def bind_workspace_to_computer(
             return None
 
     try:
-        async with _ws_cursor(conn) as cur:
+        # The pool autocommits, so without this the bind is visible while a
+        # sibling still lists the folder as its former one.
+        async with get_db_connection(conn) as owned, owned.transaction(), _ws_cursor(owned) as cur:
             await cur.execute(
                 f"""
                 WITH comp AS (
@@ -309,6 +420,9 @@ async def bind_workspace_to_computer(
                 UPDATE workspaces w
                 SET computer_id = comp.computer_id,
                     dir_name = COALESCE(%(dir_name)s, w.dir_name),
+                    -- A folder given here ends any move a settle staged.
+                    config = CASE WHEN %(dir_name)s::text IS NULL THEN w.config
+                        ELSE w.config #- '{{folder_landings}}' END,
                     status = comp.status,
                     sandbox_id = comp.provider_ref,
                     resource_tier = comp.resource_tier,
@@ -329,6 +443,10 @@ async def bind_workspace_to_computer(
                 },
             )
             row = await cur.fetchone()
+            if row is not None and row.get("dir_name"):
+                await release_former_folder(
+                    cur, computer_id=computer_id, workspace_id=workspace_id, folder=row["dir_name"]
+                )
     except UniqueViolation as e:
         constraint = getattr(getattr(e, "diag", None), "constraint_name", None)
         # An unnamed violation still qualifies: these columns have no other unique index.
@@ -392,14 +510,39 @@ async def get_live_workspace_folders_for_computer(
         return [dict(r) for r in await cur.fetchall()]
 
 
-async def get_workspace_dir_names_for_computer(computer_id: str) -> tuple[str, ...]:
-    """Include tombstones: stopped machines may still hold their project folders."""
-    async with _ws_cursor() as cur:
+async def get_workspace_dir_names_for_computer(
+    computer_id: str, *, conn=None
+) -> tuple[str, ...]:
+    """Every folder a row on this computer holds, tombstones included.
+
+    A stopped machine may still hold a deleted workspace's folder. A row staged
+    mid-move also holds the folder it left, the one its name lands on and every
+    one a pass planned for it: until the move is recorded its content may be in
+    any, and a deleted one's clearing takes whatever it finds there.
+    """
+    async with _ws_cursor(conn) as cur:
         await cur.execute(
-            "SELECT dir_name FROM workspaces WHERE computer_id = %s AND dir_name IS NOT NULL",
-            (computer_id,),
+            """
+            SELECT dir_name AS folder, NULL AS landing, NULL::jsonb AS landings
+            FROM workspaces
+            WHERE computer_id = %(computer)s AND dir_name IS NOT NULL
+            UNION ALL
+            SELECT previous_dir_names[1], name, config->'folder_landings' FROM workspaces
+            WHERE computer_id = %(computer)s
+              AND dir_name = %(moving)s || workspace_id::text
+            """,
+            {"computer": computer_id, "moving": f"{MOVING_DIR}/"},
         )
-        return tuple(row["dir_name"] for row in await cur.fetchall())
+        rows = await cur.fetchall()
+    held = [row["folder"] for row in rows if row["folder"]]
+    for row in rows:
+        held.extend(recorded_landings(row.get("landings")))
+        if row["landing"] is not None:
+            try:
+                held.append(workspace_folder_name(row["landing"]))
+            except WorkspaceNameInvalid:
+                pass
+    return tuple(held)
 
 
 async def count_live_workspaces_by_computer(
@@ -451,7 +594,7 @@ async def create_workspace_on_computer(
     description: Optional[str] = None,
     config: Optional[Dict[str, Any]] = None,
     workspace_id: Optional[str] = None,
-    slug_attempts: int = 3,
+    selection_from: Optional[str] = None,
     conn=None,
 ) -> Optional[Dict[str, Any]]:
     """Create a complete shadow atomically so failed binding cannot leave an unbound project.
@@ -460,6 +603,13 @@ async def create_workspace_on_computer(
     otherwise it may retain a stale status that later transitions skip. Include
     sandbox_id or attachment sees a split binding and rebuilds every sibling's machine.
     None means the computer is gone: resolve another instead of retrying this one.
+
+    The folder is the name. A row still holding it on this computer under any
+    case (a deleted workspace awaiting cleanup, or a sibling renamed away that
+    has not moved yet) gets this one a placeholder, which the next folder
+    settle replaces.
+    The row commits with the MCP selection it starts with; ``selection_from``
+    is a duplicate's source, whose switched-off servers the copy keeps.
     """
     from psycopg.errors import UniqueViolation
     from psycopg.types.json import Json
@@ -468,61 +618,78 @@ async def create_workspace_on_computer(
     if computer_id is None:
         return None
     workspace_id = normalize_uuid(workspace_id) or str(uuid.uuid4())
+    name = checked_workspace_name(name)
+    name_key = workspace_name_key(name)
 
-    dir_name = ""
-    for attempt in range(max(1, slug_attempts)):
-        # Widen the suffix: users may intentionally give projects the same name.
-        dir_name = workspace_dir_name(name, workspace_id, hex_chars=4 + 4 * attempt)
-        try:
-            async with AsyncExitStack() as stack:
-                if conn is not None:
-                    # A failed slug insert must roll back its savepoint before
-                    # retrying inside the duplicate's outer transaction.
-                    await stack.enter_async_context(conn.transaction())
-                cur = await stack.enter_async_context(_ws_cursor(conn))
-                await cur.execute(
-                    f"""
-                    WITH comp AS (
-                        SELECT computer_id, status, resource_tier, is_always_on,
-                               provider_ref, platform_secret_version
-                        FROM computers
-                        WHERE computer_id = %(computer_id)s AND {FENCE_NOT_DELETED}
-                        FOR SHARE
+    try:
+        # The pool autocommits, and the row must not be visible before its
+        # folder's release and its MCP selection commit with it.
+        async with folder_allocation(computer_id, conn=conn) as owned, _ws_cursor(owned) as cur:
+            await lock_user_writes(cur, user_id)
+            held = await get_workspace_dir_names_for_computer(computer_id, conn=owned)
+            computer = await get_computer(computer_id, conn=owned)
+            own_folder = computer is None or takes_name_folders(computer)
+            dir_name = candidate_dir_name(name, workspace_id, 0)
+            for dir_name in candidate_dir_names(name, workspace_id, held, own_folder=own_folder):
+                try:
+                    # A savepoint, which a failed insert rolls back so the next
+                    # attempt can run.
+                    async with owned.transaction():
+                        await cur.execute(
+                            f"""
+                            WITH comp AS (
+                                SELECT computer_id, status, resource_tier, is_always_on,
+                                       provider_ref, platform_secret_version
+                                FROM computers
+                                WHERE computer_id = %(computer_id)s AND {FENCE_NOT_DELETED}
+                                FOR SHARE
+                            )
+                            INSERT INTO workspaces (
+                                workspace_id, user_id, name, name_key, description, config,
+                                computer_id, dir_name, status, resource_tier,
+                                is_always_on, sandbox_id, platform_secret_version
+                            )
+                            SELECT %(workspace_id)s::uuid, %(user_id)s, %(name)s,
+                                   %(name_key)s, %(description)s, %(config)s,
+                                   comp.computer_id, %(dir_name)s,
+                                   comp.status, comp.resource_tier, comp.is_always_on,
+                                   comp.provider_ref, comp.platform_secret_version
+                            FROM comp
+                            RETURNING {_WS_COLS}
+                            """,
+                            {
+                                "computer_id": computer_id,
+                                "workspace_id": workspace_id,
+                                "user_id": user_id,
+                                "name": name,
+                                "name_key": name_key,
+                                "description": description,
+                                "config": Json(config or {}),
+                                "dir_name": dir_name,
+                            },
+                        )
+                        row = await cur.fetchone()
+                        if row is not None:
+                            await release_former_folder(
+                                cur, computer_id=computer_id, workspace_id=workspace_id, folder=dir_name
+                            )
+                            await start_new_workspace_selection(
+                                cur, user_id, workspace_id, like_workspace_id=selection_from
+                            )
+                    break
+                except UniqueViolation as e:
+                    if _violated_index(e) not in (_COMPUTER_DIR_INDEX, None):
+                        raise
+                    logger.info(
+                        f"Folder {dir_name!r} held on computer {computer_id}; "
+                        f"placing workspace {workspace_id} until it frees"
                     )
-                    INSERT INTO workspaces (
-                        workspace_id, user_id, name, description, config,
-                        computer_id, dir_name, status, resource_tier,
-                        is_always_on, sandbox_id, platform_secret_version
-                    )
-                    SELECT %(workspace_id)s::uuid, %(user_id)s, %(name)s,
-                           %(description)s, %(config)s,
-                           comp.computer_id, %(dir_name)s,
-                           comp.status, comp.resource_tier, comp.is_always_on,
-                           comp.provider_ref, comp.platform_secret_version
-                    FROM comp
-                    RETURNING {_WS_COLS}
-                    """,
-                    {
-                        "computer_id": computer_id,
-                        "workspace_id": workspace_id,
-                        "user_id": user_id,
-                        "name": name,
-                        "description": description,
-                        "config": Json(config or {}),
-                        "dir_name": dir_name,
-                    },
-                )
-                row = await cur.fetchone()
-            break
-        except UniqueViolation as e:
-            constraint = getattr(getattr(e, "diag", None), "constraint_name", None)
-            if constraint not in (_COMPUTER_DIR_INDEX, None):
-                raise
-            logger.info(
-                f"Folder {dir_name!r} taken on computer {computer_id}; re-slugging"
-            )
-    else:
-        raise WorkspaceDirNameTaken(workspace_id, computer_id, dir_name)
+            else:
+                raise WorkspaceDirNameTaken(workspace_id, computer_id, dir_name)
+    except UniqueViolation as e:
+        if _violated_index(e) == _USER_NAME_INDEX:
+            raise await _name_taken(user_id, name) from e
+        raise
 
     if row is None:
         logger.warning(
@@ -557,7 +724,8 @@ async def duplicate_workspace_on_computer(
         async with conn.transaction():
             workspace = await create_workspace_on_computer(
                 user_id, name, computer_id,
-                description=description, config=config, conn=conn,
+                description=description, config=config,
+                selection_from=source_id, conn=conn,
             )
             if workspace is not None:
                 await copy_workspace_files(
@@ -702,6 +870,7 @@ async def update_workspace(
     is_pinned: Optional[bool] = None,
     conn=None,
 ) -> Optional[Dict[str, Any]]:
+    from psycopg.errors import UniqueViolation
     from psycopg.types.json import Json
 
     try:
@@ -709,15 +878,24 @@ async def update_workspace(
         params = []
 
         if name is not None:
-            updates.append("name = %s")
-            params.append(name)
+            # The folder follows on the next settle; dir_name stays where it is.
+            name = checked_workspace_name(name)
+            updates.extend(("name = %s", "name_key = %s"))
+            params.extend((name, workspace_name_key(name)))
 
         if description is not None:
             updates.append("description = %s")
             params.append(description)
 
         if config is not None:
-            updates.append("config = %s")
+            # A staged row's planned landings are the folder settle's record,
+            # so a replaced config keeps the row's and never takes the caller's.
+            updates.append(
+                "config = (%s::jsonb - 'folder_landings') || CASE"
+                " WHEN config ? 'folder_landings'"
+                " THEN jsonb_build_object('folder_landings', config->'folder_landings')"
+                " ELSE '{}'::jsonb END"
+            )
             params.append(Json(config))
 
         if is_pinned is not None:
@@ -730,26 +908,53 @@ async def update_workspace(
         updates.append("updated_at = %s")
         params.append(datetime.now(timezone.utc))
         params.append(workspace_id)
+        where = ""
+        if name is not None:
+            # A row staged mid-move keeps its name until the move is recorded:
+            # its last landing went to that name's folder, and only the name
+            # keeps another workspace from being given that folder meanwhile.
+            where = " AND (name = %s OR dir_name IS DISTINCT FROM %s)"
+            params.extend((name, moving_path(workspace_id)))
 
         update_clause = ", ".join(updates)
 
-        async with _ws_cursor(conn) as cur:
-            await cur.execute(
-                f"""
-                UPDATE workspaces
-                SET {update_clause}
-                WHERE workspace_id = %s AND status != 'deleted'
-                RETURNING {_WS_COLS}
-                """,
-                params,
-            )
-            result = await cur.fetchone()
+        try:
+            async with _ws_cursor(conn) as cur:
+                await cur.execute(
+                    f"""
+                    UPDATE workspaces
+                    SET {update_clause}
+                    WHERE workspace_id = %s AND status != 'deleted'{where}
+                    RETURNING {_WS_COLS}
+                    """,
+                    params,
+                )
+                result = await cur.fetchone()
+        except UniqueViolation as e:
+            if name is None or _violated_index(e) != _USER_NAME_INDEX:
+                raise
+            async with _ws_cursor() as owner_cur:
+                await owner_cur.execute(
+                    "SELECT user_id FROM workspaces WHERE workspace_id = %s",
+                    (workspace_id,),
+                )
+                owner = await owner_cur.fetchone()
+            if owner is None:
+                # The row went while the rename failed: not found, like any missing row.
+                return None
+            raise await _name_taken(owner["user_id"], name) from e
 
         if result:
             logger.debug(f"Updated workspace: {workspace_id}")
             return dict(result)
+        if name is not None:
+            current = await get_workspace(workspace_id, conn=conn)
+            if current and current.get("dir_name") == moving_path(workspace_id):
+                raise WorkspaceFolderMoving(workspace_id)
         return None
 
+    except (WorkspaceNameInvalid, WorkspaceNameTaken, WorkspaceFolderMoving):
+        raise
     except Exception as e:
         logger.error(f"Error updating workspace {workspace_id}: {e}")
         raise
@@ -1204,13 +1409,18 @@ async def complete_workspace_folder_cleanup(
     dir_name: str,
     conn=None,
 ) -> bool:
-    """Clear a cleanup claim only for the deleted project it describes."""
+    """Clear a cleanup claim only for the deleted workspace it describes.
+
+    Clearing ``dir_name`` hands the folder name back: until now the tombstone
+    held it, because the folder was still on disk.
+    """
     async with _ws_cursor(conn) as cur:
         await cur.execute(
             """
             UPDATE workspaces
             SET config = COALESCE(config, '{}'::jsonb)
                     #- '{folder_cleanup_pending}',
+                dir_name = NULL,
                 updated_at = NOW()
             WHERE workspace_id = %s
               AND status = 'deleted'

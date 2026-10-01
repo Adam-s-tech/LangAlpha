@@ -1179,6 +1179,62 @@ def test_pull_pack_extracts_every_member_with_one_get(tmp_path, bucket):
     assert os.listdir(tmp_path / "_internal/packs") == []
 
 
+@pytest.mark.enable_socket
+def test_pull_never_writes_through_a_link_out_of_its_root(tmp_path, bucket):
+    """A workspace folder links the shared skills from the computer root; a row
+    recorded before the link must not land in every sibling's copy."""
+    shared = tmp_path / "shared/pdf"
+    shared.mkdir(parents=True)
+    (shared / "SKILL.md").write_bytes(b"current")
+    before = os.stat(shared)
+    root = tmp_path / "folder"
+    (root / ".agents/skills").mkdir(parents=True)
+    os.symlink("../../../shared/pdf", root / ".agents/skills/pdf")
+    link = {"sha256": None, "size": 0, "url": None, "mode": 0, "mtime_ns": 1, "symlink_target": "x"}
+    out = _pull(
+        root,
+        {"path": ".agents/skills/pdf", "kind": "dir", "mode": 0o700, "mtime_ns": 1},
+        _file_item(bucket, ".agents/skills/pdf/SKILL.md", b"stale"),
+        {"path": ".agents/skills/pdf/ref", "kind": "symlink", **link},
+        _pack_item(bucket, {".agents/skills/pdf/lib/a.py": b"stale", "notes.md": b"mine"}),
+    )
+    leaves = ("failed", "path leaves root through a link")
+    assert {p: (r["status"], r["error"]) for p, r in out["results"].items()} == {
+        ".agents/skills/pdf": leaves,
+        ".agents/skills/pdf/SKILL.md": leaves,
+        ".agents/skills/pdf/ref": leaves,
+        ".agents/skills/pdf/lib/a.py": leaves,
+        "notes.md": ("ok", None),
+    }
+    assert os.listdir(shared) == ["SKILL.md"]
+    assert (shared / "SKILL.md").read_bytes() == b"current"
+    after = os.stat(shared)
+    assert (after.st_mode, after.st_mtime_ns) == (before.st_mode, before.st_mtime_ns)
+    assert (root / "notes.md").read_bytes() == b"mine"
+
+
+def test_pull_never_places_a_link_through_one_it_just_placed(tmp_path):
+    """Step 1 checks every parent before any link exists, so a stale row under
+    a linked name passes it; step 3 places the ancestor link first."""
+    shared = tmp_path / "shared/pdf"
+    shared.mkdir(parents=True)
+    (shared / "helper").write_bytes(b"current")
+    root = tmp_path / "folder"
+    (root / ".agents/skills").mkdir(parents=True)
+    link = {"sha256": None, "size": 0, "url": None, "mode": 0, "mtime_ns": 1}
+    out = _pull(
+        root,
+        {"path": ".agents/skills/pdf", "kind": "symlink", "symlink_target": "../../../shared/pdf", **link},
+        {"path": ".agents/skills/pdf/helper", "kind": "symlink", "symlink_target": "x", **link},
+    )
+    assert {p: (r["status"], r["error"]) for p, r in out["results"].items()} == {
+        ".agents/skills/pdf": ("ok", None),
+        ".agents/skills/pdf/helper": ("failed", "path leaves root through a link"),
+    }
+    assert not os.path.islink(shared / "helper")
+    assert (shared / "helper").read_bytes() == b"current"
+
+
 def test_pull_pack_consumes_a_chunk_already_in_the_sandbox(tmp_path):
     """The relay path uploads the chunk itself; the runtime verifies, slices and removes it."""
     members = {"names/trailing. ": b"sp", "names/new\nline.txt": b"nl", "c.txt": b"ccc"}

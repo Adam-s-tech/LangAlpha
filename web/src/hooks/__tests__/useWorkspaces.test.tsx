@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
 import { renderHookWithProviders } from '../../test/utils';
 import { useWorkspaces } from '../useWorkspaces';
+import { useAllWorkspaces } from '../useAllWorkspaces';
 import { waitFor } from '@testing-library/react';
 
 vi.mock('../../pages/ChatAgent/utils/api', () => ({
@@ -71,5 +72,26 @@ describe('useWorkspaces', () => {
       'workspaces', 'list', { limit: 5, offset: 0, sortBy: 'custom', includeFlash: false },
     ]);
     expect(cachedData).toEqual({ workspaces: [], total: 0 });
+  });
+});
+
+describe('useAllWorkspaces', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('reads past the first page', async () => {
+    // A reach counted against the first 100 alone misses a switch in the rest.
+    const rows = Array.from({ length: 105 }, (_, i) => ({ workspace_id: `ws-${i}` }));
+    mockGetWorkspaces.mockImplementation(async (limit: number, offset: number) => ({
+      workspaces: rows.slice(offset, offset + limit),
+      total: rows.length,
+    }));
+
+    const { result } = renderHookWithProviders(() => useAllWorkspaces());
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.workspaces).toHaveLength(105);
+    expect(mockGetWorkspaces).toHaveBeenNthCalledWith(2, 100, 100, 'custom', false);
   });
 });

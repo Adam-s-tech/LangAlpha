@@ -214,11 +214,18 @@ class TestModeModelField:
 
 
 class TestOtherModelPreferences:
+    # Every name saved below is a live model: a retired one is dropped before
+    # it reaches the config (see ``TestStaleModelPreference``).
+    CATALOG = {
+        "system-default-model", "system-flash-model",
+        "gpt-4o-mini", "legacy-model", "model-a", "model-b",
+    }
+
     @pytest.mark.asyncio
     async def test_compaction_model_preference(self, base_config):
         from src.server.services.llm.config import resolve_llm_config
 
-        mock_mc = _mock_model_config()
+        mock_mc = _mock_model_config(self.CATALOG)
         with (
             patch(
                 f"{USER_MODELS}.get_model_preference",
@@ -236,7 +243,7 @@ class TestOtherModelPreferences:
         """Platform DB may still carry the legacy ``summarization_model`` key."""
         from src.server.services.llm.config import resolve_llm_config
 
-        mock_mc = _mock_model_config()
+        mock_mc = _mock_model_config(self.CATALOG)
         with (
             patch(
                 f"{USER_MODELS}.get_model_preference",
@@ -254,14 +261,14 @@ class TestOtherModelPreferences:
         """New ``compaction_model`` must override legacy ``summarization_model``."""
         from src.server.services.llm.config import resolve_llm_config
 
-        mock_mc = _mock_model_config()
+        mock_mc = _mock_model_config(self.CATALOG)
         with (
             patch(
                 f"{USER_MODELS}.get_model_preference",
                 new_callable=AsyncMock,
                 return_value={
                     "compaction_model": "gpt-4o-mini",
-                    "summarization_model": "stale-legacy-model",
+                    "summarization_model": "legacy-model",
                 },
             ),
             patch(f"{CLIENTS}.resolve_oauth_llm_client", new_callable=AsyncMock, return_value=None),
@@ -274,7 +281,7 @@ class TestOtherModelPreferences:
     async def test_fetch_model_preference(self, base_config):
         from src.server.services.llm.config import resolve_llm_config
 
-        mock_mc = _mock_model_config()
+        mock_mc = _mock_model_config(self.CATALOG)
         with (
             patch(
                 f"{USER_MODELS}.get_model_preference",
@@ -291,7 +298,7 @@ class TestOtherModelPreferences:
     async def test_fallback_models_preference(self, base_config):
         from src.server.services.llm.config import resolve_llm_config
 
-        mock_mc = _mock_model_config()
+        mock_mc = _mock_model_config(self.CATALOG)
         with (
             patch(
                 f"{USER_MODELS}.get_model_preference",
@@ -300,6 +307,7 @@ class TestOtherModelPreferences:
             ),
             patch(f"{CLIENTS}.resolve_oauth_llm_client", new_callable=AsyncMock, return_value=None),
             patch("src.llms.llm.LLM.get_model_config", return_value=mock_mc),
+            patch("src.llms.llm.create_llm", return_value=MagicMock()),
         ):
             config = await resolve_llm_config(base_config, "user-1", None, False)
         assert config.llm.fallback == ["model-a", "model-b"]
@@ -828,18 +836,18 @@ class TestCustomModelFallback:
             patch(
                 f"{USER_MODELS}.get_model_preference",
                 new_callable=AsyncMock,
-                return_value={"fallback_models": ["my-fallback"]},
+                return_value={
+                    "fallback_models": ["my-fallback"],
+                    "custom_models": [
+                        {"name": "my-fallback", "model_id": "my-fallback", "provider": "openai"}
+                    ],
+                },
             ),
             patch(f"{CLIENTS}.resolve_oauth_llm_client", new_callable=AsyncMock, return_value=None),
             patch(
                 f"{CLIENTS}.resolve_byok_llm_client",
                 new_callable=AsyncMock,
                 side_effect=_byok_side_effect,
-            ),
-            patch(
-                f"{USER_MODELS}.get_custom_model_config",
-                new_callable=AsyncMock,
-                return_value=None,  # main model is NOT custom
             ),
             patch("src.llms.llm.LLM.get_model_config", return_value=mock_mc),
         ):
@@ -1668,6 +1676,126 @@ class TestStaleModelPreference:
         # no write happened.
         assert mock_invalidate.await_count == 1
 
+    @staticmethod
+    async def _resolve_with_stale_roles(base_config, pref, mode, **kwargs):
+        from src.server.services.llm.config import resolve_llm_config
+
+        with (
+            patch(f"{USER_MODELS}.get_model_preference", new_callable=AsyncMock, return_value=pref),
+            patch(f"{CLIENTS}.resolve_oauth_llm_client", new_callable=AsyncMock, return_value=None),
+            patch("src.llms.llm.LLM.get_model_config", return_value=_mock_model_config()),
+            patch(
+                "src.server.database.user.upsert_user_preferences", new_callable=AsyncMock
+            ) as mock_upsert,
+            patch("src.server.database.user.invalidate_user_prefs_cache", new_callable=AsyncMock),
+        ):
+            config = await resolve_llm_config(
+                base_config, "user-1", None, False, mode=mode, **kwargs
+            )
+        return config, mock_upsert
+
+    @pytest.mark.asyncio
+    async def test_stale_role_model_takes_its_default_and_is_kept(self, base_config):
+        """Regression: the turn's own model is fine but a role names a model the
+        manifest lacks. A platform user has no client for the role, so the name
+        reached ``get_llm_by_type`` at graph build and failed every PTC turn.
+        The role resolves as if never set, and the saved value is left alone:
+        a worker that knows fewer models (a rollback, an older build still
+        serving) must not delete a pick a newer one can serve."""
+        config, mock_upsert = await self._resolve_with_stale_roles(
+            base_config,
+            {
+                "preferred_model": "gpt-4o",
+                "preferred_flash_model": "retired-flash",
+                "compaction_model": "retired-compaction",
+            },
+            "ptc",
+        )
+
+        assert config.llm.name == "gpt-4o"
+        assert config.llm.flash == "system-flash-model"
+        assert config.llm.compaction_name == "system-flash-model"
+        assert config.llm.fetch_name == "system-flash-model"
+        mock_upsert.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_role_filter_spares_custom_models_and_other_modes_model(self, base_config):
+        """A custom model is never stale. The PTC model is not a role of a flash
+        turn, so its dead name is left for the PTC turn to refuse with the
+        model_removed CTA. A fallback list whose every entry is gone means no
+        fallback, not the deployment's list on a key the user never chose."""
+        config, mock_upsert = await self._resolve_with_stale_roles(
+            base_config,
+            {
+                "preferred_model": "retired-main",
+                "preferred_flash_model": "gpt-4o",
+                "fetch_model": "my-fetch",
+                "custom_models": [{"name": "my-fetch", "model_id": "x", "provider": "openai"}],
+                "fallback_models": ["retired-fallback"],
+            },
+            "flash",
+        )
+
+        assert config.llm.flash == "gpt-4o"
+        assert config.llm.fetch == "my-fetch"
+        assert config.llm.fallback == []
+        mock_upsert.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_malformed_saved_model_reads_as_dead_instead_of_raising(self, base_config):
+        """Nothing validates these slots on write, and the filter runs on every
+        turn: an unhashable value there would fail each one with a 500."""
+        config, _ = await self._resolve_with_stale_roles(
+            base_config,
+            {
+                "preferred_model": "gpt-4o",
+                "fetch_model": ["not", "a", "name"],
+                "fallback_models": [{"name": "x"}, "gpt-4o"],
+                "custom_providers": ["not-a-dict"],
+            },
+            "ptc",
+        )
+
+        assert config.llm.fetch_name == "system-flash-model"
+        assert config.llm.fallback == ["gpt-4o"]
+
+    @pytest.mark.asyncio
+    async def test_a_flash_turns_own_dead_model_is_refused_not_dropped(self, base_config):
+        """The flash key is a role on a PTC turn and the model itself on a flash
+        turn. Filtered there, a flash turn would silently run the deployment's
+        flash model instead of telling the user their pick is gone."""
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as excinfo:
+            await self._resolve_with_stale_roles(
+                base_config,
+                {"preferred_model": "gpt-4o", "preferred_flash_model": "retired-flash"},
+                "flash",
+            )
+
+        assert excinfo.value.detail["type"] == "model_removed"
+        assert "retired-flash" in excinfo.value.detail["message"]
+
+
+    @pytest.mark.asyncio
+    async def test_a_call_nobody_waits_on_reads_its_own_dead_model_as_unset(self, base_config):
+        """Regression: a thread's first turn titles it with a flash call. A dead
+        flash pick counted as that call's own model, so the scrub ran and cleared
+        every dead name, fetch and fallbacks included, behind a CTA only a log
+        line ever saw."""
+        config, mock_upsert = await self._resolve_with_stale_roles(
+            base_config,
+            {
+                "preferred_model": "gpt-4o",
+                "preferred_flash_model": "retired-flash",
+                "fetch_model": "retired-fetch",
+            },
+            "flash",
+            user_facing=False,
+        )
+
+        assert config.llm.flash == "system-flash-model"
+        mock_upsert.assert_not_awaited()
 
 # ---------------------------------------------------------------------------
 # Per-user search provider selection + platform-tier gating

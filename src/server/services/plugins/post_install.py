@@ -13,8 +13,11 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from src.server.database.mcp_servers import bump_user_workspaces_mcp_version
-from src.server.database.plugins import claim_plugin_secrets
+from src.server.database.plugins import (
+    claim_plugin_secrets,
+    get_plugin,
+    plugin_fan_out_lock,
+)
 from src.server.database.user_vault_secrets import (
     create_user_secret,
     get_user_secret_names,
@@ -42,10 +45,7 @@ from src.server.services.plugins.grants import (
 from src.server.services.plugins.manifest import manifest_extension
 from src.server.services.plugins.mcp import McpEntryPlan, validate_mcp_document
 from src.server.services.plugins.server_fanout import fan_out_servers
-from src.server.services.vault_invalidation import (
-    USER_TIER,
-    after_secrets_changed,
-)
+from src.server.services.vault_invalidation import after_secrets_changed
 
 logger = logging.getLogger(__name__)
 
@@ -98,50 +98,55 @@ async def apply_sse_upgrades(
     """Install consented held-back sse entries as streamable HTTP.
 
     The plans are re-derived from the stored manifests, so an upgrade months
-    after install still lands the declared configuration.
+    after install still lands the declared configuration. They are derived
+    under the fan-out lock from the row as it stands then: an update that
+    finished while this waited has replaced the package, and an entry the new
+    one no longer declares must not land.
     """
-    plans, grants = await _stored_entry_plans(user_id, plugin)
-    sse_by_key = {
-        p.key: p
-        for p in plans
-        if p.skip_code is None and p.transport == "sse"
-    }
     report = InstallReport()
-    if grants.preexisting:
-        # Install and update both say this; an upgrade that quietly landed the
-        # entry unbound would be the one path where the user is not told.
-        report.diagnostics.append(
-            Diagnostic(
-                level="warning", scope="plugin", code="secret_preexisting",
-                message=grants.disclosure_reason(),
+    async with plugin_fan_out_lock(user_id):
+        stored = await get_plugin(user_id, plugin["name"])
+        if stored is None or stored["user_plugin_id"] != plugin["user_plugin_id"]:
+            raise ValueError(
+                f"Plugin {plugin['name']!r} was uninstalled while this upgrade waited"
             )
-        )
-    consented = []
-    for key in keys:
-        plan = sse_by_key.get(key)
-        if plan is None:
-            report.components.append(
-                ComponentResult(
-                    kind="mcp", key=key, status="error",
-                    reason="not a held-back sse entry of this plugin",
+        plans, grants = await _stored_entry_plans(user_id, stored)
+        sse_by_key = {
+            p.key: p
+            for p in plans
+            if p.skip_code is None and p.transport == "sse"
+        }
+        if grants.preexisting:
+            # Install and update both say this; an upgrade that quietly landed
+            # the entry unbound would be the one path where the user is not told.
+            report.diagnostics.append(
+                Diagnostic(
+                    level="warning", scope="plugin", code="secret_preexisting",
+                    message=grants.disclosure_reason(),
                 )
             )
-            continue
-        # Consent recorded: install as the modern transport it probed for.
-        plan.transport = "http"
-        consented.append(plan)
-    if not consented:
-        return report
-
-    await fan_out_servers(
-        user_id, plugin["user_plugin_id"], consented, report
-    )
+        consented = []
+        for key in keys:
+            plan = sse_by_key.get(key)
+            if plan is None:
+                report.components.append(
+                    ComponentResult(
+                        kind="mcp", key=key, status="error",
+                        reason="not a held-back sse entry of this plugin",
+                    )
+                )
+                continue
+            # Consent recorded: install as the modern transport it probed for.
+            plan.transport = "http"
+            consented.append(plan)
+        if not consented:
+            return report
+        # Each row commits with its own version bump, as on install.
+        await fan_out_servers(
+            user_id, plugin["user_plugin_id"], consented, report
+        )
     disclose_vaulted_literals(report)
-    await after_secrets_changed(
-        USER_TIER, user_id, report.secrets_created, user_id=user_id
-    )
-    if report.servers_created:
-        await bump_user_workspaces_mcp_version(user_id)
+    await after_secrets_changed(user_id, report.secrets_created)
     logger.info(
         f"[plugins] sse upgrade user_id={user_id} name={plugin['name']} "
         f"servers={report.servers_created}"
@@ -212,5 +217,5 @@ async def apply_bindings(
     await claim_plugin_secrets(user_id, plugin["user_plugin_id"], introduced)
     # A filled blueprint is what makes a dangling ${vault:NAME} on an
     # already-enabled server resolve; the caches must not keep the old view.
-    await after_secrets_changed(USER_TIER, user_id, written, user_id=user_id)
+    await after_secrets_changed(user_id, written)
     return written

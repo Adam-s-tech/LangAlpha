@@ -123,6 +123,62 @@ test.describe('file editor', () => {
     await expect.poll(() => writes).toEqual([`${VERBATIM}print(1)`]);
   });
 
+  test('a save that lands with another tab in front leaves nothing unsaved', async ({ page }) => {
+    // Switching tabs parks the draft, measured against the text it started
+    // from. A save that answered while it was parked left it there, so the
+    // file held the edit and its tab still asked to discard it.
+    const OTHER = 'other.md';
+    let land;
+    const held = new Promise((resolve) => { land = resolve; });
+    const writes = [];
+    await serveMonacoLocally(page);
+    await mockAPI(page, {
+      [`PUT /workspaces/${WS}/files/write`]: async (route) => {
+        writes.push(JSON.parse(route.request().postData()).content);
+        await held;
+        return json(route, {});
+      },
+      ...chatViewOverrides(),
+      [`GET /workspaces/${WS}/files`]: { files: [FILE, OTHER] },
+      [`GET /workspaces/${WS}/files/read`]: (route) => {
+        const p = new URL(route.request().url()).searchParams.get('path');
+        return json(route, { workspace_id: WS, path: p, content: p === FILE ? VERBATIM : 'other', mime: 'text/markdown', truncated: false });
+      },
+    });
+    await configureSSE({
+      method: 'GET',
+      path: `/api/v1/threads/${TH}/messages/replay`,
+      events: [sseEvents.replayDone()],
+      delay: 10,
+    });
+    await openEditor(page);
+
+    const lines = page.locator('.monaco-editor .view-lines');
+    await lines.waitFor({ timeout: 30000 });
+    await lines.click();
+    await page.keyboard.press('ControlOrMeta+End');
+    await page.keyboard.type('x');
+    await page.keyboard.press('ControlOrMeta+s');
+    await page.getByRole('dialog').getByRole('button', { name: 'Save' }).click();
+    await expect.poll(() => writes).toEqual([`${VERBATIM}x`]);
+
+    const tab = (name) => page.locator('[role="tab"]', { hasText: name });
+    await page.getByRole('button', { name: 'Toggle file tree' }).click();
+    await page.getByRole('treeitem', { name: OTHER }).dispatchEvent('click');
+    await expect(tab(OTHER)).toHaveAttribute('aria-selected', 'true');
+    const answered = page.waitForResponse((r) => r.url().includes('/files/write'));
+    land();
+    await answered;
+    // The write's answer reaches the hook a few microtasks after the response.
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)));
+
+    await tab(FILE).click();
+    await expect(page.locator('button[title="Edit file"]')).toBeVisible();
+    await page.getByRole('button', { name: `Close ${FILE}` }).click();
+    await expect(tab(FILE)).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Discard changes' })).toHaveCount(0);
+  });
+
   test('the chat header closes a panel holding a draft only through the app dialog', async ({ page }) => {
     // The chat's own exits asked with a native confirm, which froze the page,
     // the chat's stream included, and read the draft as last rendered.

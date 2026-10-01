@@ -197,7 +197,7 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, 
 
   // Takes the file and text as they were when the question was asked: the
   // answer arrives on a later render.
-  const save = useCallback(async (file: string, content: string) => {
+  const save = useCallback(async (tab: string, file: string, content: string) => {
     const seq = ++saveSeqRef.current;
     setSavingFile(file);
     setSaveError(null);
@@ -206,8 +206,23 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, 
       // Another file opened while the write was in flight, the same guard the
       // full read takes above. Without it this file's text lands in the panel
       // under the other one's name, and feeds its line and heading lookup.
-      if (selectedFileRef.current !== file) return;
+      if (selectedFileRef.current !== file) {
+        // The draft went into the parked set still measured against the text
+        // this write replaced, so it would ask about discarding an edit the
+        // file already holds. Keystrokes typed after the save are kept.
+        const parked = drafts.current.get(tab);
+        if (parked?.editContent === content) drafts.current.delete(tab);
+        else if (parked) drafts.current.set(tab, { ...parked, originalContent: content });
+        return;
+      }
       setFileContent(content);
+      // Keystrokes typed while the write was out are not in it, so the editor
+      // stays open on them, measured against what landed, as a parked draft is.
+      const typed = typedRef.current;
+      if (typed && typed.session === sessionRef.current && typed.text !== content) {
+        setOriginalContent(content);
+        return;
+      }
       setIsEditing(false);
       setEditContent(null);
       setShowDiff(false);
@@ -233,7 +248,7 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, 
       if (seq === saveSeqRef.current) setSavingFile(null);
       onSaveSettled(file);
     }
-  }, [workspaceId, writeFileFn, setFileContent, onSaveSettled, t]);
+  }, [workspaceId, writeFileFn, setFileContent, onSaveSettled, sessionRef, t]);
 
   const handleSave = useCallback(() => {
     const draft = typedDraft();
@@ -243,9 +258,9 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, setFileContent, 
     if (savingFile === selectedFile) return;
     ask(
       { title: t('filePanel.saveTitle'), message: t('filePanel.confirmSave'), confirmLabel: t('common.save') },
-      () => { void save(selectedFile, draft); },
+      () => { void save(tabId, selectedFile, draft); },
     );
-  }, [selectedFile, savingFile, workspaceId, typedDraft, ask, save, t]);
+  }, [tabId, selectedFile, savingFile, workspaceId, typedDraft, ask, save, t]);
 
   const discardEdit = useCallback(() => {
     setIsEditing(false);

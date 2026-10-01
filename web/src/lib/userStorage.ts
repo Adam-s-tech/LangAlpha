@@ -51,7 +51,7 @@ function userScoped(store: () => Storage): UserStorage {
     try { return store().getItem(key); } catch { return null; }
   };
   const write = (key: string, value: string) => {
-    try { store().setItem(key, value); } catch { /* blocked or full */ }
+    try { store().setItem(key, value); return true; } catch { return false; /* blocked or full */ }
   };
   const remove = (key: string) => {
     try { store().removeItem(key); } catch { /* blocked */ }
@@ -64,17 +64,15 @@ function userScoped(store: () => Storage): UserStorage {
       const own = read(scoped(user, key));
       if (own !== null) return own;
       const legacy = read(key);
-      if (legacy !== null) {
-        write(scoped(user, key), legacy);
-        remove(key);
-      }
+      // A full store refuses the copy, and the legacy key is then its only one.
+      if (legacy !== null && write(scoped(user, key), legacy)) remove(key);
       return legacy;
     },
     setItem(key, value) {
       const user = currentUser();
       if (!user) return;
-      write(scoped(user, key), value);
-      remove(key);
+      // As above: a refused write leaves the legacy key the only copy.
+      if (write(scoped(user, key), value)) remove(key);
     },
     removeItem(key) {
       const user = currentUser();

@@ -46,6 +46,31 @@ describe('userLocalStorage', () => {
     expect(userLocalStorage.getItem(KEY)).toBe('thread-old');
   });
 
+  it('keeps a value stored before scoping when a full store refuses its copy', () => {
+    localStorage.setItem(KEY, 'thread-old');
+    setStorageUser('user-a');
+    const full = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('full', 'QuotaExceededError');
+    });
+    expect(userLocalStorage.getItem(KEY)).toBe('thread-old');
+    full.mockRestore();
+
+    expect(localStorage.getItem(KEY)).toBe('thread-old');
+    expect(userLocalStorage.getItem(KEY)).toBe('thread-old');
+  });
+
+  it('keeps a value stored before scoping when a full store refuses a new one', () => {
+    localStorage.setItem(KEY, 'thread-old');
+    setStorageUser('user-a');
+    const full = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('full', 'QuotaExceededError');
+    });
+    userLocalStorage.setItem(KEY, 'thread-new');
+    full.mockRestore();
+
+    expect(userLocalStorage.getItem(KEY)).toBe('thread-old');
+  });
+
   it('keeps nothing while nobody is signed in, so the next user inherits nothing', () => {
     setStorageUser(null);
     localStorage.setItem(KEY, 'thread-old');

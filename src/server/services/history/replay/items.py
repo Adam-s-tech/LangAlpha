@@ -7,7 +7,7 @@ from typing import Any
 
 from src.server.database.runs import lifecycle as tl_db
 from src.server.database.provenance import provenance_row_to_event
-from src.server.services.history.replay import stored_merge
+from src.server.services.history.replay import stopped, stored_merge
 from src.server.services.runs.sse_producer import build_credit_usage_data
 from src.server.utils.error_sanitization import (
     sanitize_error_text as _sanitize_error_text,
@@ -220,59 +220,6 @@ def _error_item(
     return {"event": "error", "data": data}
 
 
-def stop_close_item(
-    thread_id: str,
-    response: dict[str, Any] | None,
-    turn_items: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    """The ``finish_reason: "stopped"`` close for a user-stopped turn's last
-    main-lane assistant message, unless the turn already carries one for it.
-
-    Stopped is a fact about the turn, recorded on its response row, but the
-    stop finalize writes a close only for a message still streaming at the
-    stop. A stop between messages (during a tool, before the next model call)
-    leaves none, and a close for a message the checkpoint committed does not
-    survive the merge. A stop during bring-up, before any assistant event,
-    has no message to name, so its close carries no ``id``: clients apply a
-    close to the turn's bubble by ``turn_index``. System cancels are not
-    stops and get no close.
-
-    Public: the shared replay in ``server/app/public.py`` streams stored
-    events itself and needs the same close.
-    """
-    if not response or response.get("status") != "cancelled":
-        return None
-    metadata = response.get("metadata")
-    if not (isinstance(metadata, dict) and metadata.get("cancelled_by_user")):
-        return None
-    last: dict[str, Any] | None = None
-    closed: set[str] = set()
-    for item in turn_items:
-        data = item.get("data") if isinstance(item, dict) else None
-        if (
-            not isinstance(data, dict)
-            or item.get("event") not in ("message_chunk", "tool_calls")
-            or not data.get("id")
-            or stored_merge._lane(data.get("agent")) != stored_merge._MAIN_LANE
-        ):
-            continue
-        last = data
-        if data.get("finish_reason") == "stopped":
-            closed.add(data["id"])
-    if last is not None and last["id"] in closed:
-        return None
-    close: dict[str, Any] = {
-        "thread_id": thread_id,
-        "role": "assistant",
-        "finish_reason": "stopped",
-    }
-    if last is not None:
-        close["id"] = last["id"]
-        if last.get("agent"):
-            close["agent"] = last["agent"]
-    return {"event": "message_chunk", "data": close}
-
-
 def _enrich(
     item: dict[str, Any],
     thread_id: str,
@@ -310,13 +257,13 @@ def _stub_turn_items(
         for q in queries_by_turn.get(turn_index, [])
     ]
     turn_items: list[dict[str, Any]] = []
-    resurrect_lanes = stored_merge._resurrect_lanes(response, frozenset())
+    resurrect_lanes = stopped.resurrect_lanes(response, frozenset())
     if resurrect_lanes:
         turn_items = stored_merge._merge_stored_payloads(
             [], stored_merge._stored_events(response), resurrect_lanes
         )
     for terminal in (
-        stop_close_item(thread_id, response, turn_items),
+        stopped.stop_close_item(thread_id, response, turn_items),
         _error_item(thread_id, response),
     ):
         if terminal:

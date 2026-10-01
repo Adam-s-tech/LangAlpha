@@ -1,0 +1,89 @@
+"""Stopped-turn knowledge: which lanes a lossy terminal leaves unfinished, and the close a user stop owes.
+
+Builds only on ``lanes``; ``stored_merge`` and ``items`` both build on it."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from src.server.services.history.replay.lanes import MAIN_LANE, agent_lane
+
+
+# Run terminals where the live capture can exceed the checkpoint: a run that
+# raised or was stopped mid-write streamed output whose message never
+# committed. Read from a task run's ledger row for its lane, and from the
+# turn's response row for the main lane (see ``resurrect_lanes``).
+# completed/interrupted runs end on a committed boundary, and a completed
+# run's archive may hold phantom partials from a mid-stream model retry;
+# resurrecting those would double-render.
+LOSSY_TERMINAL_STATUSES = frozenset({"error", "cancelled"})
+
+
+def resurrect_lanes(
+    response: dict[str, Any] | None, task_lanes: set[str] | frozenset[str]
+) -> set[str]:
+    """The claimed task lanes whose run ended lossy, plus the main lane when
+    the turn itself did.
+
+    A stopped or failed turn loses its in-flight step from the checkpoint
+    (the stop flush deliberately writes no in-flight messages, and a node
+    that raises commits nothing), yet the same finalize that records the
+    status archives every row the user watched stream.
+    """
+    lanes = set(task_lanes)
+    if (response or {}).get("status") in LOSSY_TERMINAL_STATUSES:
+        lanes.add(MAIN_LANE)
+    return lanes
+
+
+def stop_close_item(
+    thread_id: str,
+    response: dict[str, Any] | None,
+    turn_items: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """The ``finish_reason: "stopped"`` close for a user-stopped turn's last
+    main-lane assistant message, unless the turn already carries one for it.
+
+    Stopped is a fact about the turn, recorded on its response row, but the
+    stop finalize writes a close only for a message still streaming at the
+    stop. A stop between messages (during a tool, before the next model call)
+    leaves none, and a close for a message the checkpoint committed does not
+    survive the merge. A stop during bring-up, before any assistant event,
+    has no message to name, so its close carries no ``id``: clients apply a
+    close to the turn's bubble by ``turn_index``. System cancels are not
+    stops and get no close.
+
+    Public: the shared replay in ``server/app/public.py`` streams stored
+    events itself and needs the same close.
+    """
+    if not response or response.get("status") != "cancelled":
+        return None
+    metadata = response.get("metadata")
+    if not (isinstance(metadata, dict) and metadata.get("cancelled_by_user")):
+        return None
+    last: dict[str, Any] | None = None
+    closed: set[str] = set()
+    for item in turn_items:
+        data = item.get("data") if isinstance(item, dict) else None
+        if (
+            not isinstance(data, dict)
+            or item.get("event") not in ("message_chunk", "tool_calls")
+            or not data.get("id")
+            or agent_lane(data.get("agent")) != MAIN_LANE
+        ):
+            continue
+        last = data
+        if data.get("finish_reason") == "stopped":
+            closed.add(data["id"])
+    if last is not None and last["id"] in closed:
+        return None
+    close: dict[str, Any] = {
+        "thread_id": thread_id,
+        "role": "assistant",
+        "finish_reason": "stopped",
+    }
+    if last is not None:
+        close["id"] = last["id"]
+        if last.get("agent"):
+            close["agent"] = last["agent"]
+    return {"event": "message_chunk", "data": close}

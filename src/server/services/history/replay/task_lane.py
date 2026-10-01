@@ -20,7 +20,7 @@ from src.server.services.history.projector import (
 )
 from src.server.services.history.replay import items
 from src.server.services.history.replay import segment_claim
-from src.server.services.history.replay import stored_merge
+from src.server.services.history.replay import stopped
 from src.server.services.history.task_status import (
     TERMINAL_TASK_STATUSES,
     resolve_task_details,
@@ -158,7 +158,7 @@ class TaskLaneProjector:
         # must share one snapshot).
         self.claimed_watermarks: dict[str, float] = {}
         # Lanes claimed in the CURRENT turn whose run died mid-write
-        # (_LOSSY_TERMINAL_STATUSES): the stored copy may hold output the
+        # (stopped.LOSSY_TERMINAL_STATUSES): the stored copy may hold output the
         # checkpoint never committed, so the merge may resurrect their
         # trailing rows. Reset by each project_for_turn call.
         self.turn_lossy_lanes: set[str] = set()
@@ -398,7 +398,7 @@ class TaskLaneProjector:
                 self.claimed_watermarks[task_id] = (
                     started if prev is None else max(prev, started)
                 )
-            if status in stored_merge._LOSSY_TERMINAL_STATUSES:
+            if status in stopped.LOSSY_TERMINAL_STATUSES:
                 self.turn_lossy_lanes.add(task_agent)
             if not runs.attributed:
                 # Namespace-scoped signals (compaction, model fallback) are

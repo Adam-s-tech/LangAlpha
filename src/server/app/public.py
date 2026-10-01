@@ -54,10 +54,8 @@ from src.server.database.conversation import (
 from src.server.database.share_links import KIND_APP
 from src.server.services.file_grants import grant_prefix, mint_file_grant, seconds_left
 from src.server.utils.api import PageViewer, Viewer
-from src.server.services.history.replay.items import (
-    run_completed_at,
-    stop_close_item,
-)
+from src.server.services.history.replay.items import run_completed_at
+from src.server.services.history.replay.stopped import stop_close_item
 
 logger = logging.getLogger(__name__)
 

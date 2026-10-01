@@ -52,6 +52,7 @@ from src.server.services.history.projector import (
 from src.server.services.history.reader import CheckpointHistoryReader
 from src.server.utils.checkpoint_helpers import CheckpointBranchTipNotFound
 from src.server.services.history.replay import items
+from src.server.services.history.replay import stopped
 from src.server.services.history.replay import stored_merge
 from src.server.services.history.replay import task_lane
 from src.server.services.history.replay import widgets
@@ -342,15 +343,15 @@ async def _build_and_backfill(
             turn_items = stored_merge._merge_stored_payloads(
                 turn_items,
                 stored_events,
-                stored_merge._resurrect_lanes(response, lane.turn_lossy_lanes),
+                stopped.resurrect_lanes(response, lane.turn_lossy_lanes),
             )
 
         _fill_token_thresholds(turn_items)
         # Terminal error: never in stored events (persisted before it is
         # yielded live), so it appends after the merge on every turn. A user
-        # stop's close is read off the same row (see stop_close_item).
+        # stop's close is read off the same row (see stopped.stop_close_item).
         for terminal in (
-            items.stop_close_item(thread_id, response, turn_items),
+            stopped.stop_close_item(thread_id, response, turn_items),
             items._error_item(thread_id, response),
         ):
             if terminal:
@@ -550,7 +551,7 @@ def build_sse_replay_items(
         ]
         if response_id and response_id not in terminals_emitted:
             for terminal in (
-                items.stop_close_item(thread_id, response, turn_items),
+                stopped.stop_close_item(thread_id, response, turn_items),
                 items._error_item(thread_id, response),
             ):
                 if terminal:

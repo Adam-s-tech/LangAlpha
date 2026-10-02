@@ -8,6 +8,7 @@ chunk does to the manifest, and how a restore or a read addresses a member.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import random
 from contextlib import asynccontextmanager
@@ -318,6 +319,22 @@ async def test_a_run_whose_push_raises_removes_its_chunks(db):
     sb = _sandbox()
     with patch.object(blobs, "unlink_direct", new=AsyncMock(return_value=1)) as unlink:
         with pytest.raises(RuntimeError, match="registry down"):
+            await backup.sync_to_db(WS, sb, layout=LAYOUT)
+    unlink.assert_awaited_once_with(sb, [f"_internal/packs/chunk-{CHUNK}"], layout=MACHINE_LAYOUT)
+
+
+@pytest.mark.asyncio
+async def test_a_run_cancelled_mid_push_removes_its_chunks(db):
+    """A manual backup runs in its request, so a client dropping cancels it."""
+    def push(sandbox, items, *, layout=None):
+        if any(i["sha256"] == CHUNK for i in items):
+            raise asyncio.CancelledError
+        return {i["sha256"]: {"status": "ok"} for i in items}
+
+    db["push"].side_effect = push
+    sb = _sandbox()
+    with patch.object(blobs, "unlink_direct", new=AsyncMock(return_value=1)) as unlink:
+        with pytest.raises(asyncio.CancelledError):
             await backup.sync_to_db(WS, sb, layout=LAYOUT)
     unlink.assert_awaited_once_with(sb, [f"_internal/packs/chunk-{CHUNK}"], layout=MACHINE_LAYOUT)
 

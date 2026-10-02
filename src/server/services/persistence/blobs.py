@@ -712,9 +712,10 @@ async def _persist_packed(
                 unlink_after=True,
                 layout=machine,
             )
-        except Exception:
-            # No later pack will release a run whose push raised.
-            await _unlink_chunks(sandbox, staged, workspace_id, machine)
+        except (Exception, asyncio.CancelledError):
+            # No later pack will release a run whose push raised, or whose
+            # backup was cancelled by a client dropping or a shutdown.
+            await asyncio.shield(_unlink_chunks(sandbox, staged, workspace_id, machine))
             raise
         available = {r["blob_sha256"] for r in chunk_rows}
         stranded = [c["path"] for c in chunks if c["sha256"] not in available]

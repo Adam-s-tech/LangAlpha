@@ -23,7 +23,7 @@ import {
 import type { CatalogServer } from '@/pages/ChatAgent/utils/api';
 import { brokerageArt, mcpServerArt } from '@/lib/brandArt';
 import { useFlashWorkspace } from '@/hooks/useFlashWorkspace';
-import { type Brokerage } from '../brokerages';
+import type { Brokerage } from '../brokerages';
 import { isEffectivelyEnabled, isPluginOwned } from '../utils/provenance';
 import {
   ConnectButton,

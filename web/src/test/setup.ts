@@ -1,5 +1,6 @@
 /// <reference types="vitest/globals" />
 import '@testing-library/jest-dom/vitest';
+import { webcrypto } from 'node:crypto';
 import { initI18n } from '@/i18n';
 import enUS from '@/locales/en-US.json';
 import zhCN from '@/locales/zh-CN.json';
@@ -9,8 +10,18 @@ import zhCN from '@/locales/zh-CN.json';
 // app loads catalogs on demand, which would make every switch in a test async.
 void initI18n({ 'en-US': { translation: enUS }, 'zh-CN': { translation: zhCN } });
 
-// Mock window.matchMedia for framer-motion
+// Under the vm pool the global is jsdom's window, whose crypto has no `subtle`;
+// a browser on a secure origin has it, and so does the forks pool. Without it
+// auth-js quietly signs in with plain PKCE instead of S256, a branch production
+// never takes, and tests of that flow still pass.
+if (!globalThis.crypto.subtle) {
+  Object.defineProperty(globalThis.crypto, 'subtle', { configurable: true, value: webcrypto.subtle });
+}
+
+// Mock window.matchMedia for framer-motion. Configurable so a test can still
+// vi.stubGlobal it: under the vm pool `window` is the global itself.
 Object.defineProperty(window, 'matchMedia', {
+  configurable: true,
   writable: true,
   value: (query: string) => ({
     matches: false,

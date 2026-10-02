@@ -123,6 +123,9 @@ export default [
         caughtErrorsIgnorePattern: '^_',
         destructuredArrayIgnorePattern: '^_',
       }],
+      // Under verbatimModuleSyntax `import { type A } from 'x'` still loads
+      // 'x' for its side effects, and tsc accepts it. `import type` does not.
+      '@typescript-eslint/no-import-type-side-effects': 'error',
       'react-refresh/only-export-components': ['warn', refreshExportOptions],
     },
   },

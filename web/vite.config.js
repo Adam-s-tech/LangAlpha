@@ -13,17 +13,26 @@ const MARKDOWN = new Set([
 ])
 const CHARTS = new Set(['recharts', 'lightweight-charts'])
 
-// The npm package a module id belongs to, or null for app source.
+/**
+ * The npm package a module id belongs to, or null for app source.
+ * @param {string} id
+ */
 function packageOf(id) {
-  if (!id.includes('node_modules')) return null
-  const tail = id.split(/[\\/]node_modules[\\/]/).pop().split(/[\\/]/)
-  return tail[0].startsWith('@') ? `${tail[0]}/${tail[1]}` : tail[0]
+  const tail = id.split(/[\\/]node_modules[\\/]/)
+  if (tail.length < 2) return null
+  const [scope, name] = tail[tail.length - 1].split(/[\\/]/)
+  return scope.startsWith('@') ? `${scope}/${name}` : scope
 }
 
+/**
+ * @param {string} name
+ * @param {number} priority
+ * @param {(pkg: string) => boolean} matches
+ */
 const vendorGroup = (name, priority, matches) => ({
   name,
   priority,
-  test: (id) => {
+  test: (/** @type {string} */ id) => {
     const pkg = packageOf(id)
     return pkg !== null && matches(pkg)
   },
@@ -40,6 +49,7 @@ const vendorGroup = (name, priority, matches) => ({
 // emitFile puts the result through the bundler's own output pipeline. Selecting by
 // `isEntry` and not by name is the load-bearing part — codeSplitting below also emits
 // vendor-* chunks, and `index` is a name a chunking change could quietly move.
+/** @returns {import('vite').Plugin} */
 function emitVersionManifest() {
   return {
     name: 'la-version-manifest',
@@ -70,16 +80,19 @@ function emitVersionManifest() {
 // them by bare filename from one directory, so they cannot take hashed names;
 // the version in the path keeps a long-cached copy from pairing a new worker
 // with old decoders. Without them, those images are silently left blank.
+/** @returns {import('vite').Plugin} */
 function pdfjsWasm() {
   const pkg = path.resolve(import.meta.dirname, 'node_modules/pdfjs-dist')
   const dir = path.join(pkg, 'wasm')
   const { version } = JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'), 'utf8'))
   const route = `assets/pdfjs-wasm/${version}/`
+  /** @type {Record<string, string>} */
   const types = { '.wasm': 'application/wasm', '.js': 'text/javascript' }
   return {
     name: 'la-pdfjs-wasm',
     configureServer(server) {
       server.middlewares.use(`/${route}`, (req, res, next) => {
+        if (!req.url) return next()
         const file = path.join(dir, path.basename(req.url.split('?')[0]))
         if (!fs.existsSync(file)) return next()
         res.setHeader('Content-Type', types[path.extname(file)] ?? 'application/octet-stream')
@@ -117,11 +130,10 @@ export default defineConfig(({ mode }) => {
     base: env.VITE_CDN_BASE || '/',
     plugins: [react(), emitVersionManifest(), pdfjsWasm(), localePreload(path.resolve(import.meta.dirname, 'src/locales'))],
     resolve: {
+      // `@/` and the tests' `@e2e/` come from the tsconfig projects' `paths`,
+      // each file resolving through the project that owns it.
+      tsconfigPaths: true,
       alias: [
-        { find: '@', replacement: path.resolve(import.meta.dirname, './src') },
-        // Fixtures a unit test shares with the Playwright specs. Kept in step
-        // with vitest.config.ts; nothing in the app graph imports it.
-        { find: '@e2e', replacement: path.resolve(import.meta.dirname, './e2e') },
         // pdf.js 6's default build calls Map#getOrInsertComputed and Math.sumPrecise
         // unguarded (Chrome 145, Safari 26.2, Firefox 144). Its legacy build carries
         // the polyfills. The regex matches only react-pdf's bare import; the viewer

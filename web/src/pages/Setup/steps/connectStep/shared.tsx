@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components -- mixed helper/component module shared by the ConnectStep branch components */
 import { useState, useCallback } from 'react';
 import { Shield, Copy, Check } from 'lucide-react';
-import { type TestResult } from '@/components/model/ApiKeyInput';
+import type { TestResult } from '@/components/model/ApiKeyInput';
 import { api } from '@/api/client';
 import type { AccessType, RegionVariant } from '@/components/model/types';
 import { useTranslation } from 'react-i18next';

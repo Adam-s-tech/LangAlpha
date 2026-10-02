@@ -47,14 +47,14 @@ class WidgetErrorBoundary extends ReactComponent<
   { widgetType: string; children: ReactNode },
   { error: Error | null }
 > {
-  state = { error: null as Error | null };
+  override state = { error: null as Error | null };
   static getDerivedStateFromError(error: Error) {
     return { error };
   }
-  componentDidCatch(error: Error, info: ErrorInfo) {
+  override componentDidCatch(error: Error, info: ErrorInfo) {
     console.error(`[widget:${this.props.widgetType}] render error`, error, info.componentStack);
   }
-  render() {
+  override render() {
     if (this.state.error) {
       return (
         <div

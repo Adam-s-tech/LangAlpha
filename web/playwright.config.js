@@ -8,7 +8,10 @@ const E2E_PORT = Number(process.env.E2E_PORT) || 5176;
 // dev server boots, not per test. So it gets a server of its own rather than a
 // flag some spec could flip.
 const E2E_AUTH_PORT = Number(process.env.E2E_AUTH_PORT) || 5177;
-// Read by e2e/fixtures.js and e2e/mock-sse-server.js from the same variable.
+// The API origin both dev servers bake into the app. Nothing listens on it:
+// each worker starts its own mock server on the next ports up (E2E_MOCK_PORT + 1
+// + its parallel index) and e2e/fixtures.js routes the page's API traffic there,
+// so a checkout needs E2E_MOCK_PORT through E2E_MOCK_PORT + workers free.
 const E2E_MOCK_PORT = Number(process.env.E2E_MOCK_PORT) || 4100;
 // PERF_BUILD only means anything under PERF: the benchmarks are the one caller
 // that wants a production build, and a PERF_BUILD left in the shell must not
@@ -17,11 +20,16 @@ const PERF_BUILD = !!process.env.PERF && !!process.env.PERF_BUILD;
 
 export default defineConfig({
   testDir: './e2e',
+  // Runs after the web servers are up: compiles the app once before workers race to.
+  globalSetup: './e2e/global-setup.js',
   timeout: 30_000,
   retries: process.env.CI ? 1 : 0,
-  // Serial execution: the mock SSE server is shared state, so parallel
-  // workers would clobber each other's scenarios via resetMockServer().
-  workers: 1,
+  // Workers never share scenario state (each owns a mock server), so the suite
+  // runs in parallel. The benchmarks stay alone: a second browser on the same
+  // CPUs would move the frame timings they measure.
+  workers: process.env.PERF ? 1 : undefined,
+  // CI keeps its console output and also writes the report the workflow uploads.
+  reporter: process.env.CI ? [['dot'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL: `http://127.0.0.1:${E2E_PORT}`,
     trace: 'on-first-retry',
@@ -63,11 +71,6 @@ export default defineConfig({
         VITE_SUPABASE_PUBLISHABLE_KEY: 'e2e-placeholder-key',
         VITE_API_BASE_URL: `http://127.0.0.1:${E2E_MOCK_PORT}`,
       },
-    },
-    {
-      command: 'node e2e/mock-sse-server.js',
-      port: E2E_MOCK_PORT,
-      reuseExistingServer: !process.env.CI,
     },
   ],
   projects: [

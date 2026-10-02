@@ -461,8 +461,8 @@ describe('useHtmlActions — inside the desktop shell', () => {
     vi.stubGlobal(
       'URL',
       class extends URL {
-        static createObjectURL = vi.fn(() => 'blob:widget-url');
-        static revokeObjectURL = vi.fn();
+        static override createObjectURL = vi.fn(() => 'blob:widget-url');
+        static override revokeObjectURL = vi.fn();
       },
     );
   });

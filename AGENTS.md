@@ -24,7 +24,7 @@ uv run pytest tests/unit/ -v --tb=short
 uv run pytest -m integration          # hits real APIs — needs DB + Redis + API keys
 uv run pytest -m regression           # locks live market-data behavior — needs a running server + live providers
 
-cd web && pnpm test                   # Vitest;  pnpm test:e2e = Playwright;  pnpm typecheck = tsc --noEmit
+cd web && pnpm test                   # Vitest;  pnpm test:e2e = Playwright;  pnpm typecheck = tsc -b
 ```
 
 ## Architecture

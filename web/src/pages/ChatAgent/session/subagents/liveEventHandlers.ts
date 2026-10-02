@@ -787,13 +787,12 @@ export function handleTaskSteeringAccepted({ taskId, content, refs, updateSubage
     }
   }
 
-  // Confirm an optimistic pending message if it matches, otherwise insert new one
-  const pendingIdx = updatedMessages.findIndex(
-    (m: MessageRecord) => m.role === 'user' && m.isPending && m.content === content
-  );
-  if (pendingIdx !== -1) {
-    updatedMessages[pendingIdx] = { ...updatedMessages[pendingIdx], isPending: false };
-  } else {
+  // Confirm the pending bubbles this delivery carries, otherwise insert one
+  const delivered = deliveredInstructionIndexes(updatedMessages, content);
+  for (const i of delivered) {
+    updatedMessages[i] = { ...updatedMessages[i], isPending: false };
+  }
+  if (delivered.length === 0) {
     updatedMessages.push({
       id: `followup-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
       role: 'user',
@@ -815,3 +814,60 @@ export function handleTaskSteeringAccepted({ taskId, content, refs, updateSubage
   return true;
 }
 
+/** An instruction the user sent a running subagent that it has not been given yet. */
+function isPendingInstruction(m: MessageRecord): boolean {
+  return m.role === 'user' && m.isPending === true;
+}
+
+/**
+ * The pending bubbles a delivery confirms. The subagent takes every
+ * instruction queued since its last model call at once, joined by newlines,
+ * so one delivery can confirm a run of bubbles rather than a single one. The
+ * latest match wins: an earlier bubble with the same text may be one whose
+ * send failed and never reached the queue.
+ */
+function deliveredInstructionIndexes(messages: MessageRecord[], content: string): number[] {
+  const pending = messages.flatMap((m, i) => (isPendingInstruction(m) ? [i] : []));
+  for (let start = pending.length - 1; start >= 0; start--) {
+    let joined = '';
+    for (let end = start; end < pending.length; end++) {
+      joined += (end === start ? '' : '\n') + String(messages[pending[end]].content);
+      if (joined === content) return pending.slice(start, end + 1);
+      if (!content.startsWith(joined)) break;
+    }
+  }
+  return [];
+}
+
+/**
+ * Shows an instruction the user just sent a running subagent, pending until
+ * its delivery confirms it (handleTaskSteeringAccepted). The bubble joins the
+ * task's transcript, not only its card: every stream write hands the card that
+ * whole transcript, and the card keeps a longer list over a shorter one, so a
+ * bubble only the card held froze the running message until the delivery.
+ */
+export function addPendingTaskInstruction({ taskId, content, subagentStateRefs, updateSubagentCard }: {
+  taskId: string;
+  content: string;
+  subagentStateRefs: Record<string, TaskRefs>;
+  updateSubagentCard: UpdateSubagentCard | null;
+}): void {
+  if (!taskId || !content || !updateSubagentCard) return;
+  const taskRefs = getOrCreateTaskRefs({ subagentStateRefs }, taskId);
+  taskRefs.messages = [...taskRefs.messages, {
+    id: `pending-instruction-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+    role: 'user',
+    content,
+    contentSegments: [{ type: 'text', content, order: 0 }],
+    reasoningProcesses: {},
+    toolCallProcesses: {},
+    isPending: true,
+  }];
+  updateSubagentCard(taskId, { messages: taskRefs.messages });
+}
+
+/** Drops the pending bubble of an instruction the run ended without taking. */
+export function withdrawPendingTaskInstruction(taskRefs: TaskRefs, content: string): void {
+  const idx = taskRefs.messages.findLastIndex((m) => isPendingInstruction(m) && m.content === content);
+  if (idx !== -1) taskRefs.messages = taskRefs.messages.filter((_, i) => i !== idx);
+}

@@ -77,6 +77,7 @@ function harness() {
         setActiveAgentId,
         cards: cardState.cards,
         updateSubagentCard: cardState.updateSubagentCard,
+        addSubagentInstruction: () => {},
         getSubagentHistory: getSubagentHistory as never,
         resolveSubagentIdToAgentId: ((id: string) => id) as never,
         hydrateTaskTranscript: hydrateTaskTranscript as never,

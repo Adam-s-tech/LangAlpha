@@ -29,7 +29,7 @@ import {
 import {
   isSubagentEvent, handleSubagentMessageChunk, handleSubagentToolCallChunks,
   handleSubagentToolCalls, handleSubagentToolCallResult, handleTaskSteeringAccepted,
-  handleWorkflowLifecycle,
+  handleWorkflowLifecycle, withdrawPendingTaskInstruction,
 } from '../subagents/liveEventHandlers';
 import { getOrCreateTaskRefs, type UpdateSubagentCard } from '../streamRefs';
 import { handleMarketWatchUpdate, type MarketWatchState } from '../marketWatchEvents';
@@ -112,10 +112,8 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
 
   // Append a standalone assistant notice message to a task card (terminal
   // notices: steering returned, run error). A new message rather than a
-  // segment on the last assistant message: the card may hold an optimistic
-  // pending-instruction bubble that taskRefs.messages doesn't (useCardState
-  // keeps the longer array), and a failed task may have no assistant
-  // message at all — a pushed message survives both.
+  // segment on the last assistant message: a failed task may have no
+  // assistant message at all, and a pushed message survives that.
   //
   // `card` rides the same write rather than taking one of its own: by the time
   // a terminal notice arrives the card is usually already inactive, and a write
@@ -606,6 +604,8 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
             || ((event.messages || []) as Array<{ content?: string }>)
               .map((m) => m.content || '').filter(Boolean).join('\n');
           if (returnedContent) {
+            // The notice carries the text back, so its pending bubble goes.
+            withdrawPendingTaskInstruction(taskRefs, returnedContent);
             appendTaskNoticeMessage(taskId, rt.t('chat.taskSteeringReturnedNotification'), returnedContent);
           }
         } else if (eventType === 'error' || event.error) {

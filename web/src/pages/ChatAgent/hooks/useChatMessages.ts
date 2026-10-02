@@ -60,6 +60,7 @@ import type { ChatSessionRuntime } from '../session/runtime';
 import type { CardUpdater } from '../session/streamRefs';
 import { projectSubagentHistory } from '../session/subagents/projectHistory';
 import { createSubagentMuxController, getTaskIdFromEvent } from '../session/subagents/muxSink';
+import { addPendingTaskInstruction } from '../session/subagents/liveEventHandlers';
 import { loadConversationHistory as replayConversationHistory } from '../session/history/replayHistory';
 import { createStreamEventProcessor, type StreamRouterDeps } from '../session/stream/processStreamEvent';
 import { createLiveTranscript, type LiveMessages } from '../session/stream/liveMessages';
@@ -495,6 +496,15 @@ export function useChatMessages(
   const {
     store: subagentHistory, resolveSubagentIdToAgentId, getSubagentHistory, hydrateTaskTranscript,
   } = useSubagentHistory(liveMessages.flush, { t, threadId, subagentStateRefsRef });
+  // An instruction the user sent a running subagent, shown pending in the
+  // transcript its stream writes until the stream delivers it.
+  const addSubagentInstruction = (agentId: string, content: string) =>
+    addPendingTaskInstruction({
+      taskId: agentId,
+      content,
+      subagentStateRefs: subagentStateRefsRef.current,
+      updateSubagentCard,
+    });
 
   /**
    * Handler-refs bag shared by every stream entry point. One construction
@@ -2872,5 +2882,6 @@ export function useChatMessages(
     resolveSubagentIdToAgentId,
     getSubagentHistory,
     hydrateTaskTranscript,
+    addSubagentInstruction,
   };
 }

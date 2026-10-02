@@ -315,6 +315,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     getSubagentHistory,
     resolveSubagentIdToAgentId,
     hydrateTaskTranscript,
+    addSubagentInstruction,
   } = useChatMessages(workspaceId, threadId, updateTodoListCard as (todoData: Record<string, unknown>) => void, updateSubagentCard, finalizePendingTodos, handleOnboardingRelatedToolComplete, handleFileArtifact, handleOpenPreviewFromStream, agentMode, clearSubagentCards, handleWorkspaceCreated, 'web');
 
   // Fallback-suggestion pill action: adopt the model that actually answered —
@@ -435,6 +436,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     setActiveAgentId,
     cards,
     updateSubagentCard,
+    addSubagentInstruction,
     getSubagentHistory,
     resolveSubagentIdToAgentId,
     hydrateTaskTranscript,

@@ -6,7 +6,10 @@ COPY web/patches/ patches/
 # written by. Not corepack: Node 25+ no longer bundles it, and a corepack older
 # than 0.34.5 cannot start pnpm 12.
 RUN npm install -g "$(node -p 'require("./package.json").packageManager')"
-RUN pnpm install --frozen-lockfile
+# The store outlives the layer, so a lockfile change refetches only the
+# packages that changed rather than all of them.
+RUN --mount=type=cache,id=langalpha-web-pnpm-store,target=/pnpm-store \
+    pnpm install --frozen-lockfile --store-dir /pnpm-store
 COPY web/ .
 ARG VITE_HOST_MODE="oss"
 ARG VITE_API_BASE_URL=""

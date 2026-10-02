@@ -2,11 +2,14 @@ import { defineConfig } from '@playwright/test';
 
 // Use a dedicated port so E2E tests never collide with the user's dev server
 // on :5173 (which might have real Supabase env vars) or other local services.
-const E2E_PORT = 5176;
+// Each port takes an env override so two checkouts can run the suite at once.
+const E2E_PORT = Number(process.env.E2E_PORT) || 5176;
 // The auth surface only exists in platform mode, and the mode is fixed when the
 // dev server boots, not per test. So it gets a server of its own rather than a
 // flag some spec could flip.
-const E2E_AUTH_PORT = 5177;
+const E2E_AUTH_PORT = Number(process.env.E2E_AUTH_PORT) || 5177;
+// Read by e2e/fixtures.js and e2e/mock-sse-server.js from the same variable.
+const E2E_MOCK_PORT = Number(process.env.E2E_MOCK_PORT) || 4100;
 // PERF_BUILD only means anything under PERF: the benchmarks are the one caller
 // that wants a production build, and a PERF_BUILD left in the shell must not
 // make an ordinary e2e run wait four minutes for a vite build first.
@@ -44,7 +47,7 @@ export default defineConfig({
         VITE_HOST_MODE: 'oss',
         VITE_SUPABASE_URL: '',
         VITE_SUPABASE_PUBLISHABLE_KEY: '',
-        VITE_API_BASE_URL: 'http://127.0.0.1:4100',
+        VITE_API_BASE_URL: `http://127.0.0.1:${E2E_MOCK_PORT}`,
       },
     },
     {
@@ -58,12 +61,12 @@ export default defineConfig({
         // the send with a route handler, so no request leaves the browser.
         VITE_SUPABASE_URL: 'https://example.supabase.co',
         VITE_SUPABASE_PUBLISHABLE_KEY: 'e2e-placeholder-key',
-        VITE_API_BASE_URL: 'http://127.0.0.1:4100',
+        VITE_API_BASE_URL: `http://127.0.0.1:${E2E_MOCK_PORT}`,
       },
     },
     {
       command: 'node e2e/mock-sse-server.js',
-      port: 4100,
+      port: E2E_MOCK_PORT,
       reuseExistingServer: !process.env.CI,
     },
   ],

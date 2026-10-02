@@ -2600,7 +2600,9 @@
       "read_preference": "Read preferences",
       "updated_portfolio": "Updated portfolio",
       "updated_watchlist": "Updated watchlist",
-      "updated_preference": "Updated preferences"
+      "updated_preference": "Updated preferences",
+      "read_automations": "Read automations",
+      "updated_automations": "Updated automations"
     },
     "inProgress": {
       "callingServer": "calling {{server}}...",
@@ -2628,6 +2630,8 @@
       "updating_portfolio": "updating portfolio...",
       "updating_watchlist": "updating watchlist...",
       "updating_preference": "updating preferences...",
+      "reading_automations": "reading automations...",
+      "updating_automations": "updating automations...",
       "fetchingSymbolPrices": "fetching {{symbol}} prices...",
       "fetchingPrices": "fetching prices...",
       "fetchingSymbolQuotes": "quoting {{symbols}}...",
@@ -2690,6 +2694,8 @@
       "memoWrite_other": "wrote {{count}} memos",
       "profileRead": "read profile",
       "profileUpdated": "updated profile",
+      "automationsRead": "read automations",
+      "automationsUpdated": "updated automations",
       "code": "executed {{count}} code block",
       "code_other": "executed {{count}} code blocks",
       "web": "made {{count}} web call",

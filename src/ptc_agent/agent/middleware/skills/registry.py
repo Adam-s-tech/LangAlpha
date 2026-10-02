@@ -208,7 +208,10 @@ SKILL_REGISTRY: dict[str, SkillDefinition] = {
         description="Create and manage scheduled and price-triggered automations.",
         tools=AUTOMATION_TOOLS,
         skill_md_path="skills/automation/SKILL.md",
-        exposure="both",
+        # Flash-only: PTC edits the files in .agents/user/automations/
+        # through the AutomationsBackend filesystem surface. Flash has no
+        # filesystem, so it keeps the tools. Same split as user-profile.
+        exposure="flash",
     ),
     "run-workflow": SkillDefinition(
         name="run-workflow",
@@ -227,6 +230,27 @@ SKILL_REGISTRY: dict[str, SkillDefinition] = {
         skill_md_path="skills/run-workflow/SKILL.md",
         exposure="ptc",
         system_gate=_run_workflow_enabled,
+    ),
+    "langalpha-doc": SkillDefinition(
+        name="langalpha-doc",
+        # Keep in sync with the `description:` in
+        # plugins/langalpha_service/skills/langalpha-doc/SKILL.md
+        # frontmatter (locked by a unit test).
+        description=(
+            "How the platform under you works: the computer and its "
+            "workspaces, files and what survives a restart, conversation "
+            "transcripts, saved tool results, memory, and adding skills, "
+            "MCP servers, brokerages or plugins. Read it when the user "
+            "points back at an earlier conversation, when something is "
+            "missing or behaves unexpectedly, and before adding any of "
+            "those."
+        ),
+        tools=[],
+        # No `command`: the prompt points into its reference files, and a
+        # user has no reason to invoke it. PTC only, since Flash has no
+        # sandbox and LoadSkill cannot reach the references.
+        skill_md_path="skills/langalpha-doc/SKILL.md",
+        exposure="ptc",
     ),
     "pdf": SkillDefinition(
         name="pdf",

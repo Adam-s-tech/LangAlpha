@@ -218,6 +218,7 @@ class PlatformSecretSweeper:
             remount_platform_secret_bindings,
             verify_runtime_platform_secrets,
         )
+        from src.server.services.livefs.mount import restarted as livefs_restarted
         from src.server.services.platform_secret_rollout import (
             stamp_platform_secret_version,
         )
@@ -248,11 +249,17 @@ class PlatformSecretSweeper:
         try:
             runtime = await provider.get(sandbox_id)
             if needs_scrub:
-                await converge_sandbox_platform_secrets(
-                    runtime,
-                    expected=rollout_set.placeholders,
-                    bindings=rollout_set.bindings,
-                )
+                try:
+                    await converge_sandbox_platform_secrets(
+                        runtime,
+                        expected=rollout_set.placeholders,
+                        bindings=rollout_set.bindings,
+                    )
+                finally:
+                    # The force-stop left no file mount. Unrecorded, the
+                    # scrub is not stamped either, so the next cycle runs it
+                    # and records it again.
+                    await livefs_restarted(computer_id, sandbox_id)
                 # Auto-stop persists across restarts; re-assert defensively so
                 # a scrubbed always-on sandbox provably stays always-on.
                 if row.get("is_always_on") and "autostop" in runtime.capabilities:

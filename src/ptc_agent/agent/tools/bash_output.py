@@ -6,15 +6,22 @@ import structlog
 from langchain_core.tools import BaseTool, tool
 
 from ptc_agent.agent.backends.sandbox import SandboxBackend
+from ptc_agent.core.sandbox import livefs_mount
 
 logger = structlog.get_logger(__name__)
 
 
-def create_bash_output_tool(backend: SandboxBackend) -> BaseTool:
+def create_bash_output_tool(
+    backend: SandboxBackend,
+    *,
+    call_context: livefs_mount.CallContext | None = None,
+) -> BaseTool:
     """Factory function to create BashOutput tool with injected dependencies.
 
     Args:
         backend: SandboxBackend wrapping the sandbox
+        call_context: Who the background command runs for, whose thread's
+            saves through the file mount after its launch report here
 
     Returns:
         Configured BashOutput tool function
@@ -35,9 +42,29 @@ def create_bash_output_tool(backend: SandboxBackend) -> BaseTool:
         Returns:
             Status and output of the background command, or confirmation of stop.
         """
+        # A background command saves after the Bash call that launched it
+        # returned, so what its saves reported waits on its thread's late
+        # list; reading the job is where the agent learns what it did.
+        return await livefs_mount.through_mount(
+            backend.livefs, call_context, lambda _call_id: _read(command_id, action)
+        )
+
+    async def _read(command_id: str, action: str) -> tuple[str, dict[str, Any]]:
         try:
             if action == "stop":
-                stopped = await backend.astop_background_command(command_id)
+                try:
+                    stopped = await backend.astop_background_command(command_id)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to stop background command",
+                        command_id=command_id,
+                        error=str(e),
+                    )
+                    return (
+                        f"ERROR: Could not stop background command {command_id}, "
+                        f"so it may still be running: {e!s}",
+                        {"mcp_trace": []},
+                    )
                 if stopped:
                     msg = f"Background command {command_id} stopped."
                 else:
@@ -45,6 +72,13 @@ def create_bash_output_tool(backend: SandboxBackend) -> BaseTool:
                 return msg, {"mcp_trace": []}
 
             result = await backend.aget_background_command_status(command_id)
+            if not result.get("found", True):
+                return (
+                    f"No background command found with id {command_id}. A status "
+                    "check that saw it finish already returned its output, or the "
+                    "computer restarted since it started.",
+                    {"mcp_trace": []},
+                )
 
             is_running = result["is_running"]
             exit_code = result["exit_code"]

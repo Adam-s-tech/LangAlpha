@@ -30,7 +30,8 @@ from fastapi.responses import Response
 from pydantic import ValidationError
 
 from src.server.database import automation as auto_db
-from src.server.handlers import automation_handler as handler
+from src.server.database import automation_executions as exec_db
+from src.server.services.automations import lifecycle as handler
 from src.server.models.automation import (
     AutomationCreate,
     AutomationResponse,
@@ -255,7 +256,7 @@ async def list_executions(
 
 async def _runs_page(user_id: str, **filters) -> AutomationRunsListResponse:
     """The feed and one automation's history: one query, one page shape."""
-    executions, has_more = await auto_db.list_executions(user_id, **filters)
+    executions, has_more = await exec_db.list_executions(user_id, **filters)
     return AutomationRunsListResponse(
         executions=[AutomationRunResponse.model_validate(e) for e in executions],
         has_more=has_more,

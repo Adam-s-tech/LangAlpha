@@ -20,6 +20,7 @@ from ptc_agent.config.core import FilesystemConfig
 from src.server.services.computer_manager import ComputerBinding, ComputerManager
 
 _PROVISIONING = "src.server.services.computer_manager._provisioning"
+_LAYOUT = "src.server.services.workspace_layout"
 
 COMPUTER_ID = "11111111-1111-4111-8111-111111111111"
 ORIGIN_ID = "22222222-2222-4222-8222-222222222222"
@@ -93,12 +94,13 @@ class TestTheRootOwnerReachesTheSync:
         with (
             patch(f"{_PROVISIONING}.get_computer", AsyncMock(return_value=computer)),
             patch(f"{_PROVISIONING}.db_get_workspace_dir_name", folder),
+            patch(f"{_LAYOUT}.get_workspace_dir_name", folder),
             patch(
                 f"{_PROVISIONING}.sandbox_skill_sync_params",
                 AsyncMock(return_value={}),
             ),
         ):
-            await manager._sync_sandbox_assets(
+            await manager._sync_project_assets(
                 _binding(workspace_id), "user-1", sandbox
             )
         return sandbox.sync_sandbox_assets.await_args.kwargs
@@ -173,12 +175,13 @@ class TestTheRootOwnerReachesTheSync:
                 AsyncMock(return_value=_machine(origin_workspace_id=deleted_origin)),
             ),
             patch(f"{_PROVISIONING}.db_get_workspace_dir_name", folder),
+            patch(f"{_LAYOUT}.get_workspace_dir_name", folder),
             patch(
                 f"{_PROVISIONING}.sandbox_skill_sync_params",
                 AsyncMock(return_value={}),
             ),
         ):
-            await manager._sync_sandbox_assets(_binding(SIBLING_ID), "user-1", sandbox)
+            await manager._sync_project_assets(_binding(SIBLING_ID), "user-1", sandbox)
 
         kwargs = sandbox.sync_sandbox_assets.await_args.kwargs
         assert kwargs["root_owner_dir_name"] == "gone-ef56"
@@ -200,7 +203,7 @@ class TestTheRootOwnerReachesTheSync:
         with (
             patch(f"{_PROVISIONING}.get_computer", machine),
             patch(
-                f"{_PROVISIONING}.db_get_workspace_dir_name",
+                f"{_LAYOUT}.get_workspace_dir_name",
                 AsyncMock(side_effect=lambda wid, **kw: FOLDERS.get(str(wid))),
             ),
             patch(
@@ -208,7 +211,7 @@ class TestTheRootOwnerReachesTheSync:
                 AsyncMock(return_value={}),
             ),
         ):
-            await manager._sync_sandbox_assets(_binding(SIBLING_ID), "user-1", sandbox)
+            await manager._sync_project_assets(_binding(SIBLING_ID), "user-1", sandbox)
 
         assert (
             sandbox.sync_sandbox_assets.await_args.kwargs["root_owner_dir_name"]

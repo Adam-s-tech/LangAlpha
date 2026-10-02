@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.server.services.history.projector import is_run_boundary_message
+from ptc_agent.agent.transcript.classify import is_run_boundary_message
 from src.server.utils.content_normalizer import normalize_text_content
 
 

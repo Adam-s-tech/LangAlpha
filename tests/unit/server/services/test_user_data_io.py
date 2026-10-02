@@ -1,20 +1,29 @@
 """Pure-function tests for user_data_io.
 
-Exercises serialize → parse → diff round-trips without touching the database.
-The async fetch/count/apply functions need a live DB and live in the
-integration suite (``tests/integration/test_user_data_backend.py``), which
-requires Postgres.
+Exercises serialize → parse → diff round-trips without touching the database,
+and the write statements against a fake connection. What
+the SQL does to real rows lives in the integration suite
+(``tests/integration/test_user_data_backend.py``), which requires Postgres.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ptc_agent.agent.backends.db_json_route import UserDataValidationError
 from src.server.services import user_data_io as io
-from src.server.services.user_data_io import UserDataValidationError
+
+
+def _diff_portfolio(content: str, rows: list) -> io.PortfolioDiff:
+    return io.diff_portfolio(io.parse_portfolio(content), rows)
+
+
+def _diff_watchlist(content: str, watchlists: list, items_by_wl: dict) -> io.WatchlistDiff:
+    return io.diff_watchlist(io.parse_watchlist(content), watchlists, items_by_wl)
 
 
 # ---------------------------------------------------------------------------
@@ -78,20 +87,28 @@ class TestPortfolioParseAndDiff:
 
     def test_parse_error_invalid_json(self):
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_portfolio("not json{", [])
+            _diff_portfolio("not json{", [])
         assert exc.value.error_type == "parse_error"
+
+    def test_nesting_past_the_bound_is_a_parse_error(self):
+        """Deep enough that the decoder raises RecursionError on some
+        Pythons, which the route would answer as a server error."""
+        with pytest.raises(UserDataValidationError) as exc:
+            _diff_portfolio('{"holdings": ' + "[" * 100_000 + "]" * 100_000 + "}", [])
+        assert exc.value.error_type == "parse_error"
+        assert "nested more than 64 levels deep" in exc.value.hint
 
     def test_missing_version_accepted(self):
         """Agent JSON no longer carries __version__; the backend tracks the
         version server-side, so parsing a payload without __version__ must
         succeed."""
-        diff = io.parse_and_diff_portfolio('{"holdings": []}', [])
-        assert diff.is_empty()
+        diff = _diff_portfolio('{"holdings": []}', [])
+        assert not diff
 
     def test_holdings_must_be_array(self):
         payload = self._make_payload("v1", "not an array")
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_portfolio(payload, [])
+            _diff_portfolio(payload, [])
         assert exc.value.error_type == "schema_error"
         assert exc.value.field_path == "holdings"
 
@@ -100,7 +117,7 @@ class TestPortfolioParseAndDiff:
             "symbol": "TSLA", "instrument_type": "stock",
             "quantity": "10", "account_name": "Main",
         }])
-        diff = io.parse_and_diff_portfolio(payload, [])
+        diff = _diff_portfolio(payload, [])
         assert len(diff.inserts) == 1
         assert diff.inserts[0]["symbol"] == "TSLA"
         assert diff.inserts[0]["quantity"] == Decimal("10")
@@ -114,7 +131,7 @@ class TestPortfolioParseAndDiff:
             "quantity": "200",  # changed
             "average_cost": "150.25", "account_name": "Main",
         }])
-        diff = io.parse_and_diff_portfolio(payload, [existing])
+        diff = _diff_portfolio(payload, [existing])
         assert diff.inserts == []
         assert len(diff.updates) == 1
         # The DB UUID is internal — set by the applier on the update row, but
@@ -132,8 +149,8 @@ class TestPortfolioParseAndDiff:
             "currency": "USD", "account_name": "Main",
             "notes": "Long-term hold",
         }])
-        diff = io.parse_and_diff_portfolio(payload, [existing])
-        assert diff.is_empty()
+        diff = _diff_portfolio(payload, [existing])
+        assert not diff
 
     def test_agent_supplied_id_is_silently_ignored(self):
         """If the agent writes back an `id` (e.g. from a stale cache or hallucinated),
@@ -144,7 +161,7 @@ class TestPortfolioParseAndDiff:
             "symbol": "AAPL", "instrument_type": "stock",
             "quantity": "200", "average_cost": "150.25", "account_name": "Main",
         }])
-        diff = io.parse_and_diff_portfolio(payload, [existing])
+        diff = _diff_portfolio(payload, [existing])
         # The fake id was ignored; (symbol,type,account) still resolved to the
         # existing row, so this is an UPDATE not an INSERT.
         assert diff.inserts == []
@@ -154,7 +171,7 @@ class TestPortfolioParseAndDiff:
     def test_delete_missing_row(self):
         existing = _portfolio_row()
         payload = self._make_payload("v1", [])  # agent removed everything
-        diff = io.parse_and_diff_portfolio(payload, [existing])
+        diff = _diff_portfolio(payload, [existing])
         assert diff.deletes == ["11111111-1111-1111-1111-111111111111"]
         assert diff.inserts == []
         assert diff.updates == []
@@ -165,7 +182,7 @@ class TestPortfolioParseAndDiff:
             "symbol": "AAPL", "instrument_type": "stock", "account_name": "Main",
             "quantity": "300", "average_cost": "150.25",
         }])
-        diff = io.parse_and_diff_portfolio(payload, [existing])
+        diff = _diff_portfolio(payload, [existing])
         # Should match by (symbol, instrument_type, account_name) and update
         assert diff.inserts == []
         assert len(diff.updates) == 1
@@ -176,7 +193,7 @@ class TestPortfolioParseAndDiff:
             "quantity": ["not", "a", "number"],
         }])
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_portfolio(payload, [])
+            _diff_portfolio(payload, [])
         assert exc.value.error_type == "schema_error"
         assert "quantity" in exc.value.field_path
 
@@ -251,7 +268,7 @@ class TestWatchlistParseAndDiff:
             "name": "Growth", "is_default": False,
             "items": [{"symbol": "NVDA", "instrument_type": "stock"}],
         }])
-        diff = io.parse_and_diff_watchlist(payload, [], {})
+        diff = _diff_watchlist(payload, [], {})
         assert len(diff.wl_inserts) == 1
         assert diff.wl_inserts[0]["name"] == "Growth"
         assert len(diff.item_inserts) == 1
@@ -260,7 +277,7 @@ class TestWatchlistParseAndDiff:
     def test_delete_watchlist(self):
         wl = _watchlist_row()
         payload = self._make_payload("v1", [])
-        diff = io.parse_and_diff_watchlist(payload, [wl], {})
+        diff = _diff_watchlist(payload, [wl], {})
         assert diff.wl_deletes == ["22222222-2222-2222-2222-222222222222"]
 
     def test_update_item_notes(self):
@@ -281,7 +298,7 @@ class TestWatchlistParseAndDiff:
                 "notes": "watch closely",  # changed
             }],
         }])
-        diff = io.parse_and_diff_watchlist(payload, [wl], items)
+        diff = _diff_watchlist(payload, [wl], items)
         assert diff.wl_inserts == []
         assert diff.wl_deletes == []
         assert len(diff.item_updates) == 1
@@ -306,7 +323,7 @@ class TestWatchlistParseAndDiff:
                 "notes": item["notes"],
             }],
         }])
-        diff = io.parse_and_diff_watchlist(payload, [wl], items)
+        diff = _diff_watchlist(payload, [wl], items)
         assert len(diff.wl_inserts) == 1
         assert diff.wl_inserts[0]["name"] == "Growth"
         assert diff.wl_deletes == [str(wl["watchlist_id"])]
@@ -332,7 +349,7 @@ class TestWatchlistParseAndDiff:
                 "notes": "updated",
             }],
         }])
-        diff = io.parse_and_diff_watchlist(payload, [wl], items)
+        diff = _diff_watchlist(payload, [wl], items)
         # Watchlist matched by name despite bogus id → no insert/delete
         assert diff.wl_inserts == []
         assert diff.wl_deletes == []
@@ -419,7 +436,7 @@ class TestPortfolioStrictValidation:
             "symbo": "AAPL", "instrument_type": "stock", "quantity": "10",
         }])
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_portfolio(payload, [])
+            _diff_portfolio(payload, [])
         assert exc.value.error_type == "schema_error"
         assert exc.value.field_path == "holdings[0]"
         assert "unknown field" in exc.value.hint
@@ -431,7 +448,7 @@ class TestPortfolioStrictValidation:
             "totally_made_up": "value",
         }])
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_portfolio(payload, [])
+            _diff_portfolio(payload, [])
         assert "totally_made_up" in exc.value.hint
 
     def test_id_field_tolerated_silently(self):
@@ -440,7 +457,7 @@ class TestPortfolioStrictValidation:
             "id": "deadbeef-dead-beef-dead-beefdeadbeef",
             "symbol": "AAPL", "instrument_type": "stock", "quantity": "10",
         }])
-        diff = io.parse_and_diff_portfolio(payload, [])
+        diff = _diff_portfolio(payload, [])
         assert len(diff.inserts) == 1
 
     def test_duplicate_holding_rejected(self):
@@ -449,7 +466,7 @@ class TestPortfolioStrictValidation:
             {"symbol": "AAPL", "instrument_type": "stock", "account_name": "Main", "quantity": "20"},
         ])
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_portfolio(payload, [])
+            _diff_portfolio(payload, [])
         assert exc.value.error_type == "schema_error"
         assert "duplicate holding" in exc.value.hint
         assert exc.value.field_path == "holdings[1]"
@@ -459,7 +476,7 @@ class TestPortfolioStrictValidation:
             {"symbol": "AAPL", "instrument_type": "stock", "account_name": "Main", "quantity": "10"},
             {"symbol": "AAPL", "instrument_type": "stock", "account_name": "IRA", "quantity": "20"},
         ])
-        diff = io.parse_and_diff_portfolio(payload, [])
+        diff = _diff_portfolio(payload, [])
         assert len(diff.inserts) == 2
 
     def test_empty_symbol_rejected(self):
@@ -467,7 +484,7 @@ class TestPortfolioStrictValidation:
             "symbol": "   ", "instrument_type": "stock", "quantity": "10",
         }])
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_portfolio(payload, [])
+            _diff_portfolio(payload, [])
         assert exc.value.field_path == "holdings[0].symbol"
         assert "empty" in exc.value.hint
 
@@ -476,7 +493,7 @@ class TestPortfolioStrictValidation:
             "symbol": "AAPL", "instrument_type": "stock", "quantity": "-5",
         }])
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_portfolio(payload, [])
+            _diff_portfolio(payload, [])
         assert ">= 0" in exc.value.hint
 
     def test_negative_average_cost_rejected(self):
@@ -485,7 +502,7 @@ class TestPortfolioStrictValidation:
             "average_cost": "-100",
         }])
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_portfolio(payload, [])
+            _diff_portfolio(payload, [])
         assert exc.value.field_path == "holdings[0].average_cost"
 
     def test_overlong_symbol_rejected(self):
@@ -494,7 +511,7 @@ class TestPortfolioStrictValidation:
             "instrument_type": "stock", "quantity": "10",
         }])
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_portfolio(payload, [])
+            _diff_portfolio(payload, [])
         assert "too long" in exc.value.hint
         assert exc.value.field_path == "holdings[0].symbol"
 
@@ -509,7 +526,7 @@ class TestWatchlistStrictValidation:
             "name": "Tech", "color": "blue", "items": [],
         }])
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_watchlist(payload, [], {})
+            _diff_watchlist(payload, [], {})
         assert "unknown field" in exc.value.hint
         assert "color" in exc.value.hint
 
@@ -522,7 +539,7 @@ class TestWatchlistStrictValidation:
             }],
         }])
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_watchlist(payload, [], {})
+            _diff_watchlist(payload, [], {})
         assert "target_price" in exc.value.hint
         assert "items[0]" in exc.value.field_path
 
@@ -532,7 +549,7 @@ class TestWatchlistStrictValidation:
             {"name": "Tech", "items": []},
         ])
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_watchlist(payload, [], {})
+            _diff_watchlist(payload, [], {})
         assert "duplicate watchlist name" in exc.value.hint
         assert exc.value.field_path == "watchlists[1].name"
 
@@ -545,7 +562,7 @@ class TestWatchlistStrictValidation:
             ],
         }])
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_watchlist(payload, [], {})
+            _diff_watchlist(payload, [], {})
         assert "duplicate item" in exc.value.hint
         assert "watchlists[0].items[1]" in exc.value.field_path
 
@@ -554,21 +571,21 @@ class TestWatchlistStrictValidation:
             {"name": "Tech", "items": [{"symbol": "AAPL", "instrument_type": "stock"}]},
             {"name": "Mega", "items": [{"symbol": "AAPL", "instrument_type": "stock"}]},
         ])
-        diff = io.parse_and_diff_watchlist(payload, [], {})
+        diff = _diff_watchlist(payload, [], {})
         assert len(diff.wl_inserts) == 2
         assert len(diff.item_inserts) == 2
 
     def test_empty_watchlist_name_rejected(self):
         payload = self._make_payload([{"name": "  ", "items": []}])
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_watchlist(payload, [], {})
+            _diff_watchlist(payload, [], {})
         assert exc.value.field_path == "watchlists[0].name"
         assert "empty" in exc.value.hint
 
     def test_overlong_watchlist_name_rejected(self):
         payload = self._make_payload([{"name": "X" * 101, "items": []}])
         with pytest.raises(UserDataValidationError) as exc:
-            io.parse_and_diff_watchlist(payload, [], {})
+            _diff_watchlist(payload, [], {})
         assert "too long" in exc.value.hint
 
 
@@ -702,28 +719,49 @@ class TestSuggestField:
         assert _suggest_field("totally_unrelated", allowed) is None
 
 
-class TestReadmePointer:
-    """`message` auto-appends a README pointer for schema/parse errors so the
-    agent has a path to recovery without us inlining the hint at every raise."""
+README = "/home/workspace/.agents/user/profile/README.md"
 
-    def test_schema_error_message_points_to_readme(self):
+
+class TestReadmePointer:
+    """`message` appends the README the refusing route names for schema/parse
+    errors, so the agent has a path to recovery without the hint at every raise."""
+
+    def test_schema_error_message_points_to_the_named_readme(self):
         exc = UserDataValidationError(
             error_type="schema_error",
             file="portfolio.json",
             field_path="holdings[0].quantity",
             hint="must be >= 0",
+            readme=README,
         )
-        assert "README.md" in exc.message
-        assert ".agents/user/profile/README.md" in str(exc)
+        assert exc.message == (
+            f"schema_error:portfolio.json:holdings[0].quantity: must be >= 0 "
+            f"See {README} for the fields and examples."
+        )
+        assert str(exc) == exc.message
 
-    def test_parse_error_message_points_to_readme(self):
+    def test_parse_error_message_points_to_the_named_readme(self):
         exc = UserDataValidationError(
             error_type="parse_error",
             file="watchlist.json",
             field_path="line 3 col 7",
             hint="invalid JSON",
+            readme=README,
         )
-        assert "README.md" in exc.message
+        assert exc.message.endswith(f" See {README} for the fields and examples.")
+
+    def test_a_multi_line_refusal_takes_the_pointer_on_its_own_line(self):
+        exc = UserDataValidationError(
+            error_type="schema_error", file="portfolio.json", field_path="", hint="one\ntwo", readme=README
+        )
+        assert exc.message.endswith(f"two\nSee {README} for the fields and examples.")
+
+    def test_no_pointer_until_a_route_names_its_readme(self):
+        """Only the route knows where the file is mounted."""
+        exc = UserDataValidationError(
+            error_type="schema_error", file="portfolio.json", field_path="", hint="bad"
+        )
+        assert "README.md" not in exc.message
 
     def test_version_conflict_does_not_point_to_readme(self):
         exc = UserDataValidationError(
@@ -731,6 +769,7 @@ class TestReadmePointer:
             file="portfolio.json",
             field_path="",
             hint="file was modified by another writer",
+            readme=README,
         )
         assert "README.md" not in exc.message
 
@@ -740,27 +779,90 @@ class TestReadmePointer:
             file="watchlist.json",
             field_path="watchlists[0].name",
             hint="duplicate key",
+            readme=README,
         )
         assert "README.md" not in exc.message
 
     def test_readme_self_referential_error_does_not_point_to_readme(self):
-        """Editing README.md → schema_error. Don't tell the agent to read README to fix it."""
+        """Editing README.md is a schema_error; reading README won't fix it."""
         exc = UserDataValidationError(
             error_type="schema_error",
             file="README.md",
             field_path="",
-            hint="is documentation, not data — it cannot be edited.",
+            hint="is documentation, not data; it can't be edited.",
+            readme=README,
         )
         assert "README.md" not in exc.message.removeprefix("schema_error:README.md:")
 
     def test_hint_field_unchanged(self):
-        """The README pointer goes on `.message` only — `.hint` is unchanged so
+        """The README pointer goes on `.message` only; `.hint` is unchanged so
         callers reading the structured field still get the original wording."""
         exc = UserDataValidationError(
             error_type="schema_error",
             file="portfolio.json",
             field_path="holdings[0]",
             hint="unknown field 'symbo'",
+            readme=README,
         )
         assert exc.hint == "unknown field 'symbo'"
-        assert "README.md" not in exc.hint
+        assert "README.md" in exc.message
+
+
+# ---------------------------------------------------------------------------
+# The write statements
+# ---------------------------------------------------------------------------
+
+
+class _Conn:
+    """A connection whose cursor records the statements issued on it."""
+
+    def __init__(self) -> None:
+        self.cursor_obj = MagicMock()
+        self.cursor_obj.execute = AsyncMock()
+
+    def statements(self) -> list[str]:
+        return [" ".join(call.args[0].split()) for call in self.cursor_obj.execute.await_args_list]
+
+
+@pytest.fixture
+def conn() -> _Conn:
+    return _Conn()
+
+
+class TestWrites:
+    @pytest.mark.asyncio
+    async def test_an_empty_diff_issues_nothing(self, conn):
+        await io.write_portfolio_diff(conn.cursor_obj, io.PortfolioDiff(), "user-1")
+        await io.write_watchlist_diff(conn.cursor_obj, io.WatchlistDiff(), "user-1")
+
+        conn.cursor_obj.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_portfolio_deletes_go_in_one_statement(self, conn):
+        await io.write_portfolio_diff(conn.cursor_obj, io.PortfolioDiff(deletes=["id-1", "id-2"]), "user-1")
+
+        assert conn.statements() == [
+            "DELETE FROM user_portfolios WHERE user_id = %s AND user_portfolio_id = ANY(%s)"
+        ]
+        assert conn.cursor_obj.execute.await_args.args[1] == ("user-1", ["id-1", "id-2"])
+
+    @pytest.mark.asyncio
+    async def test_watchlist_items_go_before_the_lists_that_hold_them(self, conn):
+        diff = io.WatchlistDiff(wl_deletes=["wl-1"], item_deletes=["item-1"])
+
+        await io.write_watchlist_diff(conn.cursor_obj, diff, "user-1")
+
+        assert [s.split(" WHERE")[0] for s in conn.statements()] == [
+            "DELETE FROM watchlist_items",
+            "DELETE FROM watchlists",
+        ]
+
+    @pytest.mark.parametrize(
+        ("current", "verb"), [(None, "INSERT"), ({"risk_preference": {}}, "UPDATE")], ids=["new", "existing"]
+    )
+    @pytest.mark.asyncio
+    async def test_preferences_insert_a_new_row_and_update_an_existing_one(self, conn, current, verb):
+        await io.write_preferences(conn.cursor_obj, {"risk_preference": {"tolerance": "low"}}, current, "user-1")
+
+        (statement,) = conn.statements()
+        assert statement.startswith(verb)

@@ -4,6 +4,7 @@ One file of the ComputerManager split; see the package __init__."""
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -179,21 +180,26 @@ class ProviderMixin:
             logger.warning(f"Disk reading failed for computer {computer_id}: {e}")
             return row, None
 
+    @asynccontextmanager
+    async def _computer_runtime(
+        self, computer: Dict[str, Any], sandbox_id: str
+    ) -> AsyncIterator[SandboxRuntime]:
+        """This worker's session runtime when it holds that sandbox, else a detached one."""
+        session = self._cached_session(str(computer["computer_id"]))
+        runtime = getattr(getattr(session, "sandbox", None), "runtime", None)
+        if runtime is not None and self._session_sandbox_id(session) == sandbox_id:
+            yield runtime
+            return
+        binding = self._binding_from_computer("", computer)
+        async with self._detached_runtime(sandbox_id, binding=binding) as detached:
+            yield detached
+
     async def _measure_disk(
         self, computer: Dict[str, Any], sandbox_id: str, breakdown: bool
     ) -> tuple[Dict[str, Any], Dict[str, int]]:
-        """Read off this worker's session when it holds that sandbox, else a detached runtime."""
-        computer_id = str(computer["computer_id"])
-        session = self._cached_session(computer_id)
-        runtime = getattr(getattr(session, "sandbox", None), "runtime", None)
-        if runtime is not None and self._session_sandbox_id(session) == sandbox_id:
+        async with self._computer_runtime(computer, sandbox_id) as runtime:
             return await self._read_and_record_disk(
                 computer, runtime, breakdown, sandbox_id=sandbox_id
-            )
-        binding = self._binding_from_computer("", computer)
-        async with self._detached_runtime(sandbox_id, binding=binding) as detached:
-            return await self._read_and_record_disk(
-                computer, detached, breakdown, sandbox_id=sandbox_id
             )
 
     async def _recent_breakdown(

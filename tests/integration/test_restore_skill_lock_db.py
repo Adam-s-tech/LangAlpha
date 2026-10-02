@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -35,8 +35,10 @@ async def test_a_restore_waits_out_a_pass_holding_nothing_backups_need(
     ws_id = str(seed_workspace["workspace_id"])
 
     async with workspace_skill_sync_lock(ws_id):
+        # A complete restore marks the sandbox populated, an empty one too.
+        sandbox = SimpleNamespace(aupload_file_bytes=AsyncMock(return_value=True))
         restore = asyncio.create_task(
-            restore_to_sandbox(ws_id, SimpleNamespace(), layout=_LAYOUT)
+            restore_to_sandbox(ws_id, sandbox, layout=_LAYOUT)
         )
         await asyncio.sleep(0.5)
         assert not restore.done()

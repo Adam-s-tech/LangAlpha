@@ -8,7 +8,7 @@ from typing import Any, Protocol, Sequence
 
 import structlog
 
-from ptc_agent.agent.backends.results import EditTextResult
+from ptc_agent.agent.backends.results import EditTextResult, WriteTextResult
 from ptc_agent.agent.backends.sandbox import SandboxBackend
 
 logger = structlog.get_logger(__name__)
@@ -28,7 +28,9 @@ class FilesystemRoute(Protocol):
         self, file_path: str, offset: int = 0, limit: int = 2000
     ) -> str | None: ...
 
-    async def awrite_text(self, file_path: str, content: str) -> bool: ...
+    async def awrite_text(
+        self, file_path: str, content: str
+    ) -> bool | WriteTextResult: ...
 
     async def aedit_text(
         self,
@@ -111,6 +113,10 @@ class CompositeFilesystemBackend:
             raise AttributeError(name)
         return getattr(sandbox, name)
 
+    def route_for(self, path: str) -> FilesystemRoute | None:
+        """The mounted route that owns ``path``, or None where the sandbox does."""
+        return self._route_for(self.normalize_path(path))
+
     def _route_for(self, normalized_path: str) -> FilesystemRoute | None:
         for route in self._routes:
             prefix = route.root_prefix
@@ -136,7 +142,9 @@ class CompositeFilesystemBackend:
             return await route.aread_range(normalized, offset, limit)
         return await self._sandbox.aread_range(normalized, offset, limit)
 
-    async def awrite_text(self, file_path: str, content: str) -> bool:
+    async def awrite_text(
+        self, file_path: str, content: str
+    ) -> bool | WriteTextResult:
         normalized = self.normalize_path(file_path)
         route = self._route_for(normalized)
         if route is not None:

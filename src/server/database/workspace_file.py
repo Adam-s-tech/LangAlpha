@@ -187,6 +187,9 @@ async def get_files_for_workspace(
     *,
     include_content: bool = False,
     all_kinds: bool = False,
+    under: Optional[str] = None,
+    outside: Optional[str | tuple[str, ...]] = None,
+    paths: Optional[List[str]] = None,
     conn=None,
 ) -> List[Dict[str, Any]]:
     """
@@ -204,6 +207,10 @@ async def get_files_for_workspace(
         workspace_id: Workspace UUID
         include_content: Whether to include content_text and content_binary
         all_kinds: Include directory and symlink rows
+        under: Only the row for this directory and rows beneath it
+        outside: Every row except those ``under`` would select for this
+            path, or for any of these paths
+        paths: Only these exact paths
         conn: Optional database connection to reuse
 
     Returns:
@@ -226,17 +233,29 @@ async def get_files_for_workspace(
                 kind, symlink_target
             """
 
-        kind_filter = "" if all_kinds else "AND kind = 'file'"
+        filters = "" if all_kinds else "AND kind = 'file'"
+        params: list[Any] = [workspace_id]
+        # starts_with, not LIKE: these are real directory names, and an
+        # underscore in one is a LIKE wildcard.
+        if under is not None:
+            filters += " AND (file_path = %s OR starts_with(file_path, %s))"
+            params += [under, under + "/"]
+        for excluded in (outside,) if isinstance(outside, str) else outside or ():
+            filters += " AND NOT (file_path = %s OR starts_with(file_path, %s))"
+            params += [excluded, excluded + "/"]
+        if paths is not None:
+            filters += " AND file_path = ANY(%s)"
+            params.append(list(paths))
 
         async def _execute(cur):
             await cur.execute(
                 f"""
                 SELECT {columns}
                 FROM workspace_files
-                WHERE workspace_id = %s {kind_filter}
+                WHERE workspace_id = %s {filters}
                 ORDER BY file_path ASC
                 """,
-                (workspace_id,),
+                params,
             )
             results = await cur.fetchall()
             return [dict(r) for r in results]
@@ -483,7 +502,9 @@ async def manifest_clock(*, conn=None) -> datetime:
 
 
 @asynccontextmanager
-async def workspace_sync_lock(workspace_id: str, *, conn=None):
+async def workspace_sync_lock(
+    workspace_id: str, *, wait: str = SYNC_LOCK_WAIT, conn=None
+):
     """Serialize manifest syncs for one workspace, and yield the session holding it.
 
     Session-level rather than transaction-level because a sync is not one
@@ -502,13 +523,13 @@ async def workspace_sync_lock(workspace_id: str, *, conn=None):
             # lock itself outlives the commit.
             async with conn.transaction():
                 async with conn.cursor() as cur:
-                    await cur.execute(f"SET LOCAL lock_timeout = '{SYNC_LOCK_WAIT}'")
+                    await cur.execute(f"SET LOCAL lock_timeout = '{wait}'")
                     await cur.execute(
                         "SELECT pg_advisory_lock(hashtextextended(%s, 0))", (key,)
                     )
         except LockNotAvailable as e:
             raise WorkspaceSyncBusy(
-                f"workspace {workspace_id} sync lock held for over {SYNC_LOCK_WAIT}"
+                f"workspace {workspace_id} sync lock held for over {wait}"
             ) from e
         except BaseException:
             # A cancellation or failure while the grant may already have

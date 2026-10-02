@@ -11,10 +11,19 @@ which is why nothing here hands it out as a default.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
 from ptc_agent.core.paths import SandboxLayout, WorkspaceLayout
+
+from src.server.database.workspace import get_workspace_dir_name
+from src.server.database.workspace_folders import (
+    WorkspaceFolderMoving,
+    is_top_level,
+    workspace_folder_in_use,
+)
 
 
 class WorkspaceLayoutUnavailable(RuntimeError):
@@ -119,3 +128,28 @@ async def resolve_workspace_layout(
 ) -> WorkspaceLayout:
     placement = await resolve_project_placement(workspace_id, root=root, conn=conn)
     return placement.layout
+
+
+@asynccontextmanager
+async def held_workspace_layout(
+    workspace_id: str, root: str
+) -> AsyncIterator[Optional[WorkspaceLayout]]:
+    """The workspace's folder, read under the folder hold and kept in place until exit.
+
+    A settle renames a folder whenever no hold covers it, so a folder read
+    earlier (at turn start, when a job was queued) may name one a sibling now
+    holds. Raises ``WorkspaceFolderMoving`` while a settle holds the folder or
+    left it staged: a file written to the staged path makes a folder the next
+    settle cannot tell from the one being moved. None when the row names no
+    folder at all.
+    """
+    async with workspace_folder_in_use(workspace_id):
+        try:
+            dir_name = await get_workspace_dir_name(workspace_id)
+        except Exception as e:
+            raise WorkspaceLayoutUnavailable(
+                f"Could not read the folder for workspace {workspace_id}: {e}"
+            ) from e
+        if dir_name and not is_top_level(dir_name):
+            raise WorkspaceFolderMoving(workspace_id)
+        yield SandboxLayout.for_root(root).for_workspace(dir_name) if dir_name else None

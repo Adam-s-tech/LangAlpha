@@ -10,6 +10,9 @@ the computer root, which is what an unsplit machine has always done.
 The provider surface carries no directory at all: nothing prepends a prelude to
 the submitted source, because a first line that is not the caller's costs a
 ``from __future__`` import and every traceback line number.
+
+A shell a tool call runs also starts tagged with that call's id, which the file
+mount reads to name the call a save through it belongs to.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ from ptc_agent.config.core import (
 from ptc_agent.core import paths as core_paths
 from ptc_agent.core.paths import SandboxLayout
 from ptc_agent.core.project_context import ProjectContext, set_project
+from ptc_agent.core.sandbox.livefs_runtime.protocol import CALL_ENV
 from ptc_agent.core.sandbox._shared import (
     _TURN_CWD_SOURCE,
     TURN_CWD_ENV,
@@ -149,6 +153,50 @@ class TestBash:
         assert any(f"cd {WORKSPACE}/work && pwd" in c for c in commands), commands
 
 
+class TestTheCallId:
+    """The mount reads a process's starting environment, and the shell's own
+    redirections are requests of the shell's pid, so the id goes on the
+    shell's start, not in an export inside it."""
+
+    @staticmethod
+    def _sent(runtime, background: bool) -> list[str]:
+        if background:
+            return [c.args[1] for c in runtime.session_execute.await_args_list]
+        return [c.args[0] for c in runtime.exec.await_args_list]
+
+    @pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
+    @pytest.mark.asyncio
+    async def test_a_command_with_no_call_id_runs_untagged(
+        self, sandbox, runtime, background
+    ):
+        await sandbox.execute_bash_command("pwd", background=background)
+
+        sent = self._sent(runtime, background)
+        assert not any(c.startswith("env ") for c in sent), sent
+        if background:
+            # Still a child shell, so the command's own `exit` cannot end the
+            # session's shell.
+            sent = [shlex.split(c)[2] for c in sent if c.startswith("bash -c ")]
+        assert any(c.endswith(f"cd {WORK_DIR} && pwd") for c in sent), sent
+
+    @pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
+    @pytest.mark.asyncio
+    async def test_a_call_id_starts_the_whole_command_in_a_tagged_shell(
+        self, sandbox, runtime, background
+    ):
+        command = "echo \"it's\" > 'my notes.md'"
+
+        await sandbox.execute_bash_command(
+            command, call_id="c0ffee00c0ffee00", background=background
+        )
+
+        sent = self._sent(runtime, background)
+        (tagged,) = [shlex.split(c) for c in sent if c.startswith("env ")]
+        assert tagged[:4] == ["env", f"{CALL_ENV}=c0ffee00c0ffee00", "bash", "-c"]
+        assert tagged[4].endswith(f"cd {WORK_DIR} && {command}")
+        assert len(tagged) == 5
+
+
 class TestTheShippedModule:
     """The env var only moves a process if ``site`` imports the module that reads it."""
 
@@ -196,7 +244,7 @@ class TestProviderSurface:
 
     @pytest.mark.asyncio
     async def test_daytona_code_run_sends_the_env_and_the_source_unchanged(self):
-        from ptc_agent.core.sandbox.providers.daytona import DaytonaRuntime
+        from ptc_agent.core.sandbox.providers.daytona_runtime import DaytonaRuntime
 
         inner = AsyncMock()
         inner.process.exec = AsyncMock(

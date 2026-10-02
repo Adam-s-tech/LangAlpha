@@ -69,8 +69,9 @@ def mock_db_connection(mock_connection):
     """
 
     @asynccontextmanager
-    async def _fake_get_db_connection():
-        yield mock_connection
+    async def _fake_get_db_connection(conn=None):
+        # A passed connection is yielded unchanged, as the real one does.
+        yield conn if conn is not None else mock_connection
 
     with patch(
         "src.server.database.pool.get_db_connection",

@@ -159,6 +159,7 @@ class SubagentCompiler:
             "user_profile": self._user_profile,
             **self._tool_gates(defn),
             **guidance_template_vars(self._guidance(defn)),
+            "files_mounted": self._sandbox is not None and self._sandbox.livefs is not None,
         }
         # Resolve the turn's own folder so workspace_paths renders it
         if self._sandbox is not None and hasattr(self._sandbox, "config"):

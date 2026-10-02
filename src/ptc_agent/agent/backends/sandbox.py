@@ -48,6 +48,7 @@ from deepagents.backends.protocol import (
 from ptc_agent.agent.backends.results import EditTextResult
 from ptc_agent.core.paths import resolve_agent_path
 from ptc_agent.core.sandbox import ExecutionResult, PTCSandbox
+from ptc_agent.core.sandbox.livefs_mount import MountHandle
 from ptc_agent.core.sandbox.runtime import PreviewInfo
 
 logger = structlog.get_logger(__name__)
@@ -98,6 +99,22 @@ class SandboxBackend(SandboxBackendProtocol):
     def id(self) -> str:
         """Return a stable identifier for this backend instance."""
         return self.sandbox.sandbox_id or "unknown"
+
+    @property
+    def livefs(self) -> MountHandle | None:
+        """The file mount serving the sandbox, or None while none does."""
+        return self.sandbox.livefs
+
+    async def settled_livefs(
+        self, workspace_id: str | None = None
+    ) -> MountHandle | None:
+        """The mount as a command in ``workspace_id`` finds it, or None when
+        it does not serve that folder: its links may still be going in when
+        the turn starts, and may not go in at all."""
+        mount = self.sandbox.livefs
+        if mount is None or not await mount.ready(workspace_id):
+            return None
+        return self.sandbox.livefs
 
     @property
     def workspace_dir(self) -> str:
@@ -401,7 +418,9 @@ class SandboxBackend(SandboxBackendProtocol):
         """Return files matching `pattern` under `path`."""
         normalized_path = self._normalize_path(path)
         try:
-            file_paths = await self.sandbox.aglob_files(pattern, normalized_path)
+            file_paths = await self.sandbox.aglob_files(
+                pattern, normalized_path, hide_history=True
+            )
         except Exception as exc:
             logger.debug("aglob failed", pattern=pattern, error=str(exc))
             return GlobResult(error=str(exc))
@@ -481,8 +500,13 @@ class SandboxBackend(SandboxBackendProtocol):
     # --- Path helpers (sync, pure delegation) ---
 
     def normalize_path(self, path: str) -> str:
-        """Convert a virtual/relative path to an absolute sandbox path."""
-        return self.sandbox.normalize_path(path)
+        """Convert a virtual/relative path to an absolute sandbox path.
+
+        Honors a pinned root like the file ops that resolve privately; the
+        text reads and writes go through here, and a pinned backend reading
+        from the ambient tier while it writes to its pin misses its own files.
+        """
+        return self._normalize_path(path)
 
     def virtualize_path(self, path: str) -> str:
         """Strip the working-directory prefix to produce an agent-visible path."""
@@ -585,7 +609,7 @@ class SandboxBackend(SandboxBackendProtocol):
 
     async def aglob_paths(self, pattern: str, path: str = ".") -> list[str]:
         """Return glob matches as a flat list of paths (no dataclass wrapper)."""
-        return await self.sandbox.aglob_files(pattern, path)
+        return await self.sandbox.aglob_files(pattern, path, hide_history=True)
 
     # --- Execution (bash + Python code) ---
 
@@ -597,6 +621,7 @@ class SandboxBackend(SandboxBackendProtocol):
         *,
         background: bool = False,
         thread_id: str | None = None,
+        call_id: str | None = None,
     ) -> dict[str, Any]:
         """Run a bash command with full PTCSandbox options (working_dir, background, thread_id).
 
@@ -608,6 +633,7 @@ class SandboxBackend(SandboxBackendProtocol):
             timeout=timeout,
             background=background,
             thread_id=thread_id,
+            call_id=call_id,
         )
 
     async def astop_background_command(self, command_id: str) -> bool:
@@ -623,13 +649,14 @@ class SandboxBackend(SandboxBackendProtocol):
         code: str,
         *,
         thread_id: str | None = None,
+        call_id: str | None = None,
     ) -> ExecutionResult:
         """Execute Python code in the sandbox (Jupyter-style).
 
         Distinct from `aexecute` (shell) — returns rich `ExecutionResult`
         with stdout/charts/mcp_trace.
         """
-        return await self.sandbox.execute(code, thread_id=thread_id)
+        return await self.sandbox.execute(code, thread_id=thread_id, call_id=call_id)
 
     # --- File transfer (single-file helpers used by ShowWidget) ---
 

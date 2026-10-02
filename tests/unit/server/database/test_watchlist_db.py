@@ -37,6 +37,11 @@ def mock_connection(mock_cursor):
         yield mock_cursor
 
     conn.cursor = _cursor_cm
+    @asynccontextmanager
+    async def _transaction_cm():
+        yield
+
+    conn.transaction = _transaction_cm
     return conn
 
 
@@ -112,9 +117,10 @@ async def test_create_watchlist(wl_mock_db, mock_cursor):
     result = await create_watchlist("user-1", "Tech Stocks")
 
     assert result["name"] == "Tech Stocks"
-    # Verify duplicate check was performed
-    first_sql = mock_cursor.execute.call_args_list[0][0][0]
-    assert "SELECT watchlist_id FROM watchlists" in first_sql
+    # The profile lock first, then the duplicate check under it
+    lock_sql, check_sql = (c[0][0] for c in mock_cursor.execute.call_args_list[:2])
+    assert "pg_advisory_xact_lock" in lock_sql
+    assert "SELECT watchlist_id FROM watchlists" in check_sql
 
 
 @pytest.mark.asyncio
@@ -227,7 +233,8 @@ async def test_get_or_create_default_watchlist_creates(wl_mock_db, mock_cursor):
 
     assert result["name"] == "Default"
     assert result["is_default"] is True
-    assert mock_cursor.execute.await_count == 2
+    # SELECT, then the profile lock and the INSERT
+    assert mock_cursor.execute.await_count == 3
 
 
 # ===========================================================================
@@ -256,7 +263,8 @@ async def test_create_watchlist_item(wl_mock_db, mock_cursor):
     )
 
     assert result["symbol"] == "AAPL"
-    assert mock_cursor.execute.await_count == 3
+    # The profile lock, then the two checks and the INSERT
+    assert mock_cursor.execute.await_count == 4
 
 
 @pytest.mark.asyncio

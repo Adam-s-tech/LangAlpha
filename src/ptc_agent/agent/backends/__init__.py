@@ -18,6 +18,7 @@ from .langgraph_store import (
     ReadOnlyStoreError,
     StoreBackend,
     lock_for_namespace,
+    namespace_write_lock,
     validate_store_key,
 )
 from .sandbox import SandboxBackend
@@ -48,6 +49,7 @@ __all__ = [
     "StoreBackend",
     "WorkflowsBackend",
     "lock_for_namespace",
+    "namespace_write_lock",
     "prebuilt_workflow_backend",
     "validate_store_key",
     "workflow_namespace",

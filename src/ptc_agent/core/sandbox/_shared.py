@@ -7,8 +7,7 @@ from typing import Any
 
 import structlog
 
-
-
+from .livefs_runtime import protocol as livefs_protocol
 
 logger = structlog.get_logger(__name__)
 
@@ -48,6 +47,12 @@ _TRANSFER_RUNTIME_SOURCE = Path(__file__).with_name("wsfiles_transfer_runtime.py
 #: silently staying at whatever version the sandbox booted with.
 SUPERVISOR_SANDBOX_PACKAGE = "supervisor"
 _SUPERVISOR_SOURCE_DIR = Path(__file__).with_name("supervisor_runtime")
+
+#: The file mount daemon, shipped the same way and for the same reason: its
+#: hash rides ``internal_packages``, and the daemon restarts itself when the
+#: shipped code no longer matches what it runs.
+LIVEFS_SANDBOX_PACKAGE = livefs_protocol.PACKAGE_NAME
+_LIVEFS_SOURCE_DIR = Path(__file__).with_name("livefs_runtime")
 
 #: ``site`` imports this by name at interpreter startup, which is how a turn's
 #: Python lands in its own workspace folder without a prelude prepended to the
@@ -127,6 +132,8 @@ def _internal_package_files(src_dir: Path) -> list[tuple[Path, Path]]:
             supervisor_file,
             Path(SUPERVISOR_SANDBOX_PACKAGE) / supervisor_file.name,
         ))
+    for livefs_file in sorted(_LIVEFS_SOURCE_DIR.glob("*.py")):
+        files.append((livefs_file, Path(LIVEFS_SANDBOX_PACKAGE) / livefs_file.name))
     for pkg in _SANDBOX_INTERNAL_PACKAGES:
         pkg_dir = (src_dir / pkg).resolve()
         if not pkg_dir.exists():

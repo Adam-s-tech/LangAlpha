@@ -20,6 +20,12 @@ from langchain_core.messages.human import HumanMessage
 from langchain_core.messages.utils import convert_to_messages
 
 from ptc_agent.agent.middleware._message_utils import message_id
+from ptc_agent.agent.transcript import TranscriptTarget
+from ptc_agent.agent.transcript.pointer import (
+    SummaryStart,
+    summary_resumes_at,
+    transcript_note,
+)
 from src.llms.attachment_payload import FILE_BLOCK_TYPES, IMAGE_BLOCK_TYPES
 from ptc_agent.agent.middleware.compaction.types import (
     CONTEXT_SUMMARY_PREFIX,
@@ -475,7 +481,7 @@ def truncate_read_results(
             # Compute the marker we'd insert
             marker: str | None = None
             if is_duplicate or is_non_critical:
-                marker = f"... [this tool call's read result was offloaded from {file_path} — use Read to access when needed]"
+                marker = read_offload_marker(file_path)
 
             # Skip if content already equals the marker (idempotent)
             if marker is not None and messages[msg_idx].content != marker:
@@ -502,6 +508,10 @@ def truncate_read_results(
     )
 
     return new_messages, True, offloaded_ids
+
+
+def read_offload_marker(file_path: str) -> str:
+    return f"... [this tool call's read result was offloaded from {file_path} — use Read to access when needed]"
 
 
 # =============================================================================
@@ -840,17 +850,19 @@ def resolve_cutoff_index(messages: Sequence[AnyMessage], event: Mapping[str, Any
     return cutoff
 
 
-# File-note suffix appended to the summary message content; the parser splits
-# on its stable prefix, so builder and parser can't drift apart.
-_SUMMARY_FILE_NOTE = "\n\nFull conversation history saved to `{file_path}`."
+# The note older checkpoints carry, which parse_summary_message still splits on
+# when a message predates the summary_length stamp.
+_LEGACY_FILE_NOTE = "\n\nFull conversation history saved to `"
 
 
 def build_summary_message(
     summary: str,
-    file_path: str | None = None,
+    transcript: TranscriptTarget | None = None,
     original_message_count: int = 0,
+    *,
+    resumes_at: SummaryStart | None = None,
 ) -> HumanMessage:
-    """Build the summary HumanMessage with optional file path reference.
+    """Build the summary HumanMessage, pointing at the transcript when there is one.
 
     Tags with lc_source='summarization' for chain filtering, and stamps the
     emit-time ``context_window`` summarize fields into ``additional_kwargs``
@@ -858,8 +870,8 @@ def build_summary_message(
     stream.
     """
     content = f"{CONTEXT_SUMMARY_PREFIX}{summary}"
-    if file_path is not None:
-        content += _SUMMARY_FILE_NOTE.format(file_path=file_path)
+    if transcript is not None:
+        content += transcript_note(transcript, resumes_at)
 
     return HumanMessage(
         content=content,
@@ -874,19 +886,50 @@ def build_summary_message(
     )
 
 
+def build_summary_event(
+    summary: str,
+    transcript: TranscriptTarget | None,
+    *,
+    raw_messages: list[AnyMessage],
+    preserved_messages: list[AnyMessage],
+    original_message_count: int,
+    to_summarize: Sequence[AnyMessage] = (),
+    summarized: Sequence[AnyMessage] = (),
+) -> CompactionEvent:
+    """The event putting ``summary`` in place of ``to_summarize``, pointing
+    at the transcript when there is one. ``summarized`` is what the model was
+    sent of them after trimming, which says where the summary starts."""
+    summary_message = build_summary_message(
+        summary,
+        transcript,
+        original_message_count,
+        resumes_at=(
+            summary_resumes_at(raw_messages, to_summarize, summarized)
+            if transcript is not None
+            else None
+        ),
+    )
+    return build_compaction_event(
+        raw_messages=raw_messages,
+        preserved_messages=preserved_messages,
+        summary_message=summary_message,
+        file_path=transcript.directory if transcript else None,
+    )
+
+
 def parse_summary_message(message: HumanMessage) -> str:
     """Recover the raw summary text from a ``build_summary_message`` message."""
     content = message.content if isinstance(message.content, str) else ""
     text = content.removeprefix(CONTEXT_SUMMARY_PREFIX)
-    # The exact length is stamped at build time — slice by it rather than
-    # string-splitting on the file note, which would mis-truncate a summary
-    # that itself contains the note text (reachable when file_path is None).
+    # The exact length is stamped at build time; slice by it rather than
+    # string-splitting on the note, which would mis-truncate a summary that
+    # itself contains the note text.
     stamped = message.additional_kwargs.get("summarize_complete") or {}
     length = stamped.get("summary_length")
     if isinstance(length, int) and 0 <= length <= len(text):
         return text[:length]
     # Legacy checkpoints without the stamp: fall back to note-prefix splitting.
-    return text.rsplit(_SUMMARY_FILE_NOTE.split("{", 1)[0], 1)[0]
+    return text.rsplit(_LEGACY_FILE_NOTE, 1)[0]
 
 
 # =============================================================================

@@ -731,6 +731,21 @@ class SessionLifecycleMixin:
                         reusing_sandbox=True,
                     )
                     mark("mcp_asset_sync")
+                    if (
+                        skills_signature is not None
+                        and session.skills_signature != skills_signature
+                    ):
+                        # The upload only fills the shared directory; this
+                        # workspace reaches a shared skill through a link the
+                        # reconciler lays. Without it, a skill added or switched
+                        # back on is listed this turn but cannot be read.
+                        await self._reconcile_skills(
+                            binding.workspace_id,
+                            workspace_user_id,
+                            session.sandbox,
+                            source="warm_skills_changed",
+                        )
+                        mark("skill_reconcile")
 
                 # Stamp only after successful sync so failures retain the retry signal.
                 if skills_signature is not None:

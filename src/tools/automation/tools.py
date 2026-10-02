@@ -22,8 +22,16 @@ from langchain_core.tools import tool
 from pydantic import ValidationError
 
 from src.server.database import automation as auto_db
-from src.server.handlers import automation_handler as auto_handler
-from src.server.models.automation import AutomationCreate
+from src.server.database import automation_executions as exec_db
+from src.server.services.automations import lifecycle
+from src.server.models.automation import (
+    AutomationCreate,
+    future_run,
+    in_own_thread,
+    parse_delivery,
+    run_time,
+    thread_fields,
+)
 from src.server.utils.error_sanitization import validation_error_text
 from src.utils.timezone_utils import zone_or_none
 
@@ -48,6 +56,15 @@ def _get_workspace_id(config: RunnableConfig) -> str | None:
     return configurable.get("workspace_id")
 
 
+def _thread(value: str, config: RunnableConfig) -> dict[str, Any]:
+    """The thread fields for ``value``; a refusal names the parameter, which
+    the shared message alone does not."""
+    try:
+        return thread_fields(value, config.get("configurable", {}).get("thread_id"))
+    except ValueError as exc:
+        raise ValueError(f"thread: {exc}") from None
+
+
 def _get_timezone(config: RunnableConfig) -> str:
     """Extract user timezone from the runnable config, defaulting to UTC."""
     configurable = config.get("configurable", {})
@@ -70,23 +87,24 @@ def _parse_schedule(schedule: str, tz: str) -> dict[str, Any]:
         Dict with trigger_type and either cron_expression or next_run_at.
 
     Raises:
-        ValueError: If schedule is neither valid cron nor valid ISO datetime.
+        ValueError: If schedule is neither valid cron nor valid ISO datetime,
+            or is a one-time run that has already passed.
     """
     try:
         croniter(schedule)
         return {"trigger_type": "cron", "cron_expression": schedule}
     except (ValueError, KeyError):
-        try:
-            dt = datetime.fromisoformat(schedule)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=zone_or_none(tz) or timezone.utc)
-            return {"trigger_type": "once", "next_run_at": dt}
-        except ValueError:
-            raise ValueError(
-                f"Invalid schedule: '{schedule}'. "
-                f"Use a cron expression (e.g. '0 9 * * 1-5') or "
-                f"ISO datetime (e.g. '2026-03-01T10:00:00')."
-            )
+        pass
+    try:
+        dt = run_time(schedule)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid schedule: {exc}. Use a cron expression (e.g. '0 9 * * 1-5') or "
+            "an ISO datetime (e.g. '2026-03-01T10:00:00')."
+        ) from None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=zone_or_none(tz) or timezone.utc)
+    return {"trigger_type": "once", "next_run_at": future_run(dt, tz)}
 
 
 def _disable_reason(automation: dict[str, Any]) -> dict[str, Any]:
@@ -202,10 +220,10 @@ async def check_automations(
         if not automation:
             return json.dumps({"error": f"Automation '{automation_id}' not found."}), {}
 
-        executions, _ = await auto_db.list_executions(
+        executions, _ = await exec_db.list_executions(
             user_id, automation_id=automation_id, limit=5
         )
-        exec_total = await auto_db.count_executions(automation_id)
+        exec_total = await exec_db.count_executions(automation_id)
 
         result = _serialize(
             {
@@ -313,27 +331,8 @@ async def create_automation(
         else:
             return json.dumps({"error": "Either schedule or trigger_config is required"}), {}
 
-        # Resolve thread strategy
-        thread_strategy = "new"
-        conversation_thread_id = None
-        if thread == "persistent":
-            thread_strategy = "continue"
-        elif thread == "current":
-            thread_strategy = "continue"
-            conversation_thread_id = config.get("configurable", {}).get("thread_id")
-
-        delivery_config = None
-        delivery_warning = None
-        if delivery:
-            delivery_config = {"methods": [m.strip() for m in delivery.split(",")]}
-            from src.config import settings
-            if not settings.AUTOMATION_WEBHOOK_URL:
-                delivery_warning = (
-                    "Delivery methods were saved, but AUTOMATION_WEBHOOK_URL is not configured. "
-                    "Delivery will not work until the webhook URL is set."
-                )
-
-        automation = await auto_handler.create_automation(
+        delivery_config = parse_delivery(delivery) if delivery else None
+        automation = await lifecycle.create_automation(
             user_id,
             AutomationCreate(
                 name=name,
@@ -342,11 +341,13 @@ async def create_automation(
                 agent_mode=_get_agent_mode(config),
                 timezone=tz,
                 workspace_id=_get_workspace_id(config),
-                thread_strategy=thread_strategy,
-                conversation_thread_id=conversation_thread_id,
+                **_thread(thread or "new", config),
                 delivery_config=delivery_config,
                 **trigger,
             ),
+        )
+        delivery_warning = lifecycle.delivery_warning(
+            delivery_config["methods"] if delivery_config else None
         )
 
         schedule_display = automation.get("cron_expression") or (
@@ -423,7 +424,7 @@ async def manage_automation(
             return {"error": error}
 
         if action == "pause":
-            result = await auto_handler.pause_automation(automation_id, user_id)
+            result = await lifecycle.pause_automation(automation_id, user_id)
             if not result:
                 return {"error": f"Automation '{automation_id}' not found."}
             return _serialize(
@@ -434,7 +435,7 @@ async def manage_automation(
             )
 
         elif action == "resume":
-            result = await auto_handler.resume_automation(automation_id, user_id)
+            result = await lifecycle.resume_automation(automation_id, user_id)
             if not result:
                 return {"error": f"Automation '{automation_id}' not found."}
             return _serialize(
@@ -446,7 +447,7 @@ async def manage_automation(
             )
 
         elif action == "trigger":
-            result = await auto_handler.trigger_automation(automation_id, user_id)
+            result = await lifecycle.trigger_automation(automation_id, user_id)
             return _serialize(result)
 
         elif action == "delete":
@@ -467,24 +468,20 @@ async def manage_automation(
             if remove_delivery:
                 update_data["delivery_config"] = {}
             elif delivery:
-                update_data["delivery_config"] = {
-                    "methods": [m.strip() for m in delivery.split(",")],
-                }
-                from src.config import settings
-                if not settings.AUTOMATION_WEBHOOK_URL:
-                    delivery_warning = (
-                        "Delivery methods were saved, but AUTOMATION_WEBHOOK_URL is not configured. "
-                        "Delivery will not work until the webhook URL is set."
-                    )
+                update_data["delivery_config"] = parse_delivery(delivery)
+                delivery_warning = lifecycle.delivery_warning(
+                    update_data["delivery_config"]["methods"]
+                )
             if thread is not None:
-                if thread == "new":
-                    update_data["thread_strategy"] = "new"
-                    update_data["conversation_thread_id"] = None
-                elif thread == "persistent":
-                    update_data["thread_strategy"] = "continue"
-                elif thread == "current":
-                    update_data["thread_strategy"] = "continue"
-                    update_data["conversation_thread_id"] = config.get("configurable", {}).get("thread_id")
+                thread_data = _thread(thread, config)
+                if thread == "persistent":
+                    current = await auto_db.get_automation(automation_id, user_id)
+                    if not current:
+                        return {"error": f"Automation '{automation_id}' not found."}
+                    # Restated, it keeps the thread its first run pinned.
+                    if in_own_thread(current):
+                        thread_data = {"thread_strategy": "continue"}
+                update_data.update(thread_data)
             if schedule is not None:
                 tz = _get_timezone(config)
                 schedule_info = _parse_schedule(schedule, tz)
@@ -500,7 +497,7 @@ async def manage_automation(
                     "name, description, instruction, schedule, thread, delivery."
                 }
 
-            result = await auto_handler.update_automation(
+            result = await lifecycle.update_automation(
                 automation_id, user_id, update_data
             )
             if not result:

@@ -181,8 +181,8 @@ class TestOtherRoutesStayOnTheComputer:
     @pytest.mark.parametrize(
         ("gate", "expected"),
         [
-            ("memo", f"{ROOT}/{MEMO_USER_DIR}/"),
-            ("user_data", f"{ROOT}/.agents/user/profile/"),
+            ("memo", {f"{ROOT}/{MEMO_USER_DIR}/"}),
+            ("user_data", {f"{ROOT}/.agents/user/profile/", f"{ROOT}/.agents/user/automations/"}),
         ],
     )
     def test_user_scoped_routes_are_not_moved_into_the_workspace(self, gate, expected):
@@ -191,4 +191,4 @@ class TestOtherRoutesStayOnTheComputer:
             gates=_gates(user_memory=False, workspace_memory=False, **{gate: True}),
         )
 
-        assert _prefixes(backend) == {expected}
+        assert _prefixes(backend) == expected

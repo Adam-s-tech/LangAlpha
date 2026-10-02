@@ -203,6 +203,9 @@ class BaselineContextMiddleware(AgentMiddleware):
         rebuild_after_updates: Durable rows since the last epoch that force a
             rebuild. Zero disables the safety valve.
         read_timeout_s: Ceiling on any one turn-boundary read.
+        files_mounted: Whether the file mount served as the agent was built,
+            which a rebuild freezes for the static prompt to state. None for
+            a build whose prompt says nothing about the mount.
     """
 
     def __init__(
@@ -222,9 +225,11 @@ class BaselineContextMiddleware(AgentMiddleware):
         model_name: str | None = None,
         rebuild_after_updates: int = DEFAULT_REBUILD_AFTER_UPDATES,
         read_timeout_s: float = _READ_TIMEOUT_S,
+        files_mounted: bool | None = None,
     ) -> None:
         super().__init__()
         self._session = session
+        self._files_mounted = files_mounted
         # None is a read that did not answer (or a build with no workspace);
         # an empty string is a workspace with no name. Only the first is kept
         # out of change detection, and ``sandbox_enabled`` below tells the two
@@ -381,6 +386,7 @@ class BaselineContextMiddleware(AgentMiddleware):
             profile_available=self._profile_available,
             workspace_available=self._workspace_available,
             workspace_configured=self._sandbox_enabled,
+            files_mounted=self._files_mounted,
         )
 
     async def _read_sources(self, state: Any) -> list[SourceRead]:

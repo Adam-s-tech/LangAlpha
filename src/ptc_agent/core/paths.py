@@ -8,6 +8,7 @@ these classes, preventing duplicate path definitions.
 from __future__ import annotations
 
 import posixpath
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import ClassVar
@@ -83,6 +84,7 @@ class SandboxLayout:
     MEMORY_USER_DIR: ClassVar[str] = ".agents/user/memory"
     MEMO_USER_DIR: ClassVar[str] = ".agents/user/memo"
     USER_PROFILE_DIR: ClassVar[str] = ".agents/user/profile"
+    AUTOMATIONS_DIR: ClassVar[str] = ".agents/user/automations"
     WORKFLOWS_DIR: ClassVar[str] = ".agents/workflows"
     TMP_DIR: ClassVar[str] = ".agents/tmp"
 
@@ -284,6 +286,8 @@ class WorkspaceLayout:
     # workspace takes it along instead of leaving it flat on the machine.
     THREADS_DIR: ClassVar[str] = ".agents/threads"
     LARGE_TOOL_RESULTS_DIR: ClassVar[str] = ".agents/large_tool_results"
+    # Rendered from each thread's checkpoint and served by the file mount.
+    TRANSCRIPTS_DIR: ClassVar[str] = ".agents/transcripts"
     AGENT_MD_FILE: ClassVar[str] = "agent.md"
     # Task directories sit directly in the folder; only the shared dataset
     # directory has a fixed name.
@@ -343,6 +347,10 @@ class WorkspaceLayout:
         return self.join(self.LARGE_TOOL_RESULTS_DIR)
 
     @property
+    def transcripts(self) -> str:
+        return self.join(self.TRANSCRIPTS_DIR)
+
+    @property
     def agent_md(self) -> str:
         return self.join(self.AGENT_MD_FILE)
 
@@ -355,6 +363,15 @@ class WorkspaceLayout:
         bound turn wants the absolute ``thread_dir`` instead.
         """
         return "/".join((WorkspaceLayout.THREADS_DIR, thread_id, *parts))
+
+    @staticmethod
+    def large_results_subdir(thread_id: str) -> str:
+        """A thread's evicted tool results, workspace-relative.
+
+        Outside ``thread_subdir`` on purpose: these are backed up, while thread
+        scratch is regenerable and is not.
+        """
+        return "/".join((WorkspaceLayout.LARGE_TOOL_RESULTS_DIR, thread_id))
 
     def thread_dir(self, thread_id: str) -> str:
         """One thread's scratch directory inside this folder, absolute."""
@@ -408,6 +425,18 @@ BACKUP_EXCLUDE_DIRS: frozenset[str] = frozenset({
     ".self-improve",
 })
 
+# Where the file mount links the user's server-held files in, workspace-
+# relative (every workspace folder holds all of them, as the root does). The
+# server is their only copy: a backup never reads them and a restore never
+# writes them, including rows an older manifest recorded before they were
+# mounted.
+MOUNTED_AGENT_SUBDIRS: tuple[str, ...] = (
+    SandboxLayout.USER_DIR,
+    SandboxLayout.WORKFLOWS_DIR,
+    WorkspaceLayout.MEMORY_DIR,
+    WorkspaceLayout.TRANSCRIPTS_DIR,
+)
+
 # Exclude ephemeral agent data from backup. Both tiers appear because the
 # names are matched workspace-relative and the two tiers can share a folder.
 # The tool package is here because every byte of it (wrappers, docs, config)
@@ -415,9 +444,7 @@ BACKUP_EXCLUDE_DIRS: frozenset[str] = frozenset({
 BACKUP_EXCLUDE_AGENT_SUBDIRS: tuple[str, ...] = (
     WorkspaceLayout.THREADS_DIR,
     WorkspaceLayout.TOOLS_DIR,
-    SandboxLayout.USER_DIR,
-    SandboxLayout.WORKFLOWS_DIR,
-    WorkspaceLayout.LARGE_TOOL_RESULTS_DIR,
+    *MOUNTED_AGENT_SUBDIRS,
 )
 
 # Virtual paths route through CompositeFilesystemBackend to LangGraph BaseStore,
@@ -432,12 +459,16 @@ MEMO_INDEX_FILENAME: str = "memo.md"
 # Writes fork shipped workflows into the user store, shadowing the shipped copy.
 WORKFLOW_DIR: str = SandboxLayout.WORKFLOWS_DIR
 
-# DB-backed user_portfolios, watchlists, watchlist_items, and user_preferences;
-# agent JSON writes validate and apply diffs atomically.
-USER_PROFILE_DATA_DIR: str = SandboxLayout.USER_PROFILE_DIR
-USER_PROFILE_PORTFOLIO_FILE: str = "portfolio.json"
-USER_PROFILE_WATCHLIST_FILE: str = "watchlist.json"
-USER_PROFILE_PREFERENCE_FILE: str = "preference.json"
+# The directories whose files are rows in Postgres, each beside a README.md:
+# the user's portfolio, watchlists and preferences under the fixed names in
+# USER_DATA_FILES, and one file per automation under a name the agent picks,
+# which AUTOMATION_FILE_NAME matches. The routes, the file panel and the
+# browser's path classifier all read these.
+USER_DATA_FILES: dict[str, tuple[str, ...]] = {
+    SandboxLayout.USER_PROFILE_DIR: ("portfolio.json", "watchlist.json", "preference.json"),
+}
+USER_DATA_DIRS: tuple[str, ...] = (SandboxLayout.USER_PROFILE_DIR, SandboxLayout.AUTOMATIONS_DIR)
+AUTOMATION_FILE_NAME = r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.json"
 
 HIDDEN_DIR_NAMES: frozenset[str] = frozenset({SandboxLayout.INTERNAL_DIR})
 
@@ -468,6 +499,23 @@ ALWAYS_HIDDEN_BASENAMES: tuple[str, ...] = (
     ".profile",
 )
 ALWAYS_HIDDEN_SUFFIXES: tuple[str, ...] = (".pyc",)
+
+#: How a thread's scratch, results and transcript directories are named: the
+#: first 8 characters of its id.
+THREAD_DIR_NAME = re.compile(r"^[0-9a-f]{8}$")
+
+# Not the backup exclusions: these hide harness scratch from the agent's globs,
+# while a backup skips mounted and regenerated trees. Keep them separate.
+# What the harness wrote about past turns: per-thread scratch (evicted messages,
+# truncated args, offloaded results, scripts) and the thread-less fallback for
+# large results. The agent reaches each through a pointer that names its path,
+# so its own broad globs skip them rather than drown project files in copies of
+# them. Matched as a child of .agents, so a project's own threads/ stays visible.
+AGENT_HISTORY_DIRS: tuple[str, ...] = (
+    WorkspaceLayout.THREADS_DIR,
+    WorkspaceLayout.LARGE_TOOL_RESULTS_DIR,
+    WorkspaceLayout.TRANSCRIPTS_DIR,
+)
 
 
 

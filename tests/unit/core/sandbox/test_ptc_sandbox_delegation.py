@@ -15,6 +15,7 @@ Covers:
 - close -> provider.close
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -285,13 +286,14 @@ class TestBackgroundBashTrace:
 
     @patch("ptc_agent.core.sandbox.ptc_sandbox.create_provider")
     @pytest.mark.asyncio
-    async def test_launch_injects_trace_env_and_records_path(
+    async def test_launch_injects_trace_env_named_after_the_session(
         self, mock_create_provider, mock_provider, mock_runtime
     ):
         from ptc_agent.core.sandbox.runtime import SessionCommandResult
 
         sandbox = self._sandbox(mock_create_provider, mock_provider, mock_runtime)
         mock_runtime.fetch_working_dir = AsyncMock(return_value="/home/workspace")
+        mock_runtime.list_sessions = AsyncMock(return_value=[])
         mock_runtime.create_session = AsyncMock()
         mock_runtime.session_execute = AsyncMock(
             return_value=SessionCommandResult(
@@ -305,39 +307,42 @@ class TestBackgroundBashTrace:
 
         # The executed bg command carries the MCP trace env (so a backgrounded
         # python script importing the wrappers records its calls) ...
+        session_id = mock_runtime.create_session.call_args.args[0]
         bg_cmd = mock_runtime.session_execute.call_args.args[1]
         assert "export MCP_TRACE_FILE=" in bg_cmd
         assert "export PYTHONPATH=" in bg_cmd
         assert "python long_job.py" in bg_cmd
-        # ... and the trace path is tracked under the returned cmd_id for harvest.
-        assert "cmd-xyz" in result["stdout"]
-        assert sandbox._bg_trace_paths.get("cmd-xyz", "").endswith(".jsonl")
+        # ... at a path any worker can derive from the command_id it returns.
+        assert f"{session_id}.jsonl" in bg_cmd
+        assert f"command_id: {session_id}" in result["stdout"]
+        # A child shell, so the command's own `exit` cannot end the session's
+        # shell before the exit code is recorded.
+        assert bg_cmd.startswith("bash -c ")
 
     @patch("ptc_agent.core.sandbox.ptc_sandbox.create_provider")
     @pytest.mark.asyncio
-    async def test_status_harvests_trace_once_on_completion(
+    async def test_status_harvests_trace_and_ends_session_on_completion(
         self, mock_create_provider, mock_provider, mock_runtime
     ):
         from ptc_agent.core.sandbox.runtime import SessionCommandResult
 
         sandbox = self._sandbox(mock_create_provider, mock_provider, mock_runtime)
-        sandbox._bg_sessions["cmd-1"] = "bg-bash_0001"
-        sandbox._bg_trace_paths["cmd-1"] = "/home/workspace/.system/trace/t.jsonl"
-        mock_runtime.session_command_logs = AsyncMock(
+        mock_runtime.session_logs = AsyncMock(
             return_value=SessionCommandResult(
-                cmd_id="cmd-1", exit_code=0, stdout="done", stderr=""
+                cmd_id="c", exit_code=0, stdout="done", stderr=""
             )
         )
+        mock_runtime.delete_session = AsyncMock()
         trace = [{"server": "marketdata", "tool": "quote", "result_sha256": "a" * 64}]
         with patch.object(
             sandbox, "_collect_mcp_trace", AsyncMock(return_value=trace)
         ) as collect:
-            result = await sandbox.get_background_command_status("cmd-1")
+            result = await sandbox.get_background_command_status("bg-0123456789ab")
 
-        collect.assert_awaited_once()
+        assert collect.await_args.args[0].endswith("/bg-0123456789ab.jsonl")
         assert result["mcp_trace"] == trace
-        # Trace path is consumed so a second status read can't re-emit it.
-        assert "cmd-1" not in sandbox._bg_trace_paths
+        assert result["found"] and result["stdout"] == "done"
+        mock_runtime.delete_session.assert_awaited_once_with("bg-0123456789ab")
 
     @patch("ptc_agent.core.sandbox.ptc_sandbox.create_provider")
     @pytest.mark.asyncio
@@ -347,46 +352,53 @@ class TestBackgroundBashTrace:
         from ptc_agent.core.sandbox.runtime import SessionCommandResult
 
         sandbox = self._sandbox(mock_create_provider, mock_provider, mock_runtime)
-        sandbox._bg_sessions["cmd-1"] = "bg-bash_0001"
-        sandbox._bg_trace_paths["cmd-1"] = "/home/workspace/.system/trace/t.jsonl"
-        mock_runtime.session_command_logs = AsyncMock(
+        mock_runtime.session_logs = AsyncMock(
             return_value=SessionCommandResult(
-                cmd_id="cmd-1", exit_code=None, stdout="...", stderr=""
+                cmd_id="c", exit_code=None, stdout="...", stderr=""
             )
         )
+        mock_runtime.delete_session = AsyncMock()
         with patch.object(
             sandbox, "_collect_mcp_trace", AsyncMock(return_value=[])
         ) as collect:
-            result = await sandbox.get_background_command_status("cmd-1")
+            result = await sandbox.get_background_command_status("bg-0123456789ab")
 
         collect.assert_not_awaited()
-        assert result["mcp_trace"] == []
-        # Still running → trace path retained for the eventual completion read.
-        assert "cmd-1" in sandbox._bg_trace_paths
+        mock_runtime.delete_session.assert_not_awaited()
+        assert result["is_running"] and result["mcp_trace"] == []
 
     @patch("ptc_agent.core.sandbox.ptc_sandbox.create_provider")
     @pytest.mark.asyncio
-    async def test_status_unknown_cmd_returns_empty_trace(
+    async def test_status_unknown_cmd_is_not_found(
         self, mock_create_provider, mock_provider, mock_runtime
     ):
         sandbox = self._sandbox(mock_create_provider, mock_provider, mock_runtime)
+        mock_runtime.session_logs = AsyncMock(return_value=None)
+        result = await sandbox.get_background_command_status("bg-0123456789ab")
+        assert result["found"] is False and result["mcp_trace"] == []
+        # An id that could not be a background session never reaches the sandbox.
+        mock_runtime.session_logs.reset_mock()
         result = await sandbox.get_background_command_status("nope")
-        assert result["mcp_trace"] == []
+        assert result["found"] is False
+        mock_runtime.session_logs.assert_not_called()
 
     @patch("ptc_agent.core.sandbox.ptc_sandbox.create_provider")
     @pytest.mark.asyncio
-    async def test_stop_drops_trace_mapping(
+    async def test_stop_drops_the_trace(
         self, mock_create_provider, mock_provider, mock_runtime
     ):
-        sandbox = self._sandbox(mock_create_provider, mock_provider, mock_runtime)
-        sandbox._bg_sessions["cmd-1"] = "bg-bash_0001"
-        sandbox._bg_trace_paths["cmd-1"] = "/home/workspace/.system/trace/t.jsonl"
-        mock_runtime.delete_session = AsyncMock()
+        from ptc_agent.core.sandbox import sessions
 
-        stopped = await sandbox.stop_background_command("cmd-1")
+        sandbox = self._sandbox(mock_create_provider, mock_provider, mock_runtime)
+        mock_runtime.delete_session = AsyncMock()
+        mock_runtime.exec = AsyncMock()
+
+        stopped = await sandbox.stop_background_command("bg-0123456789ab")
         assert stopped is True
-        # A stopped command yields no output, so nothing to attest — drop the map.
-        assert "cmd-1" not in sandbox._bg_trace_paths
+        # A stopped command yields no output, so nothing to attest. The rm
+        # follows the stop rather than holding it up.
+        await asyncio.gather(*list(sessions._housekeeping))
+        assert "bg-0123456789ab.jsonl" in mock_runtime.exec.call_args.args[0]
 
 
 class TestEgressRelayCredentialPush:

@@ -10,7 +10,7 @@ the shipped version again.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -20,6 +20,7 @@ from langgraph.store.memory import InMemoryStore
 from ptc_agent.agent.backends.langgraph_store import (
     MAX_CONTENT_BYTES,
     InvalidStoreKeyError,
+    ReadOnlyStoreError,
     StoreBackend,
     StoreContentTooLargeError,
 )
@@ -31,6 +32,11 @@ logger = structlog.get_logger(__name__)
 PREBUILT_READ_ONLY_ERROR = (
     "Pre-built workflows are read-only here. Sign in so writes can fork them "
     "into your own workflow tier."
+)
+
+PREBUILT_DELETE_ERROR = (
+    "Pre-built workflows ship with the product and cannot be deleted. Save a "
+    "script of the same name to replace it."
 )
 
 _WORKFLOW_TIER = "workflows"
@@ -162,6 +168,10 @@ class WorkflowsBackend:
     def root_prefix(self) -> str:
         return self._store.root_prefix
 
+    def is_writable(self, file_path: str) -> bool:
+        # A shipped script is writable too: the write forks it.
+        return True
+
     async def _saved_paths(self) -> set[str]:
         """Absolute paths the user tier owns — these shadow pre-builts.
 
@@ -218,7 +228,13 @@ class WorkflowsBackend:
             return None
         return await self._prebuilt.aread_range(file_path, offset, limit)
 
-    async def awrite_text(self, file_path: str, content: str) -> bool:
+    async def awrite_text(
+        self,
+        file_path: str,
+        content: str,
+        *,
+        check: Callable[[str | None], None] | None = None,
+    ) -> bool:
         # Refuse anything the REST surface could not address again — a row
         # saved under such a key is unreadable and undeletable for good.
         # Checked before the store is touched, so nothing is stranded.
@@ -238,7 +254,14 @@ class WorkflowsBackend:
                 f"Workflow script is {size} bytes; max is {cap}. Shorten the "
                 "script or push detail into the agents it dispatches."
             )
-        return await self._store.awrite_text(file_path, content)
+        # Where no save has forked it, the file a check sees is the shipped
+        # script, as a read serves it.
+        return await self._store.awrite_text(
+            file_path,
+            content,
+            check=check,
+            base_content=await self._prebuilt.aread_text(file_path),
+        )
 
     async def aedit_text(
         self,
@@ -261,6 +284,33 @@ class WorkflowsBackend:
             base_content=await self._prebuilt.aread_text(file_path),
             max_bytes=workflow_script_byte_cap(),
         )
+
+    async def adelete_text(
+        self, file_path: str, *, check: Callable[[str | None], None] | None = None
+    ) -> bool:
+        # Deleting a saved script exposes the shipped one of the same name
+        # again; a shipped script alone has nothing of the user's to delete.
+        if await self._store.adelete_text(file_path, check=check):
+            return True
+        if await self._prebuilt.aread_text(file_path) is not None:
+            raise ReadOnlyStoreError(PREBUILT_DELETE_ERROR)
+        return False
+
+    async def ais_deletable(self, file_path: str) -> bool:
+        """Whether ``adelete_text`` would answer rather than refuse, for a
+        caller that must know before it changes anything else.
+
+        Raises when the user tier cannot be listed: unlike a read, which
+        answers "no such file" then, this caller has no safe guess.
+        """
+        if await self._prebuilt.aread_text(file_path) is None:
+            return True
+        return file_path in await self._saved_paths()
+
+    async def aread_tree(self, path: str) -> dict[str, str]:
+        tree = await self._prebuilt.aread_tree(path)
+        tree.update(await self._store.aread_tree(path))
+        return tree
 
     async def aglob_paths(self, pattern: str, path: str = ".") -> list[str]:
         saved = await self._store.aglob_paths(pattern, path)

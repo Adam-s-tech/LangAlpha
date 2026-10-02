@@ -28,8 +28,6 @@ def _sandbox(kind: SandboxFailureKind, failure: Exception) -> PTCSandbox:
     under test.
     """
     sandbox = PTCSandbox.__new__(PTCSandbox)
-    sandbox._bg_sessions = {}
-    sandbox._bg_trace_paths = {}
     sandbox._preview_sessions = {}
     sandbox._preview_link_cache = {}
     sandbox.runtime = None

@@ -25,6 +25,8 @@ from ptc_agent.agent.backends import (
     prebuilt_workflow_backend,
     workflow_namespace,
 )
+from ptc_agent.agent.backends.automations import AutomationsBackend
+from ptc_agent.agent.backends.db_json_route import DbJsonRoute
 from ptc_agent.agent.backends.user_data import UserDataBackend
 from ptc_agent.agent.middleware.background_subagent.workflow.prebuilt import (
     get_prebuilt_workflows,
@@ -39,11 +41,25 @@ from ptc_agent.core.paths import (
     MEMO_USER_DIR,
     MEMORY_INDEX_FILENAME,
     MEMORY_USER_DIR,
-    USER_PROFILE_DATA_DIR,
     WORKFLOW_DIR,
     SandboxLayout,
     WorkspaceLayout,
 )
+from ptc_agent.core.sandbox.livefs_mount import CallContext
+
+# The routes that serve the user's database rows as files, one per directory
+# of ``USER_DATA_DIRS``.
+USER_DATA_ROUTES = (UserDataBackend, AutomationsBackend)
+
+
+def route_for(path: str) -> type[DbJsonRoute] | None:
+    """The route serving ``path`` (relative to the sandbox root), if it may
+    be one of the user's data files, whether or not one is there."""
+    directory, _, name = path.rpartition("/")
+    return next(
+        (r for r in USER_DATA_ROUTES if r.directory == directory and r.file_named(name) is not None),
+        None,
+    )
 
 
 @dataclass(frozen=True)
@@ -83,9 +99,9 @@ def resolve_identity_gates(
         user_memory=identified,
         workspace_memory=identified and bool(workspace_id),
         memo=identified,
-        # Independent of `store`: the user-profile data backend (portfolio +
-        # watchlist + preferences) talks to the application DB tables, not the
-        # LangGraph store.
+        # Independent of `store`: the user's data files (profile and
+        # automations) talk to the application DB tables, not the LangGraph
+        # store.
         user_data=bool(user_id),
         workflow=workflow,
         workflow_fs=workflow and identified,
@@ -105,6 +121,7 @@ def build_filesystem_backend(
     user_id: str | None,
     workspace_id: str | None,
     layout: WorkspaceLayout | None = None,
+    call: CallContext | None = None,
 ) -> tuple[Any, BaselineSources | None]:
     """Mount the store-backed routes over the sandbox filesystem.
 
@@ -115,8 +132,13 @@ def build_filesystem_backend(
 
     ``layout`` is the turn's workspace folder, which the workspace memory
     mount hangs off. Omitted, the workspace owns the computer root.
+    ``call`` is who the files are written for, which a new automation
+    defaults to: this workspace, this conversation for ``thread: "current"``,
+    and this clock, else the user's own.
     """
-    if not (gates.memory or gates.memo or gates.user_data or gates.workflow):
+    if not (
+        gates.memory or gates.memo or gates.user_data or gates.workflow
+    ):
         return backend, None
 
     # One cache per agent (≈ per request). Shared by every memory/memo
@@ -228,12 +250,14 @@ def build_filesystem_backend(
             routes.append(prebuilt_route)
 
     if gates.user_data:
-        routes.append(
-            UserDataBackend(
+        routes.extend(
+            route(
                 user_id=user_id,
+                call=call or CallContext(),
                 sandbox_backend=backend,
-                root_prefix=f"{sandbox_root}/{USER_PROFILE_DATA_DIR}/",
+                root_prefix=f"{sandbox_root}/{route.directory}/",
             )
+            for route in USER_DATA_ROUTES
         )
 
     if not routes:

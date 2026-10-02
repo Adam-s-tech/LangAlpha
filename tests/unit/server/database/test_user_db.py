@@ -37,6 +37,11 @@ def mock_connection(mock_cursor):
         yield mock_cursor
 
     conn.cursor = _cursor_cm
+    @asynccontextmanager
+    async def _transaction_cm():
+        yield
+
+    conn.transaction = _transaction_cm
     return conn
 
 

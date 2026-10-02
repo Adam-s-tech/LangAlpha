@@ -2313,6 +2313,75 @@ class TestJoiningARunningMachine(_Base):
 
 
 # ---------------------------------------------------------------------------
+# A warm session whose skills changed
+# ---------------------------------------------------------------------------
+
+
+class TestWarmSkillChange(_Base):
+    """The asset upload fills only the computer's shared skills directory.
+
+    A workspace reaches a shared skill through a link the reconciler lays, so a
+    warm turn after a skill is added or switched back on must reconcile too, or
+    the skill is listed that turn but cannot be read.
+    """
+
+    @staticmethod
+    async def _warm_sync(manager, session, *, mcp_changed):
+        session.sandbox.ensure_sandbox_ready = AsyncMock()
+        session.skills_signature = "before"
+        patches = (
+            ("_apply_session_platform_secret", AsyncMock()),
+            (
+                "_apply_session_mcp",
+                AsyncMock(return_value=MagicMock() if mcp_changed else None),
+            ),
+            ("_freeze_tool_view", MagicMock()),
+            ("tool_view", MagicMock()),
+            ("_servers_needing_discovery", MagicMock(return_value=[])),
+            ("_kick_mcp_discovery", MagicMock()),
+            ("_sync_sandbox_assets", AsyncMock()),
+            ("_reconcile_skills", AsyncMock()),
+        )
+        with ExitStack() as stack:
+            for name, new in patches:
+                stack.enter_context(patch.object(manager, name, new=new))
+            await manager._complete_phase2_sync(
+                _make_binding("ws-a"),
+                session,
+                workspace_user_id="user-1",
+                needs_sync=True,
+                needs_deferred_sync=False,
+                phase2_owner=True,
+                phase2_event=None,
+                mark=lambda _phase: None,
+                skills_signature="after" if not mcp_changed else "before",
+            )
+            return manager._sync_sandbox_assets, manager._reconcile_skills
+
+    @pytest.mark.asyncio
+    async def test_changed_skills_upload_then_relink(self):
+        manager = _make_manager()
+        session = _make_session()
+
+        upload, reconcile = await self._warm_sync(manager, session, mcp_changed=False)
+
+        upload.assert_awaited_once()
+        reconcile.assert_awaited_once()
+        assert reconcile.await_args.kwargs["source"] == "warm_skills_changed"
+        assert session.skills_signature == "after"
+
+    @pytest.mark.asyncio
+    async def test_an_mcp_only_change_does_not_reconcile_skills(self):
+        manager = _make_manager()
+        session = _make_session()
+
+        upload, reconcile = await self._warm_sync(manager, session, mcp_changed=True)
+
+        upload.assert_awaited_once()
+        reconcile.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
 # Folders on a shared machine
 # ---------------------------------------------------------------------------
 
@@ -2569,6 +2638,8 @@ class TestStartAnswersToEntitlement(_Base):
         manager._destroy_sandbox = AsyncMock()
         manager._apply_autostop_for_always_on = AsyncMock()
         manager._sync_machine_assets = AsyncMock()
+        manager._serve_livefs = AsyncMock()
+        manager._link_livefs_soon = MagicMock()
         manager._record_sync = MagicMock()
         manager._put_session = MagicMock()
         manager._clear_session = AsyncMock()
@@ -2966,6 +3037,30 @@ async def test_an_unfinished_skill_pass_is_retried_before_attach_is_remembered()
     assert manager._projects_attached
 
 @pytest.mark.asyncio
+async def test_a_workspace_the_bring_up_drops_during_its_attach_is_queued_again():
+    """The bring-up the restore queued runs at the attach's next await and may
+    drop the workspace (its folder began a move), discarding its key. The
+    attach must not put the key back, or no later acquisition queues it."""
+    manager = _make_manager()
+    manager._projects_attached.clear()
+    session = TestEveryProjectsToolOverlay._joining()
+    with _attaching(manager, session) as reached:
+        restore = manager._maybe_restore_files
+        synced = reached.sync.side_effect
+
+        async def dropped_meanwhile(*args, **kwargs):
+            manager._projects_attached.clear()
+            return await synced(*args, **kwargs)
+
+        reached.sync.side_effect = dropped_meanwhile
+        await manager.get_session_for_workspace("ws-joiner", user_id="user-1")
+        assert not manager._projects_attached
+        await manager.get_session_for_workspace("ws-joiner", user_id="user-1")
+
+    assert restore.await_count == 2
+    assert manager._projects_attached
+
+@pytest.mark.asyncio
 async def test_layout_failure_is_not_downgraded_to_best_effort_asset_sync():
     from ptc_agent.core.sandbox.migration import LayoutMigrationError
 
@@ -3104,6 +3199,39 @@ async def test_stopped_replacement_drops_the_reading_of_the_sandbox_it_replaced(
         await manager._replace_stopped_sandbox(binding, "original", claim_id="c-1", disk_guard=None, origin_workspace_id=None, user_id="user-1")
     clear.assert_awaited_once_with(binding.computer_id, sandbox_id="original")
     assert order == (["clear"] if gone else ["destroy", "clear"])
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_computers_backup_brings_no_mount_up():
+    """Its session stops once the files are saved, and no revoke follows, so
+    a token minted for it would stay live on a stopped computer."""
+    # The tests above stub the sync on the shared instance.
+    ComputerManager.reset_instance()
+    manager = _make_manager()
+    binding = _make_binding(provider_ref="original")
+    sandbox = SimpleNamespace(
+        sync_sandbox_assets=AsyncMock(return_value=SimpleNamespace(layout_version=4))
+    )
+    session = SimpleNamespace(initialize=AsyncMock(), stop=AsyncMock(), sandbox=sandbox)
+    manager._root_owner_folder = AsyncMock(return_value=None)
+    manager._stamp_layout_version = AsyncMock()
+    manager._backup_machine_files_to_db = AsyncMock()
+    manager._destroy_sandbox = AsyncMock()
+    manager._serve_livefs = AsyncMock()
+    manager._link_livefs_soon = MagicMock()
+    with (
+        patch(f"{_MACHINES}.sandbox_skill_sync_params", AsyncMock(return_value={})),
+        patch(f"{_MACHINES}.get_workspace_dir_names_for_computer", AsyncMock(return_value=())),
+        patch("src.server.services.computer_manager._spec.Session", return_value=session),
+        patch("src.server.services.computer_manager._spec.try_claim_computer_for_start", AsyncMock(return_value={"status": "starting"})),
+        patch("src.server.services.computer_manager._spec.update_computer_status", AsyncMock()),
+        patch("src.server.services.computer_manager._spec.heartbeat_computer_spec_change", AsyncMock(return_value=True)),
+        patch("src.server.services.computer_manager._spec.clear_computer_disk", AsyncMock()),
+    ):
+        await manager._replace_stopped_sandbox(binding, "original", claim_id="c-1", disk_guard=None, origin_workspace_id=None, user_id="user-1")
+    sandbox.sync_sandbox_assets.assert_awaited_once()
+    manager._serve_livefs.assert_not_awaited()
+    manager._link_livefs_soon.assert_not_called()
 
 
 @pytest.mark.asyncio

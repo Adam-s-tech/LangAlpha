@@ -5,7 +5,9 @@ import {
   Newspaper, Brain, User, FileBarChart, Clock, ClipboardList, Zap, Settings, Terminal,
   Sparkles, BookText, BookMarked, BookPlus, PenLine, Eye, Plug,
 } from 'lucide-react';
-import { classifyAgentPath, topicFromMemoryKey, type AgentPathInfo } from '../utils/agentPaths';
+import {
+  classifyAgentPath, topicFromMemoryKey, type AgentPathInfo, type UserDataEntity,
+} from '../utils/agentPaths';
 import { directToolDisplayName, parseDirectToolName, summarizeDirectToolArgs } from '../utils/directTools';
 import { INTERVAL_LABEL } from '@/lib/bars';
 import { LARGE_TOOL_RESULTS_PREFIX } from './filePanel/fileMeta';
@@ -140,8 +142,7 @@ export function getDisplayName(
     if (info.kind === 'memo') {
       return t ? t('toolArtifact.tool.memo') : 'Memo';
     }
-    if (info.kind === 'user-profile') {
-      // entity is 'portfolio' | 'watchlist' | 'preference' — i18n key per entity.
+    if (info.kind === 'user-data') {
       return t ? t(`toolArtifact.tool.${info.entity}`) : entityLabel(info.entity);
     }
   }
@@ -153,9 +154,10 @@ export function getDisplayName(
 }
 
 /** Title-case fallback when no `t` is supplied (tests, server-rendered logs). */
-function entityLabel(entity: 'portfolio' | 'watchlist' | 'preference'): string {
+function entityLabel(entity: UserDataEntity): string {
   if (entity === 'portfolio') return 'Portfolio';
   if (entity === 'watchlist') return 'Watchlist';
+  if (entity === 'automations') return 'Automations';
   return 'Preference';
 }
 
@@ -175,7 +177,9 @@ export function getToolIcon(rawToolName: string, args?: ToolCallArgs): LucideIco
       // though current backend rules make this read-only by design).
       return FILE_WRITE_TOOLS.has(rawToolName) ? BookPlus : BookText;
     }
-    if (info.kind === 'user-profile') return User;
+    // Automations take the glyph check_automations uses, so the file and the
+    // tool read as one surface.
+    if (info.kind === 'user-data') return info.entity === 'automations' ? Clock : User;
   }
   if (parseDirectToolName(rawToolName)) return Plug;
   return TOOL_DISPLAY_CONFIG[rawToolName]?.icon || Wrench;
@@ -244,11 +248,11 @@ export function getInProgressText(rawToolName: string, toolCall: ToolCall | unde
         return tr?.('updatingMemoSlug', { slug: info.key }) ?? `updating memo ${info.key}...`;
       }
     }
-    if (info.kind === 'user-profile') {
-      // Write and Edit both surface as "updating" — UserDataBackend treats
-      // either as an upsert against the canonical DB row(s), so the user-
-      // facing verb is the same.
-      const entity = info.entity;
+    if (info.kind === 'user-data') {
+      const { entity } = info;
+      // Write and Edit both surface as "updating": UserDataBackend and
+      // AutomationsBackend apply either as changes to the canonical DB rows,
+      // so the user-facing verb is the same.
       if (rawToolName === 'Read') {
         return tr?.(`reading_${entity}`) ?? `reading ${entity}...`;
       }
@@ -397,10 +401,11 @@ export function getCompletedSummary(toolName: string, toolCall: ToolCall | undef
       if (info.isIndex) return null;
       return info.key || null;
     }
-    if (info.kind === 'user-profile') {
-      // Row title already says "Read portfolio" / "Updated watchlist" — no
-      // extra pill needed (would duplicate the entity name).
-      return null;
+    if (info.kind === 'user-data') {
+      // A profile row's title already names its file ("Read portfolio").
+      // Automations are one file each, so the pill says which one.
+      if (info.entity !== 'automations') return null;
+      return info.rawPath.split('/').pop()?.replace(/\.json$/, '') || null;
     }
   }
   // Annotation steps: headline reads "NVDA · 1D" — the chart instance the draw
@@ -497,8 +502,8 @@ export function getCompletedRowTitle(
         return t ? t('toolArtifact.completed.updatedMemo') : 'Updated memo';
       }
     }
-    if (info.kind === 'user-profile') {
-      const entity = info.entity;
+    if (info.kind === 'user-data') {
+      const { entity } = info;
       if (toolName === 'Read') {
         return t ? t(`toolArtifact.completed.read_${entity}`) : `Read ${entity}`;
       }
@@ -526,6 +531,8 @@ export type ToolCategory =
                   // generic "read N memos" framing.)
   | 'profileRead'   // Read on .agents/user/profile/{portfolio,watchlist,preference}.json
   | 'profileWrite'  // Write/Edit on the same paths
+  | 'automationsRead'   // Read on an automation's file in .agents/user/automations/
+  | 'automationsWrite'  // Write/Edit on the same paths
   | 'code'
   | 'web'
   | 'search'      // Glob, Grep
@@ -544,8 +551,10 @@ export function categorizeTool(toolName: string, toolCall: ToolCall | undefined)
     if (info.kind === 'memo') {
       return FILE_WRITE_TOOLS.has(toolName) ? 'memoWrite' : 'memo';
     }
-    if (info.kind === 'user-profile') {
-      return FILE_WRITE_TOOLS.has(toolName) ? 'profileWrite' : 'profileRead';
+    if (info.kind === 'user-data') {
+      const write = FILE_WRITE_TOOLS.has(toolName);
+      if (info.entity === 'automations') return write ? 'automationsWrite' : 'automationsRead';
+      return write ? 'profileWrite' : 'profileRead';
     }
     // info.kind === 'file' (a known file tool but path is generic) falls
     // through to the per-tool bucketing below.

@@ -318,8 +318,8 @@ async def _handle_update(
                 content=(
                     f"Error: Task-{target_task_id} finished "
                     f"({meta_status}) before the follow-up could be "
-                    f"delivered. Check its output with "
-                    f"action='output', or use action='resume' to "
+                    f"delivered. Read its result with "
+                    f"TaskOutput(task_id='{target_task_id}'), or use action='resume' to "
                     f"continue it with new instructions."
                 ),
                 tool_call_id=tool_call_id,

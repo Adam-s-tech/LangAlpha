@@ -2,6 +2,8 @@
 // agentPaths.generated.ts. Re-exported here so callers keep one import.
 import {
   AGENT_MD_FILE,
+  AUTOMATION_FILE_NAME,
+  AUTOMATIONS_DIR,
   CASEFOLD_EXCEPTIONS,
   MEMO_INDEX_FILENAME,
   MEMO_USER_DIR,
@@ -10,8 +12,8 @@ import {
   MEMORY_WORKSPACE_DIR,
   SANDBOX_ROOT_PREFIXES,
   SKILLS_DIR,
-  USER_PROFILE_DIR,
-  USER_PROFILE_FILES,
+  USER_DATA_DIRS,
+  USER_DATA_FILES,
 } from './agentPaths.generated';
 
 export {
@@ -22,25 +24,50 @@ export {
   MEMORY_USER_DIR,
   MEMORY_WORKSPACE_DIR,
   SKILLS_DIR,
-  USER_PROFILE_DIR,
-  USER_PROFILE_FILES,
+  USER_DATA_FILES,
 };
 
-export type UserProfileEntity = keyof typeof USER_PROFILE_FILES;
+type UserDataFileName = (typeof USER_DATA_FILES)[keyof typeof USER_DATA_FILES][number];
+type WithoutJson<F> = F extends `${infer Name}.json` ? Name : never;
 
-/** The schema documentation file the agent reads to learn the JSON shapes.
- *  Treated as chatter and hidden from the chat timeline. */
-export const USER_PROFILE_README_FILENAME = 'README.md';
+/** Which DB-backed user file a path names: a profile file's name without
+ *  `.json`, or `automations` for any automation's file. */
+export type UserDataEntity = WithoutJson<UserDataFileName> | 'automations';
+
+const USER_DATA_ENTITY_BY_PATH: ReadonlyMap<string, UserDataEntity> = new Map(
+  Object.entries(USER_DATA_FILES as Record<string, readonly UserDataFileName[]>).flatMap(
+    ([dir, files]) => files.map(
+      (file): [string, UserDataEntity] => [`${dir}/${file}`, file.replace(/\.json$/, '') as UserDataEntity],
+    ),
+  ),
+);
+
+/** The schema documentation file the agent reads to learn the JSON shapes of
+ *  the DB-backed user files. Treated as chatter and hidden from the chat
+ *  timeline. */
+export const USER_DATA_README_FILENAME = 'README.md';
+const USER_DATA_README_PATHS = new Set(
+  USER_DATA_DIRS.map((dir) => `${dir}/${USER_DATA_README_FILENAME}`),
+);
+
+function userDataEntity(norm: string): UserDataEntity | undefined {
+  const fixed = USER_DATA_ENTITY_BY_PATH.get(norm);
+  if (fixed) return fixed;
+  const name = norm.startsWith(`${AUTOMATIONS_DIR}/`) ? norm.slice(AUTOMATIONS_DIR.length + 1) : '';
+  return AUTOMATION_FILE_NAME.test(name) ? 'automations' : undefined;
+}
 
 /**
- * True when `rawPath` resolves to `.agents/user/profile/README.md` under any of
- * the prefixes the agent emits (relative, absolute sandbox root, `file://`,
- * `__wsref__/<wsid>/...`). Used by the chat timeline to suppress the agent's
- * "Read schema doc" calls — they're not user-actionable.
+ * True when `rawPath` resolves to the README beside a DB-backed user file
+ * (`.agents/user/profile/README.md`, `.agents/user/automations/README.md`)
+ * under any of the prefixes the agent emits (relative, absolute sandbox root,
+ * `file://`, `__wsref__/<wsid>/...`).
+ * Used by the chat timeline to suppress the agent's "Read schema doc" calls:
+ * they're not user-actionable.
  */
-export function isUserProfileReadmePath(rawPath: string): boolean {
+export function isUserDataReadmePath(rawPath: string): boolean {
   if (!rawPath) return false;
-  return workspaceRelativePath(rawPath) === `${USER_PROFILE_DIR}/${USER_PROFILE_README_FILENAME}`;
+  return USER_DATA_README_PATHS.has(workspaceRelativePath(rawPath));
 }
 
 /**
@@ -212,7 +239,7 @@ export function normalizeAgentHref(raw: string): string {
   return parseAgentHref(raw).path;
 }
 
-export type AgentPathKind = 'memory' | 'memo' | 'user-profile' | 'skill' | 'file';
+export type AgentPathKind = 'memory' | 'memo' | 'user-data' | 'skill' | 'file';
 export type MemoryTier = 'user' | 'workspace';
 
 export interface MemoryPathInfo {
@@ -246,10 +273,9 @@ export interface SkillPathInfo {
   crossWorkspaceId?: string;
 }
 
-export interface UserProfilePathInfo {
-  kind: 'user-profile';
-  /** Which of the three entities this path targets. */
-  entity: UserProfileEntity;
+export interface UserDataPathInfo {
+  kind: 'user-data';
+  entity: UserDataEntity;
   rawPath: string;
   /** Workspace id extracted from a `__wsref__/<wsid>/...` cross-workspace ref. */
   crossWorkspaceId?: string;
@@ -263,7 +289,7 @@ export interface FilePathInfo {
 export type AgentPathInfo =
   | MemoryPathInfo
   | MemoPathInfo
-  | UserProfilePathInfo
+  | UserDataPathInfo
   | SkillPathInfo
   | FilePathInfo;
 
@@ -358,16 +384,11 @@ export function classifyAgentPath(rawPath: string): AgentPathInfo {
       crossWorkspaceId,
     };
   }
-  if (norm.startsWith(`${USER_PROFILE_DIR}/`)) {
-    const tail = norm.slice(USER_PROFILE_DIR.length + 1);
-    // Match the bare basename (no subdirs handled — UserDataBackend only
-    // serves the three known files at the prefix).
-    const entity = (Object.entries(USER_PROFILE_FILES) as [UserProfileEntity, string][])
-      .find(([, filename]) => filename === tail)?.[0];
-    if (entity) {
-      return { kind: 'user-profile', entity, rawPath, crossWorkspaceId };
-    }
-    // Unknown user/profile path → fall through to generic file.
+  // Only the data files themselves: the README beside them, and any other name
+  // in those directories, stays a generic file.
+  const entity = userDataEntity(norm);
+  if (entity) {
+    return { kind: 'user-data', entity, rawPath, crossWorkspaceId };
   }
   if (norm.startsWith(`${SKILLS_DIR}/`)) {
     const tail = norm.slice(SKILLS_DIR.length + 1);
@@ -398,9 +419,6 @@ export interface AgentArtifactRouting {
   targetMemoryTier: MemoryTier | null;
   /** `''` (empty string) means open Memo tab without selecting; null means no memo target. */
   targetMemoKey: string | null;
-  /** When set, opens the Files tab on the user-profile JSON file (served virtually
-   *  by workspace_files via UserDataBackend). Mutually exclusive with the others. */
-  targetUserProfile: UserProfileEntity | null;
   /** True when the routing must clear filePanelWorkspaceId (user-scoped artifact). */
   clearWorkspaceId: boolean;
   /** Workspace id to set on filePanelWorkspaceId (only for cross-workspace file links). */
@@ -430,13 +448,7 @@ export function computeAgentArtifactRouting(
   const info = classifyAgentPath(routedPath);
   // Caller-supplied wsid wins; otherwise fall back to the wsid extracted from
   // a `__wsref__/...` marker in the path itself.
-  const embeddedWsid =
-    info.kind === 'memory'
-    || info.kind === 'memo'
-    || info.kind === 'skill'
-    || info.kind === 'user-profile'
-      ? info.crossWorkspaceId
-      : undefined;
+  const embeddedWsid = info.kind === 'file' ? undefined : info.crossWorkspaceId;
   const resolvedWsid = targetWorkspaceId ?? embeddedWsid ?? null;
 
   const base: AgentArtifactRouting = {
@@ -444,7 +456,6 @@ export function computeAgentArtifactRouting(
     targetMemoryKey: null,
     targetMemoryTier: null,
     targetMemoKey: null,
-    targetUserProfile: null,
     clearWorkspaceId: false,
     setWorkspaceId: null,
     targetDirectory: null,
@@ -489,13 +500,12 @@ export function computeAgentArtifactRouting(
       clearWorkspaceId: true,
     };
   }
-  if (info.kind === 'user-profile') {
-    // User-profile data is user-scoped (not workspace-scoped), so clear any
-    // stale filePanelWorkspaceId from a prior cross-workspace click — same
-    // pattern as user-tier memory.
+  if (info.kind === 'user-data') {
+    // The DB-backed user files are user-scoped (not workspace-scoped), so
+    // clear any stale filePanelWorkspaceId from a prior cross-workspace click,
+    // the same pattern as user-tier memory.
     return {
       ...base,
-      targetUserProfile: info.entity,
       targetFile: routedPath,
       clearWorkspaceId: true,
     };

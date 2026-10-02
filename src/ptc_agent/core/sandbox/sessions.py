@@ -6,8 +6,10 @@ semantics are unchanged.
 """
 
 import asyncio
+import re
 import shlex
 import uuid
+from collections.abc import Coroutine
 from typing import Any
 
 import structlog
@@ -115,9 +117,9 @@ async def start_preview_server(
         )
     except Exception as e:
         if "already exists" in str(e).lower():
-            # Stale session from a previous server process — delete and
+            # Stale session from a previous server process: delete and
             # recreate to avoid inheriting a running command from the old
-            # session (same pattern as _create_bg_session).
+            # session.
             try:
                 await sandbox._runtime_call(
                     sandbox.runtime.delete_session,
@@ -250,103 +252,103 @@ async def start_and_get_preview_url(
         return await sandbox.get_preview_url(port, expires_in=expires_in)
 
 
-async def _evict_finished_bg_sessions(sandbox: "PTCSandbox") -> None:
-    """Evict finished background sessions to stay under the cap."""
+# A background command runs in its own session, named at random: several
+# workers start them on one sandbox, so the session list on the sandbox is the
+# record, and its name is the command_id the agent reads it back by.
+_BG_PREFIX = "bg-"
+_BG_ID = re.compile(r"^bg-[0-9a-f]{12}$")
+# Deletes in flight at once when the cap evicts, so a full sandbox clears in a
+# few round trips without a burst against the provider's rate limit.
+_EVICT_CONCURRENCY = 4
+
+# Cleanup that no caller waits on. The set only holds each task until it ends,
+# so it is not collected mid-flight; nothing reads it.
+_housekeeping: set[asyncio.Task[None]] = set()
+
+
+def _in_background(cleanup: Coroutine[Any, Any, None]) -> None:
+    task = asyncio.create_task(cleanup)
+    _housekeeping.add(task)
+    task.add_done_callback(_housekeeping.discard)
+
+
+def bg_trace_path(sandbox: "PTCSandbox", session_id: str) -> str:
+    """Where a background command's MCP trace goes, derived from its id so
+    whichever worker sees it finish can harvest it."""
+    return f"{sandbox.layout.system_trace}/{session_id}.jsonl"
+
+
+async def _drop_bg_traces(sandbox: "PTCSandbox", session_ids: list[str]) -> None:
     assert sandbox.runtime is not None
-    # Collect finished sessions (skip sentinel keys)
-    finished: list[str] = []
-    for cmd_id, sid in list(sandbox._bg_sessions.items()):
-        if cmd_id.startswith("_pending:"):
-            continue
-        try:
-            result = await sandbox._runtime_call(
-                sandbox.runtime.session_command_logs,
-                sid, cmd_id,
-                retry_policy=RetryPolicy.SAFE,
-            )
-            if result.exit_code is not None:
-                finished.append(cmd_id)
-        except Exception:
-            # Can't check status (e.g. sandbox restarted) — treat as
-            # finished to avoid zombie entries that permanently block the cap.
-            finished.append(cmd_id)
-    # Delete finished sessions. A finished command's MCP trace is normally
-    # harvested by the BashOutput that observes completion (provenance is
-    # attributed to that observation). A command that finished but was never
-    # observed before the cap forced eviction has no tool-call surface to
-    # attribute its trace to, so it's dropped — log it so the rare provenance
-    # gap is observable, not silent. (Faithful harvest-on-evict would need a
-    # deferred-trace channel keyed to the original launch; out of scope here.)
-    for cmd_id in finished:
-        dropped_trace = sandbox._bg_trace_paths.pop(cmd_id, None)
-        if dropped_trace:
-            logger.info(
-                "Evicting finished bg session with unharvested MCP trace",
-                cmd_id=cmd_id,
-            )
-            # The pop above drops the last host-side reference to this trace,
-            # so delete the JSONL now — otherwise it leaks on the sandbox
-            # until teardown (no later path knows the filename to reap it).
-            try:
-                await sandbox._runtime_call(
-                    sandbox.runtime.exec,
-                    f"rm -f {shlex.quote(dropped_trace)}",
-                    retry_policy=RetryPolicy.SAFE,
-                )
-            except Exception:
-                logger.debug("Evict bg trace cleanup failed", path=dropped_trace)
-        sid = sandbox._bg_sessions.pop(cmd_id, None)
-        if sid:
-            try:
-                await sandbox._runtime_call(
-                    sandbox.runtime.delete_session, sid,
-                    retry_policy=RetryPolicy.SAFE,
-                )
-            except Exception:
-                logger.debug("Evict bg session failed", session_id=sid)
-
-
-async def _create_bg_session(sandbox: "PTCSandbox", label: str) -> str:
-    """Create a dedicated session for a background command.
-
-        Each background command gets its own Daytona session so blocking
-        commands don't prevent subsequent ones from executing.
-        Evicts finished sessions when the cap is reached.
-        """
-    await sandbox._wait_ready()
-    assert sandbox.runtime is not None
-
-    # Evict finished sessions if at or above the cap
-    active_count = sum(1 for k in sandbox._bg_sessions if not k.startswith("_pending:"))
-    if active_count >= sandbox._MAX_BG_SESSIONS:
-        await sandbox._evict_finished_bg_sessions()
-
-    session_id = f"bg-{label}"
+    paths = " ".join(shlex.quote(bg_trace_path(sandbox, sid)) for sid in session_ids)
     try:
         await sandbox._runtime_call(
-            sandbox.runtime.create_session,
-            session_id,
-            retry_policy=RetryPolicy.SAFE,
+            sandbox.runtime.exec, f"rm -f {paths}", retry_policy=RetryPolicy.SAFE
         )
-    except Exception as e:
-        if "already exists" in str(e).lower():
-            # Stale session from a previous run — delete and recreate
-            # to avoid inheriting env/state from the old session
-            try:
-                await sandbox._runtime_call(
-                    sandbox.runtime.delete_session,
-                    session_id,
-                    retry_policy=RetryPolicy.SAFE,
-                )
-                await sandbox._runtime_call(
-                    sandbox.runtime.create_session,
-                    session_id,
-                    retry_policy=RetryPolicy.SAFE,
-                )
-            except Exception:
-                logger.debug("Stale bg session cleanup failed, reusing", session_id=session_id)
-        else:
-            raise
+    except Exception:
+        logger.debug("Background trace cleanup failed", session_ids=session_ids)
+
+
+async def _delete_bg_session(sandbox: "PTCSandbox", session_id: str, event: str) -> None:
+    assert sandbox.runtime is not None
+    try:
+        await sandbox._runtime_call(
+            sandbox.runtime.delete_session, session_id, retry_policy=RetryPolicy.SAFE
+        )
+    except FileNotFoundError:
+        pass  # Another worker's read or eviction got there first.
+    except Exception as exc:
+        logger.warning(event, session_id=session_id, error=str(exc))
+
+
+async def _evict_finished_bg_sessions(sandbox: "PTCSandbox", launched: str) -> None:
+    """Past the cap, delete the background sessions whose command has finished.
+
+        Runs after ``launched`` is created, so it never counts or deletes that
+        one; a launch elsewhere at the same moment can leave the cap one over.
+        A finished command nobody read loses its output and its MCP trace here:
+        with no tool call to attribute the trace to, it is dropped, and logged
+        so the gap is visible.
+        """
+    assert sandbox.runtime is not None
+    try:
+        sessions = await sandbox._runtime_call(
+            sandbox.runtime.list_sessions, retry_policy=RetryPolicy.SAFE
+        )
+        others = [
+            s for s in sessions
+            if s.session_id.startswith(_BG_PREFIX) and s.session_id != launched
+        ]
+        if len(others) < sandbox._MAX_BG_SESSIONS:
+            return
+        finished = [s.session_id for s in others if not s.running]
+        if not finished:
+            return
+        logger.info("Evicting finished background sessions", count=len(finished))
+        gate = asyncio.Semaphore(_EVICT_CONCURRENCY)
+
+        async def evict(session_id: str) -> None:
+            async with gate:
+                await _delete_bg_session(sandbox, session_id, "Evict bg session failed")
+
+        await asyncio.gather(
+            *(evict(sid) for sid in finished), _drop_bg_traces(sandbox, finished)
+        )
+    except Exception:
+        logger.debug("Background session eviction skipped", exc_info=True)
+
+
+async def _create_bg_session(sandbox: "PTCSandbox") -> str:
+    """A fresh session for one background command, so a blocking command
+    doesn't hold up the next. Evicting at the cap follows the launch rather
+    than holding it up."""
+    await sandbox._wait_ready()
+    assert sandbox.runtime is not None
+    session_id = f"{_BG_PREFIX}{uuid.uuid4().hex[:12]}"
+    await sandbox._runtime_call(
+        sandbox.runtime.create_session, session_id, retry_policy=RetryPolicy.SAFE
+    )
+    _in_background(_evict_finished_bg_sessions(sandbox, session_id))
     return session_id
 
 
@@ -357,54 +359,45 @@ async def get_background_command_status(sandbox: "PTCSandbox", cmd_id: str) -> d
             cmd_id: Command ID returned when the background command was started.
 
         Returns:
-            Dict with keys: success, is_running, exit_code, stdout, stderr, cmd_id.
+            Dict with keys: found, success, is_running, exit_code, stdout,
+            stderr, cmd_id, mcp_trace.
         """
     await sandbox._wait_ready()
     assert sandbox.runtime is not None
 
-    session_id = sandbox._bg_sessions.get(cmd_id)
-    if not session_id:
+    result: SessionCommandResult | None = None
+    if _BG_ID.match(cmd_id):
+        result = await sandbox._runtime_call(
+            sandbox.runtime.session_logs, cmd_id, retry_policy=RetryPolicy.SAFE
+        )
+    if result is None:
         return {
+            "found": False,
             "success": False,
             "is_running": False,
             "exit_code": None,
             "stdout": "",
-            "stderr": "No background session found for this command",
+            "stderr": "",
             "cmd_id": cmd_id,
             "mcp_trace": [],
         }
-
-    result: SessionCommandResult = await sandbox._runtime_call(
-        sandbox.runtime.session_command_logs,
-        session_id,
-        cmd_id,
-        retry_policy=RetryPolicy.SAFE,
-    )
     is_running = result.exit_code is None
 
-    # Harvest the backgrounded command's MCP provenance trace exactly once,
-    # when it finishes. This rides the same status path that returns the
-    # command's output to the agent, so there's no result-bearing path that
-    # skips provenance (the stop action returns no output). Best-effort.
+    # Harvest the backgrounded command's MCP provenance trace when it
+    # finishes. This rides the same status path that returns the command's
+    # output to the agent, so there's no result-bearing path that skips
+    # provenance (the stop action returns no output). Best-effort.
     mcp_trace: list[dict] = []
-
-    # Auto-clean: if the command finished (e.g. killed via pkill), tear
-    # down the orphaned session so it doesn't leak on the Daytona side.
     if not is_running:
-        trace_path = sandbox._bg_trace_paths.pop(cmd_id, None)
-        if trace_path:
-            mcp_trace = await sandbox._collect_mcp_trace(trace_path)
-        sid = sandbox._bg_sessions.pop(cmd_id, None)
-        if sid:
-            try:
-                await sandbox._runtime_call(
-                    sandbox.runtime.delete_session, sid,
-                    retry_policy=RetryPolicy.SAFE,
-                )
-            except Exception:
-                logger.debug("Auto-clean bg session failed", session_id=sid)
+        # The output is returned now, so the session has done its job; the
+        # trace lives outside the session, so the two need no order.
+        mcp_trace, _ = await asyncio.gather(
+            sandbox._collect_mcp_trace(bg_trace_path(sandbox, cmd_id)),
+            _delete_bg_session(sandbox, cmd_id, "Auto-clean bg session failed"),
+        )
 
     return {
+        "found": True,
         "success": not is_running and result.exit_code == 0,
         "is_running": is_running,
         "exit_code": result.exit_code,
@@ -418,27 +411,23 @@ async def get_background_command_status(sandbox: "PTCSandbox", cmd_id: str) -> d
 async def stop_background_command(sandbox: "PTCSandbox", cmd_id: str) -> bool:
     """Stop a background command by deleting its session.
 
-        Returns True if the session was found and deleted.
+        Returns True if the session was found and deleted, False if there was
+        none. A delete that fails raises: the command may still be running.
         """
-    session_id = sandbox._bg_sessions.get(cmd_id)
-    if not session_id:
+    if not _BG_ID.match(cmd_id):
         return False
     await sandbox._wait_ready()
     assert sandbox.runtime is not None
-    # Drop the trace mapping (the ephemeral sandbox FS owns the file itself).
-    # A stopped command yields no output, so there's nothing to attest.
-    sandbox._bg_trace_paths.pop(cmd_id, None)
     try:
         await sandbox._runtime_call(
-            sandbox.runtime.delete_session,
-            session_id,
-            retry_policy=RetryPolicy.SAFE,
+            sandbox.runtime.delete_session, cmd_id, retry_policy=RetryPolicy.SAFE
         )
-    except Exception:
-        logger.warning("Failed to delete bg session", session_id=session_id)
-        sandbox._bg_sessions.pop(cmd_id, None)
+    except FileNotFoundError:
+        # Providers report a session that isn't there this way: never
+        # started, or finished and already read.
         return False
-    sandbox._bg_sessions.pop(cmd_id, None)
+    # A stopped command yields no output, so there's nothing to attest.
+    _in_background(_drop_bg_traces(sandbox, [cmd_id]))
     return True
 
 

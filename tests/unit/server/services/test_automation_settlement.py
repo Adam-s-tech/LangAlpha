@@ -89,6 +89,7 @@ def _settlement(row):
     )
     with (
         patch(f"{_MOD}.auto_db", new=fx.db),
+        patch(f"{_MOD}.exec_db", new=fx.db),
         patch(f"{_MOD}.WebhookClient", return_value=MagicMock(fire_event=fx.fire)),
         patch(f"{_MOD}.publish_automation_wait", new=fx.announce),
         patch(f"{_MOD}.safe_add", new=fx.metric),
@@ -547,7 +548,7 @@ def _sweep(run_row):
     )
     with (
         patch(f"{_MOD}.settle", new=fx.settle),
-        patch(f"{_MOD}.auto_db.get_settling_run", new=fx.get_run),
+        patch(f"{_MOD}.exec_db.get_settling_run", new=fx.get_run),
         patch(f"{_MOD}.read_run_excerpt", new=fx.excerpt),
     ):
         yield fx

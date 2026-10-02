@@ -103,23 +103,26 @@ CLAIM_SQL = """
      WHERE user_id = %s AND sha256 = ANY(%s) AND condemned_at IS NOT NULL
 """
 
-# Every column a manifest row can reference a blob through: its own object, or
-# the pack chunk it is a member of. Written against a ``workspace_file_blobs
-# b``; the condemn pass, the reap re-check and the orphan report must agree on
-# it exactly. A row references a registry entry only through a workspace of
-# the same user, since that user's object is the one the row's bytes are in.
-# Two EXISTS rather than one OR so each side can use its partial index.
+# Every column a row can reference a blob through: a manifest row's own object
+# or the pack chunk it is a member of, and a stored thread transcript file.
+# Written against a ``workspace_file_blobs b``; the condemn pass, the reap
+# re-check and the orphan report must agree on it exactly. A row references a
+# registry entry only under the same user, since that user's object is the
+# one the row's bytes are in. One EXISTS per column rather than one OR so each
+# side can use its own index.
 REFERENCED_SQL = (
     "(EXISTS (SELECT 1 FROM workspace_files f"
     " JOIN workspaces w ON w.workspace_id = f.workspace_id"
     " WHERE f.blob_sha256 = b.sha256 AND w.user_id = b.user_id)"
     " OR EXISTS (SELECT 1 FROM workspace_files f"
     " JOIN workspaces w ON w.workspace_id = f.workspace_id"
-    " WHERE f.pack_sha256 = b.sha256 AND w.user_id = b.user_id))"
+    " WHERE f.pack_sha256 = b.sha256 AND w.user_id = b.user_id)"
+    " OR EXISTS (SELECT 1 FROM thread_transcript_files t"
+    " WHERE t.sha256 = b.sha256 AND t.user_id = b.user_id))"
 )
 
 # The manifest side of the same relation: an unaliased ``workspace_files``
 # predicate for a row whose bytes live in object storage. It enumerates the
-# same two pointer columns as REFERENCED_SQL, so a third one has to land in
-# both.
+# same two ``workspace_files`` columns as REFERENCED_SQL, so a third one
+# there has to land in both.
 BLOB_BACKED_SQL = "(blob_sha256 IS NOT NULL OR pack_sha256 IS NOT NULL)"

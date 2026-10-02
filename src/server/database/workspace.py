@@ -19,6 +19,7 @@ from src.server.database.computer import (
     COMPUTER_STATUSES,
     get_computer,
 )
+from src.server.database.livefs_links import drop_workspace_links
 from src.server.database.mcp_servers import start_new_workspace_selection
 from src.server.database.pool import get_db_connection
 from src.server.database.sql_fences import (
@@ -275,6 +276,26 @@ async def get_workspace(
         raise
 
 
+async def get_workspace_placement(workspace_id: str) -> Optional[Dict[str, Any]]:
+    """A live workspace's owner, computer and folder: what the file mount
+    checks on every request under a workspace, without the full row."""
+    workspace_id = normalize_uuid(workspace_id)
+    if workspace_id is None:
+        return None
+
+    async with _ws_cursor() as cur:
+        await cur.execute(
+            """
+            SELECT workspace_id, user_id, computer_id, dir_name
+            FROM workspaces
+            WHERE workspace_id = %s AND status != 'deleted'
+            """,
+            (workspace_id,),
+        )
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
 async def get_workspace_identity(workspace_id: str) -> Optional[Dict[str, Any]]:
     """Avoid large JSONB reads on every cached-session validation.
 
@@ -443,6 +464,14 @@ async def bind_workspace_to_computer(
                 },
             )
             row = await cur.fetchone()
+            if row is not None:
+                # A move takes the mount's links on the computer left with
+                # it: a folder made there again, should the workspace come
+                # back, holds none until a link lays them, and every worker's
+                # next turn there reads it so.
+                await drop_workspace_links(
+                    cur, workspace_id, keep_computer_id=computer_id
+                )
             if row is not None and row.get("dir_name"):
                 await release_former_folder(
                     cur, computer_id=computer_id, workspace_id=workspace_id, folder=row["dir_name"]
@@ -1354,6 +1383,9 @@ async def delete_workspace(
                     await retire_workspace_grants(
                         cur, workspace_id, result.get("computer_id")
                     )
+                    # No worker may serve the folder as linked once the
+                    # tombstone is visible: a settle clears it.
+                    await drop_workspace_links(cur, workspace_id)
 
         if result:
             logger.info(f"Deleted workspace: {workspace_id}")

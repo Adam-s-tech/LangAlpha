@@ -92,6 +92,14 @@ class SessionCommandResult:
 
 
 @dataclass
+class SessionState:
+    """A session on the machine, and whether a command in it is still running."""
+
+    session_id: str
+    running: bool
+
+
+@dataclass
 class Artifact:
     """An artifact produced by code execution (e.g. a chart image)."""
 
@@ -203,6 +211,18 @@ class SandboxRuntime(ABC):
         command, because one computer holds several workspace folders and the
         turn, not the machine, decides which of them is its."""
         ...
+
+    async def exec_as_root(
+        self, command: str, timeout: int = 60, env: dict[str, str] | None = None
+    ) -> ExecResult:
+        """``exec`` as root, for work the sandbox's own user must not be able
+        to do, such as mounting. ``env`` reaches that command alone, so a
+        secret in it is in no file and no command line. A runtime whose
+        commands already run as root and take no environment keeps this
+        default, which refuses one."""
+        if env:
+            raise NotImplementedError(f"{type(self).__name__} takes no exec environment")
+        return await self.exec(command, timeout)
 
     @abstractmethod
     async def code_run(
@@ -316,6 +336,15 @@ class SandboxRuntime(ABC):
         self, session_id: str, command_id: str
     ) -> SessionCommandResult:
         """Get stdout/stderr logs of a session command."""
+        raise NotImplementedError("Sessions not supported by this runtime")
+
+    async def session_logs(self, session_id: str) -> SessionCommandResult | None:
+        """Logs and exit code of the session's latest command, or None when the
+        session does not exist."""
+        raise NotImplementedError("Sessions not supported by this runtime")
+
+    async def list_sessions(self) -> list[SessionState]:
+        """Every session on the machine."""
         raise NotImplementedError("Sessions not supported by this runtime")
 
     async def delete_session(self, session_id: str) -> None:

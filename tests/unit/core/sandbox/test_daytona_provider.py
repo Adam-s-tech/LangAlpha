@@ -61,7 +61,7 @@ class TestDaytonaRuntime:
 
     @pytest.fixture
     def runtime(self, mock_sdk_sandbox):
-        from ptc_agent.core.sandbox.providers.daytona import DaytonaRuntime
+        from ptc_agent.core.sandbox.providers.daytona_runtime import DaytonaRuntime
 
         return DaytonaRuntime(mock_sdk_sandbox)
 
@@ -81,7 +81,7 @@ class TestDaytonaRuntime:
 
     @pytest.mark.asyncio
     async def test_upload_file_delegates(self, runtime, mock_sdk_sandbox):
-        from ptc_agent.core.sandbox.providers.daytona import _FS_TIMEOUT_S
+        from ptc_agent.core.sandbox.providers.daytona_runtime import _FS_TIMEOUT_S
 
         await runtime.upload_file(b"data", "/path/file.txt")
         mock_sdk_sandbox.fs.upload_file.assert_called_once()
@@ -92,7 +92,7 @@ class TestDaytonaRuntime:
 
     @pytest.mark.asyncio
     async def test_upload_files_delegates(self, runtime, mock_sdk_sandbox):
-        from ptc_agent.core.sandbox.providers.daytona import _FS_TIMEOUT_S
+        from ptc_agent.core.sandbox.providers.daytona_runtime import _FS_TIMEOUT_S
 
         await runtime.upload_files([(b"a", "/a.txt"), (b"b", "/b.txt")])
         mock_sdk_sandbox.fs.upload_files.assert_called_once()
@@ -103,7 +103,7 @@ class TestDaytonaRuntime:
 
     @pytest.mark.asyncio
     async def test_download_file_delegates(self, runtime, mock_sdk_sandbox):
-        from ptc_agent.core.sandbox.providers.daytona import _FS_TIMEOUT_S
+        from ptc_agent.core.sandbox.providers.daytona_runtime import _FS_TIMEOUT_S
 
         data = await runtime.download_file("/path/file.txt")
         mock_sdk_sandbox.fs.download_file.assert_called_once_with(
@@ -217,6 +217,48 @@ class TestDaytonaRuntime:
         assert meta["id"] == "daytona-123"
         assert meta["working_dir"] == "/home/workspace"
 
+    @pytest.mark.asyncio
+    async def test_finished_command_output_is_read_after_its_status(
+        self, runtime, mock_sdk_sandbox
+    ):
+        # Logs fetched alongside the status that shows the command finished
+        # may predate its last write, so the ones returned come after it.
+        process = mock_sdk_sandbox.process
+        process.execute_session_command = AsyncMock(return_value=MagicMock(cmd_id="c1"))
+        process.get_session = AsyncMock(
+            return_value=MagicMock(commands=[MagicMock(id="c1", exit_code=0)])
+        )
+        process.get_session_command_logs = AsyncMock(
+            side_effect=[MagicMock(stdout="partial", stderr=""), MagicMock(stdout="all", stderr="")]
+        )
+        await runtime.session_execute("bg-0123456789ab", "job", run_async=True)
+
+        result = await runtime.session_logs("bg-0123456789ab")
+
+        assert (result.exit_code, result.stdout) == (0, "all")
+
+    @pytest.mark.asyncio
+    async def test_logs_follow_the_latest_command_not_the_one_started_here(
+        self, runtime, mock_sdk_sandbox
+    ):
+        process = mock_sdk_sandbox.process
+        process.execute_session_command = AsyncMock(return_value=MagicMock(cmd_id="c1"))
+        process.get_session = AsyncMock(
+            return_value=MagicMock(
+                commands=[MagicMock(id="c1", exit_code=0), MagicMock(id="c2", exit_code=None)]
+            )
+        )
+
+        async def logs(session_id, command_id):
+            return MagicMock(stdout=command_id, stderr="")
+
+        process.get_session_command_logs = AsyncMock(side_effect=logs)
+        await runtime.session_execute("bg-0123456789ab", "job", run_async=True)
+
+        result = await runtime.session_logs("bg-0123456789ab")
+
+        assert (result.cmd_id, result.exit_code, result.stdout) == ("c2", None, "c2")
+
 
 # ---------------------------------------------------------------------------
 # DaytonaProvider
@@ -249,10 +291,8 @@ class TestDaytonaProvider:
     async def test_create_returns_runtime(
         self, MockAsyncDaytona, mock_daytona_client
     ):
-        from ptc_agent.core.sandbox.providers.daytona import (
-            DaytonaProvider,
-            DaytonaRuntime,
-        )
+        from ptc_agent.core.sandbox.providers.daytona import DaytonaProvider
+        from ptc_agent.core.sandbox.providers.daytona_runtime import DaytonaRuntime
 
         provider = DaytonaProvider.__new__(DaytonaProvider)
         provider._config = DaytonaConfig(api_key="test-key")
@@ -435,10 +475,8 @@ class TestDaytonaProvider:
     ):
         """C2 guardrail: the default tier degrades to a base-sized sandbox when
         its snapshot can't be built — base-size ~= default, so no hard failure."""
-        from ptc_agent.core.sandbox.providers.daytona import (
-            DaytonaProvider,
-            DaytonaRuntime,
-        )
+        from ptc_agent.core.sandbox.providers.daytona import DaytonaProvider
+        from ptc_agent.core.sandbox.providers.daytona_runtime import DaytonaRuntime
 
         provider = DaytonaProvider.__new__(DaytonaProvider)
         provider._config = DaytonaConfig(api_key="test-key")
@@ -458,10 +496,8 @@ class TestDaytonaProvider:
     ):
         """Guardrail: snapshots globally disabled never expected a sized snapshot,
         so an elevated tier degrades to base-sized instead of raising."""
-        from ptc_agent.core.sandbox.providers.daytona import (
-            DaytonaProvider,
-            DaytonaRuntime,
-        )
+        from ptc_agent.core.sandbox.providers.daytona import DaytonaProvider
+        from ptc_agent.core.sandbox.providers.daytona_runtime import DaytonaRuntime
 
         provider = DaytonaProvider.__new__(DaytonaProvider)
         provider._config = DaytonaConfig(api_key="test-key", snapshot_enabled=False)
@@ -481,10 +517,8 @@ class TestDaytonaProvider:
     ):
         """C4b: a tier removed from config must stay recoverable — warn + base
         size, not raise (raising would lock the workspace out permanently)."""
-        from ptc_agent.core.sandbox.providers.daytona import (
-            DaytonaProvider,
-            DaytonaRuntime,
-        )
+        from ptc_agent.core.sandbox.providers.daytona import DaytonaProvider
+        from ptc_agent.core.sandbox.providers.daytona_runtime import DaytonaRuntime
 
         provider = DaytonaProvider.__new__(DaytonaProvider)
         provider._config = DaytonaConfig(api_key="test-key")
@@ -499,10 +533,8 @@ class TestDaytonaProvider:
 
     @pytest.mark.asyncio
     async def test_get_returns_runtime(self, mock_daytona_client):
-        from ptc_agent.core.sandbox.providers.daytona import (
-            DaytonaProvider,
-            DaytonaRuntime,
-        )
+        from ptc_agent.core.sandbox.providers.daytona import DaytonaProvider
+        from ptc_agent.core.sandbox.providers.daytona_runtime import DaytonaRuntime
 
         provider = DaytonaProvider.__new__(DaytonaProvider)
         provider._config = DaytonaConfig(api_key="test-key")

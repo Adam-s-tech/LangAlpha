@@ -15,6 +15,7 @@ from psycopg.types.json import Json
 
 from src.llms.preferences import MOVED_MODEL_KEYS, TuningError
 from src.server.database.pool import get_db_connection
+from src.server.database.user_lock import lock_user_profile
 from src.server.utils.db import UpdateQueryBuilder
 
 logger = logging.getLogger(__name__)
@@ -593,8 +594,9 @@ async def upsert_user_preferences(
         RETURNING {_PREF_RETURNING}
     """
 
-    async with get_db_connection() as conn:
+    async with get_db_connection() as conn, conn.transaction():
         async with conn.cursor(row_factory=dict_row) as cur:
+            await lock_user_profile(cur, user_id)
             await cur.execute(
                 sql, [str(uuid4()), user_id, *insert_params, *set_params]
             )
@@ -613,8 +615,9 @@ async def delete_user_preferences(user_id: str) -> bool:
     Returns:
         True if a row was deleted, False if no preferences existed
     """
-    async with get_db_connection() as conn:
+    async with get_db_connection() as conn, conn.transaction():
         async with conn.cursor() as cur:
+            await lock_user_profile(cur, user_id)
             await cur.execute(
                 "DELETE FROM user_preferences WHERE user_id = %s",
                 (user_id,),

@@ -275,6 +275,13 @@ async def delete_thread_endpoint(thread_id: str, x_user_id: CurrentUserId):
             except Exception:
                 pass
 
+        if thread_row:
+            from src.server.services.workspace_manager import WorkspaceManager
+
+            manager = WorkspaceManager.current()
+            if manager is not None:
+                manager.prune_thread_dirs_soon(str(thread_row["workspace_id"]))
+
         await publish_thread_deleted(
             user_id=x_user_id,
             thread_id=thread_id,

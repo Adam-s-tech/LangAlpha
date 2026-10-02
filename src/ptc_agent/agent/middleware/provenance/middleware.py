@@ -45,6 +45,7 @@ from ptc_agent.agent.provenance.types import (
     RESULT_BODY_MAX_BYTES,
 )
 from ptc_agent.core.paths import (
+    AGENT_HISTORY_DIRS,
     LEGACY_ROOT_TOOLS_DIR,
     MEMO_USER_DIR,
     MEMORY_USER_DIR,
@@ -81,8 +82,7 @@ _INFRA_PREFIXES = (
     SandboxLayout.MCP_SERVERS_DIR,
     ".self-improve",
     SandboxLayout.SKILLS_DIR,
-    WorkspaceLayout.THREADS_DIR,
-    WorkspaceLayout.LARGE_TOOL_RESULTS_DIR,
+    *AGENT_HISTORY_DIRS,
 )
 
 # Agent-scaffolding FILES (not dirs) at the workspace root: injected context, not

@@ -19,7 +19,7 @@ from ptc_agent.agent.tools.bash_output import create_bash_output_tool
 
 
 def _make_backend(*, status: dict | None = None, stopped: bool = True) -> Any:
-    backend = SimpleNamespace()
+    backend = SimpleNamespace(livefs=None)
     backend.aget_background_command_status = AsyncMock(return_value=status or {})
     backend.astop_background_command = AsyncMock(return_value=stopped)
     return backend
@@ -80,6 +80,15 @@ class TestBashOutputMcpTraceArtifact:
         msg = await tool.ainvoke(_tool_call("cmd-1", action="stop"))
         assert msg.artifact == {"mcp_trace": []}
         assert "stopped" in msg.content
+
+    @pytest.mark.asyncio
+    async def test_a_stop_that_failed_says_so(self):
+        backend = _make_backend()
+        backend.astop_background_command = AsyncMock(side_effect=RuntimeError("timeout"))
+        tool = create_bash_output_tool(backend)
+        msg = await tool.ainvoke(_tool_call("cmd-1", action="stop"))
+        assert msg.content.startswith("ERROR: Could not stop")
+        assert "may still be running" in msg.content
 
     @pytest.mark.asyncio
     async def test_missing_trace_key_defaults_to_empty(self):

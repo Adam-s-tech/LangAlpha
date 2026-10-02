@@ -439,6 +439,80 @@ async def get_thread_with_summary(
         raise
 
 
+async def get_workspace_thread_short_ids(workspace_id: str) -> set[str]:
+    """First 8 characters of every thread id in a workspace.
+
+    A thread's sandbox scratch is keyed by that prefix, so two threads can
+    share a directory; cleanup keeps any prefix a live thread still uses.
+    """
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT DISTINCT left(conversation_thread_id::text, 8)
+                FROM conversation_threads
+                WHERE workspace_id = %s
+                """,
+                (workspace_id,),
+            )
+            return {row[0] for row in await cur.fetchall()}
+
+
+async def list_computer_threads(
+    computer_id: str, *, rows: bool = True
+) -> Tuple[str, List[Dict[str, Any]]]:
+    """Threads of every live workspace on a computer, newest first, and
+    whether each has a stored transcript: the computer's thread index.
+
+    Also a digest of every one of those fields, from the same snapshot, which
+    changes whenever any of them does; ``rows=False`` returns the digest
+    alone, for the price of one row.
+    """
+    digest = """
+        WITH threads AS (
+            SELECT t.conversation_thread_id, t.title, t.created_at,
+                   t.updated_at, w.workspace_id,
+                   w.name AS workspace_name, w.dir_name,
+                   EXISTS (
+                       SELECT 1 FROM thread_transcripts s
+                       WHERE s.conversation_thread_id = t.conversation_thread_id
+                   ) AS has_transcript
+            FROM conversation_threads t
+            JOIN workspaces w ON w.workspace_id = t.workspace_id
+            WHERE w.computer_id = %s AND w.status <> 'deleted'
+        ),
+        digest AS (
+            SELECT encode(sha256(convert_to(coalesce(string_agg(
+                       row_to_json(threads)::text, E'\\n'
+                       ORDER BY threads.conversation_thread_id
+                   ), ''), 'UTF8')), 'hex') AS digest
+            FROM threads
+        )
+    """
+    query = (
+        # One statement, so the digest is of exactly the rows returned. The
+        # join keeps the digest's row when there are no threads.
+        digest
+        + """
+        SELECT digest.digest, threads.*
+        FROM digest LEFT JOIN threads ON TRUE
+        ORDER BY threads.updated_at DESC, threads.conversation_thread_id
+        """
+        if rows
+        else digest + "SELECT digest FROM digest"
+    )
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(query, (computer_id,))
+            found = await cur.fetchall()
+    threads = [
+        {k: v for k, v in row.items() if k != "digest"}
+        for row in found
+        if row.get("conversation_thread_id") is not None
+    ]
+    return found[0]["digest"], threads
+
+
 async def get_thread_by_id(conversation_thread_id: str) -> Optional[Dict[str, Any]]:
     """
     Get thread by ID.
@@ -476,17 +550,17 @@ async def get_thread_by_id(conversation_thread_id: str) -> Optional[Dict[str, An
         raise
 
 
-async def get_thread_owner_id(thread_id: str) -> Optional[str]:
+async def get_thread_owner_id(thread_id: str, *, conn=None) -> Optional[str]:
     """Return the user_id that owns the thread's workspace, or None if not found.
 
     Delegates to ``get_thread_auth_meta`` (the superset query) to avoid a
     near-duplicate JOIN; UUID normalization / not-found handling live there.
     """
-    meta = await get_thread_auth_meta(thread_id)
+    meta = await get_thread_auth_meta(thread_id, conn=conn)
     return meta["user_id"] if meta else None
 
 
-async def get_thread_auth_meta(thread_id: str) -> Optional[Dict[str, Any]]:
+async def get_thread_auth_meta(thread_id: str, *, conn=None) -> Optional[Dict[str, Any]]:
     """Owner ``user_id`` + ``is_shared`` + ``msg_type`` in one query.
 
     Lets ``/status`` authorize the caller, read share state, and pick the
@@ -499,7 +573,7 @@ async def get_thread_auth_meta(thread_id: str) -> Optional[Dict[str, Any]]:
     if thread_id is None:
         return None
     try:
-        async with pool.get_db_connection() as conn:
+        async with pool.get_db_connection(conn) as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """

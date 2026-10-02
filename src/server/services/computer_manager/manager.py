@@ -13,9 +13,11 @@ from ptc_agent.config import AgentConfig
 from src.server.services.workspace_entitlements import WorkspaceEntitlementsMixin
 
 from src.server.services.computer_manager._types import MachineState
+from src.server.services.computer_manager._bringup import BringUpMixin
 from src.server.services.computer_manager._machine_backup import MachineBackupMixin
 from src.server.services.computer_manager._folders import FolderSettleMixin
 from src.server.services.computer_manager._lifecycle import SessionLifecycleMixin
+from src.server.services.computer_manager._livefs import LivefsMixin
 from src.server.services.computer_manager._machines import MachineLifecycleMixin
 from src.server.services.computer_manager._mcp import McpSecretsMixin
 from src.server.services.computer_manager._providers import ProviderMixin
@@ -30,6 +32,8 @@ class ComputerManager(
     SessionCacheMixin,
     ProviderMixin,
     ProvisioningMixin,
+    LivefsMixin,
+    BringUpMixin,
     FolderSettleMixin,
     MachineBackupMixin,
     McpSecretsMixin,
@@ -81,6 +85,7 @@ class ComputerManager(
 
         # asyncio holds weak task refs; retain publishes until PUBLISH completes.
         self._status_publish_tasks: set[asyncio.Task] = set()
+        self._prune_tasks: set[asyncio.Task] = set()
 
         # Cache one classifier per backend: SDK error shapes differ and constructing
         # a provider for every failed teardown leaks HTTP clients.

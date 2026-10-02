@@ -83,6 +83,21 @@ EXCLUDE_BASENAMES: frozenset[str] = frozenset({".DS_Store", "Thumbs.db"})
 
 SYNC_MARKER_NAME = ".file_sync_marker"
 
+# Evicted tool results are most of a long thread's bytes and are read back
+# rarely, so a restore brings them after the rest of the folder rather than
+# before the first turn. Their rows are pruned only once the sandbox holds
+# DEFERRED_MARKER, which that second pass writes when every one came back:
+# until then a missing result is one still on its way, not one deleted.
+# The scan has to list the marker to see it, so no sandbox-side exclusion may
+# cover it; the server drops it from the manifest instead.
+DEFERRED_RESTORE_DIR = WorkspaceLayout.LARGE_TOOL_RESULTS_DIR
+DEFERRED_MARKER = f"{DEFERRED_RESTORE_DIR}/.restored"
+
+
+def is_deferred(path: str) -> bool:
+    return path == DEFERRED_RESTORE_DIR or path.startswith(DEFERRED_RESTORE_DIR + "/")
+
+
 # Bounded by the disk rather than the workspace's history: a scan hashes only
 # what changed, the sandbox hashes at ~1.5 GB/s, and a tier's writable layer
 # is the most it can ever hold, so even a cold tenth of that rate fits.
@@ -272,6 +287,8 @@ class ScanResult:
     # Wall clock minus boot clock at the start: lets a sweep see a clock
     # stepped back since (see ScanMark).
     clock_offset_ns: int | None = None
+    # The sandbox holds DEFERRED_MARKER: its evicted results are complete.
+    deferred_restored: bool = False
 
 
 @dataclass(slots=True)
@@ -498,7 +515,7 @@ async def scan_workspace(
             is_binary=e.get("is_binary"),
         )
         for e in out.get("entries", [])
-        if e["path"] != SYNC_MARKER_NAME
+        if e["path"] not in (SYNC_MARKER_NAME, DEFERRED_MARKER)
     ]
     return ScanResult(
         entries=entries,
@@ -512,6 +529,9 @@ async def scan_workspace(
             out.get("clock_offset_ns")
             if isinstance(out.get("clock_offset_ns"), int)
             else None
+        ),
+        deferred_restored=any(
+            e["path"] == DEFERRED_MARKER for e in out.get("entries", [])
         ),
     )
 

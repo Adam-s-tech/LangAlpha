@@ -21,6 +21,7 @@ from ptc_agent.core.sandbox._defaults import (
 )
 from ptc_agent.core.sandbox.platform_secrets import build_platform_secret_bindings
 from ptc_agent.core.sandbox.providers import create_provider
+from ptc_agent.core.sandbox.livefs_mount import MountHandle
 from ptc_agent.core.sandbox.retry import RetryPolicy, async_retry_with_backoff
 from ptc_agent.core.sandbox.runtime import (
     PreviewInfo,
@@ -85,6 +86,13 @@ class PTCSandbox:
         self.tool_generator = ToolFunctionGenerator()
         self.execution_count = 0
         self.bash_execution_count = 0
+        # Set by the host while the file mount serves this sandbox; None
+        # means the store-backed paths are not on its filesystem.
+        self.livefs: MountHandle | None = None
+        # A reconnect found the mount gone: it booted the sandbox, or nothing
+        # answered at the mount's path. The host records that before it next
+        # reads what was recorded of the mount, which still says it serves.
+        self.livefs_lost = False
 
         # Working directory — initialized from config, updated by fetch_working_dir()
         # after sandbox creation/reconnect.
@@ -97,13 +105,6 @@ class PTCSandbox:
         # Track per-thread code dirs that have been created (avoids repeated mkdir)
         self._thread_dirs_created: set[str] = set()
 
-        # Per-command sessions for background Bash commands (cmd_id → session_id)
-        self._bg_sessions: dict[str, str] = {}
-        # Per-command MCP provenance trace paths for background Bash (cmd_id →
-        # trace_path). Harvested when get_background_command_status observes the
-        # command finished, so a backgrounded script's MCP calls are recorded
-        # too (the foreground/ExecuteCode path harvests inline).
-        self._bg_trace_paths: dict[str, str] = {}
         # Per-port sessions for preview servers (port → (session_id, cmd_id))
         self._preview_sessions: dict[int, tuple[str, str]] = {}
         # The workspace that started each locally tracked preview. A computer
@@ -706,8 +707,6 @@ class PTCSandbox:
         self._reconnect_incomplete = True
 
         # Clear stale state — sessions and preview links don't survive stop/start
-        self._bg_sessions.clear()
-        self._bg_trace_paths.clear()
         self._preview_sessions.clear()
         self._preview_link_cache.clear()
 
@@ -758,6 +757,9 @@ class PTCSandbox:
                     sandbox_id=sandbox_id,
                 )
 
+        if state_value != "running":
+            self.livefs_lost = True
+            self.livefs = None
         if state_value == "running":
             logger.debug(
                 "Sandbox already started, skipping start", sandbox_id=sandbox_id
@@ -896,7 +898,9 @@ class PTCSandbox:
 
         # Initialize MCP server sessions (needed for tool execution)
         self.mcp_server_sessions: dict[str, Any] = {}
-        await self._start_internal_mcp_servers()
+        if await self._start_internal_mcp_servers() is False:
+            self.livefs_lost = True
+            self.livefs = None
         self._reconnect_incomplete = False
 
         logger.debug(
@@ -1241,9 +1245,8 @@ class PTCSandbox:
 
         try:
             if self.runtime:
-                # Clean up all managed sessions (preview + background)
-                all_sessions = [sid for sid, _ in self._preview_sessions.values()] + list(self._bg_sessions.values())
-                for sid in dict.fromkeys(all_sessions):  # deduplicate
+                # Clean up preview sessions; deleting the sandbox ends the rest
+                for sid in dict.fromkeys(sid for sid, _ in self._preview_sessions.values()):
                     try:
                         await self._runtime_call(
                             self.runtime.delete_session, sid,
@@ -1253,8 +1256,6 @@ class PTCSandbox:
                         logger.debug("Failed to delete session", session_id=sid)
                 self._preview_sessions.clear()
                 self._preview_owners.clear()
-                self._bg_sessions.clear()
-                self._bg_trace_paths.clear()
 
                 if self._reconnect_incomplete:
                     logger.info(
@@ -1444,7 +1445,7 @@ class PTCSandbox:
     ) -> dict[str, dict[str, Any]]:
         return await _mcp_setup.discover_user_mcp_schemas(self, servers)
 
-    async def _start_internal_mcp_servers(self) -> None:
+    async def _start_internal_mcp_servers(self) -> bool | None:
         return await _mcp_setup._start_internal_mcp_servers(self)
 
     def _detect_missing_imports(self, stderr: str) -> list[str]:
@@ -1467,9 +1468,10 @@ class PTCSandbox:
         auto_install: bool = True,
         max_retries: int = 2,
         thread_id: str | None = None,
+        call_id: str | None = None,
         _carry_mcp_trace: list[dict] | None = None,
     ) -> ExecutionResult:
-        return await _execution.execute(self, code, timeout, auto_install=auto_install, max_retries=max_retries, thread_id=thread_id, _carry_mcp_trace=_carry_mcp_trace)
+        return await _execution.execute(self, code, timeout, auto_install=auto_install, max_retries=max_retries, thread_id=thread_id, call_id=call_id, _carry_mcp_trace=_carry_mcp_trace)
 
     async def execute_bash_command(
         self,
@@ -1479,13 +1481,21 @@ class PTCSandbox:
         *,
         background: bool = False,
         thread_id: str | None = None,
+        call_id: str | None = None,
     ) -> dict[str, Any]:
-        return await _execution.execute_bash_command(self, command, working_dir, timeout, background=background, thread_id=thread_id)
+        return await _execution.execute_bash_command(self, command, working_dir, timeout, background=background, thread_id=thread_id, call_id=call_id)
 
     def _build_trace_env_command(
-        self, bash_id: str, full_command: str
+        self,
+        bash_id: str,
+        full_command: str,
+        call_id: str | None = None,
+        trace_path: str | None = None,
+        own_shell: bool = False,
     ) -> tuple[str, str]:
-        return _execution._build_trace_env_command(self, bash_id, full_command)
+        return _execution._build_trace_env_command(
+            self, bash_id, full_command, call_id, trace_path, own_shell
+        )
 
     # -- sessions --
 
@@ -1523,11 +1533,8 @@ class PTCSandbox:
             owner=owner,
         )
 
-    async def _evict_finished_bg_sessions(self) -> None:
-        return await _sessions._evict_finished_bg_sessions(self)
-
-    async def _create_bg_session(self, label: str) -> str:
-        return await _sessions._create_bg_session(self, label)
+    async def _create_bg_session(self) -> str:
+        return await _sessions._create_bg_session(self)
 
     async def get_background_command_status(self, cmd_id: str) -> dict[str, Any]:
         return await _sessions.get_background_command_status(self, cmd_id)
@@ -1622,9 +1629,16 @@ class PTCSandbox:
         return _paths._validate_path_allow_denied(self, path)
 
     async def aglob_files(
-        self, pattern: str, path: str = ".", *, allow_denied: bool = False
+        self,
+        pattern: str,
+        path: str = ".",
+        *,
+        allow_denied: bool = False,
+        hide_history: bool = False,
     ) -> list[str]:
-        return await _files.aglob_files(self, pattern, path, allow_denied=allow_denied)
+        return await _files.aglob_files(
+            self, pattern, path, allow_denied=allow_denied, hide_history=hide_history
+        )
 
     async def agrep_content(
         self,

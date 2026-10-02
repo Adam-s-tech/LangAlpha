@@ -666,8 +666,8 @@ class TestMutationFence:
             return_value={
                 "offloaded_args": 0,
                 "offloaded_reads": 0,
-                "messages": [],
-                "original_count": 2,
+                "offloaded_arg_ids": set(),
+                "offloaded_read_ids": set(),
             }
         )
 
@@ -699,8 +699,8 @@ class TestMutationFence:
             return_value={
                 "offloaded_args": 0,
                 "offloaded_reads": 0,
-                "messages": [],
-                "original_count": 2,
+                "offloaded_arg_ids": set(),
+                "offloaded_read_ids": set(),
             }
         )
 

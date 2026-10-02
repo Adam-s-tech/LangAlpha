@@ -207,6 +207,12 @@ class BaselineEpoch:
     compaction_seen: str | None = None
     incomplete: bool = False
     cursor: ObservationCursor = field(default_factory=ObservationCursor)
+    # Whether the static system prompt says the file mount serves. The prompt
+    # is the cached prefix, so the mount coming up or going down mid-epoch
+    # would miss the whole prefix; the value holds until the next rebuild,
+    # and the tools work either way. None for a build that states nothing
+    # about the mount (Flash) or an epoch stored before the value was.
+    files_mounted: bool | None = None
     # False for the empty epoch of a thread's first turn, which is what tells
     # the first turn apart from an epoch that happens to carry no sources.
     stored: bool = False
@@ -230,6 +236,7 @@ class BaselineEpoch:
             str(key): str(sha) for key, sha in as_dict(data.get("observed")).items()
         }
         seen = data.get("compaction_seen")
+        mounted = data.get("files_mounted")
         return cls(
             epoch=int(data.get("epoch") or 0),
             built_at=str(data.get("built_at") or ""),
@@ -246,6 +253,7 @@ class BaselineEpoch:
             cursor=ObservationCursor(
                 observed=observed, drift_updates=int(data.get("drift_updates") or 0)
             ),
+            files_mounted=mounted if isinstance(mounted, bool) else None,
             stored=bool(data),
         )
 
@@ -268,6 +276,8 @@ class BaselineEpoch:
         }
         if self.agent_md is not None:
             state["agent_md"] = self.agent_md.to_state()
+        if self.files_mounted is not None:
+            state["files_mounted"] = self.files_mounted
         return state
 
     def source_entry(self, kind: str) -> FileEntry | None:
@@ -325,6 +335,9 @@ class Observations:
     # is not blind to the workspace, it has none, so a rebuild drops the one
     # an earlier PTC epoch froze instead of carrying it forward.
     workspace_configured: bool = True
+    # Whether the file mount serves as this turn's agent was built. None for
+    # a build whose prompt says nothing about it.
+    files_mounted: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +374,12 @@ def advance_epoch(
         still = sorted({kind for kind in observations.retained_rows if kind in carried})
         return rebuilt, [_rebuilt_row(observations.now, folded, still)]
     rows, cursor = _observe(epoch, observations)
+    if epoch.files_mounted is None and observations.files_mounted is not None:
+        # An epoch stored before it froze the value takes this turn's, as its
+        # rebuild would have: no row, since no prompt stated another.
+        epoch = replace(epoch, files_mounted=observations.files_mounted)
+        if not rows:
+            return epoch, []
     if not rows:
         return None, []
     return replace(epoch, cursor=cursor), rows
@@ -564,6 +583,7 @@ def _freeze(
         compaction_seen=obs.compaction,
         incomplete=incomplete,
         cursor=ObservationCursor(observed=observed, drift_updates=0),
+        files_mounted=obs.files_mounted,
         stored=True,
     )
 

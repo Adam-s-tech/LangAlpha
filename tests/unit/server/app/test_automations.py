@@ -5,7 +5,7 @@ Covers CRUD, control actions (trigger/pause/resume), and execution history.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -19,6 +19,8 @@ from tests.conftest import create_test_app
 # ---------------------------------------------------------------------------
 
 NOW = datetime.now(timezone.utc)
+# A one-time run's time, a month out.
+LATER = NOW + timedelta(days=30)
 AUTO_ID = str(uuid.uuid4())
 EXEC_ID = str(uuid.uuid4())
 
@@ -84,7 +86,9 @@ async def client():
 
 HANDLER = "src.server.app.automations.handler"
 AUTO_DB = "src.server.app.automations.auto_db"
-HANDLER_DB = "src.server.handlers.automation_handler.auto_db"
+HANDLER_DB = "src.server.services.automations.lifecycle.auto_db"
+EXEC_DB = "src.server.app.automations.exec_db"
+HANDLER_EXEC_DB = "src.server.services.automations.lifecycle.exec_db"
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +159,7 @@ async def test_create_refuses_a_schedule_field_of_another_kind(client):
                 "name": "Daily Briefing",
                 "trigger_type": "cron",
                 "cron_expression": "0 8 * * *",
-                "next_run_at": NOW.isoformat(),
+                "next_run_at": LATER.isoformat(),
                 "instruction": "Give me a market summary",
             },
         )
@@ -297,13 +301,142 @@ async def test_update_refuses_a_schedule_field_of_another_kind(client):
     ):
         resp = await client.patch(
             f"/api/v1/automations/{AUTO_ID}",
-            json={"next_run_at": NOW.isoformat()},
+            json={"next_run_at": LATER.isoformat()},
         )
 
     assert resp.status_code == 422
     [error] = resp.json()["detail"]
     assert "next_run_at doesn't apply to a 'cron' automation" in error["msg"]
     update.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# The zone every surface refuses, and the times and zones only the agent's do
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_refuses_an_unknown_zone_as_a_bad_body(client):
+    body = {
+        "name": "Reminder",
+        "trigger_type": "once",
+        "next_run_at": LATER.isoformat(),
+        "instruction": "Remind me",
+        "timezone": "Mars/Olympus",
+    }
+    with patch(f"{HANDLER}.create_automation", new_callable=AsyncMock) as create:
+        resp = await client.post("/api/v1/automations", json=body)
+
+    assert resp.status_code == 422
+    assert any("unknown IANA timezone 'Mars/Olympus'" in e["msg"] for e in resp.json()["detail"])
+    create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_refuses_an_unknown_zone_as_a_bad_body(client):
+    with patch(f"{HANDLER}.update_automation", new_callable=AsyncMock) as update:
+        resp = await client.patch(f"/api/v1/automations/{AUTO_ID}", json={"timezone": "Mars/Olympus"})
+
+    assert resp.status_code == 422
+    assert any("unknown IANA timezone 'Mars/Olympus'" in e["msg"] for e in resp.json()["detail"])
+    update.assert_not_awaited()
+
+
+_USERS_OWN = [
+    ({"next_run_at": "2030-01-01"}, "next_run_at", datetime(2030, 1, 1, tzinfo=timezone.utc)),
+    ({"next_run_at": "2020-01-01T09:00:00Z"}, "next_run_at", datetime(2020, 1, 1, 9, tzinfo=timezone.utc)),
+    ({"timezone": "EST"}, "timezone", "EST"),
+]
+_USERS_OWN_IDS = ["date-only", "past", "fixed-offset"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("fields", "field", "stored"), _USERS_OWN, ids=_USERS_OWN_IDS)
+async def test_create_takes_the_users_own_time_and_zone(client, fields, field, stored):
+    """The page resends what it stored and reads times on the device's
+    clock; the date, past-time and fixed-offset guards are for the agent."""
+    body = {
+        "name": "Reminder",
+        "trigger_type": "once",
+        "next_run_at": LATER.isoformat(),
+        "instruction": "Remind me",
+        **fields,
+    }
+    with patch(
+        f"{HANDLER}.create_automation", new_callable=AsyncMock, return_value=_automation()
+    ) as create:
+        resp = await client.post("/api/v1/automations", json=body)
+
+    assert resp.status_code == 201
+    assert getattr(create.await_args.kwargs["data"], field) == stored
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("fields", "field", "stored"), _USERS_OWN, ids=_USERS_OWN_IDS)
+async def test_update_takes_the_users_own_time_and_zone(client, fields, field, stored):
+    with patch(
+        f"{HANDLER}.update_automation", new_callable=AsyncMock, return_value=_automation()
+    ) as update:
+        resp = await client.patch(f"/api/v1/automations/{AUTO_ID}", json=fields)
+
+    assert resp.status_code == 200
+    assert update.await_args.kwargs["fields"][field] == stored
+
+
+@pytest.fixture
+def unknown_models():
+    """The user can run no model by the name asked for."""
+    lifecycle = "src.server.services.automations.lifecycle"
+    with (
+        patch(f"{lifecycle}.user_models.get_model_preference", new_callable=AsyncMock, return_value={}),
+        patch(
+            f"{lifecycle}.user_models.classify_model",
+            new_callable=AsyncMock,
+            return_value=("unknown", None),
+        ),
+        patch(
+            f"{lifecycle}.user_models.get_custom_provider_config",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(f"{lifecycle}.get_configured_llm_models", return_value={"vendor": ["model-a"]}),
+    ):
+        yield
+
+
+@pytest.mark.asyncio
+async def test_create_with_an_unknown_model_is_409(client, unknown_models):
+    with patch(HANDLER_DB) as db:
+        db.create_automation = AsyncMock()
+        resp = await client.post(
+            "/api/v1/automations",
+            json={
+                "name": "Daily Briefing",
+                "trigger_type": "cron",
+                "cron_expression": "0 8 * * *",
+                "instruction": "Give me a market summary",
+                "llm_model": "no-such-model",
+            },
+        )
+
+    assert resp.status_code == 409
+    assert "unknown model 'no-such-model'" in resp.json()["detail"]
+    assert "model-a" in resp.json()["detail"]
+    db.create_automation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_to_an_unknown_model_is_409(client, unknown_models):
+    with patch(HANDLER_DB) as db:
+        db.get_automation = AsyncMock(return_value=_automation())
+        db.update_automation = AsyncMock()
+        resp = await client.patch(
+            f"/api/v1/automations/{AUTO_ID}", json={"llm_model": "no-such-model"}
+        )
+
+    assert resp.status_code == 409
+    assert "unknown model 'no-such-model'" in resp.json()["detail"]
+    db.update_automation.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +581,7 @@ def _run(**overrides):
 @pytest.mark.asyncio
 async def test_list_executions(client):
     with patch(
-        f"{AUTO_DB}.list_executions",
+        f"{EXEC_DB}.list_executions",
         new_callable=AsyncMock,
         return_value=([_run()], True),
     ):
@@ -467,7 +600,7 @@ async def test_list_executions(client):
 @pytest.mark.asyncio
 async def test_list_executions_with_pagination(client):
     with patch(
-        f"{AUTO_DB}.list_executions",
+        f"{EXEC_DB}.list_executions",
         new_callable=AsyncMock,
         return_value=([], False),
     ) as mock_list:
@@ -492,7 +625,7 @@ async def test_run_feed_is_not_captured_by_the_automation_route(client):
     would be read as an automation named "executions"."""
     with (
         patch(
-            f"{AUTO_DB}.list_executions",
+            f"{EXEC_DB}.list_executions",
             new_callable=AsyncMock,
             return_value=([_run()], False),
         ) as mock_list,
@@ -513,8 +646,7 @@ async def test_run_feed_is_not_captured_by_the_automation_route(client):
 # POST /api/v1/automations/{automation_id}/executions/{execution_id}/skip
 # ---------------------------------------------------------------------------
 
-HANDLER_DB = "src.server.handlers.automation_handler.auto_db"
-SETTLE = "src.server.handlers.automation_handler.settle"
+SETTLE = "src.server.services.automations.lifecycle.settle"
 SKIP_URL = f"/api/v1/automations/{AUTO_ID}/executions/{EXEC_ID}/skip"
 
 
@@ -527,10 +659,11 @@ SKIP_URL = f"/api/v1/automations/{AUTO_ID}/executions/{EXEC_ID}/skip"
 async def test_skip_that_does_not_land(client, status_now, expected):
     with (
         patch(HANDLER_DB) as db,
+        patch(HANDLER_EXEC_DB) as execs,
         patch(SETTLE, new_callable=AsyncMock, return_value=False),
     ):
         db.get_automation = AsyncMock(return_value=_automation())
-        db.get_execution_status = AsyncMock(return_value=status_now)
+        execs.get_execution_status = AsyncMock(return_value=status_now)
         resp = await client.post(SKIP_URL)
 
     assert resp.status_code == expected
@@ -581,18 +714,18 @@ DISMISS_URL = f"/api/v1/automations/{AUTO_ID}/executions/{EXEC_ID}/dismiss"
 @pytest.mark.asyncio
 async def test_dismiss_answers_with_the_automation(client):
     dismissed = _execution(status="failed", dismissed_at=NOW)
-    with patch(HANDLER_DB) as db:
+    with patch(HANDLER_DB) as db, patch(HANDLER_EXEC_DB) as execs:
         db.get_automation = AsyncMock(
             return_value=_automation(status="disabled", last_execution=dismissed)
         )
-        db.dismiss_execution = AsyncMock(return_value=True)
+        execs.dismiss_execution = AsyncMock(return_value=True)
         resp = await client.post(DISMISS_URL)
 
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "disabled"
     assert body["last_execution"]["dismissed_at"] is not None
-    db.dismiss_execution.assert_awaited_once_with(EXEC_ID, automation_id=AUTO_ID)
+    execs.dismiss_execution.assert_awaited_once_with(EXEC_ID, automation_id=AUTO_ID)
 
 
 @pytest.mark.asyncio
@@ -602,10 +735,10 @@ async def test_dismiss_answers_with_the_automation(client):
     ids=["did-not-fail", "nonexistent"],
 )
 async def test_dismiss_that_does_not_land(client, status_now, expected):
-    with patch(HANDLER_DB) as db:
+    with patch(HANDLER_DB) as db, patch(HANDLER_EXEC_DB) as execs:
         db.get_automation = AsyncMock(return_value=_automation())
-        db.dismiss_execution = AsyncMock(return_value=False)
-        db.get_execution_status = AsyncMock(return_value=status_now)
+        execs.dismiss_execution = AsyncMock(return_value=False)
+        execs.get_execution_status = AsyncMock(return_value=status_now)
         resp = await client.post(DISMISS_URL)
 
     assert resp.status_code == expected
@@ -613,10 +746,10 @@ async def test_dismiss_that_does_not_land(client, status_now, expected):
 
 @pytest.mark.asyncio
 async def test_dismiss_on_another_users_automation_writes_nothing(client):
-    with patch(HANDLER_DB) as db:
+    with patch(HANDLER_DB) as db, patch(HANDLER_EXEC_DB) as execs:
         db.get_automation = AsyncMock(return_value=None)
-        db.dismiss_execution = AsyncMock()
+        execs.dismiss_execution = AsyncMock()
         resp = await client.post(DISMISS_URL)
 
     assert resp.status_code == 404
-    db.dismiss_execution.assert_not_awaited()
+    execs.dismiss_execution.assert_not_awaited()

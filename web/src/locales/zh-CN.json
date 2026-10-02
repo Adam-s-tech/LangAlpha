@@ -2578,7 +2578,9 @@
       "read_preference": "已读取偏好",
       "updated_portfolio": "已更新持仓",
       "updated_watchlist": "已更新自选股",
-      "updated_preference": "已更新偏好"
+      "updated_preference": "已更新偏好",
+      "read_automations": "已读取自动化",
+      "updated_automations": "已更新自动化"
     },
     "inProgress": {
       "callingServer": "正在调用 {{server}}...",
@@ -2606,6 +2608,8 @@
       "updating_portfolio": "更新持仓...",
       "updating_watchlist": "更新自选股...",
       "updating_preference": "更新偏好...",
+      "reading_automations": "读取自动化...",
+      "updating_automations": "更新自动化...",
       "fetchingSymbolPrices": "获取 {{symbol}} 价格...",
       "fetchingPrices": "获取价格...",
       "fetchingSymbolQuotes": "获取 {{symbols}} 报价...",
@@ -2665,6 +2669,8 @@
       "memoWrite": "写入 {{count}} 份备忘",
       "profileRead": "读取偏好资料",
       "profileUpdated": "更新偏好资料",
+      "automationsRead": "读取自动化",
+      "automationsUpdated": "更新自动化",
       "code": "执行 {{count}} 段代码",
       "web": "发起 {{count}} 次网络请求",
       "search": "执行 {{count}} 次搜索",

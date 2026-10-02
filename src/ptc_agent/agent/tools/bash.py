@@ -6,24 +6,21 @@ import structlog
 from langchain_core.tools import BaseTool, tool
 
 from ptc_agent.agent.backends.sandbox import SandboxBackend
+from ptc_agent.agent.tools.mount_guard import run_guarded
 from ptc_agent.core.paths import (
     MEMO_USER_DIR,
     MEMORY_USER_DIR,
     WorkspaceLayout,
 )
+from ptc_agent.core.sandbox import livefs_mount
 
 logger = structlog.get_logger(__name__)
 
-# Bash runs in the sandbox FS; memory and memo live in the store. Refuse those
-# paths so the agent routes them through the file tools instead of silently
-# dropping writes on the sandbox (which would also let the agent fabricate
-# fake memos invisible to the UI).
-_MEMORY_PATH_MARKERS: tuple[str, ...] = (
-    f"{MEMORY_USER_DIR}/",
-    f"{WorkspaceLayout.MEMORY_DIR}/",
-    f"{MEMO_USER_DIR}/",
-)
-
+# Memory and memo live in the store, which the sandbox sees only while the
+# file mount serves it. Without the mount, refuse those paths so the agent
+# routes them through the file tools instead of silently dropping writes on
+# the sandbox (which would also let the agent fabricate fake memos invisible
+# to the UI).
 _MEMORY_ROUTE_ERROR = (
     f"ERROR: Store-backed paths ({MEMORY_USER_DIR}/**, "
     f"{WorkspaceLayout.MEMORY_DIR}/**, "
@@ -35,16 +32,28 @@ _MEMORY_ROUTE_ERROR = (
 )
 
 
-def _command_touches_memory(command: str) -> bool:
-    return any(marker in command for marker in _MEMORY_PATH_MARKERS)
+# The automation files are rows in the database, which the sandbox sees only
+# while the file mount serves them.
+_FILES_ROUTE_ERROR = (
+    "ERROR: {dir}/** is kept on the server, not on the sandbox filesystem, and no "
+    "file mount serves it to Bash right now. Use Read, Edit and Write on the files in "
+    "{dir}/. Bash can't see or change them."
+)
 
 
-def create_execute_bash_tool(backend: SandboxBackend, thread_id: str = "") -> BaseTool:
+def create_execute_bash_tool(
+    backend: SandboxBackend,
+    thread_id: str = "",
+    *,
+    call_context: livefs_mount.CallContext | None = None,
+) -> BaseTool:
     """Factory function to create Bash tool with injected dependencies.
 
     Args:
         backend: SandboxBackend wrapping the sandbox
         thread_id: Short thread ID (first 8 chars) for thread-scoped script storage
+        call_context: Who the command runs for, which a save through the file
+            mount reads its defaults from
 
     Returns:
         Configured Bash tool function
@@ -58,7 +67,7 @@ def create_execute_bash_tool(backend: SandboxBackend, thread_id: str = "") -> Ba
         run_in_background: bool | None = False,
         working_dir: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Execute bash commands in a persistent shell session.
+        """Execute bash commands in a fresh shell in your workspace folder.
 
         Use for: git, npm, docker, system commands, directory operations,
         and running Python scripts written to files.
@@ -80,14 +89,24 @@ def create_execute_bash_tool(backend: SandboxBackend, thread_id: str = "") -> Ba
         With run_in_background=True it returns a command_id instead of output; read
         that with BashOutput.
         """
-        # Bash cannot reach the store-backed memory tier.
-        if _command_touches_memory(command):
-            logger.info(
-                "Blocked bash command touching memory path",
-                command=command[:100],
-            )
-            return _MEMORY_ROUTE_ERROR, {"mcp_trace": []}
+        return await run_guarded(
+            backend,
+            command,
+            call_context,
+            lambda call_id: _run(command, working_dir, timeout, run_in_background, call_id),
+            memory_error=_MEMORY_ROUTE_ERROR,
+            files_error=_FILES_ROUTE_ERROR,
+            blocked_event="Blocked bash command touching a store-backed path",
+            command=command[:100],
+        )
 
+    async def _run(
+        command: str,
+        working_dir: str | None,
+        timeout: int | None,
+        run_in_background: bool | None,
+        call_id: str | None,
+    ) -> tuple[str, dict[str, Any]]:
         try:
             logger.debug(
                 "Executing bash command",
@@ -106,8 +125,9 @@ def create_execute_bash_tool(backend: SandboxBackend, thread_id: str = "") -> Ba
                 command,
                 working_dir=working_dir,
                 timeout=timeout_seconds,
-                background=run_in_background,
+                background=bool(run_in_background),
                 thread_id=thread_id or None,
+                call_id=call_id,
             )
 
             # Provenance for any MCP calls a script run here made (foreground

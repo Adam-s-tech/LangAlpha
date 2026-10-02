@@ -107,6 +107,7 @@ EXPECTED_RELATIVE = {
     "MEMORY_USER_DIR": ".agents/user/memory",
     "MEMO_USER_DIR": ".agents/user/memo",
     "USER_PROFILE_DIR": ".agents/user/profile",
+    "AUTOMATIONS_DIR": ".agents/user/automations",
     "WORKFLOWS_DIR": ".agents/workflows",
     "TMP_DIR": ".agents/tmp",
     "SYSTEM_DIR": ".system",
@@ -134,6 +135,7 @@ EXPECTED_WORKSPACE_RELATIVE = {
     "MCP_CLIENT_CONFIG_FILE": ".agents/tools/mcp_client_config.json",
     "THREADS_DIR": ".agents/threads",
     "LARGE_TOOL_RESULTS_DIR": ".agents/large_tool_results",
+    "TRANSCRIPTS_DIR": ".agents/transcripts",
     "AGENT_MD_FILE": "agent.md",
     "DATA_DIR": "data",
 }
@@ -152,6 +154,7 @@ EXPECTED_WORKSPACE_ABSOLUTE = {
     "large_tool_results": (
         "/home/workspace/acme-ab12/.agents/large_tool_results"
     ),
+    "transcripts": "/home/workspace/acme-ab12/.agents/transcripts",
     "agent_md": "/home/workspace/acme-ab12/agent.md",
 }
 
@@ -1117,15 +1120,16 @@ class TestGeneratedFrontendModule:
             # folder actually carries.
             "export const MEMORY_WORKSPACE_DIR = '.agents/memory';",
             "export const MEMO_USER_DIR = '.agents/user/memo';",
-            "export const USER_PROFILE_DIR = '.agents/user/profile';",
             "export const SKILLS_DIR = '.agents/skills';",
             "export const MEMORY_INDEX_FILENAME = 'memory.md';",
             "export const MEMO_INDEX_FILENAME = 'memo.md';",
             "  'home/workspace/',",
             "  'home/daytona/',",
-            "  portfolio: 'portfolio.json',",
-            "  watchlist: 'watchlist.json',",
-            "  preference: 'preference.json',",
+            "  '.agents/user/profile': ['portfolio.json', 'watchlist.json', 'preference.json'],",
+            "export const AUTOMATIONS_DIR = '.agents/user/automations';",
+            "export const USER_DATA_DIRS = [\n  '.agents/user/profile',\n  '.agents/user/automations',\n] as const;",
+            # One file per automation, under a name the server also checks.
+            "export const AUTOMATION_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\\.json$/;",
             # Root directories an earlier layout owned. A sandbox reused
             # across its migration still has them, so the file panel filters
             # on them by name.

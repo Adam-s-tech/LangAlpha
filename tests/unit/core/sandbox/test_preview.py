@@ -112,6 +112,13 @@ def sandbox(mock_provider, mock_runtime):
     return _make_sandbox(mock_provider, mock_runtime)
 
 
+async def _settle_housekeeping() -> None:
+    """Wait out the cleanup background-session calls leave running."""
+    from ptc_agent.core.sandbox import sessions
+
+    await asyncio.gather(*list(sessions._housekeeping))
+
+
 # ===================================================================
 # Part 1: PTCSandbox unit tests
 # ===================================================================
@@ -121,47 +128,78 @@ class TestCreateBgSession:
     """Tests for PTCSandbox._create_bg_session."""
 
     @pytest.mark.asyncio
-    async def test_happy_path_creates_session(self, sandbox, mock_runtime):
-        session_id = await sandbox._create_bg_session("task-1")
-        assert session_id == "bg-task-1"
-        mock_runtime.create_session.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_already_exists_triggers_delete_and_recreate(
+    async def test_names_are_random_so_workers_never_share_one(
         self, sandbox, mock_runtime
     ):
-        mock_runtime.create_session.side_effect = [
-            Exception("session already exists"),
-            None,  # recreate succeeds
-        ]
-        mock_runtime.delete_session.return_value = None
-
-        session_id = await sandbox._create_bg_session("task-2")
-
-        assert session_id == "bg-task-2"
-        assert mock_runtime.delete_session.call_count == 1
+        mock_runtime.list_sessions = AsyncMock(return_value=[])
+        first = await sandbox._create_bg_session()
+        second = await sandbox._create_bg_session()
+        assert first != second
+        assert first.startswith("bg-") and len(first) == len("bg-") + 12
         assert mock_runtime.create_session.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_delete_recreate_failure_reuses_stale(
+    async def test_create_error_raises_without_deleting_anything(
         self, sandbox, mock_runtime
     ):
-        mock_runtime.create_session.side_effect = [
-            Exception("session already exists"),
-            Exception("still broken"),
-        ]
-        mock_runtime.delete_session.side_effect = Exception("delete also failed")
+        # A name clash must never delete the existing session: it may be
+        # another worker's running command.
+        mock_runtime.list_sessions = AsyncMock(return_value=[])
+        mock_runtime.create_session.side_effect = Exception("session already exists")
 
-        # Should not raise — falls back to reusing stale session
-        session_id = await sandbox._create_bg_session("task-3")
-        assert session_id == "bg-task-3"
+        with pytest.raises(Exception, match="already exists"):
+            await sandbox._create_bg_session()
+        mock_runtime.delete_session.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_non_already_exists_error_raises(self, sandbox, mock_runtime):
-        mock_runtime.create_session.side_effect = Exception("permission denied")
+    async def test_at_cap_evicts_only_finished_background_sessions(
+        self, sandbox, mock_runtime
+    ):
+        from ptc_agent.core.sandbox.runtime import SessionState
 
-        with pytest.raises(Exception, match="permission denied"):
-            await sandbox._create_bg_session("task-4")
+        running = [SessionState(f"bg-{i:012x}", True) for i in range(15)]
+        finished = [SessionState(f"bg-{i:012x}", False) for i in range(15, 20)]
+        preview = [SessionState("preview-8080-abc", False)]
+
+        async def listing():
+            # Eviction lists after the launch's session exists, before its
+            # command is known to have started.
+            launched = mock_runtime.create_session.call_args.args[0]
+            return running + finished + preview + [SessionState(launched, False)]
+
+        mock_runtime.list_sessions = AsyncMock(side_effect=listing)
+
+        launched = await sandbox._create_bg_session()
+        await _settle_housekeeping()
+
+        deleted = {c.args[0] for c in mock_runtime.delete_session.call_args_list}
+        assert deleted == {s.session_id for s in finished}
+        assert launched not in deleted
+
+    @pytest.mark.asyncio
+    async def test_launch_does_not_wait_on_eviction(self, sandbox, mock_runtime):
+        release = asyncio.Event()
+
+        async def listing():
+            await release.wait()
+            return []
+
+        mock_runtime.list_sessions = AsyncMock(side_effect=listing)
+
+        await asyncio.wait_for(sandbox._create_bg_session(), timeout=1)
+        release.set()
+        await _settle_housekeeping()
+
+    @pytest.mark.asyncio
+    async def test_under_cap_evicts_nothing(self, sandbox, mock_runtime):
+        from ptc_agent.core.sandbox.runtime import SessionState
+
+        mock_runtime.list_sessions = AsyncMock(
+            return_value=[SessionState("bg-000000000001", False)]
+        )
+        await sandbox._create_bg_session()
+        await _settle_housekeeping()
+        mock_runtime.delete_session.assert_not_called()
 
 
 class TestStopBackgroundCommand:
@@ -169,26 +207,36 @@ class TestStopBackgroundCommand:
 
     @pytest.mark.asyncio
     async def test_found_and_deleted(self, sandbox, mock_runtime):
-        sandbox._bg_sessions["cmd-abc"] = "bg-abc"
-        result = await sandbox.stop_background_command("cmd-abc")
+        mock_runtime.session_logs = AsyncMock()
+        result = await sandbox.stop_background_command("bg-0123456789ab")
         assert result is True
-        mock_runtime.delete_session.assert_called_once()
-        assert "cmd-abc" not in sandbox._bg_sessions
+        mock_runtime.delete_session.assert_called_once_with("bg-0123456789ab")
+        mock_runtime.session_logs.assert_not_called()
+        await _settle_housekeeping()
+        assert "bg-0123456789ab.jsonl" in mock_runtime.exec.call_args.args[0]
 
     @pytest.mark.asyncio
-    async def test_no_session_returns_false(self, sandbox):
-        result = await sandbox.stop_background_command("nonexistent")
+    async def test_unknown_session_returns_false(self, sandbox, mock_runtime):
+        mock_runtime.delete_session.side_effect = FileNotFoundError("No session")
+        result = await sandbox.stop_background_command("bg-0123456789ab")
         assert result is False
+        await _settle_housekeeping()
+        mock_runtime.exec.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_delete_fails_returns_false(self, sandbox, mock_runtime):
-        sandbox._bg_sessions["cmd-fail"] = "bg-fail"
-        mock_runtime.delete_session.side_effect = Exception("network error")
+    async def test_malformed_id_never_reaches_the_sandbox(self, sandbox, mock_runtime):
+        assert await sandbox.stop_background_command("preview-8080-abc") is False
+        mock_runtime.delete_session.assert_not_called()
 
-        result = await sandbox.stop_background_command("cmd-fail")
-        assert result is False
-        # Session should be cleaned up from _bg_sessions even on failure
-        assert "cmd-fail" not in sandbox._bg_sessions
+    @pytest.mark.asyncio
+    async def test_delete_that_fails_raises(self, sandbox, mock_runtime):
+        """Neither "stopped" nor "not found" is true when the delete failed."""
+        mock_runtime.delete_session.side_effect = RuntimeError("network error")
+
+        with pytest.raises(RuntimeError, match="network error"):
+            await sandbox.stop_background_command("bg-0123456789ab")
+        await _settle_housekeeping()
+        mock_runtime.exec.assert_not_called()
 
 
 class TestStartPreviewServer:

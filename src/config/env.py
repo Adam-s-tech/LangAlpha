@@ -66,9 +66,12 @@ PDF_RENDER_INTERNAL_BASE: str = os.getenv("PDF_RENDER_INTERNAL_BASE", "http://12
 # then have no execution path, but nothing else is affected.
 EGRESS_RELAY_SECRET: str = os.getenv("EGRESS_RELAY_SECRET", "")
 
-# Base URL sandboxes use to reach the egress relay (the generated client
-# appends /v1/egress/{grant_id}). Sandboxes are remote (or in OSS Docker, on a
-# different network), so this must be a sandbox-reachable address. Empty means
+# Base URL sandboxes use to reach this backend: the egress relay (the generated
+# client appends /v1/egress/{grant_id}) and the file mount that serves memory,
+# profile, automations and workflows to sandbox code, plus memos and
+# transcripts read-only (/api/v1/livefs/). Sandboxes are remote
+# (or in OSS Docker, on a different network), so this must be a
+# sandbox-reachable address. Empty means
 # unconfigured: services/egress/reachability.py then falls back to the server
 # base, adapted per sandbox provider (Docker host gateway) or warned about
 # (Daytona + a local address). Point it at the API origin, not an SPA-fallback

@@ -262,6 +262,7 @@ async def trigger_compaction(
                     previous_event=previous_event,
                     compaction_config=compaction_cfg,
                     llm_client=compaction_client,
+                    thread_id=thread_id,
                 )
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
@@ -340,9 +341,10 @@ async def trigger_offload(thread_id: str, *, user_id: str | None = None) -> dict
     """
     Manually trigger tool-arg offloading for a thread (Tier 1 only).
 
-    Truncates large tool arguments in older messages and offloads the
-    originals to the sandbox filesystem. No LLM summarization is performed.
-    ``user_id`` identifies the caller to the session acquire, same as
+    Records large tool arguments and stale Read results in older messages as
+    offloaded and writes the original arguments to the sandbox filesystem. No
+    LLM summarization is performed. ``user_id`` identifies the caller to the
+    session acquire, same as
     :func:`trigger_compaction`.
 
     Args:
@@ -352,7 +354,10 @@ async def trigger_offload(thread_id: str, *, user_id: str | None = None) -> dict
         Dict with success, thread_id, message_count, offloaded_args, offloaded_reads
     """
     try:
-        from ptc_agent.agent.middleware.compaction import offload_tool_args
+        from ptc_agent.agent.middleware.compaction import (
+            get_effective_messages,
+            offload_tool_args,
+        )
 
         # Same fence as /compact — /offload also writes checkpoint state and
         # could race a running workflow's _offloaded_tool_call_ids updates.
@@ -366,50 +371,48 @@ async def trigger_offload(thread_id: str, *, user_id: str | None = None) -> dict
                 thread_id, "offload", checkpointer=mutation.saver, user_id=user_id, held=held
             )
 
-            # Load already-offloaded IDs from graph state (persisted in checkpoint)
+            # Recorded offloads are the whole record: the checkpoint keeps full
+            # messages and the middleware re-applies these ids on every call.
             already_offloaded: set[str] = set(
                 state.values.get("_offloaded_tool_call_ids") or ()
             )
             already_offloaded_reads: set[str] = set(
                 state.values.get("_offloaded_read_result_ids") or ()
             )
-            if already_offloaded:
-                logger.info(
-                    f"Loaded {len(already_offloaded)} already-offloaded IDs "
-                    f"for thread {thread_id}"
-                )
+            effective = get_effective_messages(
+                messages, state.values.get("_summarization_event")
+            )
 
-            # Call offload_tool_args (Tier 1 only)
             compaction_cfg = setup.agent_config.compaction if setup.agent_config else None
             try:
                 result = await offload_tool_args(
-                    messages=messages,
+                    messages=effective,
                     backend=backend,
                     already_offloaded=already_offloaded,
+                    already_offloaded_reads=already_offloaded_reads,
                     compaction_config=compaction_cfg,
+                    thread_id=thread_id,
                 )
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
             offloaded_args = result["offloaded_args"]
             offloaded_reads = result["offloaded_reads"]
-            new_ids = result.get("new_offloaded_ids", set())
 
-            # Update graph state: truncated messages + offloaded IDs + batch counter
-            state_update: dict = {"messages": result["messages"]}
-            if new_ids:
-                # new_offloaded_ids contains both arg and read IDs — merge into both
-                # state fields (extra IDs in either set are harmless, they're just guards)
-                state_update["_offloaded_tool_call_ids"] = already_offloaded | new_ids
-                state_update["_offloaded_read_result_ids"] = (
-                    already_offloaded_reads | new_ids
-                )
-                state_update["_truncation_batch_count"] = len(messages)
-
+            # Ids and the batch counter only, never messages. The counter
+            # holds the middleware's own auto pass off for one batch.
             await _update_graph_state(
                 graph,
                 lg_config,
-                state_update,
+                {
+                    "_offloaded_tool_call_ids": (
+                        already_offloaded | result["offloaded_arg_ids"]
+                    ),
+                    "_offloaded_read_result_ids": (
+                        already_offloaded_reads | result["offloaded_read_ids"]
+                    ),
+                    "_truncation_batch_count": len(effective),
+                },
                 thread_id,
                 "offload",
             )
@@ -417,7 +420,6 @@ async def trigger_offload(thread_id: str, *, user_id: str | None = None) -> dict
             logger.info(
                 f"Manual offload completed for thread {thread_id}: "
                 f"{offloaded_args} tool args, {offloaded_reads} read results"
-                f"{f', {len(already_offloaded)} previously offloaded (skipped)' if already_offloaded else ''}"
             )
 
             # Persist context_window event to last response for replay
@@ -434,7 +436,7 @@ async def trigger_offload(thread_id: str, *, user_id: str | None = None) -> dict
             return {
                 "success": True,
                 "thread_id": thread_id,
-                "message_count": result["original_count"],
+                "message_count": len(messages),
                 "offloaded_args": offloaded_args,
                 "offloaded_reads": offloaded_reads,
             }

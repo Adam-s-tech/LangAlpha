@@ -618,6 +618,7 @@ async def _persist_packed(
     existing: dict[str, dict[str, Any]],
     *,
     may_prune: bool = True,
+    withheld: frozenset[str] = frozenset(),
     layout: WorkspaceLayout,
 ) -> tuple[list[dict[str, Any]], list[UnsavedFile], int]:
     """Rows for every small file, via the pack set. Returns (rows, unsaved, skipped).
@@ -633,7 +634,9 @@ async def _persist_packed(
     and is packed on this pass. A member that is absent from the sandbox
     counts as having left only when this pass may prune its row: while
     pruning is withheld the row stays and the file is expected back, so
-    repacking around it would repeat on every sync until the restore. The
+    repacking around it would repeat on every sync until the restore; a
+    ``withheld`` member (a deferred restore still due) is expected back the
+    same way. The
     same pass leaves a moved stamp unrecorded, for the reason ``sync_to_db``
     gives: it may be the failed restore's own doing.
     """
@@ -648,7 +651,7 @@ async def _persist_packed(
         for path, m in existing.items()
         if m.get("kind", "file") == "file" and m.get("pack_sha256")
     }
-    left = previously_packed - set(by_path) if may_prune else set()
+    left = previously_packed - set(by_path) - withheld if may_prune else set()
     if not left and all(packed_unchanged(e) for e in members):
         rows: list[dict[str, Any]] = []
         for e in members:

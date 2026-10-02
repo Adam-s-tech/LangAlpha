@@ -25,6 +25,7 @@ from ptc_agent.agent.middleware.background_subagent.workflow.emitter import (
 )
 from ptc_agent.agent.middleware.compaction.utils import parse_summary_message
 from ptc_agent.agent.middleware.tool.argument_parsing import parse_tool_args
+from ptc_agent.agent.transcript.classify import STEERING_MARKERS, human_kind
 from src.llms.content_utils import extract_content_with_type
 from src.llms.token_counter import extract_token_usage
 from src.server.utils.content_normalizer import normalize_text_content
@@ -46,28 +47,6 @@ HistoryEventKind = Literal[
     "context-window",
     "user-message",
 ]
-
-_STEERING_MARKERS = (
-    "[Steering from User]\n",
-    "[Follow-up Instructions from Orchestrator]\n",
-)
-
-# Written by src/ptc_agent/agent/middleware/market_watch.py — the lc_source tag
-# and the content stamp prefix that mark a live-price injection.
-_MARKET_WATCH_SOURCE = "market_watch"
-_MARKET_WATCH_STAMP_OPEN = "<market-watch>"
-
-# Written by src/server/utils/credit_resume_context.py — the lc_source tag on
-# the record of gate-stopped background tasks injected when a credit-paused
-# turn resumes.
-_CREDIT_GATE_SOURCE = "credit_gate"
-
-# Written by src/ptc_agent/agent/middleware/runtime_context/: the tail
-# envelope carrier and the durable rows it renders. Both are request-scoped and
-# never checkpointed, so neither should reach this projector at all; they are
-# registered because ``plain`` is the fallback and an unregistered stamp would
-# open a run it only landed inside.
-_RUNTIME_CONTEXT_SOURCES = frozenset({"runtime_context", "runtime_update"})
 
 _FILE_OPERATION_TOOLS = {"Write", "Edit"}
 _ARTIFACT_FROM_TOOL_MESSAGE = {
@@ -238,41 +217,6 @@ def _sse(event_type: str, data: dict[str, Any]) -> dict[str, Any]:
     return {"event": event_type, "data": data}
 
 
-def _human_message_kind(message: HumanMessage) -> str:
-    """Classify a HumanMessage by its injection stamp: ``market-watch``,
-    ``steering``, ``summarization``, ``credit-gate``, ``runtime-context``, or
-    ``plain`` (real user input).
-
-    Every stamp a writer emits must be registered here. ``plain`` is the
-    fallback, and it is load-bearing — it is what ``is_run_boundary_message``
-    treats as a run's opening input, so an unregistered stamp would open a
-    run it only landed inside.
-    """
-    kwargs = message.additional_kwargs or {}
-    source = kwargs.get("lc_source")
-    content = message.content if isinstance(message.content, str) else ""
-    if source == _MARKET_WATCH_SOURCE or content.startswith(_MARKET_WATCH_STAMP_OPEN):
-        # Both guards stay: the content-prefix check is the safety net for
-        # any ephemeral stamp that reaches a message unstamped.
-        return "market-watch"
-    if source == "steering" or content.startswith(_STEERING_MARKERS):
-        return "steering"
-    if source == "summarization":
-        return "summarization"
-    if source == _CREDIT_GATE_SOURCE:
-        return "credit-gate"
-    if source in _RUNTIME_CONTEXT_SOURCES:
-        return "runtime-context"
-    return "plain"
-
-
-def is_run_boundary_message(message: AnyMessage) -> bool:
-    """A plain HumanMessage opens a run in a task namespace (the spawn or
-    resume input); stamped injections (steering, market-watch, runtime
-    context, summaries) land mid-run and never open one."""
-    return isinstance(message, HumanMessage) and _human_message_kind(message) == "plain"
-
-
 def _project_human_message(message: HumanMessage, agent: str) -> list[HistoryEvent]:
     """Project marked mid-turn HumanMessage injections; skip plain main-agent
     input (the turn's user input is table-sourced by the replay endpoint).
@@ -284,7 +228,7 @@ def _project_human_message(message: HumanMessage, agent: str) -> list[HistoryEve
     """
     kwargs = message.additional_kwargs or {}
     content = message.content if isinstance(message.content, str) else ""
-    kind = _human_message_kind(message)
+    kind = human_kind(message)
 
     if kind in ("market-watch", "credit-gate", "runtime-context"):
         # Model-facing only. Returning here rather than falling through also
@@ -296,7 +240,7 @@ def _project_human_message(message: HumanMessage, agent: str) -> list[HistoryEve
         payload = kwargs.get("steering_delivered")
         if not isinstance(payload, dict):
             text = content.split("\n", 1)[1] if "\n" in content else content
-            if content.startswith(_STEERING_MARKERS[1]):
+            if content.startswith(STEERING_MARKERS[1]):
                 payload = {"content": text, "count": 1}
             else:
                 payload = {"count": 1, "messages": [{"content": text}]}

@@ -491,6 +491,10 @@ class MachineLifecycleMixin:
 
     async def _settle_machine_stop(self, computer_id: str, status: str) -> None:
         """CAS from 'stopping' so a teardown's tail cannot stomp a peer's transition."""
+        if status == ComputerStatus.STOPPED:
+            # While the row still reads 'stopping', so no start can have minted
+            # a token this would end.
+            await self._revoke_livefs(computer_id)
         if (
             await update_computer_status(computer_id, status, expected="stopping")
             is None
@@ -664,12 +668,19 @@ class MachineLifecycleMixin:
                 raise RuntimeError(
                     f"Computer {computer_id} came up without a sandbox identity"
                 )
-            await self._sync_machine_assets(
+            # The machine comes up to run code, so its first turn finds the
+            # mount serving rather than starting it on the turn's path.
+            await self._livefs_beside(
                 computer_id,
                 user_id,
                 session.sandbox,
-                reusing_sandbox=reconnected,
-                origin_workspace_id=computer.get("origin_workspace_id"),
+                self._sync_machine_assets(
+                    computer_id,
+                    user_id,
+                    session.sandbox,
+                    reusing_sandbox=reconnected,
+                    origin_workspace_id=computer.get("origin_workspace_id"),
+                ),
             )
 
             restored_projects: list[ComputerBinding] = []
@@ -753,12 +764,20 @@ class MachineLifecycleMixin:
             # is the safe side; it is no reason to unwind a bound machine.
             for project_binding in restored_projects:
                 try:
-                    await self._maybe_restore_files(project_binding, session.sandbox)
+                    await self._maybe_restore_files(
+                        project_binding, session.sandbox, urgent=False
+                    )
                 except Exception as e:
                     logger.warning(
                         f"Could not settle the restore flag for "
                         f"{project_binding.workspace_id} after binding: {e}"
                     )
+            if reconnected:
+                # The disk outlived the stop, but it still holds the threads
+                # deleted or gone idle meanwhile, and no worker's attach will
+                # look again: projects stay attached across a stop on the
+                # same sandbox. The bring-up job reconciles each one.
+                await self._queue_reconnect_syncs(computer_id, session.sandbox)
             self._record_sync(computer_id)
             await update_computer_activity(computer_id)
             logger.info(
@@ -775,6 +794,14 @@ class MachineLifecycleMixin:
             else:
                 await self._clear_session(computer_id, evict_session=session)
             raise
+
+    async def _queue_reconnect_syncs(self, computer_id: str, sandbox: Any) -> None:
+        """Queue every project on a resumed sandbox; the restore step finds
+        nothing deferred on a warm disk, so each costs only its sync."""
+        for workspace_id in await get_live_workspace_ids_for_computer(computer_id):
+            self._queue_bring_up(
+                computer_id, workspace_id, sandbox, sandbox.working_dir, urgent=False
+            )
 
     async def _revert_machine_start(self, computer_id: str) -> None:
         """CAS only from starting so failure cannot stop a machine another worker moved."""

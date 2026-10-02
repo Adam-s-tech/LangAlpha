@@ -46,10 +46,10 @@ def _make_automation(
     return data
 
 
-def _quiet_sweep(mock_auto_db):
+def _quiet_sweep(mock_exec_db):
     """Nothing left unsettled, so a poll's sweep is a no-op."""
-    mock_auto_db.settle_legacy_executions = AsyncMock(return_value=0)
-    mock_auto_db.list_abandoned_executions = AsyncMock(return_value=[])
+    mock_exec_db.settle_legacy_executions = AsyncMock(return_value=0)
+    mock_exec_db.list_abandoned_executions = AsyncMock(return_value=[])
 
 
 # ---------------------------------------------------------------------------
@@ -164,33 +164,35 @@ class TestPollOnce:
         AutomationScheduler._instance = None
 
     @pytest.mark.asyncio
+    @patch("src.server.services.automation_scheduler.exec_db")
     @patch("src.server.services.automation_scheduler.auto_db")
     @patch("src.server.services.automation_scheduler.AutomationExecutor")
-    async def test_poll_once_no_due_automations(self, mock_executor_cls, mock_auto_db):
+    async def test_poll_once_no_due_automations(self, mock_executor_cls, mock_auto_db, mock_exec_db):
         mock_executor = MagicMock()
         mock_executor_cls.get_instance.return_value = mock_executor
         mock_auto_db.claim_due_automations = AsyncMock(return_value=[])
-        _quiet_sweep(mock_auto_db)
+        _quiet_sweep(mock_exec_db)
 
         scheduler = AutomationScheduler()
         await scheduler._poll_once()
         await scheduler._sweep_task
 
         mock_auto_db.claim_due_automations.assert_awaited_once()
-        mock_auto_db.list_abandoned_executions.assert_awaited_once()
+        mock_exec_db.list_abandoned_executions.assert_awaited_once()
         assert len(scheduler._running_tasks) == 0
 
     @pytest.mark.asyncio
+    @patch("src.server.services.automation_scheduler.exec_db")
     @patch("src.server.services.automation_scheduler.auto_db")
     @patch("src.server.services.automation_scheduler.AutomationExecutor")
-    async def test_poll_once_dispatches_cron_automation(self, mock_executor_cls, mock_auto_db):
+    async def test_poll_once_dispatches_cron_automation(self, mock_executor_cls, mock_auto_db, mock_exec_db):
         mock_executor = AsyncMock()
         mock_executor_cls.get_instance.return_value = mock_executor
 
         automation = _make_automation(trigger_type="cron", cron_expression="0 9 * * *")
         mock_auto_db.claim_due_automations = AsyncMock(return_value=[automation])
         mock_auto_db.update_automation_next_run = AsyncMock()
-        _quiet_sweep(mock_auto_db)
+        _quiet_sweep(mock_exec_db)
 
         scheduler = AutomationScheduler()
         await scheduler._poll_once()
@@ -206,9 +208,10 @@ class TestPollOnce:
         mock_executor.execute.assert_awaited_once()
 
     @pytest.mark.asyncio
+    @patch("src.server.services.automation_scheduler.exec_db")
     @patch("src.server.services.automation_scheduler.auto_db")
     @patch("src.server.services.automation_scheduler.AutomationExecutor")
-    async def test_poll_once_skips_next_run_for_once_type(self, mock_executor_cls, mock_auto_db):
+    async def test_poll_once_skips_next_run_for_once_type(self, mock_executor_cls, mock_auto_db, mock_exec_db):
         mock_executor = AsyncMock()
         mock_executor_cls.get_instance.return_value = mock_executor
 
@@ -217,7 +220,7 @@ class TestPollOnce:
         )
         mock_auto_db.claim_due_automations = AsyncMock(return_value=[automation])
         mock_auto_db.update_automation_next_run = AsyncMock()
-        _quiet_sweep(mock_auto_db)
+        _quiet_sweep(mock_exec_db)
 
         scheduler = AutomationScheduler()
         await scheduler._poll_once()
@@ -226,10 +229,11 @@ class TestPollOnce:
         mock_auto_db.update_automation_next_run.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @patch(f"{_MOD}.exec_db")
     @patch(f"{_MOD}.auto_db")
     @patch(f"{_MOD}.AutomationExecutor")
     async def test_a_failed_reschedule_still_runs_the_whole_batch(
-        self, mock_executor_cls, mock_auto_db
+        self, mock_executor_cls, mock_auto_db, mock_exec_db
     ):
         """Every row is claimed before the loop: one left undispatched would
         sit until the sweep failed it as interrupted."""
@@ -240,7 +244,7 @@ class TestPollOnce:
         mock_auto_db.update_automation_next_run = AsyncMock(
             side_effect=[RuntimeError("db blip"), None]
         )
-        _quiet_sweep(mock_auto_db)
+        _quiet_sweep(mock_exec_db)
 
         scheduler = AutomationScheduler()
         await scheduler._poll_once()
@@ -251,21 +255,22 @@ class TestPollOnce:
             first["_execution_id"],
             second["_execution_id"],
         ]
-        mock_auto_db.list_abandoned_executions.assert_awaited_once()
+        mock_exec_db.list_abandoned_executions.assert_awaited_once()
 
     @pytest.mark.asyncio
+    @patch(f"{_MOD}.exec_db")
     @patch(f"{_MOD}.auto_db")
     @patch(f"{_MOD}.AutomationExecutor")
-    async def test_poll_claims_before_it_sweeps(self, mock_executor_cls, mock_auto_db):
+    async def test_poll_claims_before_it_sweeps(self, mock_executor_cls, mock_auto_db, mock_exec_db):
         mock_executor_cls.get_instance.return_value = AsyncMock()
         calls = []
         mock_auto_db.claim_due_automations = AsyncMock(
             side_effect=lambda **_: calls.append("claim") or []
         )
-        mock_auto_db.settle_legacy_executions = AsyncMock(
+        mock_exec_db.settle_legacy_executions = AsyncMock(
             side_effect=lambda *_: calls.append("sweep") or 0
         )
-        mock_auto_db.list_abandoned_executions = AsyncMock(return_value=[])
+        mock_exec_db.list_abandoned_executions = AsyncMock(return_value=[])
 
         scheduler = AutomationScheduler()
         await scheduler._poll_once()
@@ -274,10 +279,11 @@ class TestPollOnce:
         assert calls == ["claim", "sweep"]
 
     @pytest.mark.asyncio
+    @patch(f"{_MOD}.exec_db")
     @patch(f"{_MOD}.auto_db")
     @patch(f"{_MOD}.AutomationExecutor")
     async def test_a_slow_sweep_does_not_hold_up_the_next_claim(
-        self, mock_executor_cls, mock_auto_db
+        self, mock_executor_cls, mock_auto_db, mock_exec_db
     ):
         mock_executor_cls.get_instance.return_value = AsyncMock()
         release = asyncio.Event()
@@ -289,8 +295,8 @@ class TestPollOnce:
             return 0
 
         mock_auto_db.claim_due_automations = AsyncMock(return_value=[])
-        mock_auto_db.settle_legacy_executions = AsyncMock(side_effect=slow_sweep)
-        mock_auto_db.list_abandoned_executions = AsyncMock(return_value=[])
+        mock_exec_db.settle_legacy_executions = AsyncMock(side_effect=slow_sweep)
+        mock_exec_db.list_abandoned_executions = AsyncMock(return_value=[])
         scheduler = AutomationScheduler()
 
         await scheduler._poll_once()
@@ -328,16 +334,17 @@ class TestSweep:
 
     @pytest.mark.asyncio
     @patch(f"{_MOD}.settle_abandoned")
+    @patch(f"{_MOD}.exec_db")
     @patch(f"{_MOD}.auto_db")
     @patch(f"{_MOD}.AutomationExecutor")
     async def test_settles_each_abandoned_firing_of_a_live_automation(
-        self, mock_executor_cls, mock_auto_db, mock_settle
+        self, mock_executor_cls, mock_auto_db, mock_exec_db, mock_settle
     ):
         mock_executor_cls.get_instance.return_value = MagicMock()
         kept, gone = _abandoned_row("auto-kept"), _abandoned_row("auto-gone")
         automation = _make_automation(automation_id="auto-kept")
-        mock_auto_db.settle_legacy_executions = AsyncMock(return_value=2)
-        mock_auto_db.list_abandoned_executions = AsyncMock(return_value=[kept, gone])
+        mock_exec_db.settle_legacy_executions = AsyncMock(return_value=2)
+        mock_exec_db.list_abandoned_executions = AsyncMock(return_value=[kept, gone])
         mock_auto_db.get_automation = AsyncMock(
             side_effect=lambda aid, uid: automation if aid == "auto-kept" else None
         )
@@ -345,23 +352,24 @@ class TestSweep:
 
         await AutomationScheduler()._sweep_abandoned_firings()
 
-        mock_auto_db.settle_legacy_executions.assert_awaited_once_with(INTERRUPTED_ERROR)
-        mock_auto_db.list_abandoned_executions.assert_awaited_once_with(
+        mock_exec_db.settle_legacy_executions.assert_awaited_once_with(INTERRUPTED_ERROR)
+        mock_exec_db.list_abandoned_executions.assert_awaited_once_with(
             ABANDONED_AFTER_SECONDS
         )
         mock_settle.assert_awaited_once_with(automation, kept, ABANDONED_AFTER_SECONDS)
 
     @pytest.mark.asyncio
     @patch(f"{_MOD}.settle_abandoned")
+    @patch(f"{_MOD}.exec_db")
     @patch(f"{_MOD}.auto_db")
     @patch(f"{_MOD}.AutomationExecutor")
     async def test_one_failing_row_does_not_stop_the_rest(
-        self, mock_executor_cls, mock_auto_db, mock_settle
+        self, mock_executor_cls, mock_auto_db, mock_exec_db, mock_settle
     ):
         mock_executor_cls.get_instance.return_value = MagicMock()
         rows = [_abandoned_row("auto-1"), _abandoned_row("auto-1")]
-        mock_auto_db.settle_legacy_executions = AsyncMock(return_value=0)
-        mock_auto_db.list_abandoned_executions = AsyncMock(return_value=rows)
+        mock_exec_db.settle_legacy_executions = AsyncMock(return_value=0)
+        mock_exec_db.list_abandoned_executions = AsyncMock(return_value=rows)
         mock_auto_db.get_automation = AsyncMock(return_value=_make_automation())
         mock_settle.side_effect = [RuntimeError("db blip"), None]
 
@@ -371,14 +379,15 @@ class TestSweep:
 
     @pytest.mark.asyncio
     @patch(f"{_MOD}.settle_abandoned")
+    @patch(f"{_MOD}.exec_db")
     @patch(f"{_MOD}.auto_db")
     @patch(f"{_MOD}.AutomationExecutor")
     async def test_a_failed_listing_never_raises(
-        self, mock_executor_cls, mock_auto_db, mock_settle
+        self, mock_executor_cls, mock_auto_db, mock_exec_db, mock_settle
     ):
         mock_executor_cls.get_instance.return_value = MagicMock()
-        mock_auto_db.settle_legacy_executions = AsyncMock(return_value=0)
-        mock_auto_db.list_abandoned_executions = AsyncMock(
+        mock_exec_db.settle_legacy_executions = AsyncMock(return_value=0)
+        mock_exec_db.list_abandoned_executions = AsyncMock(
             side_effect=RuntimeError("db down")
         )
 

@@ -73,7 +73,7 @@ class TestSweepBoundaries:
         self, seed_user, patched_get_db_connection
     ):
         db = patched_get_db_connection
-        from src.server.database.automation import list_abandoned_executions
+        from src.server.database.automation_executions import list_abandoned_executions
 
         aid = await _automation(seed_user["user_id"])
         stale_running = await _firing(db, aid, heartbeat=_STALE)
@@ -95,10 +95,8 @@ class TestSweepBoundaries:
         self, seed_user, patched_get_db_connection
     ):
         db = patched_get_db_connection
-        from src.server.database.automation import (
-            get_automation,
-            settle_legacy_executions,
-        )
+        from src.server.database.automation import get_automation
+        from src.server.database.automation_executions import settle_legacy_executions
 
         aid = await _automation(seed_user["user_id"])
         young = await _firing(db, aid, heartbeat="NULL")
@@ -118,7 +116,7 @@ class TestSweepBoundaries:
         self, seed_user, patched_get_db_connection
     ):
         db = patched_get_db_connection
-        from src.server.database.automation import settle_execution
+        from src.server.database.automation_executions import settle_execution
 
         aid = await _automation(seed_user["user_id"])
         eid = await _firing(db, aid)
@@ -135,7 +133,8 @@ class TestSweepBoundaries:
         db = patched_get_db_connection
         import asyncio
 
-        from src.server.database.automation import get_automation, settle_execution
+        from src.server.database.automation import get_automation
+        from src.server.database.automation_executions import settle_execution
 
         aid = await _automation(seed_user["user_id"], max_failures=5)
         eid = await _firing(db, aid, heartbeat=_STALE)
@@ -160,7 +159,8 @@ class TestSettleExecution:
     async def test_strikes_count_up_to_the_limit_and_say_why(
         self, seed_user, patched_get_db_connection
     ):
-        from src.server.database.automation import get_automation, settle_execution
+        from src.server.database.automation import get_automation
+        from src.server.database.automation_executions import settle_execution
 
         auto_id = await _automation(seed_user["user_id"], max_failures=2)
 
@@ -181,7 +181,8 @@ class TestSettleExecution:
         self, seed_user, patched_get_db_connection
     ):
         db = patched_get_db_connection
-        from src.server.database.automation import get_automation, settle_execution
+        from src.server.database.automation import get_automation
+        from src.server.database.automation_executions import settle_execution
 
         aid = await _automation(seed_user["user_id"], max_failures=1)
         eid = await _firing(db, aid)
@@ -200,10 +201,9 @@ class TestSettleExecution:
     async def test_a_claimed_once_firing_closes_its_automation_and_a_manual_one_does_not(
         self, seed_user, patched_get_db_connection
     ):
-        from src.server.database.automation import (
-            claim_due_automations,
+        from src.server.database.automation import claim_due_automations, get_automation
+        from src.server.database.automation_executions import (
             create_execution,
-            get_automation,
             settle_execution,
             transition_execution,
         )
@@ -235,11 +235,8 @@ class TestSettleExecution:
         self, seed_user, patched_get_db_connection
     ):
         db = patched_get_db_connection
-        from src.server.database.automation import (
-            get_automation,
-            settle_execution,
-            update_automation,
-        )
+        from src.server.database.automation import get_automation, update_automation
+        from src.server.database.automation_executions import settle_execution
 
         aid = await _automation(
             seed_user["user_id"], trigger_type="price", cron_expression=None,
@@ -260,11 +257,13 @@ class TestSettleExecution:
     ):
         from src.server.database.automation import (
             claim_price_firing,
-            create_execution,
             get_automation,
+            update_automation,
+        )
+        from src.server.database.automation_executions import (
+            create_execution,
             settle_execution,
             transition_execution,
-            update_automation,
         )
 
         uid = seed_user["user_id"]
@@ -298,7 +297,7 @@ class TestSettleExecution:
         self, seed_user, patched_get_db_connection
     ):
         db = patched_get_db_connection
-        from src.server.database.automation import (
+        from src.server.database.automation_executions import (
             get_execution_status,
             list_executions,
             settle_execution,
@@ -327,7 +326,9 @@ class TestSettleExecution:
         self, seed_user, patched_get_db_connection
     ):
         db = patched_get_db_connection
-        from src.server.database.automation import has_earlier_waiting_execution
+        from src.server.database.automation_executions import (
+            has_earlier_waiting_execution,
+        )
 
         aid = await _automation(seed_user["user_id"])
         first = await _firing(db, aid, status="waiting")
@@ -380,7 +381,7 @@ class TestWhyAFiringFailed:
     """The failure a user acts on, and why an automation switched itself off."""
 
     async def _settle_failed(self, aid, db, **fields):
-        from src.server.database.automation import settle_execution
+        from src.server.database.automation_executions import settle_execution
 
         eid = await _firing(db, aid)
         row = await settle_execution(
@@ -393,7 +394,8 @@ class TestWhyAFiringFailed:
         self, seed_user, patched_get_db_connection
     ):
         db = patched_get_db_connection
-        from src.server.database.automation import get_automation, list_executions
+        from src.server.database.automation import get_automation
+        from src.server.database.automation_executions import list_executions
 
         uid = seed_user["user_id"]
         aid = await _automation(uid, max_failures=5)
@@ -450,11 +452,8 @@ class TestWhyAFiringFailed:
         self, seed_user, patched_get_db_connection
     ):
         db = patched_get_db_connection
-        from src.server.database.automation import (
-            get_automation,
-            settle_execution,
-            update_automation,
-        )
+        from src.server.database.automation import get_automation, update_automation
+        from src.server.database.automation_executions import settle_execution
 
         uid = seed_user["user_id"]
         aid = await _automation(uid, max_failures=5)
@@ -514,7 +513,7 @@ class TestWhyAFiringFailed:
         self, seed_user, patched_get_db_connection
     ):
         db = patched_get_db_connection
-        from src.server.database.automation import settle_execution
+        from src.server.database.automation_executions import settle_execution
 
         aid = await _automation(seed_user["user_id"], max_failures=5)
         await self._settle_failed(aid, db, failure_reason="usage_limit")

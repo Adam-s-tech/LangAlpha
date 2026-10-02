@@ -89,6 +89,7 @@ __all__ = [
     "register_blobs",
     "registered_blobs",
     "store_blob",
+    "store_blobs",
     "sweep_blob_garbage",
 ]
 
@@ -158,6 +159,56 @@ async def store_blob(user_id: str, sha256: str, data: bytes) -> None:
         # a manifest row against, so deleting it here could strand that row.
         msg = f"Blob registry insert failed for {key}"
         raise BlobUploadError(msg) from e
+
+
+async def store_blobs(
+    user_id: str, contents: dict[str, bytes], *, concurrency: int = 8
+) -> None:
+    """``store_blob`` for many digests at once: one claim for all of them,
+    the uploads side by side, then one register for those that landed.
+
+    The order per blob is ``store_blob``'s, claim before upload before row,
+    so the batch changes the round trips and not the protocol. A failed
+    upload raises once the rest have settled and been registered.
+    """
+    if not contents:
+        return
+    keys = {sha: blob_key(user_id, sha) for sha in contents}
+    try:
+        async with get_db_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(CLAIM_SQL, (user_id, list(keys)))
+    except Exception as e:
+        msg = f"Blob claim failed for {len(keys)} blobs of user {user_id}"
+        raise BlobUploadError(msg) from e
+    gate = asyncio.Semaphore(concurrency)
+
+    async def put(sha: str) -> bool:
+        async with gate:
+            return await asyncio.to_thread(
+                _storage_upload_bytes,
+                keys[sha],
+                contents[sha],
+                BLOB_CONTENT_TYPE,
+                max_size=RELAY_MAX_BYTES,
+            )
+
+    outcomes = await asyncio.gather(*(put(sha) for sha in keys), return_exceptions=True)
+    landed = [
+        (sha, len(contents[sha]))
+        for sha, outcome in zip(keys, outcomes)
+        if outcome is True
+    ]
+    try:
+        await register_blobs(user_id, landed)
+    except Exception as e:
+        # As in store_blob: the objects are durable and stay.
+        msg = f"Blob registry insert failed for {len(landed)} blobs of user {user_id}"
+        raise BlobUploadError(msg) from e
+    if len(landed) < len(keys):
+        failed = [keys[sha] for sha, outcome in zip(keys, outcomes) if outcome is not True]
+        msg = f"Blob upload failed for {len(failed)} of {len(keys)}: {failed[0]}"
+        raise BlobUploadError(msg)
 
 
 async def registered_blobs(user_id: str, sha256s: list[str]) -> set[str]:

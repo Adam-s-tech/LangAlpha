@@ -7,9 +7,13 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Any, Dict, Mapping, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Set, Tuple
 
 from ptc_agent.core.session import Session
+from src.server.services.livefs.tracker import MountTracker
+
+if TYPE_CHECKING:
+    from src.server.services.computer_manager._bringup import BringUp
 
 
 # This cache stores which projects this process has already materialised on a
@@ -190,6 +194,9 @@ class MachineState:
     # Each project's frozen tool configuration, keyed by workspace; see
     # WorkspaceToolView. Execution context, dropped with the session.
     tool_views: OrderedDict[str, WorkspaceToolView] = field(default_factory=OrderedDict)
+    livefs: MountTracker = field(default_factory=MountTracker)
+    # The background restore and transcript sync of the sandbox in the slot.
+    bring_up: Optional["BringUp"] = None
 
     def forget_session(self) -> None:
         """Drop everything the session owned, keeping the lock its caller may hold.
@@ -205,3 +212,15 @@ class MachineState:
         self.phase2_event = None
         self.last_sync_at = None
         self.tool_views.clear()
+        self.livefs.forget()
+        if self.bring_up is not None:
+            self.cancel_bring_up(self.bring_up.sandbox_id)
+
+    def cancel_bring_up(self, sandbox_id: Optional[str]) -> None:
+        """Stop the bring-up running against ``sandbox_id``, before that sandbox goes.
+
+        A job for another sandbox belongs to a replacement installed meanwhile."""
+        job = self.bring_up
+        if job is not None and job.sandbox_id == sandbox_id:
+            self.bring_up = None
+            job.cancel()

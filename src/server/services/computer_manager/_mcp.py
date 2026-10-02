@@ -536,7 +536,9 @@ class McpSecretsMixin:
                             egress_binding=current.egress_binding,
                         )
                         self._store_tool_view(computer_id, updated)
-                        await self._sync_sandbox_assets(
+                        # Only the tool modules changed; the mount is the
+                        # turn's to bring up.
+                        await self._sync_project_assets(
                             binding,
                             user_id,
                             session.sandbox,

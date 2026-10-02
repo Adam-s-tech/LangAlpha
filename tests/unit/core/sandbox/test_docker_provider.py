@@ -18,7 +18,11 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import io
+import os
+import shlex
+import subprocess
 import tarfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -42,6 +46,7 @@ from ptc_agent.core.sandbox.runtime import (
     ExecResult,
     RuntimeState,
     SandboxTransientError,
+    SessionState,
 )
 
 
@@ -348,7 +353,20 @@ class TestDockerRuntimeExec:
         container.exec.assert_called_once_with(
             cmd=["bash", "-c", "ls"],
             workdir="/home/workspace",
+            user="",
+            environment=None,
         )
+
+    @pytest.mark.asyncio
+    async def test_exec_as_root_overrides_the_image_user(self, runtime, container):
+        exec_mock = _make_exec_mock("", exit_code=0)
+        container.exec = AsyncMock(return_value=exec_mock)
+
+        await runtime.exec_as_root("id -u", env={"SECRET": "x"})
+        assert container.exec.call_args.kwargs["user"] == "root"
+        # The secret rides the exec's environment, never its command line.
+        assert container.exec.call_args.kwargs["environment"] == {"SECRET": "x"}
+        assert "x" not in container.exec.call_args.kwargs["cmd"][-1]
 
     @pytest.mark.asyncio
     async def test_exec_nonzero_exit_code(self, runtime, container):
@@ -1115,20 +1133,26 @@ class TestDockerRuntimeSessions:
 
     @pytest.mark.asyncio
     async def test_create_session(self, runtime):
-        """create_session creates the session directory."""
-        runtime._container.exec = AsyncMock(
-            return_value=_make_exec_mock(exit_code=1)  # dir doesn't exist
-        )
+        """create_session creates the session directory in one exec."""
+        runtime._container.exec = AsyncMock(return_value=_make_exec_mock(exit_code=0))
         await runtime.create_session("preview-8080")
-        assert runtime._container.exec.call_count == 2  # test -d + mkdir -p
+        assert runtime._container.exec.call_count == 1
 
     @pytest.mark.asyncio
     async def test_create_session_already_exists(self, runtime):
         """create_session raises when session dir already exists."""
         runtime._container.exec = AsyncMock(
-            return_value=_make_exec_mock(exit_code=0)  # dir exists
+            return_value=_make_exec_mock(exit_code=3)  # dir exists
         )
         with pytest.raises(RuntimeError, match="Session already exists"):
+            await runtime.create_session("preview-8080")
+
+    @pytest.mark.asyncio
+    async def test_create_session_that_fails_raises(self, runtime):
+        """A launch into a directory that was never made would fail later and
+        less clearly."""
+        runtime._container.exec = AsyncMock(return_value=_make_exec_mock(exit_code=1))
+        with pytest.raises(RuntimeError, match="Could not create session"):
             await runtime.create_session("preview-8080")
 
     @pytest.mark.asyncio
@@ -1205,9 +1229,71 @@ class TestDockerRuntimeSessions:
         cmd = call_args[1].get("cmd", call_args[0][0] if call_args[0] else None)
         cmd_str = cmd[-1] if isinstance(cmd, list) else str(cmd)
         # Kills entire process group (negative PID) and the process itself
-        assert 'kill -- -"$pid"' in cmd_str
-        assert 'kill "$pid"' in cmd_str
+        assert "kill -- -$pid" in cmd_str
+        assert "kill $pid" in cmd_str
         assert "rm -rf" in cmd_str
+
+    @pytest.mark.asyncio
+    async def test_delete_missing_session_raises_not_found(self, runtime):
+        """A stop tells "no such command" from a failed delete by this."""
+        runtime._container.exec = AsyncMock(return_value=_make_exec_mock(exit_code=3))
+        with pytest.raises(FileNotFoundError):
+            await runtime.delete_session("bg-0123456789ab")
+
+    @pytest.mark.asyncio
+    async def test_delete_that_did_not_finish_raises(self, runtime):
+        """exec reports a timeout as -1, and the command may still be running."""
+        runtime._container.exec = AsyncMock(return_value=_make_exec_mock(exit_code=-1))
+        with pytest.raises(RuntimeError, match="Could not delete session"):
+            await runtime.delete_session("bg-0123456789ab")
+
+    @pytest.mark.asyncio
+    async def test_a_stop_before_the_pid_is_written_keeps_the_command_from_running(
+        self, runtime, tmp_path
+    ):
+        """The launch returns before its wrapper writes the .pid, so a stop in
+        that window finds no PID to kill; the wrapper must then not run."""
+        sessions = tmp_path / "sessions"
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+
+        async def local_exec(command: str, timeout: int = 60) -> ExecResult:
+            done = subprocess.run(
+                ["bash", "-c", command.replace("/tmp/.sessions", str(sessions))],
+                capture_output=True, text=True, env=env,
+            )
+            return ExecResult(stdout=done.stdout, stderr=done.stderr, exit_code=done.returncode)
+
+        stop_scripts: list[str] = []
+
+        async def record(command: str, timeout: int = 60) -> ExecResult:
+            stop_scripts.append(command.replace("/tmp/.sessions", str(sessions)))
+            return ExecResult(stdout="", stderr="", exit_code=0)
+
+        runtime.exec = record
+        await runtime.delete_session("bg-0123456789ab")
+
+        # The wrapper starts through setsid, so a setsid on PATH runs the stop
+        # after the launch returned and before the .pid is written.
+        ran, launched = tmp_path / "ran", tmp_path / "launched"
+        setsid = bin_dir / "setsid"
+        setsid.write_text(
+            f"#!/bin/bash\nbash -c {shlex.quote(stop_scripts[0])}\n\"$@\"\ntouch {launched}\n"
+        )
+        setsid.chmod(0o755)
+
+        runtime.exec = local_exec
+        await runtime.create_session("bg-0123456789ab")
+        await runtime.session_execute("bg-0123456789ab", f"touch {ran}", run_async=True)
+        for _ in range(100):
+            if launched.exists():
+                break
+            await asyncio.sleep(0.05)
+
+        assert launched.exists()
+        assert not ran.exists()
+        assert not list(sessions.glob("*/bg-0123456789ab"))
 
     @pytest.mark.asyncio
     async def test_delete_session_invalid_id(self, runtime):
@@ -1226,6 +1312,118 @@ class TestDockerRuntimeSessions:
         """session_command_logs rejects invalid session IDs."""
         with pytest.raises(ValueError, match="Invalid session_id"):
             await runtime.session_command_logs("../evil", "abc12345")
+
+
+def _stat_line(pid: int, start: int) -> str:
+    """A /proc/<pid>/stat line whose start time (field 22) is ``start``,
+    behind a command name with the spaces and parens one may hold."""
+    return f"{pid} (a) b (c) S {' '.join(['0'] * 18)} {start} 0 0\n"
+
+
+class TestDockerSessionsAcrossRestartsAndPidReuse:
+    """The session scripts run in a local bash, with the session root and /proc
+    moved into a temp dir, so a test sets which process each pid names. A real
+    process in its own group stands in for whatever a pid names now, so a kill
+    that reaches it shows."""
+
+    SID = "bg-0123456789ab"
+
+    @pytest.fixture
+    def machine(self, tmp_path):
+        sessions, proc = tmp_path / "sessions", tmp_path / "proc"
+        proc.mkdir()
+
+        async def local_exec(command: str, timeout: int = 60) -> ExecResult:
+            command = command.replace("/tmp/.sessions", str(sessions))
+            command = command.replace("/proc/", f"{proc}/")
+            done = subprocess.run(["bash", "-c", command], capture_output=True, text=True)
+            # The Docker exec stream carries stderr in stdout too.
+            return ExecResult(
+                stdout=done.stdout + done.stderr, stderr="", exit_code=done.returncode
+            )
+
+        def set_start(pid: int, start: int) -> None:
+            (proc / str(pid)).mkdir(exist_ok=True)
+            (proc / str(pid) / "stat").write_text(_stat_line(pid, start))
+
+        def record(run: int, pid: int, start: int) -> None:
+            """A command whose wrapper wrote no exit code."""
+            session = sessions / f"run-{run}" / self.SID
+            session.mkdir(parents=True)
+            (session / "c0ffee00.pid").write_text(f"{pid} {start}\n")
+
+        runtime = DockerRuntime(
+            _make_mock_container(), runtime_id="docker-test", working_dir="/home/workspace"
+        )
+        runtime.exec = local_exec
+        victim = subprocess.Popen(["sleep", "30"], start_new_session=True)
+        yield SimpleNamespace(
+            runtime=runtime, sessions=sessions, set_start=set_start, record=record, victim=victim
+        )
+        victim.kill()
+        victim.wait()
+
+    @pytest.mark.asyncio
+    async def test_a_restart_leaves_no_sessions_and_signals_nothing(self, machine):
+        """A stop ends every process in the container, but the session files
+        stay on its disk, and pids count up from 1 again, so the pid a killed
+        command recorded soon names a new run's job."""
+        runtime, victim = machine.runtime, machine.victim
+        machine.set_start(1, 100)
+        machine.record(100, victim.pid, 150)
+        machine.set_start(1, 200)
+        machine.set_start(victim.pid, 250)
+
+        assert await runtime.list_sessions() == []
+        assert await runtime.session_logs(self.SID) is None
+        with pytest.raises(FileNotFoundError):
+            await runtime.session_command_logs(self.SID, "c0ffee00")
+        with pytest.raises(FileNotFoundError):
+            await runtime.delete_session(self.SID)
+        assert victim.poll() is None
+
+        await runtime.create_session("bg-ba5eba11ba5e")
+        assert sorted(p.name for p in machine.sessions.iterdir()) == ["run-200"]
+
+    @pytest.mark.asyncio
+    async def test_a_pid_that_names_another_process_reads_as_ended_and_is_not_signalled(
+        self, machine
+    ):
+        """Within a run, a wrapper can die without writing its exit code (the
+        OOM killer), and its pid can then be handed to another process."""
+        runtime, victim = machine.runtime, machine.victim
+        machine.set_start(1, 200)
+        machine.record(200, victim.pid, 250)
+        machine.set_start(victim.pid, 300)
+
+        assert await runtime.list_sessions() == [SessionState(self.SID, running=False)]
+        assert (await runtime.session_logs(self.SID)).exit_code == 137
+        assert (await runtime.session_command_logs(self.SID, "c0ffee00")).exit_code == 137
+        await runtime.delete_session(self.SID)
+        assert victim.poll() is None
+
+    @pytest.mark.asyncio
+    async def test_a_live_wrapper_reads_as_running_and_its_group_is_stopped(self, machine):
+        runtime, victim = machine.runtime, machine.victim
+        machine.set_start(1, 200)
+        machine.record(200, victim.pid, 300)
+        machine.set_start(victim.pid, 300)
+
+        assert await runtime.list_sessions() == [SessionState(self.SID, running=True)]
+        assert (await runtime.session_logs(self.SID)).exit_code is None
+        await runtime.delete_session(self.SID)
+        assert victim.wait(timeout=5) is not None
+
+    @pytest.mark.asyncio
+    async def test_a_finished_commands_leftovers_go_with_its_session(self, machine):
+        """With the wrapper gone and its pid not reused, a group by that id
+        holds what the command left running."""
+        runtime, victim = machine.runtime, machine.victim
+        machine.set_start(1, 200)
+        machine.record(200, victim.pid, 300)
+
+        await runtime.delete_session(self.SID)
+        assert victim.wait(timeout=5) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -1274,6 +1472,33 @@ class TestDockerProviderPreviewConfig:
 
         mock_container.start.assert_awaited_once()
         mock_container.delete.assert_awaited_once_with(force=True)
+
+    @pytest.mark.asyncio
+    async def test_a_host_without_fuse_runs_the_sandbox_without_the_mount(self):
+        provider = DockerProvider(DockerConfig(), working_dir="/home/workspace")
+        refused = _make_mock_container()
+        refused.start.side_effect = RuntimeError(
+            'error gathering device information while adding custom device "/dev/fuse"'
+        )
+        started = _make_mock_container()
+        sent: list[set[str]] = []
+
+        async def create(*, config, name):
+            sent.append(set(config["HostConfig"]))
+            return refused if len(sent) == 1 else started
+
+        mock_client = MagicMock()
+        mock_client.containers.create = AsyncMock(side_effect=create)
+        mock_client.images.inspect = AsyncMock()
+        provider._client = mock_client
+
+        await provider.create()
+
+        fuse = {"Devices", "CapAdd", "SecurityOpt"}
+        assert fuse <= sent[0]
+        assert not fuse & sent[1]
+        refused.delete.assert_awaited_once_with(force=True)
+        started.start.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_create_publishes_proxy_ports_with_dynamic_host_ports(self):

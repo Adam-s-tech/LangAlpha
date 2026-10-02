@@ -21,6 +21,7 @@ COMPUTER_ID = "11111111-1111-4111-8111-111111111111"
 _SWEEP = "src.server.services.platform_secret_sweep"
 _ROLLOUT = "src.server.services.platform_secret_rollout"
 _MECHANICS = "ptc_agent.core.sandbox.platform_secrets"
+_LIVEFS = "src.server.services.livefs.mount"
 
 
 def _rollout_set(generation: int = 1) -> PlatformSecretRolloutSet:
@@ -70,6 +71,13 @@ def _fresh_sweeper():
     PlatformSecretSweeper.reset_instance()
 
 
+@pytest.fixture(autouse=True)
+def mount_restarted():
+    """The file mount's record of the scrub's restart."""
+    with patch(f"{_LIVEFS}.restarted", AsyncMock()) as restarted:
+        yield restarted
+
+
 @asynccontextmanager
 async def _fake_conn(acquired: bool):
     cur = MagicMock()
@@ -80,7 +88,7 @@ async def _fake_conn(acquired: bool):
 
 
 @pytest.mark.asyncio
-async def test_legacy_row_gets_scrub_restart_and_always_on_reassert():
+async def test_legacy_row_gets_scrub_restart_and_always_on_reassert(mount_restarted):
     sweeper = PlatformSecretSweeper()
     rollout_set = _rollout_set()
     runtime = _runtime()
@@ -113,8 +121,40 @@ async def test_legacy_row_gets_scrub_restart_and_always_on_reassert():
     stamp.assert_awaited_once_with(
         computer_id=COMPUTER_ID, expected_sandbox_id="sb", rollout_set=rollout_set
     )
-    # The restart killed the cached session's exec processes.
+    # The restart killed the cached session's exec processes, and the mount.
     drop.assert_awaited_once_with(COMPUTER_ID)
+    mount_restarted.assert_awaited_once_with(COMPUTER_ID, "sb")
+
+
+@pytest.mark.parametrize("scrub_fails", [False, True], ids=["scrubbed", "scrub-failed"])
+@pytest.mark.asyncio
+async def test_a_scrub_whose_mount_record_fails_is_not_stamped(
+    mount_restarted, scrub_fails
+):
+    """Unstamped, the next cycle scrubs it again and records the restart
+    again; one that failed part way may have restarted it all the same."""
+    sweeper = PlatformSecretSweeper()
+    provider = MagicMock()
+    provider.get = AsyncMock(return_value=_runtime())
+    converge = AsyncMock(side_effect=RuntimeError("stuck") if scrub_fails else None)
+    stamp = AsyncMock()
+    mount_restarted.side_effect = None if scrub_fails else ConnectionError("unreachable")
+
+    with (
+        patch(f"{_MECHANICS}.converge_sandbox_platform_secrets", converge),
+        patch(f"{_ROLLOUT}.stamp_platform_secret_version", stamp),
+        patch(
+            "src.server.services.runs.executor.LocalRunExecutor.get_instance",
+            return_value=_executor(busy=False),
+        ),
+    ):
+        converged = await sweeper._converge_locked(
+            COMPUTER_ID, "sb", _row(), _rollout_set(), provider
+        )
+
+    assert converged is False
+    stamp.assert_not_awaited()
+    mount_restarted.assert_awaited_once_with(COMPUTER_ID, "sb")
 
 
 @pytest.mark.asyncio
@@ -142,7 +182,7 @@ async def test_active_turn_defers_the_scrub_to_the_next_cycle():
 
 
 @pytest.mark.asyncio
-async def test_certified_behind_row_hot_swaps_without_restart():
+async def test_certified_behind_row_hot_swaps_without_restart(mount_restarted):
     # 0 < version < generation: placeholders throughout — hot remount + verify,
     # never a scrub (and no busy gate: nothing destructive happens).
     sweeper = PlatformSecretSweeper()
@@ -177,6 +217,7 @@ async def test_certified_behind_row_hot_swaps_without_restart():
     verify.assert_awaited_once_with(runtime, expected=rollout_set.placeholders)
     stamp.assert_awaited_once()
     drop.assert_not_awaited()
+    mount_restarted.assert_not_awaited()
 
 
 @pytest.mark.asyncio

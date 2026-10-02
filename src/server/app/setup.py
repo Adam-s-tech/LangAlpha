@@ -40,6 +40,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.gzip import GZipMiddleware
 
+from ptc_agent.core.sandbox.livefs_runtime.protocol import PREFIX as LIVEFS_PREFIX
 from ptc_agent.core.sandbox.platform_secrets import PlatformSecretError
 from ptc_agent.core.sandbox.runtime import SandboxGoneError, SandboxTransientError
 from src.config.logging_config import configure_logging
@@ -1049,23 +1050,32 @@ class MalformedIdDiagnosticMiddleware:
         await self.app(scope, receive, send)
 
 
-class _GZipExceptFileDownloads(GZipMiddleware):
-    """GZip, except the workspace file download.
+def _gzip_exempt(path: str) -> bool:
+    """Whether GZip leaves the response at ``path`` as it is.
 
-    That body is the file's own bytes, often already compressed, and can be
-    gigabytes streamed from a sandbox: compressing it spends a worker's CPU
-    for little, and drops the Content-Length the client's progress bar needs.
+    The workspace file download is the file's own bytes, often already
+    compressed, and can be gigabytes streamed from a sandbox: compressing it
+    spends a worker's CPU for little, and drops the Content-Length the
+    client's progress bar needs.
+
+    The file mount's endpoint names a file's version in an ETag, which the
+    next save is checked against. A CDN in front of the server (Cloudflare
+    for one) asks for gzip whatever its client asked, and decompressing for
+    the daemon, which asks for no encoding, weakens or drops that tag.
     """
+    return path.endswith("/files/download") or path.startswith(f"{LIVEFS_PREFIX}/")
 
+
+class _SelectiveGZip(GZipMiddleware):
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope["path"].endswith("/files/download"):
+        if scope["type"] == "http" and _gzip_exempt(scope["path"]):
             await self.app(scope, receive, send)
             return
         await super().__call__(scope, receive, send)
 
 
 # Register GZip compression middleware (compresses JSON responses >= 1KB)
-app.add_middleware(_GZipExceptFileDownloads, minimum_size=1000)
+app.add_middleware(_SelectiveGZip, minimum_size=1000)
 
 # TEMP (malformed-id-diag): log malformed workspace/thread ids + Referer so the next
 # real prod occurrence names the SPA route that built the bad request.
@@ -1173,6 +1183,7 @@ from src.server.app.memo import router as memo_router
 from src.server.app.memory import router as memory_router
 from src.server.app.workflows import include_workflow_router
 from src.server.app.egress_relay import router as egress_relay_router
+from src.server.app.livefs import router as livefs_router
 from src.server.app.mcp_catalog import router as mcp_catalog_router
 from src.server.app.mcp_brokerages import router as mcp_brokerages_router
 from src.server.app.mcp_builtin import router as mcp_builtin_router
@@ -1291,6 +1302,9 @@ app.include_router(
 app.include_router(
     egress_relay_router
 )  # /v1/egress/{grant_id} - Sandbox egress relay (relay-JWT auth, not user auth)
+app.include_router(
+    livefs_router
+)  # /api/v1/livefs/* - Sandbox file mount (mount-token auth, not user auth)
 app.include_router(
     mcp_servers_router
 )  # /api/v1/workspaces/{id}/mcp/servers - Per-workspace MCP server config

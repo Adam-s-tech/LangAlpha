@@ -1,7 +1,7 @@
 import { chartInstanceKey, planChartAnnotationCards } from '../chartAnnotationGrouping';
 import { INLINE_ARTIFACT_TOOLS, isInlineArtifactReady } from '../charts/InlineArtifactCards';
 import { normalizeSubagentText } from './normalizeSubagentText';
-import { isUserProfileReadmePath } from '../../utils/agentPaths';
+import { isUserDataReadmePath } from '../../utils/agentPaths';
 import { MIN_LIVE_EXPOSURE_MS } from './liveZoneTiming';
 import { inChunkOrder } from '../../session/stream/textChunks';
 import type { ContentSegmentRecord, ToolCallProcessRecord } from './types';
@@ -192,7 +192,7 @@ export function buildRenderBlocks(
           if (HIDDEN_TOOL_CALL_NAMES.has(toolName || '')) return false;
           const args = (toolCallProcesses[s.toolCallId!]?.toolCall as ToolCallData | undefined)?.args;
           const path = args?.file_path || args?.filePath || args?.path || args?.filename;
-          if (toolName === 'Read' && typeof path === 'string' && isUserProfileReadmePath(path)) return false;
+          if (toolName === 'Read' && typeof path === 'string' && isUserDataReadmePath(path)) return false;
           return true;
         }
         return false;

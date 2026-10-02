@@ -19,6 +19,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from src.server.database import automation as auto_db
+from src.server.database import automation_executions as exec_db
 from src.server.database.api_keys import is_byok_active
 from src.server.database.oauth_tokens import has_any_oauth_token
 from src.server.database.runs import lifecycle as tl_db
@@ -96,7 +97,7 @@ async def _keep_alive(execution_id: str) -> None:
     while True:
         await asyncio.sleep(_HEARTBEAT_SECONDS)
         try:
-            await auto_db.touch_execution(execution_id)
+            await exec_db.touch_execution(execution_id)
         except Exception as e:
             # One missed beat is harmless; the sweep waits for five.
             logger.warning(
@@ -114,7 +115,7 @@ async def _link_run(execution_id: str, run_id: str) -> bool:
     sweep settle the firing by that run should its finalize job never run.
     """
     return (
-        await auto_db.transition_execution(
+        await exec_db.transition_execution(
             execution_id,
             from_statuses=("running",),
             to="running",
@@ -313,7 +314,7 @@ class AutomationExecutor:
         """
         # ``started_at`` becomes the wait's start, which the run stamps again
         # when it starts.
-        if not await auto_db.transition_execution(
+        if not await exec_db.transition_execution(
             execution_id,
             from_statuses=("pending", "running"),
             to="waiting",
@@ -382,12 +383,12 @@ class AutomationExecutor:
         """One look at the line: the fresh automation once this firing may
         run, None once it ended, ``_STILL_WAITING`` otherwise."""
         automation_id = str(automation["automation_id"])
-        if await auto_db.get_execution_status(execution_id) != "waiting":
+        if await exec_db.get_execution_status(execution_id) != "waiting":
             return None
         # One firing in line is enough: a frequent schedule must not stack up
         # copies of the same run behind a long turn. Asked on every look, since
         # an earlier firing can join the line after this one did.
-        if await auto_db.has_earlier_waiting_execution(automation_id, execution_id):
+        if await exec_db.has_earlier_waiting_execution(automation_id, execution_id):
             await settle(
                 automation, execution_id, Outcome.SKIPPED, skip_reason="thread_busy"
             )
@@ -402,7 +403,7 @@ class AutomationExecutor:
                     automation, execution_id, Outcome.SKIPPED, skip_reason="user"
                 )
                 return None
-            if not await auto_db.transition_execution(
+            if not await exec_db.transition_execution(
                 execution_id,
                 from_statuses=("waiting",),
                 to="running",
@@ -614,7 +615,7 @@ class AutomationExecutor:
             f"automation_id={automation_id} execution_id={execution_id} "
             f"mode={agent_mode}"
         )
-        if not await auto_db.transition_execution(
+        if not await exec_db.transition_execution(
             execution_id,
             from_statuses=("pending",),
             to="running",
@@ -676,7 +677,7 @@ class AutomationExecutor:
             # The thread exists from here on, so record it on the run now: a
             # live run can then be opened and watched while it streams, not
             # only once it settles.
-            if not await auto_db.transition_execution(
+            if not await exec_db.transition_execution(
                 execution_id,
                 from_statuses=("running",),
                 to="running",

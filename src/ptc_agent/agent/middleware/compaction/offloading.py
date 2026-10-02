@@ -1,46 +1,97 @@
-"""Backend filesystem offloading for evicted messages and truncated args."""
+"""Offloading: the view that re-applies recorded offloads to each model call,
+and the backend files that keep what truncated args and inline attachments cut."""
 
 import base64
 import logging
 import uuid
 from typing import Any
 
-from langchain_core.messages import AIMessage, AnyMessage
-from langchain_core.messages.human import HumanMessage
+from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
 from langgraph.config import get_config
 
 from ptc_agent.core.paths import WorkspaceLayout
 from src.llms.attachment_payload import FILE_BLOCK_TYPES
+from ptc_agent.agent.middleware.compaction.types import TRUNCATABLE_TOOLS
 from ptc_agent.agent.middleware.compaction.utils import (
-    _extract_text_from_content,
+    read_offload_marker,
     strip_base64_from_messages,
+    truncate_tool_call,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def is_summary_message(msg: AnyMessage) -> bool:
-    """Check if a message is a previous summarization message.
+def tool_call_ids(messages: list[AnyMessage]) -> set[str]:
+    return {
+        tc["id"]
+        for msg in messages
+        if isinstance(msg, AIMessage)
+        for tc in msg.tool_calls or ()
+        if tc.get("id")
+    }
 
-    Summary messages are tagged with lc_source='summarization' in additional_kwargs.
-    These should be filtered from offloads to avoid summary-of-summary noise.
+
+def apply_recorded_offloads(
+    messages: list[AnyMessage],
+    arg_ids: set[str],
+    read_ids: set[str],
+    max_length: int,
+    truncation_text: str,
+    thread_dir: str | None = None,
+) -> list[AnyMessage]:
+    """Re-apply every recorded Tier 1 offload to one model call's messages.
+
+    An offload is a view over the checkpoint, not a rewrite of it: the id sets
+    are the record, and every call re-truncates them. The batch gate only
+    decides when new ids join; without this, a call truncated at one batch
+    came back in full on the next, busting the prompt cache each time. Each id
+    is checked against its tool, so an arg id never blanks a result and a read
+    id only replaces a Read result.
     """
-    if not isinstance(msg, HumanMessage):
-        return False
-    return msg.additional_kwargs.get("lc_source") == "summarization"
+    if not arg_ids and not read_ids:
+        return messages
+
+    read_paths: dict[str, str] = {}
+    out: list[AnyMessage] = []
+    changed = False
+    for msg in messages:
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            calls = []
+            msg_changed = False
+            for tc in msg.tool_calls:
+                if tc["name"] == "Read" and tc["id"] in read_ids:
+                    read_paths[tc["id"]] = tc.get("args", {}).get("file_path", "")
+                if tc["id"] in arg_ids and tc["name"] in TRUNCATABLE_TOOLS:
+                    new_tc = truncate_tool_call(
+                        tc, max_length, truncation_text, thread_dir
+                    )
+                    msg_changed = msg_changed or new_tc is not tc
+                    calls.append(new_tc)
+                else:
+                    calls.append(tc)
+            if msg_changed:
+                msg = msg.model_copy()
+                msg.tool_calls = calls
+                changed = True
+        elif isinstance(msg, ToolMessage) and msg.tool_call_id in read_paths:
+            marker = read_offload_marker(read_paths[msg.tool_call_id])
+            if msg.content != marker:
+                msg = msg.model_copy()
+                msg.content = marker
+                changed = True
+        out.append(msg)
+
+    return out if changed else messages
 
 
-def filter_summary_messages(messages: list[AnyMessage]) -> list[AnyMessage]:
-    """Filter out previous summary messages from a message list."""
-    return [msg for msg in messages if not is_summary_message(msg)]
+def get_thread_id(thread_id: str | None = None) -> str:
+    """Short thread id: the one passed, else graph config's, else a session id.
 
-
-def get_thread_id() -> str:
-    """Extract short thread_id from langgraph config.
-
-    Returns:
-        First 8 characters of thread_id, or a generated session ID.
+    Manual /compact and /offload run outside the graph, so they pass the id;
+    the session fallback is fresh on every call and names no real thread.
     """
+    if thread_id:
+        return str(thread_id)[:8]
     try:
         config = get_config()
         thread_id = config.get("configurable", {}).get("thread_id")
@@ -52,86 +103,12 @@ def get_thread_id() -> str:
     return f"session_{uuid.uuid4().hex[:8]}"
 
 
-async def aoffload_to_backend(backend: Any, messages: list[AnyMessage]) -> str | None:
-    """Persist evicted messages to sandbox before summarization (async).
-
-    Each message is written to its own file keyed by message ID:
-    `.agents/threads/{tid}/evicted_{message_id}.md`
-
-    Previous summary messages are filtered out to avoid summary-of-summary noise.
-    Individual messages are truncated at 5000 chars for storage.
-
-    Args:
-        backend: The Daytona backend for filesystem operations.
-        messages: Messages being summarized (evicted from context).
-
-    Returns:
-        The thread directory path where files were stored, or None if
-        offload failed or backend is not available.
-    """
-    if backend is None:
-        return None
-
-    # Filter out previous summary messages
-    filtered_messages = filter_summary_messages(messages)
-    if not filtered_messages:
-        return None
-
-    thread_id = get_thread_id()
-    thread_dir = WorkspaceLayout.thread_subdir(thread_id)
-    written = 0
-
-    for msg in filtered_messages:
-        msg_id = msg.id or uuid.uuid4().hex[:8]
-        path = f"{thread_dir}/evicted_{msg_id}.md"
-
-        content = _extract_text_from_content(msg.content)
-        if len(content) > 5000:
-            content = content[:5000] + "\n...(truncated)"
-
-        # Include tool call info for AI messages
-        tool_info = ""
-        if isinstance(msg, AIMessage) and msg.tool_calls:
-            tool_names = [tc["name"] for tc in msg.tool_calls]
-            tool_info = f" [tools: {', '.join(tool_names)}]"
-
-        file_content = f"# {msg.type}{tool_info}\n\n{content}\n"
-
-        try:
-            result = await backend.awrite(path, file_content, overwrite=True)
-            if result is None or result.error:
-                error_msg = result.error if result else "backend returned None"
-                logger.warning(
-                    "Failed to offload evicted message %s to %s: %s",
-                    msg_id,
-                    path,
-                    error_msg,
-                )
-            else:
-                written += 1
-        except Exception as e:
-            logger.warning(
-                "Exception offloading evicted message %s to %s: %s",
-                msg_id,
-                path,
-                e,
-            )
-
-    if written > 0:
-        logger.debug(
-            "Offloaded %d/%d evicted messages to %s",
-            written,
-            len(filtered_messages),
-            thread_dir,
-        )
-        return thread_dir
-
-    return None
-
-
 async def aoffload_truncated_args(
-    backend: Any, originals: dict[str, dict[str, Any]]
-) -> None:
+    backend: Any,
+    originals: dict[str, dict[str, Any]],
+    *,
+    thread_id: str | None = None,
+) -> set[str]:
     """Persist original tool call args to sandbox before truncation discards them.
 
     Each truncated tool call gets its own file at
@@ -143,15 +120,22 @@ async def aoffload_truncated_args(
         backend: The Daytona backend for filesystem operations.
         originals: Mapping of tool_call_id -> {"name": str, "args": dict}
                    as returned by truncate_message_args.
-    """
-    if backend is None or not originals:
-        return
 
-    thread_id = get_thread_id()
+    Returns:
+        The ids safe to record: those written, or all of them with no
+        backend, since the marker then names no file. A failed write stays
+        out, so its marker never names a missing file and a later pass
+        retries it.
+    """
+    if backend is None:
+        return set(originals)
+
+    short_id = get_thread_id(thread_id)
+    saved: set[str] = set()
 
     for tool_call_id, original in originals.items():
         path = WorkspaceLayout.thread_subdir(
-            thread_id, f"truncated_args_{tool_call_id}.md"
+            short_id, f"truncated_args_{tool_call_id}.md"
         )
         tool_name = original["name"]
         args = original["args"]
@@ -175,6 +159,7 @@ async def aoffload_truncated_args(
                     error_msg,
                 )
             else:
+                saved.add(tool_call_id)
                 logger.debug(
                     "Offloaded truncated args for %s (%s) to %s",
                     tool_call_id,
@@ -188,6 +173,8 @@ async def aoffload_truncated_args(
                 tool_name,
                 e,
             )
+
+    return saved
 
 
 # =============================================================================
@@ -252,6 +239,8 @@ def _extract_base64_info(block: dict) -> tuple[str, str, str] | None:
 async def aoffload_base64_content(
     backend: Any,
     messages: list[AnyMessage],
+    *,
+    thread_id: str | None = None,
 ) -> list[AnyMessage]:
     """Offload base64 content blocks to sandbox files, replacing with path references.
 
@@ -275,8 +264,7 @@ async def aoffload_base64_content(
     if backend is None:
         return strip_base64_from_messages(messages)
 
-    thread_id = get_thread_id()
-    thread_dir = WorkspaceLayout.thread_subdir(thread_id)
+    thread_dir = WorkspaceLayout.thread_subdir(get_thread_id(thread_id))
 
     result: list[AnyMessage] = []
     changed = False

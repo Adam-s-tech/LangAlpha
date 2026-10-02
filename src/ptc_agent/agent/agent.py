@@ -68,6 +68,7 @@ from ptc_agent.agent.middleware.background_subagent.workflow.prebuilt import (
 from ptc_agent.agent.middleware.image_capture import ImageCaptureMiddleware
 from ptc_agent.agent.middleware.openai_prompt_caching import OpenAIPromptCachingMiddleware
 from ptc_agent.agent.middleware.runtime_context import (
+    FrozenPromptMiddleware,
     TailEnvelopeMiddleware,
     TurnContext,
     TurnContextMiddleware,
@@ -119,6 +120,7 @@ from src.tools.market_watch import watch_market
 from ptc_agent.config import AgentConfig
 from ptc_agent.core.mcp_registry import MCPRegistry
 from ptc_agent.core.sandbox import PTCSandbox
+from ptc_agent.core.sandbox.livefs_mount import CallContext
 
 try:
     from langchain.agents.middleware import HumanInTheLoopMiddleware
@@ -164,6 +166,7 @@ class PTCAgent:
         direct_tool_summary: str = "",
         workspace: WorkspaceLayout | None = None,
         legacy_layout: bool = False,
+        files_mounted: bool = False,
     ) -> str:
         """Build the static system prompt (excludes time/profile for cacheability).
 
@@ -192,6 +195,7 @@ class PTCAgent:
             market_watch_enabled=self.config.feature_enabled("market_watch"),
             crawl_enabled=crawl_enabled,
             direct_tool_summary=direct_tool_summary,
+            files_mounted=files_mounted,
         )
 
     def _get_tool_summary(self, mcp_registry: MCPRegistry) -> str:
@@ -297,6 +301,13 @@ class PTCAgent:
                 workspace_id_present=bool(workspace_id_for_memory),
             )
 
+        # Who this turn writes for: a new automation's defaults, for the
+        # file tools and for a save through the file mount alike.
+        call_context = CallContext(
+            workspace_id=workspace_id_for_memory,
+            thread_id=thread_id,
+            timezone=turn_context.tool_timezone if turn_context else None,
+        )
         filesystem_backend, baseline_store_sources = build_filesystem_backend(
             backend=backend,
             gates=gates,
@@ -304,16 +315,23 @@ class PTCAgent:
             user_id=user_id,
             workspace_id=workspace_id_for_memory,
             layout=workspace_layout,
+            call=call_context,
         )
 
         # Create the execute_code tool for MCP invocation
         execute_code_tool = create_execute_code_tool(
-            backend, mcp_registry, thread_id=short_thread_id, session=session
+            backend,
+            mcp_registry,
+            thread_id=short_thread_id,
+            session=session,
+            call_context=call_context,
         )
 
         # Create the Bash tool for shell command execution
-        bash_tool = create_execute_bash_tool(backend, thread_id=short_thread_id)
-        bash_output_tool = create_bash_output_tool(backend)
+        bash_tool = create_execute_bash_tool(
+            backend, thread_id=short_thread_id, call_context=call_context
+        )
+        bash_output_tool = create_bash_output_tool(backend, call_context=call_context)
 
         # Create the preview URL tool for sandbox service previews
         workspace_id = project.workspace_id if project else ""
@@ -579,12 +597,13 @@ class PTCAgent:
         subagent_summary = format_subagent_summary(subagents)
 
         eviction_dir = (
-            WorkspaceLayout.thread_subdir(short_thread_id, "large_tool_results")
+            WorkspaceLayout.large_results_subdir(short_thread_id)
             if short_thread_id
             else WorkspaceLayout.LARGE_TOOL_RESULTS_DIR
         )
 
-        system_prompt = self._build_system_prompt(
+        render_prompt = partial(
+            self._build_system_prompt,
             subagent_summary,
             turn.guidance,
             plan_mode=plan_mode,
@@ -596,6 +615,10 @@ class PTCAgent:
             workspace=workspace_layout,
             legacy_layout=bool(project is not None and project.layout_origin == 3),
         )
+        # Read once: the baseline freezes this value per epoch, and the
+        # prompt is sent with the frozen one (FrozenPromptMiddleware).
+        files_mounted = sandbox.livefs is not None
+        system_prompt = render_prompt(files_mounted=files_mounted)
 
         logger.debug(
             "Creating agent with custom middleware stack",
@@ -700,6 +723,7 @@ class PTCAgent:
             workspace_name=workspace_name,
             workspace_description=workspace_description,
             sources=baseline_store_sources,
+            files_mounted=files_mounted,
             blocks={
                 "mcp_servers": lambda _state: tool_summary,
                 "skills": lambda state: skill_loader_middleware.build_manifest(state)
@@ -781,6 +805,12 @@ class PTCAgent:
         deepagent_middleware = [
             m
             for m in [
+                # Outermost, since it replaces the prompt every middleware
+                # below appends to.
+                FrozenPromptMiddleware(
+                    files_mounted=files_mounted,
+                    render=lambda mounted: render_prompt(files_mounted=mounted),
+                ),
                 LargeResultEvictionMiddleware(
                     backend=backend, eviction_dir=eviction_dir
                 ),

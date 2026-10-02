@@ -5,6 +5,7 @@ Defines Pydantic models for creating, updating, listing, and viewing
 automations and their execution history.
 """
 
+import re
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
@@ -21,6 +22,7 @@ from pydantic import (
 )
 
 from src.server.utils.error_sanitization import validation_error_text
+from src.utils.timezone_utils import zone_or_none
 
 
 # =============================================================================
@@ -136,6 +138,114 @@ class DeliveryConfig(BaseModel):
     )
 
 
+def parse_delivery(value: Any) -> Dict[str, List[str]]:
+    """Delivery as the agent writes it, a list or a comma-separated string, as
+    the stored ``delivery_config``."""
+    if isinstance(value, str):
+        return {"methods": [m.strip() for m in value.split(",") if m.strip()]}
+    # Blanks drop as in the string form: the old tool stored "slack," as ["slack", ""].
+    if isinstance(value, list) and all(isinstance(m, str) for m in value):
+        return {"methods": [m.strip() for m in value if m.strip()]}
+    raise ValueError('must be a list of delivery methods, e.g. ["slack"], or [] for none')
+
+
+# =============================================================================
+# Thread, clock and run time
+# =============================================================================
+
+
+def thread_fields(value: Any, current_thread_id: Optional[str]) -> Dict[str, Any]:
+    """Where runs post, as the agent names it, as the row's two thread fields.
+
+    "persistent" is the automation's own thread, which its first run creates,
+    so it clears any pinned conversation; "current" pins the conversation the
+    agent is writing from.
+    """
+    if value == "new":
+        return {"thread_strategy": "new", "conversation_thread_id": None}
+    if value == "persistent":
+        return {"thread_strategy": "continue", "conversation_thread_id": None}
+    if value == "current":
+        if not current_thread_id:
+            raise ValueError('"current" needs a conversation thread, and this run has none')
+        return {"thread_strategy": "continue", "conversation_thread_id": str(current_thread_id)}
+    if isinstance(value, str):
+        try:
+            return {"thread_strategy": "continue", "conversation_thread_id": str(UUID(value))}
+        except ValueError:
+            pass
+    raise ValueError('must be "new", "persistent", "current" or a thread id')
+
+
+def in_own_thread(row: Dict[str, Any]) -> bool:
+    """Whether the row's runs continue in the automation's own thread, the
+    one "persistent" names. Its first run pins the thread it creates, so a
+    pin alone does not tell it from a pinned conversation; ``owns_thread``
+    does."""
+    if row.get("thread_strategy") != "continue":
+        return False
+    return not row.get("conversation_thread_id") or bool(row.get("owns_thread"))
+
+
+# Zones that read as a region's clock but hold one offset all year, so a
+# 9:00 "EST" automation runs at 10:00 New York time all summer.
+_FIXED_OFFSET_ZONES = {
+    "EST": "America/New_York",
+    "MST": "America/Denver (or America/Phoenix, which keeps MST all year)",
+}
+
+
+def region_zone(name: str) -> str:
+    """Refuse a fixed-offset zone the agent writes, which it picks for a
+    region by mistake. A zone the user chose, on the page or in their
+    profile, is theirs to keep."""
+    if name in _FIXED_OFFSET_ZONES:
+        raise ValueError(
+            f"{name!r} is a fixed offset that ignores daylight saving; use a region zone "
+            f"such as {_FIXED_OFFSET_ZONES[name]}"
+        )
+    return name
+
+
+def on_clock(value: datetime, tz_name: Optional[str]) -> str:
+    """A time on an automation's clock, to the second, with its offset."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(zone_or_none(tz_name or "UTC") or UTC).isoformat(timespec="seconds")
+
+
+_DATE_ONLY = re.compile(r"\d{4}-?\d{2}-?\d{2}")
+
+
+def run_time(text: str) -> datetime:
+    """A one-time run's ISO time as the agent writes it, naive when it names
+    no offset: the caller reads that on the clock it means. A bare date is
+    refused, since it would run at midnight."""
+    if _DATE_ONLY.fullmatch(text.strip()):
+        raise ValueError(
+            f"{text!r} has no time of day, which would run at midnight; write one, "
+            f"e.g. {text.strip()}T09:00:00"
+        )
+    try:
+        return datetime.fromisoformat(text.strip())
+    except ValueError:
+        raise ValueError(f"not an ISO datetime: {text!r}") from None
+
+
+def future_run(when: datetime, tz_name: Optional[str]) -> datetime:
+    """Refuse a one-time run the agent sets in the past, which the scheduler
+    would fire the moment it is saved. ``tz_name`` is the clock the refusal
+    shows both times on."""
+    now = datetime.now(UTC)
+    if (when if when.tzinfo else when.replace(tzinfo=UTC)) >= now:
+        return when
+    where = "on this automation's clock" if tz_name else "in UTC"
+    raise ValueError(
+        f"{on_clock(when, tz_name)} has already passed (it is {on_clock(now, tz_name)} {where}); "
+        "set a future time"
+    )
+
+
 # =============================================================================
 # Request Models
 # =============================================================================
@@ -144,18 +254,70 @@ class DeliveryConfig(BaseModel):
 TriggerType = Literal["cron", "once", "price"]
 
 # The schedule field each kind of trigger reads, and reads alone.
-_SCHEDULE_FIELD: Dict[str, str] = {
+SCHEDULE_FIELD: Dict[str, str] = {
     "cron": "cron_expression",
     "once": "next_run_at",
     "price": "trigger_config",
 }
 
+# The monitor watches the US stock and index feeds, where a pair or futures
+# symbol is saved as a stock that never quotes. Bare bases stay allowed:
+# BTC and ETH are also US-listed fund tickers.
+_PAIR_QUOTES = ("USD", "USDT", "USDC", "EUR", "GBP", "JPY")
+_CRYPTO_BASES = ("BTC", "ETH", "SOL", "XRP", "DOGE", "ADA", "LTC", "BNB", "AVAX", "DOT", "LINK", "SHIB")
+
+
+def _is_pair_symbol(symbol: str) -> bool:
+    s = symbol.upper()
+    if s.startswith(("X:", "C:")) or s.endswith(("=X", "=F")):
+        return True
+    if s.partition("-")[2] in _PAIR_QUOTES:
+        return True
+    return any(s == base + quote for base in _CRYPTO_BASES for quote in _PAIR_QUOTES)
+
+
+# Each field's name and cycle: a step up to the cycle is a steady interval
+# (*/60 minutes is hourly); a longer one matches once per cycle.
+_CRON_FIELDS = (("minute", 60), ("hour", 24), ("day-of-month", 31), ("month", 12), ("day-of-week", 7))
+
+
+def _refuse_misread_cron(expression: str) -> None:
+    """Refuse cron croniter accepts but reads differently than it looks.
+
+    A sixth field is seconds to croniter and the first field to Quartz, so
+    ``0 0 9 * * 5`` meant as Fridays at 9:00 runs on the 9th at 00:00:05. A
+    step longer than its field's cycle (``*/90`` minutes) matches once per
+    cycle, not every 90 minutes.
+    """
+    if expression.startswith("@"):
+        return
+    fields = expression.split()
+    if len(fields) != 5:
+        raise ValueError(
+            f"'{expression}' has {len(fields)} fields; use five: minute hour day-of-month month "
+            "day-of-week (seconds aren't supported)"
+        )
+    for value, (label, cycle) in zip(fields, _CRON_FIELDS):
+        for part in value.split(","):
+            step = part.partition("/")[2]
+            if step.isdigit() and int(step) > cycle:
+                raise ValueError(
+                    f"'{expression}': a /{step} step is longer than the {label} field's cycle of "
+                    f"{cycle}, so it matches once per cycle. Cron steps only within one field; "
+                    "list the times instead"
+                )
+
 
 class _ScheduleFields(BaseModel):
     """The schedule fields, which a create and an update check the same way."""
 
+    timezone: Optional[str] = Field(
+        default=None, max_length=100, description="IANA timezone (e.g., 'America/New_York')"
+    )
+    # Widths match the VARCHAR columns, so an overlong value is a schema error
+    # naming the field rather than a database error on save.
     cron_expression: Optional[str] = Field(
-        None, description="Cron expression (required for trigger_type='cron')"
+        None, max_length=100, description="Cron expression (required for trigger_type='cron')"
     )
     trigger_config: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -171,6 +333,8 @@ class _ScheduleFields(BaseModel):
     def _cron_parses(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and not croniter.is_valid(v):
             raise ValueError(f"Invalid cron expression: '{v}'")
+        if v is not None:
+            _refuse_misread_cron(v)
         return v
 
     @field_validator("trigger_config")
@@ -183,9 +347,21 @@ class _ScheduleFields(BaseModel):
         # fires. The config is stored as sent: the monitor parses it again.
         if v is not None:
             try:
-                PriceTriggerConfig(**v)
+                config = PriceTriggerConfig(**v)
             except ValidationError as e:
                 raise ValueError(f"Invalid price trigger config: {validation_error_text(e)}")
+            if _is_pair_symbol(config.symbol):
+                raise ValueError(
+                    f"Invalid price trigger config: '{config.symbol}' is a crypto, currency or futures "
+                    "symbol; price alerts watch US stocks and indices only"
+                )
+        return v
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_zone(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and zone_or_none(v) is None:
+            raise ValueError(f"unknown IANA timezone {v!r}")
         return v
 
     @field_validator("next_run_at")
@@ -197,7 +373,7 @@ class _ScheduleFields(BaseModel):
         # Refused rather than stored: a next_run_at on a price row would have
         # the scheduler claim and fire it.
         foreign = [
-            field for other, field in _SCHEDULE_FIELD.items()
+            field for other, field in SCHEDULE_FIELD.items()
             if other != kind and getattr(self, field) is not None
         ]
         if foreign:
@@ -209,7 +385,7 @@ class _ScheduleFields(BaseModel):
 class AutomationCreate(_ScheduleFields):
     """Request model for creating an automation."""
 
-    name: str = Field(..., max_length=255, description="Display name for the automation")
+    name: str = Field(..., min_length=1, max_length=255, description="Display name for the automation")
     description: Optional[str] = Field(None, description="Optional description")
 
     # Trigger
@@ -217,7 +393,7 @@ class AutomationCreate(_ScheduleFields):
         ..., description="'cron' for recurring, 'once' for one-time, 'price' for price-triggered"
     )
     timezone: str = Field(
-        default="UTC", description="IANA timezone (e.g., 'America/New_York')"
+        default="UTC", max_length=100, description="IANA timezone (e.g., 'America/New_York')"
     )
 
     # Agent config
@@ -225,13 +401,13 @@ class AutomationCreate(_ScheduleFields):
         default="flash", description="Agent mode for execution"
     )
     instruction: str = Field(
-        ..., description="The prompt/instruction for the agent"
+        ..., min_length=1, description="The prompt/instruction for the agent"
     )
     workspace_id: Optional[UUID] = Field(
         None, description="Workspace ID (required for 'ptc' mode)"
     )
     llm_model: Optional[str] = Field(
-        None, description="LLM model name override"
+        None, max_length=100, description="LLM model name override"
     )
     additional_context: Optional[List[Dict[str, Any]]] = Field(
         None, description="Additional context items (skills, images, etc.)"
@@ -263,7 +439,7 @@ class AutomationCreate(_ScheduleFields):
 
     @model_validator(mode="after")
     def _schedule_fits_the_kind(self) -> "AutomationCreate":
-        field = _SCHEDULE_FIELD[self.trigger_type]
+        field = SCHEDULE_FIELD[self.trigger_type]
         if getattr(self, field) is None:
             raise ValueError(f"{field} is required for trigger_type='{self.trigger_type}'")
         self._refuse_other_kinds(self.trigger_type)
@@ -279,17 +455,16 @@ class AutomationUpdate(_ScheduleFields):
     is accepted only to be refused when it differs from the stored one.
     """
 
-    name: Optional[str] = Field(None, max_length=255)
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
 
     trigger_type: Optional[TriggerType] = None
-    timezone: Optional[str] = None
 
     # Agent config
     agent_mode: Optional[Literal["ptc", "flash"]] = None
-    instruction: Optional[str] = None
+    instruction: Optional[str] = Field(None, min_length=1)
     workspace_id: Optional[UUID] = None
-    llm_model: Optional[str] = None
+    llm_model: Optional[str] = Field(None, max_length=100)
     additional_context: Optional[List[Dict[str, Any]]] = None
 
     # Thread strategy

@@ -262,7 +262,9 @@ async def test_restore_holds_the_same_lock_across_the_flag_and_the_transfer():
         seen_conns.append(conn)
         return True
 
-    async def _rows(workspace_id, *, include_content=False, all_kinds=False, conn=None):
+    async def _rows(
+        workspace_id, *, include_content=False, all_kinds=False, outside=None, conn=None
+    ):
         order.append("read")
         seen_conns.append(conn)
         return [{"file_path": "d", "kind": "dir", "permissions": "0755"}]

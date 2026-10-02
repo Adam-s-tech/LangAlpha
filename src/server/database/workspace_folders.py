@@ -457,7 +457,7 @@ def _drop_contention(computer_id: str) -> None:
 
 
 @asynccontextmanager
-async def workspace_folders_lock(computer_id: str):
+async def workspace_folders_lock(computer_id: str, *, wait_s: float = _LOCK_WAIT_S):
     """One settle or folder removal per computer, across workers.
 
     Held on a connection of its own, closed on exit with every folder hold
@@ -468,11 +468,13 @@ async def workspace_folders_lock(computer_id: str):
     the lock is free; within a process only one caller per computer looks,
     so the callers queued behind a settle open one connection when it ends,
     not one each. Yields that connection, or None when another holder kept
-    the lock past the wait: the caller leaves folders where they are this time.
+    the lock past ``wait_s``: the caller leaves folders where they are this
+    time. A caller on a turn's path waits briefly, as a settle can hold the
+    lock for as long as its sandbox script runs.
     """
     key = f"{_LOCK_NS}:{computer_id}"
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + _LOCK_WAIT_S
+    deadline = loop.time() + wait_s
     conn = None
     claimed = False
     try:
@@ -489,7 +491,9 @@ async def workspace_folders_lock(computer_id: str):
                 _drop_contention(computer_id)
                 claimed = False
             if loop.time() >= deadline:
-                logger.warning(f"Folder lock on computer {computer_id} busy; not settling")
+                logger.warning(
+                    f"Folder lock on computer {computer_id} still held after {wait_s:g}s"
+                )
                 break
             await asyncio.sleep(_LOCK_RETRY_S)
         yield conn

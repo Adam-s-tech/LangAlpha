@@ -40,6 +40,7 @@ from ptc_agent.agent.middleware.runtime_context import (
     BaselineContextMiddleware,
     BaselineEpoch,
     BaselineSources,
+    FrozenPromptMiddleware,
     MemoSource,
     MemoryTierSource,
     Observations,
@@ -1512,3 +1513,71 @@ def _compose(middlewares, final_handler):
         chain = wrapper
 
     return chain
+
+
+# ---------------------------------------------------------------------------
+# The mount the static prompt states
+# ---------------------------------------------------------------------------
+
+
+class TestTheMountTheStaticPromptStates:
+    """Whether the file mount serves is stated in the static prompt, which is
+    the cached prefix, so the epoch freezes it: a mount coming up or going
+    down mid-epoch changes the prompt only at the next rebuild."""
+
+    @pytest.mark.asyncio
+    async def test_the_epoch_keeps_the_value_it_froze_until_a_compaction(self):
+        first = await _middleware(_session("# Notes"), files_mounted=False).abefore_agent(
+            {}, None
+        )
+        assert first[STATE_BASELINE]["files_mounted"] is False
+
+        mounted = _middleware(_session("# Notes"), files_mounted=True)
+        assert await mounted.abefore_agent(first, None) is None
+
+        rebuilt = await _middleware(_session("# Notes"), files_mounted=True).abefore_agent(
+            {**first, "_summarization_event": _compaction_event("msg-1")}, None
+        )
+        assert rebuilt[STATE_BASELINE]["files_mounted"] is True
+
+    @pytest.mark.asyncio
+    async def test_an_epoch_stored_before_the_value_takes_this_turns_without_a_row(self):
+        first = await _middleware(_session("# Notes")).abefore_agent({}, None)
+        assert "files_mounted" not in first[STATE_BASELINE]
+
+        adopted = await _middleware(_session("# Notes"), files_mounted=True).abefore_agent(
+            first, None
+        )
+
+        assert adopted[STATE_BASELINE]["files_mounted"] is True
+        assert adopted[STATE_BASELINE]["epoch"] == first[STATE_BASELINE]["epoch"]
+        assert "messages" not in adopted
+
+    @pytest.mark.asyncio
+    async def test_the_prompt_is_sent_as_the_epoch_froze_it(self):
+        frozen = await _middleware(_session("# Notes"), files_mounted=False).abefore_agent(
+            {}, None
+        )
+        renders: list[bool] = []
+
+        def render(mounted: bool) -> str:
+            renders.append(mounted)
+            return f"Static system prompt, mounted={mounted}."
+
+        sent: list[SystemMessage] = []
+
+        async def handler(request: ModelRequest) -> ModelResponse:
+            sent.append(request.system_message)
+            return MagicMock()
+
+        built_mounted = FrozenPromptMiddleware(files_mounted=True, render=render)
+        await built_mounted.awrap_model_call(_request(frozen), handler)
+        await built_mounted.awrap_model_call(_request(frozen), handler)
+        assert [m.content for m in sent] == ["Static system prompt, mounted=False."] * 2
+        assert renders == [False]
+
+        built_unmounted = FrozenPromptMiddleware(files_mounted=False, render=render)
+        await built_unmounted.awrap_model_call(_request(frozen), handler)
+        await built_unmounted.awrap_model_call(_request({}), handler)
+        assert [m.content for m in sent[2:]] == ["Static system prompt."] * 2
+        assert renders == [False]

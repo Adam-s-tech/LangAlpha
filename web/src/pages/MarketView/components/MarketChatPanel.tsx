@@ -12,7 +12,6 @@ import { useStableHandler } from '@/hooks/useStableHandler';
 import { useWorkspace } from '@/hooks/useWorkspace';
 import { usePreferences } from '@/hooks/usePreferences';
 import { readTurnEndScroll } from '@/lib/turnEndScroll';
-import { prefersReducedMotion } from '@/lib/reducedMotion';
 import { LiveMessageList } from '../../ChatAgent/components/MessageList';
 import { MessageActionsProvider, type MessageActions } from '../../ChatAgent/components/messageList/MessageActionsContext';
 import { SubagentTelemetryContext } from '../../ChatAgent/components/SubagentTelemetryContext';
@@ -21,7 +20,7 @@ import { WorkspaceProvider } from '../../ChatAgent/contexts/WorkspaceContext';
 import { useChatMessages } from '../../ChatAgent/hooks/useChatMessages';
 import { DispatchStatusProvider } from '../../ChatAgent/hooks/usePTCDispatchStatus';
 import { useStreamFollow } from '../../ChatAgent/components/chatView/streamFollow';
-import { findTurnReply, useTurnEnd } from '../../ChatAgent/components/chatView/turnEnd';
+import { useTranscriptFollow } from '../../ChatAgent/components/chatView/useTranscriptFollow';
 import { useActiveThreadPublisher } from '@/lib/threadLifecycle/useActiveThreadPublisher';
 import { flashWorkspaceQuery } from '@/hooks/useFlashWorkspace';
 import { appendPathSuffix, getPreviewUrl, summarizeThread, offloadThread } from '../../ChatAgent/utils/api';
@@ -416,7 +415,6 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     messageError,
     threadId,
     threadModels,
-    handleSendMessage,
     stopWorkflow,
     getSubagentHistory,
     // HITL handlers — plan approval, ask-user questions, workspace/PTC/secretary
@@ -447,10 +445,8 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     setIsCompacting,
     tokenUsage,
     insertNotification,
-    // Message-level actions — edit, regenerate, retry, and feedback thumbs.
-    handleEditMessage,
-    handleRegenerate,
-    handleRetry,
+    // Feedback thumbs. Send, edit, regenerate and retry come from
+    // useTranscriptFollow below.
     handleThumbUp,
     handleThumbDown,
     feedbackByTurn,
@@ -484,18 +480,13 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const showTranscript = messages.length > 0 || isLoading || isLoadingHistory;
-  // Every send below rejoins the follow, wherever the reader had scrolled:
-  // their message and the reply land at the end.
-  const { rejoin: rejoinFollow, landOnReply } = useStreamFollow(messagesContainerRef, transcriptRef, showTranscript, isLoading || isLoadingHistory);
-  // "When a reply finishes" applies here as in the main chat, which counts a
-  // pending interrupt or plan feedback as the turn still open.
-  const turnEndScroll = readTurnEndScroll(preferences);
-  useTurnEnd(messages, isLoading || !!pendingInterrupt || !!pendingRejection, () => {
-    if (turnEndScroll !== 'reply_start') return;
-    const c = messagesContainerRef.current;
-    const id = c && findTurnReply(c, messages);
-    if (id) landOnReply(id, prefersReducedMotion() ? 'auto' : 'smooth');
-  });
+  const follow = useStreamFollow(messagesContainerRef, transcriptRef, showTranscript, isLoading || isLoadingHistory);
+  const { handleSendMessage, handleEditMessage, handleRegenerate, handleRetry } = useTranscriptFollow(
+    chat,
+    follow,
+    () => messagesContainerRef.current,
+    readTurnEndScroll(preferences),
+  );
 
   // Send: shape attachments + chart screenshot like ChatAgent does.
   const handleSend = useCallback(
@@ -575,11 +566,10 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
         ...modelOptions,
         ...(selectionSnapshots.length > 0 ? { chartSelections: selectionSnapshots } : {}),
       });
-      rejoinFollow();
       onClearChartImage();
       chartSelectionStore.clearAll();
     },
-    [symbol, interval, chartImage, chartImageDesc, handleSendMessage, rejoinFollow, onClearChartImage],
+    [symbol, interval, chartImage, chartImageDesc, handleSendMessage, onClearChartImage],
   );
 
   // Stop the running turn (the input's Stop button). Mirrors ChatView: the hook's
@@ -687,11 +677,9 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
   const stableThumbDown = useStableHandler(handleThumbDown);
   const stableReportWithAgent = useStableHandler((instruction: string) => {
     handleSendMessage(`/self-improve ${instruction}`, false, null, null, {});
-    rejoinFollow();
   });
   const stableWidgetSendPrompt = useStableHandler((text: string) => {
     handleSendMessage(text, false, null, null, {});
-    rejoinFollow();
   });
 
   const messageActions = useMemo<MessageActions>(() => ({

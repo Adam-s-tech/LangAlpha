@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AT_BOTTOM_PX, NEAR_BOTTOM_PX, createSettleWindow, isNearBottom, type SettleWindow } from '../../utils/scrollHelpers';
-import { createStreamFollow } from './streamFollow';
+import { INTENT_EVENTS, createStreamFollow, type StreamFollowControls } from './streamFollow';
 import { anchorTop, findMessageElement, resolveScrollContent, resolveScrollViewport, type AnchorPart } from '../../utils/scrollDom';
 import { scrollMemory } from '@/lib/scrollMemory';
 import { ANCHORED_TOGGLE_EVENT } from '../../utils/anchoredToggle';
@@ -300,6 +300,16 @@ export function useChatScroll({
     [getScrollContainer, withProgrammaticScroll, armSettleTimers, setPillState, messagesLenRef],
   );
 
+  // For a turn the reader starts: their message and the reply land at the
+  // end, so a reader scrolled up is taken there and followed again, as the jump
+  // pill does. Instant, since the growth of their own bubble re-applies the pin
+  // instantly before the next paint and would cut a smooth scroll short anyway.
+  // A turn the main transcript is not on screen for leaves its place alone.
+  const rejoin = useCallback(() => {
+    if (activeAgentIdRef.current !== 'main' || !isActiveRef.current) return;
+    pinToBottom('auto');
+  }, [activeAgentIdRef, isActiveRef, pinToBottom]);
+
   // Re-apply the pin target; called by the ResizeObserver each time content
   // settles, so async media finishing layout can't strand the user mid-thread
   // ('bottom') or clamp a remembered offset short ('offset'). Applied right
@@ -350,6 +360,26 @@ export function useChatScroll({
     },
     [getScrollContainer, withProgrammaticScroll, armSettleTimers, setPillState, messagesLenRef],
   );
+
+  // For a turn that finished under 'reply_start': the first line of the reply
+  // under the viewport top, and the follow stops. Only a reader the follow was
+  // carrying is moved; one who scrolled up keeps their place. pinToMessage
+  // decides the rest: a reply shorter than the viewport clamps to the bottom
+  // and nothing moves, and its settle window re-measures the anchor as late
+  // media lands.
+  const landOnReply = useCallback(
+    (id: string, behavior: 'auto' | 'smooth') => {
+      if (activeAgentIdRef.current !== 'main' || !isActiveRef.current) return;
+      // A bottom pin is the follow inside its settle window (thread entry, the
+      // jump pill) and hands over; an offset or anchor pin holds a place the
+      // reader chose.
+      if (pinTargetRef.current && pinTargetRef.current.mode !== 'bottom') return;
+      if (!isNearBottomRef.current || !entryRestoreSettled()) return;
+      pinToMessage(id, behavior, true, 'reply');
+    },
+    [activeAgentIdRef, isActiveRef, entryRestoreSettled, pinToMessage],
+  );
+  const follow = useMemo<StreamFollowControls>(() => ({ rejoin, landOnReply }), [rejoin, landOnReply]);
 
   // Bring a turn's deliverables deck into view as it unfolds. The deck cannot
   // do this for itself: its height animates over 260ms, and the observer below
@@ -442,13 +472,15 @@ export function useChatScroll({
     };
     c.addEventListener('scroll', handleScroll, { passive: true });
 
-    // A real user gesture (wheel / touch) reclaims scroll control even mid
-    // programmatic smooth-scroll. Without this, those scroll events are flagged
-    // programmatic and ignored above, so the pin keeps yanking against the user.
     // A disclosure toggle: hold the toggled row at the viewport position it had
     // when clicked, for as long as its animation resizes the transcript. The
     // bottom pin is released too, since the reader has just chosen a place.
     let toggleAnchor: { el: HTMLElement; top: number; until: number } | null = null;
+    // A real user gesture (a wheel, a touch, a press on the scrollbar or the
+    // transcript, a key) reclaims scroll control even mid programmatic scroll.
+    // Without this, those scroll events are flagged programmatic and ignored
+    // above, so the pin keeps yanking against the user: a bottom pin re-applied
+    // on every growth frame of a reply keeps that flag set for the whole turn.
     const handleUserIntent = () => {
       if (!isMain) return;
       programmaticScrollRef.current = false;
@@ -461,8 +493,7 @@ export function useChatScroll({
         entryRestoreRafRef.current = null;
       }
     };
-    c.addEventListener('wheel', handleUserIntent, { passive: true });
-    c.addEventListener('touchstart', handleUserIntent, { passive: true });
+    for (const type of INTENT_EVENTS) c.addEventListener(type, handleUserIntent, { passive: true });
 
     const handleAnchoredToggle = (e: Event) => {
       if (!isMain) return;
@@ -492,6 +523,14 @@ export function useChatScroll({
         const grew = lastHeight >= 0 && height > lastHeight;
         const growth = grew ? height - lastHeight : 0;
         lastHeight = height;
+        if (pinTargetRef.current) {
+          // A toggle clears every pin, so one set since (a send, the jump pill)
+          // has placed the reader anew and ends the toggle's hold: holding the
+          // row would scroll them back to it.
+          toggleAnchor = null;
+          reapplyPin();
+          return;
+        }
         if (toggleAnchor) {
           if (performance.now() > toggleAnchor.until || !c.contains(toggleAnchor.el)) {
             toggleAnchor = null;
@@ -510,10 +549,6 @@ export function useChatScroll({
             if (Math.abs(delta) >= 1) withProgrammaticScroll(() => c.scrollTo({ top: c.scrollTop + delta }), 'auto');
             return;
           }
-        }
-        if (pinTargetRef.current) {
-          reapplyPin();
-          return;
         }
         if (grew && isFollowing()) stream.follow();
       });
@@ -543,8 +578,7 @@ export function useChatScroll({
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       c.removeEventListener('scroll', handleScroll);
-      c.removeEventListener('wheel', handleUserIntent);
-      c.removeEventListener('touchstart', handleUserIntent);
+      for (const type of INTENT_EVENTS) c.removeEventListener(type, handleUserIntent);
       c.removeEventListener(ANCHORED_TOGGLE_EVENT, handleAnchoredToggle);
       document.removeEventListener('visibilitychange', handleVisibility);
       if (visibilityRafRef.current != null) {
@@ -677,6 +711,7 @@ export function useChatScroll({
     getScrollContainer,
     withProgrammaticScroll,
     pinToBottom,
+    follow,
     pinToMessage,
     revealFiles,
     pinTargetRef,
@@ -688,6 +723,5 @@ export function useChatScroll({
     isNearBottomRef,
     isSubagentNearBottomRef,
     restoredForThreadRef,
-    entryRestoreSettled,
   };
 }

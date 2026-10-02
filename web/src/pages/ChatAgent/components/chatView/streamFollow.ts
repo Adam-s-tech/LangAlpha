@@ -50,8 +50,10 @@ export function createStreamFollow(c: HTMLElement, following: { current: boolean
   };
 }
 
+/** What the follow policy (useTranscriptFollow) asks of a scroll engine. */
 export interface StreamFollowControls {
-  /** Follows again from the bottom wherever the reader was, for a send. */
+  /** Follows again from the bottom wherever the reader was, for a turn the
+   *  reader starts. */
   rejoin(): void;
   /** Brings the start of reply bubble `id` under the viewport top, for a turn
    *  that finished under the 'reply_start' preference. */
@@ -61,16 +63,14 @@ export interface StreamFollowControls {
 // What a reader does to scroll: a wheel or trackpad, a touch, the scrollbar or
 // a click, a key. A landing's own scrolls cannot be told from the reader's by
 // position (a smooth one passes through any), so one of these ends the hold.
-const INTENT_EVENTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+export const INTENT_EVENTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
 
 /**
  * The follow for a scroller that keeps no position to restore, so the first
  * observation follows too and a thread opens at its end. `shown` re-attaches
  * it when the content mounts. Later growth is followed only while `active`:
  * in a settled transcript it is the reader's own doing, a row opened, and
- * stays where they put it. `rejoin` is for a send: the reader's message and
- * the reply land at the end, so a reader scrolled up would not see either.
- * `landOnReply` is for a finished turn: it moves only a reader the follow was
+ * stays where they put it. `landOnReply` moves only a reader the follow was
  * carrying and stops following, and a reply that fits on screen moves nothing.
  */
 export function useStreamFollow(

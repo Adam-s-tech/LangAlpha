@@ -4,6 +4,8 @@ import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { useScrollMemory } from '@/lib/scrollMemory';
 import { getNewsArticle } from '../Dashboard/utils/api';
+import { useLocale } from '@/hooks/useLocale';
+import { formatTimestamp } from '@/lib/format';
 
 interface ArticleSentiment {
   ticker: string;
@@ -63,6 +65,7 @@ function NewsDetailPage() {
 function NewsArticleView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const locale = useLocale();
   const [article, setArticle] = useState<NewsArticle | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -127,7 +130,7 @@ function NewsArticleView() {
         <div className="flex items-center gap-3 flex-wrap">
           {article.published_at && (
             <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-              {new Date(article.published_at).toLocaleString()}
+              {formatTimestamp(article.published_at, locale)}
             </span>
           )}
           {article.author && (

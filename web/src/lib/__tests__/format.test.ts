@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createFormatter, createDateFormatter, compactNumber, compactNumberFixed2, fixed2, formatBytes, relativeTime, signedFixed2 } from '@/lib/format';
+import { createFormatter, createDateFormatter, compactNumber, compactNumberFixed2, fixed2, formatBytes, formatTimestamp, relativeTime, signedFixed2 } from '@/lib/format';
 
 describe('createFormatter', () => {
   it('formats numbers in the given locale', () => {
@@ -32,6 +32,20 @@ describe('createDateFormatter', () => {
     const fmt = createDateFormatter({ year: 'numeric', month: 'long' });
     const date = new Date('2026-04-25T00:00:00Z');
     expect(fmt(date, 'en-US')).not.toBe(fmt(date, 'zh-CN'));
+  });
+});
+
+describe('formatTimestamp', () => {
+  it('formats a timestamp in the given locale', () => {
+    const ts = '2026-04-25T14:30:00Z';
+    expect(formatTimestamp(ts, 'en-US')).toMatch(/2026/);
+    expect(formatTimestamp(ts, 'en-US')).not.toBe(formatTimestamp(ts, 'zh-CN'));
+  });
+
+  // Intl throws on an invalid Date, so a malformed timestamp from the server
+  // would take the whole view down with it.
+  it('hands back a timestamp it cannot parse as written', () => {
+    expect(formatTimestamp('sometime last week', 'en-US')).toBe('sometime last week');
   });
 });
 

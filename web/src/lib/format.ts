@@ -43,6 +43,20 @@ export function createDateFormatter(
   return (d, locale) => format(locale).format(d);
 }
 
+// The fields Date#toLocaleString() prints by default.
+const dateTime = createDateFormatter({
+  year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric',
+});
+
+/** A timestamp string as a date and time in `locale`. An unparseable one comes
+ *  back as written, since Intl throws a RangeError on an invalid Date. */
+export function formatTimestamp(ts: string | null | undefined, locale: string): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts;
+  return dateTime(d, locale);
+}
+
 const zoneNames = new Map<string, string>();
 
 /** A zone's name in `locale` ("Eastern Time", "中国标准时间"). UTC stays

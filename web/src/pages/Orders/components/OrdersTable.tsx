@@ -78,6 +78,7 @@ function OrderRow({
   return (
     <tr
       className="orders-row"
+      data-no-drag
       tabIndex={0}
       data-testid={`order-row-${order.attempt_id}`}
       onClick={open}

@@ -121,6 +121,8 @@
     "workspaces": "工作区",
     "workspaceGallery": "工作区总览",
     "collapse": "收起侧边栏",
+    "back": "后退",
+    "forward": "前进",
     "expand": "展开侧边栏",
     "resize": "调整侧边栏宽度",
     "plugins": "插件",

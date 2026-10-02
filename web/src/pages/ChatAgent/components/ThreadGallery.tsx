@@ -613,7 +613,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
             in the desktop shell: it is the top bar the content column already
             has, so it costs no layout, and the back button wins its own clicks
             back through the `no-drag` list in chrome.css. */}
-        <div className="flex-shrink-0 px-6 py-4 enter-fade-up" data-chrome="drag">
+        <div className="flex-shrink-0 px-6 py-4 enter-fade-up" data-chrome="drag" style={{ paddingTop: 'calc(var(--page-top) - 4px)' }}>
           <button
             onClick={onBack}
             className="p-2 rounded-md transition-colors"

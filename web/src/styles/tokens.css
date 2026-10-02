@@ -42,8 +42,13 @@ html {
   --font-content: 'Geist', 'Noto Sans SC', -apple-system, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'Menlo', 'Noto Sans SC', ui-monospace, SFMono-Regular, monospace;
 
-  --sidebar-width: 80px;
+  --sidebar-width: 64px;
+  --sidebar-rail-width: 64px;
   --bottom-tab-height: 78px;
+  /* Space above a page's first row. Every route's title or header row starts
+     this far down, so the first row sits at one depth when moving between pages
+     (centre of a 28px title row: --page-top + 14px). */
+  --page-top: clamp(16px, 3vw, 32px);
 
   /* ---------- Background roles ----------
      Which fill belongs on which surface. Reach for the role, not a lookalike

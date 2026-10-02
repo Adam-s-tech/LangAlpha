@@ -487,7 +487,7 @@ function WorkspaceTreeRowImpl({
             input owns the row. */}
         <div
           className="nav-panel-row group"
-          style={{ paddingLeft: 10 }}
+          style={{ paddingLeft: 10, position: 'relative' }}
           onClick={handleRowClick}
           {...(isRenaming ? {} : dragHandleProps)}
         >
@@ -516,64 +516,69 @@ function WorkspaceTreeRowImpl({
               >
                 {ws.name || t('nav.workspaceFallback')}
               </span>
-              {/* initial={false}: thread switches remount the panel; the chevron
-                  must render at its resting angle, not animate to it. Hidden
-                  until the row is hovered (always visible on touch). */}
-              <motion.span
-                className={`flex-shrink-0 flex items-center ${isMobile ? '' : 'opacity-0 group-hover:opacity-100 transition-opacity'}`}
-                initial={false}
-                animate={{ rotate: isExpanded ? 90 : 0 }}
-                transition={{ duration: 0.15, ease: 'easeOut' }}
-              >
-                <ChevronRight className="h-4 w-4" style={{ color: 'var(--color-text-tertiary)' }} />
-              </motion.span>
-              {/* Right-aligned row actions: new thread + options (pin / rename).
-                  Hover-revealed on desktop, always shown on touch. */}
-              {(onNewThread || showWsMenu) && (
-                <div className={`flex items-center gap-0.5 ml-auto flex-shrink-0 ${isMobile ? '' : 'opacity-0 group-hover:opacity-100 transition-opacity'}`}>
-                  {onNewThread && (
-                    <button
-                      type="button"
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => { e.stopPropagation(); onNewThread(wsId); }}
-                      className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-[var(--color-border-muted)]"
-                      title={t('nav.newThread')}
-                      aria-label={t('nav.newThread')}
-                    >
-                      <SquarePen className="h-3.5 w-3.5" style={{ color: 'var(--color-text-tertiary)' }} />
-                    </button>
-                  )}
-                  {showWsMenu && (
-                    <DropdownMenu modal={false}>
-                      <DropdownMenuTrigger asChild>
-                        <button
-                          type="button"
-                          onPointerDown={(e) => e.stopPropagation()}
-                          onClick={(e) => e.stopPropagation()}
-                          className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-[var(--color-border-muted)]"
-                          title={t('workspace.options')}
-                          aria-label={t('workspace.options')}
-                        >
-                          <MoreHorizontal className="h-3.5 w-3.5" style={{ color: 'var(--color-text-tertiary)' }} />
-                        </button>
-                      </DropdownMenuTrigger>
-                      {/* Drops below the trigger, growing rightward past the
-                          sidebar edge into the content area (Codex-style).
-                          align=end would grow leftward over the tree since the
-                          trigger hugs the sidebar edge. */}
-                      <DropdownMenuContent align="start" sideOffset={4} onClick={(e) => e.stopPropagation()}>
-                        <WorkspaceMenuItems
-                          workspace={ws}
-                          onTogglePin={onPinWorkspace ? () => onPinWorkspace(wsId, !isPinned) : undefined}
-                          onRename={rename.enabled ? () => rename.onStart(wsId, ws.name || '') : undefined}
-                          onDuplicate={wsActions.openDuplicate}
-                          onDelete={wsActions.openDelete}
-                        />
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  )}
-                </div>
-              )}
+              {/* Chevron + row actions float over the name's tail on hover
+                  (as thread rows do), so the name keeps the full row width
+                  instead of truncating around controls that are not showing. */}
+              <div className={isMobile ? 'flex items-center gap-0.5 ml-auto flex-shrink-0' : 'nav-panel-row-actions'}>
+                {/* initial={false}: thread switches remount the panel; the chevron
+                    must render at its resting angle, not animate to it. Hidden
+                    until the row is hovered (always visible on touch). */}
+                <motion.span
+                  className="flex-shrink-0 flex items-center"
+                  initial={false}
+                  animate={{ rotate: isExpanded ? 90 : 0 }}
+                  transition={{ duration: 0.15, ease: 'easeOut' }}
+                >
+                  <ChevronRight className="h-4 w-4" style={{ color: 'var(--color-text-tertiary)' }} />
+                </motion.span>
+                {/* Right-aligned row actions: new thread + options (pin / rename).
+                    Hover-revealed on desktop, always shown on touch. */}
+                {(onNewThread || showWsMenu) && (
+                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                    {onNewThread && (
+                      <button
+                        type="button"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); onNewThread(wsId); }}
+                        className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-[var(--color-border-muted)]"
+                        title={t('nav.newThread')}
+                        aria-label={t('nav.newThread')}
+                      >
+                        <SquarePen className="h-3.5 w-3.5" style={{ color: 'var(--color-text-tertiary)' }} />
+                      </button>
+                    )}
+                    {showWsMenu && (
+                      <DropdownMenu modal={false}>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-[var(--color-border-muted)]"
+                            title={t('workspace.options')}
+                            aria-label={t('workspace.options')}
+                          >
+                            <MoreHorizontal className="h-3.5 w-3.5" style={{ color: 'var(--color-text-tertiary)' }} />
+                          </button>
+                        </DropdownMenuTrigger>
+                        {/* Drops below the trigger, growing rightward past the
+                            sidebar edge into the content area (Codex-style).
+                            align=end would grow leftward over the tree since the
+                            trigger hugs the sidebar edge. */}
+                        <DropdownMenuContent align="start" sideOffset={4} onClick={(e) => e.stopPropagation()}>
+                          <WorkspaceMenuItems
+                            workspace={ws}
+                            onTogglePin={onPinWorkspace ? () => onPinWorkspace(wsId, !isPinned) : undefined}
+                            onRename={rename.enabled ? () => rename.onStart(wsId, ws.name || '') : undefined}
+                            onDuplicate={wsActions.openDuplicate}
+                            onDelete={wsActions.openDelete}
+                          />
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
+                )}
+              </div>
               {threadsLoading && (
                 <Loader
                  

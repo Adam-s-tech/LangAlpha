@@ -17,7 +17,7 @@
   /* A tab short enough to need no scrollbar must not sit 4px to the right
      of one that does; the gutter is reserved either way. */
   scrollbar-gutter: stable;
-  padding: clamp(16px, 3vw, 32px) clamp(16px, 3vw, 32px) 48px;
+  padding: var(--page-top) clamp(16px, 3vw, 32px) 48px;
 }
 
 .plugins-container {

@@ -121,6 +121,50 @@ html.desktop-mac .sidebar-window-drag {
   -webkit-app-region: drag;
 }
 
+/* Desktop shell: the expanded panel's header row moves up into the 38px titlebar
+   row, to the right of the window buttons, and carries the toggle and back and
+   forward only. The brand stays in the collapsed rail. */
+/* The macOS window buttons float over the rail and reach ~73px, so the desktop
+   shell keeps a rail that clears them; everywhere else it hugs its icons. */
+html.desktop-mac {
+  --sidebar-rail-width: 76px;
+}
+
+html.desktop-mac .sidebar--panel .sidebar-panel-header {
+  position: relative;
+  margin-top: -38px;
+  height: 38px;
+  padding: 0 10px 0 84px;
+  box-sizing: border-box;
+}
+html.desktop-mac .sidebar--panel .sidebar-collapse-btn { order: 1; }
+html.desktop-mac .sidebar--panel .sidebar-history { order: 2; }
+html.desktop-mac .sidebar--panel .sidebar-brand {
+  display: none;
+}
+/* Breathing room between the titlebar row and the first item. */
+html.desktop-mac .sidebar--panel .sidebar-panel-nav {
+  margin-top: 6px;
+}
+
+.sidebar-history {
+  display: none;
+}
+
+html.desktop-mac .sidebar-history {
+  display: flex;
+  gap: 2px;
+}
+
+.sidebar-history .sidebar-collapse-btn:disabled:hover {
+  background: transparent;
+}
+
+.sidebar-history .sidebar-collapse-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 .sidebar-panel-header {
   display: flex;
   align-items: center;
@@ -390,14 +434,14 @@ html.desktop-mac .sidebar-window-drag {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 0 14px;
+  padding: 0 12px;
 }
 
 .sidebar-nav-item {
   position: relative;
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
   border: none;
   background: transparent;
   display: flex;
@@ -420,11 +464,12 @@ html.desktop-mac .sidebar-window-drag {
   color: hsl(var(--sidebar-icon-selected));
 }
 
-/* Accent bar hugging the rail edge (-14px = .sidebar-nav horizontal padding) */
+/* Accent bar hugging the rail edge: the item is centred in the rail, so its
+   offset from the edge is half of what the rail has left over. */
 .sidebar-nav-item.active::before {
   content: '';
   position: absolute;
-  left: -14px;
+  left: calc((40px - var(--sidebar-width)) / 2);
   top: 50%;
   transform: translateY(-50%);
   width: 3px;
@@ -466,27 +511,6 @@ html.desktop-mac .sidebar-window-drag {
   overflow: visible;
   padding: 0;
   transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-.sidebar-account-plan-flair {
-  position: absolute;
-  bottom: -4px;
-  right: -6px;
-  font-size: 0.5625rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  line-height: 1;
-  padding: 2px 5px;
-  border-radius: 999px;
-  background: var(--color-accent-primary);
-  color: var(--color-text-on-accent, #ffffff);
-  border: 2px solid hsl(var(--sidebar-bg));
-  max-width: 56px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  pointer-events: none;
 }
 
 .sidebar-account-trigger:hover {

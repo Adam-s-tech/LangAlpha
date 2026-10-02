@@ -275,7 +275,7 @@ function AuthenticatedShell() {
   // is viewport-anchored — some of them portalled clean out of the layout
   // subtree. Off the root they'd read the collapsed default from tokens.css and
   // sit under the sidebar. 0 on mobile, where no sidebar renders at all.
-  const sidebarWidthVar = isMobile ? '0px' : sidebarCollapsed ? '80px' : `${sidebarWidth}px`;
+  const sidebarWidthVar = isMobile ? '0px' : sidebarCollapsed ? 'var(--sidebar-rail-width)' : `${sidebarWidth}px`;
   useLayoutEffect(() => {
     const root = document.documentElement;
     root.style.setProperty('--sidebar-width', sidebarWidthVar);

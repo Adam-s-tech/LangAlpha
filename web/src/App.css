@@ -45,6 +45,16 @@
    needed from here: the strip is the first child of an unpadded column, so it
    already starts at the window's top edge and runs the column's full width. */
 
+/* In the desktop shell the window buttons live in the sidebar's titlebar row,
+   not over this column, so the strip is a drag handle and no longer needs a
+   band of its own. It keeps its full height but takes no room in the flow: the
+   route's content starts at the top edge and the strip lies over its top
+   padding. Controls under it stay clickable because they declare `no-drag`
+   (chrome.css). The narrow layout below hides it. */
+html.desktop-mac .app-main .chrome-drag-strip {
+  margin-bottom: -38px;
+}
+
 @media (max-width: 767px) {
   .app-layout {
     height: 100vh;

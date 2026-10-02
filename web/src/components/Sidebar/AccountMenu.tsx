@@ -137,11 +137,6 @@ const AccountMenu: React.FC<AccountMenuProps> = ({ variant = 'rail' }) => {
               ) : (
                 <User className="sidebar-account-icon" />
               )}
-              {planDisplayName && (
-                <span className="sidebar-account-plan-flair" aria-hidden="true">
-                  {planDisplayName}
-                </span>
-              )}
             </button>
           )}
         </DropdownMenuTrigger>

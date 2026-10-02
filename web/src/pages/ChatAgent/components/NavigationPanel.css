@@ -76,9 +76,20 @@
   border-radius: 0 8px 8px 0;
 }
 
-.nav-panel-row:hover .nav-panel-row-actions {
+/* Focus and an open menu keep the actions up too: the menu is portaled, so
+   hovering it ends the row's :hover, and a keyboard user is never hovering. */
+.nav-panel-row:hover .nav-panel-row-actions,
+.nav-panel-row:focus-within .nav-panel-row-actions,
+.nav-panel-row:has([data-state='open']) .nav-panel-row-actions {
   opacity: 1;
   pointer-events: auto;
+}
+
+@media (hover: none), (any-pointer: coarse) {
+  .nav-panel-row-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 /* Agent group — visually nested under thread with a left guide line.

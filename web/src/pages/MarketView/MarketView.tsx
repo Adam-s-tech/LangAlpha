@@ -624,6 +624,10 @@ function MarketViewInner() {
 
   return (
     <div className="market-center-container">
+      {/* Doubles as the window titlebar in the desktop shell; inert elsewhere.
+          Page-wide, so the chat and watchlist columns stay draggable too; it
+          overlaps the header rather than pushing it down (App.css). */}
+      <div className="chrome-drag-strip" aria-hidden="true" />
       {isMobile ? (
         <div className="market-mobile-layout">
           <StockHeader
@@ -744,23 +748,21 @@ function MarketViewInner() {
         </div>
       ) : (
         <>
-          {/* The dashboard header used to sit here and double as the titlebar in
-              the desktop shell. The row below is three columns, so one strip
-              above them is the drag region rather than three marked bars. */}
-          <div className="chrome-drag-strip" aria-hidden="true" />
           <div className="market-content-wrapper">
             <div className="market-left-panel">
-              <StockHeader
-                symbol={selectedStock}
-                quote={quote}
-                chartMeta={chartMeta}
-                onToggleOverview={() => setShowOverview(v => !v)}
-                onSwitchSymbol={handleStockSearch}
-                wsStatus={wsStatus}
-                wsHasData={wsHasData}
-                wsDataLevel={wsDataLevel}
-                ginlixDataEnabled={ginlixDataEnabled}
-              />
+              <div className="market-titlebar">
+                <StockHeader
+                  symbol={selectedStock}
+                  quote={quote}
+                  chartMeta={chartMeta}
+                  onToggleOverview={() => setShowOverview(v => !v)}
+                  onSwitchSymbol={handleStockSearch}
+                  wsStatus={wsStatus}
+                  wsHasData={wsHasData}
+                  wsDataLevel={wsDataLevel}
+                  ginlixDataEnabled={ginlixDataEnabled}
+                />
+              </div>
               <div className="market-chart-area">
                 {showOverview && (
                   <CompanyOverviewPanel

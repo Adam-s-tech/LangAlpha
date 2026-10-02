@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+pytestmark = [pytest.mark.integration, pytest.mark.yahoo, pytest.mark.asyncio]
 
 _SYMBOL = "AAPL"
 

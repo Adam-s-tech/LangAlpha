@@ -182,6 +182,7 @@ asyncio_mode = "strict"
 markers = [
     "integration: hits real APIs — requires env vars (deselect with '-m \"not integration\"')",
     "slow: long-running tests (stress, concurrency) -- opt-in",
+    "yahoo: hits live Yahoo Finance, no secrets needed; run by yahoo-live.yml when yfinance code or its version changes, not by the general integration job",
     "provider_docker: tests requiring Docker daemon",
     "provider_daytona: tests requiring Daytona API key",
     "regression: locks live market-data API behavior against a running server + live providers — opt-in",

@@ -56,6 +56,7 @@ from src.server.services.file_grants import grant_prefix, mint_file_grant, secon
 from src.server.utils.api import PageViewer, Viewer
 from src.server.services.history.replay.items import run_completed_at
 from src.server.services.history.replay.stopped import stop_close_item
+from src.tools.secretary import SECRETARY_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -80,29 +81,18 @@ _PRIVATE_ARTIFACT_KEYS = (RECEIPT_KEY, "provenance")
 # order it decided by the attempt's ledger id. A viewer cannot answer one and
 # must not read which of the owner's orders were approved.
 _PRIVATE_QUERY_METADATA_KEYS = frozenset({"workspace_id", "order_decisions"})
+# Keys naming the owner's account wherever they sit in an event: no share
+# renders them, and none is the viewer's to read.
+_OWNER_ID_KEYS = frozenset({"workspace_id", "user_id"})
 # The one mark a direct MCP call carries before its answer: ``direct_tool_name``
 # builds every direct tool name under this prefix, its digest forms included.
 _DIRECT_TOOL_PREFIX = "mcp__"
-
-
-def _strip_order_requests(data: dict[str, Any]) -> dict[str, Any] | None:
-    """An interrupt with the order's requests removed, or None when nothing is left.
-
-    The approval card that asked the owner carries the account and the whole
-    order; a viewer cannot answer it and must not read it.
-    """
-    requests = data.get("action_requests")
-    if not isinstance(requests, list):
-        return data
-    kept = [
-        r for r in requests if not (isinstance(r, dict) and "attempt_id" in r)
-    ]
-    if len(kept) == len(requests):
-        return data
-    if not kept:
-        return None
-    data["action_requests"] = kept
-    return data
+# The flash agent's account tools list, create, delete and dispatch into the
+# owner's workspaces and threads. Their answers are the owner's own rows as
+# text, sandbox and user ids included, which no key strip reaches; their
+# arguments and approvals name the same things. A share renders none of these
+# calls, so each travels as its name and id alone.
+_SECRETARY_TOOL_NAMES = frozenset(t.name for t in SECRETARY_TOOLS)
 
 
 def _is_order_result(data: dict[str, Any]) -> bool:
@@ -213,7 +203,8 @@ def _may_be_order(
 def _strip_call_args(
     data: dict[str, Any], order_calls: set[str], cleared_calls: set[tuple[str, str]]
 ) -> dict[str, Any]:
-    """A ``tool_calls`` event with the arguments of each possible order call emptied.
+    """A ``tool_calls`` event with the arguments of each possible order call
+    and each secretary call emptied.
 
     Emptied rather than dropped, as the stream does for arguments it cannot
     parse: the call keeps its card and its id, so its result still lands.
@@ -224,21 +215,40 @@ def _strip_call_args(
     data["tool_calls"] = [
         {**call, "args": {}}
         if isinstance(call, dict)
-        and _may_be_order(call, data.get("id"), order_calls, cleared_calls)
+        and (
+            call.get("name") in _SECRETARY_TOOL_NAMES
+            or _may_be_order(call, data.get("id"), order_calls, cleared_calls)
+        )
         else call
         for call in calls
     ]
     return data
 
 
-def _without_workspace_ids(value: Any) -> Any:
-    """A copy of ``value`` with every ``workspace_id`` key removed, at any depth."""
+def _track_secretary_calls(data: dict[str, Any], secretary_calls: set[str]) -> None:
+    """Record which call ids in a ``tool_calls`` event now name a secretary call."""
+    calls = data.get("tool_calls")
+    if not isinstance(calls, list):
+        return
+    for call in calls:
+        if not isinstance(call, dict) or not call.get("id"):
+            continue
+        if call.get("name") in _SECRETARY_TOOL_NAMES:
+            secretary_calls.add(str(call["id"]))
+        else:
+            secretary_calls.discard(str(call["id"]))
+
+
+def _without_owner_ids(value: Any) -> Any:
+    """A copy of ``value`` with every owner id key removed, at any depth."""
     if isinstance(value, dict):
         return {
-            k: _without_workspace_ids(v) for k, v in value.items() if k != "workspace_id"
+            k: _without_owner_ids(v)
+            for k, v in value.items()
+            if k not in _OWNER_ID_KEYS
         }
     if isinstance(value, list):
-        return [_without_workspace_ids(v) for v in value]
+        return [_without_owner_ids(v) for v in value]
     return value
 
 
@@ -399,6 +409,10 @@ async def replay_shared_thread(share_token: str):
 
     async def event_generator():
         seq = 0
+        # Call ids whose latest call is a secretary one. A result names only
+        # its call id, which a provider may repeat later, so this follows the
+        # stream in order rather than reading the thread up front.
+        secretary_calls: set[str] = set()
 
         for q in queries:
             if not isinstance(q, dict):
@@ -410,9 +424,9 @@ async def replay_shared_thread(share_token: str):
             # Build user_message payload, less the keys a viewer must not read
             metadata = q.get("metadata") or {}
             if isinstance(metadata, dict):
-                # Attached context is client-shaped, so a workspace id can sit
-                # at any depth in it.
-                metadata = _without_workspace_ids(
+                # Attached context is client-shaped, so an owner id can sit at
+                # any depth in it.
+                metadata = _without_owner_ids(
                     {
                         k: v
                         for k, v in metadata.items()
@@ -427,10 +441,13 @@ async def replay_shared_thread(share_token: str):
                 "timestamp": q.get("created_at"),
                 "metadata": metadata,
             }
-            # Tag system queries so the frontend can hide the user bubble
+            # Tag system queries so the frontend can hide the user bubble. Its
+            # text is the agent's own prompt, never shown, and a report-back
+            # names the dispatched thread and its workspace, so it stays here.
             query_type = q.get("type")
             if query_type == "system":
                 payload["query_type"] = "system"
+                payload["content"] = ""
             # The turn's end, paired with the query timestamp above to give the
             # fold row its duration. This payload is hand-built rather than
             # taken from the replay builder, so the field has to be mirrored
@@ -472,22 +489,29 @@ async def replay_shared_thread(share_token: str):
                 seq += 1
                 # Shallow-copy so we never mutate the stored/cached event dict.
                 replay_data = dict(data)
-                # The owner's workspace_id never reaches a public viewer. Stored
-                # workspace_status events carry it at the top level and tool
-                # artifacts (chart annotations) nest it, so it goes at every
-                # depth. sandbox_state is server-side runtime state.
-                replay_data = _without_workspace_ids(replay_data)
+                # The owner's ids never reach a public viewer. Stored
+                # workspace_status events carry the workspace id at the top
+                # level, tool artifacts (chart annotations) nest it, and a
+                # steering event names the user on each message, so they go at
+                # every depth. sandbox_state is server-side runtime state.
+                replay_data = _without_owner_ids(replay_data)
                 replay_data.pop("sandbox_state", None)
                 replay_data = _strip_private_artifact(replay_data)
                 if event_type == "tool_calls":
+                    _track_secretary_calls(replay_data, secretary_calls)
                     replay_data = _strip_call_args(
                         replay_data, order_calls, cleared_calls
                     )
+                if (
+                    event_type == "tool_call_result"
+                    and str(replay_data.get("tool_call_id")) in secretary_calls
+                ):
+                    replay_data["content"] = ""
                 if event_type == "interrupt":
-                    replay_data = _strip_order_requests(replay_data)
-                    if replay_data is None:
-                        seq -= 1
-                        continue
+                    # An interrupt asks the owner, and no share renders or
+                    # answers one.
+                    seq -= 1
+                    continue
                 replay_data.setdefault("thread_id", thread_id)
                 replay_data["turn_index"] = turn_index
                 replay_data["response_id"] = str(response.get("conversation_response_id"))

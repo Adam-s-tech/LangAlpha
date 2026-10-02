@@ -160,6 +160,7 @@ async def _replay(
     sse_events: list[dict] | None = None,
     later_events: list[dict] | None = None,
     later_metadata: dict | None = None,
+    later_query: dict | None = None,
 ) -> tuple[str, list[dict]]:
     thread = {
         "conversation_thread_id": _THREAD_ID,
@@ -180,6 +181,7 @@ async def _replay(
                 "turn_index": 1,
                 "content": "approve",
                 "metadata": later_metadata if later_metadata is not None else {},
+                **(later_query or {}),
             }
         )
         responses.append(
@@ -479,3 +481,41 @@ async def test_replay_still_carries_the_rest_of_the_turn(client):
     message = next(e for e in events if e["event"] == "message")
     assert message["data"]["content"] == "Placed."
     assert "workspace_id" not in message["data"]
+
+
+@pytest.mark.parametrize(
+    "request_",
+    [
+        {
+            "type": "ask_user_question",
+            "question": "Which account should I use?",
+            "options": ["IRA", "Brokerage"],
+            "allow_multiple": False,
+        },
+        {"type": "credit_pause", "message": "You have used this month's credits."},
+    ],
+    ids=["question", "credit_pause"],
+)
+async def test_replay_drops_every_interrupt(client, request_):
+    """An interrupt asks the owner, and no share renders or answers one."""
+    interrupt = {
+        "event": "interrupt",
+        "data": {
+            "interrupt_id": "int-2",
+            "action_requests": [request_],
+            "role": "assistant",
+            "finish_reason": "interrupt",
+        },
+    }
+    before = {"event": "message", "data": {"content": "Checking."}}
+    after = {"event": "message", "data": {"content": "Done."}}
+    body, events = await _replay(client, [before, interrupt, after])
+    assert [e["event"] for e in events] == [
+        "user_message",
+        "message",
+        "message",
+        "replay_done",
+    ]
+    assert request_["type"] not in body
+    ids = [line[len("id: ") :] for line in body.splitlines() if line.startswith("id: ")]
+    assert ids == ["1", "2", "3", "4"]

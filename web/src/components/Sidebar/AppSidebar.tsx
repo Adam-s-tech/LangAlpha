@@ -20,15 +20,29 @@ import { useSidebarAgents } from '@/pages/ChatAgent/components/sidebarAgentsBrid
 import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth } from './sidebarWidth';
 import './Sidebar.css';
 
+interface NavigationLike {
+  canGoBack: boolean;
+  canGoForward: boolean;
+  addEventListener: (type: string, fn: () => void) => void;
+  removeEventListener: (type: string, fn: () => void) => void;
+}
+
 /** Back/forward for the desktop titlebar row; hidden elsewhere by CSS. */
 function HistoryButtons() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [can, setCan] = useState({ back: true, forward: false });
+  // Without the Navigation API the stack depth is unknowable, so both stay live.
+  const [can, setCan] = useState({ back: true, forward: true });
   useEffect(() => {
-    const nav = (window as unknown as { navigation?: { canGoBack: boolean; canGoForward: boolean; addEventListener: (e: string, f: () => void) => void; removeEventListener: (e: string, f: () => void) => void } }).navigation;
+    if (!document.documentElement.classList.contains('desktop-mac')) return;
+    const nav = (window as unknown as { navigation?: NavigationLike }).navigation;
     if (!nav) return;
-    const sync = () => setCan({ back: nav.canGoBack, forward: nav.canGoForward });
+    const sync = () =>
+      setCan((prev) =>
+        prev.back === nav.canGoBack && prev.forward === nav.canGoForward
+          ? prev
+          : { back: nav.canGoBack, forward: nav.canGoForward },
+      );
     sync();
     nav.addEventListener('currententrychange', sync);
     return () => nav.removeEventListener('currententrychange', sync);

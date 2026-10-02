@@ -624,6 +624,10 @@ function MarketViewInner() {
 
   return (
     <div className="market-center-container">
+      {/* Doubles as the window titlebar in the desktop shell; inert elsewhere.
+          Page-wide, so the chat and watchlist columns stay draggable too; it
+          overlaps the header rather than pushing it down (App.css). */}
+      <div className="chrome-drag-strip" aria-hidden="true" />
       {isMobile ? (
         <div className="market-mobile-layout">
           <StockHeader
@@ -746,11 +750,7 @@ function MarketViewInner() {
         <>
           <div className="market-content-wrapper">
             <div className="market-left-panel">
-              {/* The header is the page's titlebar in the desktop shell: it donates
-                  the drag region, and the wrapper reserves the titlebar's height
-                  inside the header's own surface so its title lines up with the
-                  sidebar logo (market-titlebar, MarketView.css). */}
-              <div className="market-titlebar" data-chrome="drag">
+              <div className="market-titlebar">
                 <StockHeader
                   symbol={selectedStock}
                   quote={quote}

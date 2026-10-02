@@ -128,7 +128,7 @@ html.desktop-mac .sidebar--panel .sidebar-panel-header {
   position: relative;
   margin-top: -38px;
   height: 38px;
-  padding: 0 10px 0 78px;
+  padding: 0 10px 0 84px;
   box-sizing: border-box;
 }
 html.desktop-mac .sidebar--panel .sidebar-collapse-btn { order: 1; }
@@ -148,6 +148,10 @@ html.desktop-mac .sidebar--panel .sidebar-panel-nav {
 html.desktop-mac .sidebar-history {
   display: flex;
   gap: 2px;
+}
+
+.sidebar-history .sidebar-collapse-btn:disabled:hover {
+  background: transparent;
 }
 
 .sidebar-history .sidebar-collapse-btn:disabled {

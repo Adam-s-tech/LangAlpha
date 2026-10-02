@@ -43,6 +43,7 @@ html {
   --font-mono: 'JetBrains Mono', 'Menlo', 'Noto Sans SC', ui-monospace, SFMono-Regular, monospace;
 
   --sidebar-width: 64px;
+  --sidebar-rail-width: 64px;
   --bottom-tab-height: 78px;
   /* Space above a page's first row. Every route's title or header row starts
      this far down, so the first row sits at one depth when moving between pages

@@ -85,7 +85,7 @@
   pointer-events: auto;
 }
 
-@media (hover: none) {
+@media (hover: none), (any-pointer: coarse) {
   .nav-panel-row-actions {
     opacity: 1;
     pointer-events: auto;

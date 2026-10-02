@@ -124,6 +124,12 @@ html.desktop-mac .sidebar-window-drag {
 /* Desktop shell: the expanded panel's header row moves up into the 38px titlebar
    row, to the right of the window buttons, and carries the toggle and back and
    forward only. The brand stays in the collapsed rail. */
+/* The macOS window buttons float over the rail and reach ~73px, so the desktop
+   shell keeps a rail that clears them; everywhere else it hugs its icons. */
+html.desktop-mac {
+  --sidebar-rail-width: 76px;
+}
+
 html.desktop-mac .sidebar--panel .sidebar-panel-header {
   position: relative;
   margin-top: -38px;

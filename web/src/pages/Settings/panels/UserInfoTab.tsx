@@ -26,7 +26,7 @@ import { useTranslation } from 'react-i18next';
 import { useToast } from '@/components/ui/use-toast';
 import ConfirmDialog from '@/pages/Dashboard/components/ConfirmDialog';
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
-import { isSupported, setLocaleCookie } from '@/lib/locale';
+import { isSupported, setLocaleCookie, switchLocale } from '@/lib/locale';
 import TimezonePicker from '@/components/TimezonePicker';
 import { deviceTimezone } from '@/lib/deviceTimezone';
 import type { Preferences } from './types';
@@ -128,7 +128,7 @@ export function UserInfoTab() {
   const handleLocaleChange = (newLocale: string) => {
     setLocale(newLocale);
     if (isSupported(newLocale)) {
-      i18n.changeLanguage(newLocale);
+      void switchLocale(i18n, newLocale);
       setLocaleCookie(newLocale);
     }
     userInfoRef.current = { ...userInfoRef.current, locale: newLocale };

@@ -112,6 +112,13 @@
         // bundle that carries it is what failed to load.
         function showDeadEnd() {
           var root = document.getElementById('root');
+          // A preload in <head> can fail before the parser reaches <body>:
+          // WebKit reports a missing file that early. This is the document's one
+          // decision, so giving up here would leave it blank; wait for #root.
+          if (!root && document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', showDeadEnd);
+            return;
+          }
           if (!root || root.firstChild) return;
           var zh = (navigator.language || '').indexOf('zh') === 0;
           root.innerHTML =
@@ -235,8 +242,14 @@
             }
           }
         });
+
+        // A boot failure no listener above can see, such as a catalog served
+        // from another origin or i18next itself throwing, would otherwise
+        // leave #root blank. main.tsx hands it here to end the same way.
+        window.__LA_RECOVER__ = recover;
       })();
     </script>
+    <!-- locale-preload: replaced at build by scripts/locale-preload.ts -->
     <script>
       (function () {
         // The desktop shell's preload has already run, so the bridge is here to

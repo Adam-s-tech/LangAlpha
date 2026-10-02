@@ -3,7 +3,7 @@
  *
  * Live in lib/quotes so nothing in lib/ imports a page — `quoteBatcher` calls
  * these directly and Dashboard/utils/api re-exports them for back-compat. Both
- * hit the shared axios client and return the raw batch envelope
+ * hit the shared API client and return the raw batch envelope
  * (`snapshots | results | data`), swallowing network errors to `{}`.
  */
 import { api } from '@/api/client';

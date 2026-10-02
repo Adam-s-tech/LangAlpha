@@ -100,8 +100,8 @@ export async function fetchStockData(
       return { data: [], error: 'Request cancelled' };
     }
     console.error('Error fetching stock data from backend:', error);
-    const axiosError = error as { response?: { data?: { detail?: string } }; message?: string };
-    const errorMsg = axiosError?.response?.data?.detail || axiosError?.message || 'Failed to fetch stock data';
+    const apiError = error as { response?: { data?: { detail?: string } }; message?: string };
+    const errorMsg = apiError?.response?.data?.detail || apiError?.message || 'Failed to fetch stock data';
     return { data: [], error: errorMsg };
   }
 }

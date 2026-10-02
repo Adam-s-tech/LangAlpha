@@ -3,12 +3,14 @@
  * one thread, one agent, plus the drag chip. Lifted out of the panel so each
  * row is a real component — hooks can live per row (title fade, per-thread
  * liveness), and the panel keeps only tree-level state and handlers.
+ *
+ * Every element in a section that takes focus or runs a CSS animation carries
+ * a `data-nav-key` unique within the section: the nav tree's kit swap
+ * (./navTreeKit) finds its twin in the new tree by it, to carry focus and
+ * animation clocks across. An element without one has no twin.
  */
 import React, { memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { motion, AnimatePresence } from 'framer-motion';
-import { useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import {
   ChevronRight, Folder, FolderOpen, Zap, Pin,
   X, ChevronsDown, MoreHorizontal, SquarePen, Archive,
@@ -25,6 +27,7 @@ import type { NavWorkspace } from '../hooks/useNavigationData';
 import { WorkspaceMenuItems } from './workspaceActions';
 import type { WorkspaceActions } from './workspaceActions';
 import { clampWorkspaceName } from '../utils/workspaceName';
+import { useNavTree, type DragGate } from './navTreeKit';
 
 export interface ThreadEntry {
   thread_id: string;
@@ -53,50 +56,22 @@ function workspaceGlyph(ws: NavWorkspace, expanded: boolean) {
   return expanded ? <FolderOpen className={className} style={style} /> : <Folder className={className} style={style} />;
 }
 
-/**
- * Sortable wrapper for one workspace section (header row + thread sub-list).
- * The header row receives the drag listeners via the render prop, which also
- * gets `isDragging` so the section can collapse to header height while lifted.
- *
- * Translate-only (not Transform) so displaced siblings never pick up the
- * scaleX/scaleY that distorts variable-height rows; the lifted item itself is
- * hidden here and shown as a fixed-size DragOverlay chip instead.
- */
-function SortableWorkspace({ wsId, disabled, children }: {
-  wsId: string;
-  disabled: boolean | { draggable: boolean; droppable: boolean };
-  children: (args: { dragHandleProps: Record<string, unknown>; isDragging: boolean }) => React.ReactNode;
-}) {
-  // dnd-kit back-compat trap: a boolean `disabled` normalizes to
-  // {draggable, droppable: false} — the row would stay an active drop
-  // target. Spell out both aspects so `true` really means fully disabled.
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: wsId,
-    disabled: typeof disabled === 'boolean' ? { draggable: disabled, droppable: disabled } : disabled,
-  });
-  const dragDisabled = typeof disabled === 'boolean' ? disabled : disabled.draggable;
-  const style: React.CSSProperties = {
-    transform: CSS.Translate.toString(transform),
-    transition,
-    opacity: isDragging ? 0 : 1,
-    position: 'relative',
-    zIndex: isDragging ? 5 : undefined,
-  };
-  return (
-    <div ref={setNodeRef} style={style} data-ws-id={wsId}>
-      {children({ dragHandleProps: dragDisabled ? {} : { ...attributes, ...listeners }, isDragging })}
-    </div>
-  );
-}
+// The disclosure chevron turns a quarter when its row opens. A CSS transition,
+// so a remount renders at the resting angle and only a toggle turns it.
+const CHEVRON_CLASS = 'h-4 w-4 transition-transform duration-150 ease-[ease-out] motion-reduce:transition-none';
+
+// Row action buttons dip while pressed.
+const PRESS_CLASS = 'transition-transform duration-150 active:scale-[0.85] motion-reduce:transition-none';
 
 // Its own component so useTitleFade can run per row (hooks can't live in a map
 // callback). Fades softly when a live title rewrite lands (auto-title,
 // rename); static on first paint. No native `title` attr — the metadata
 // hover card carries the full title (a browser tooltip would double up).
-function ThreadRowTitle({ title, active }: { title: string; active: boolean }) {
+function ThreadRowTitle({ tid, title, active }: { tid: string; title: string; active: boolean }) {
   const fading = useTitleFade(title);
   return (
     <span
+      data-nav-key={`thread:${tid}:title`}
       className={`text-sm truncate${fading ? ' animate-fade-in' : ''}`}
       style={{ color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}
     >
@@ -202,6 +177,7 @@ export function AgentRow({ agent, isSelected, isMobile, onSelectAgent, onRemoveA
   return (
     <div
       data-testid="agent-row"
+      data-nav-key={`agent:${agent.id}`}
       data-agent-role={isMainAgent ? 'main' : 'sub'}
       className={`nav-panel-agent-row group ${isAgentActive && !isMainAgent ? 'nav-panel-agent-pulse' : ''}${isSelected ? ' is-selected' : ''}`}
       style={{ backgroundColor: isSelected ? 'var(--color-border-muted)' : undefined }}
@@ -233,6 +209,7 @@ export function AgentRow({ agent, isSelected, isMobile, onSelectAgent, onRemoveA
       {/* Remove button -- non-main agents only, on hover */}
       {!isMainAgent && (
         <button
+          data-nav-key={`agent:${agent.id}:remove`}
           onClick={(e) => { e.stopPropagation(); onRemoveAgent?.(agent.id); }}
           className={`shrink-0 p-0 bg-transparent border-none cursor-pointer transition-opacity ${isMobile ? 'opacity-60' : 'opacity-0 group-hover:opacity-100'}`}
           title={t('nav.removeAgent')}
@@ -278,6 +255,7 @@ function ThreadTreeRowImpl({
   onArchiveThread,
 }: ThreadTreeRowProps) {
   const { t } = useTranslation();
+  const { kit } = useNavTree();
   const tid = thread.thread_id;
   const subagents = agents?.filter((a) => !a.isMainAgent) || [];
   const hasSubagents = isCurrentThread && subagents.length > 0;
@@ -302,24 +280,24 @@ function ThreadTreeRowImpl({
             }}
           >
             <ThreadRowGlyph tid={tid} isCurrentThread={isCurrentThread} />
-            <ThreadRowTitle title={title} active={isCurrentThread} />
+            <ThreadRowTitle tid={tid} title={title} active={isCurrentThread} />
             {/* Expand-agents chevron — immediately right of the thread name,
                 mirroring the workspace row. Only on the current thread when it
                 has subagents. Hover-revealed (always shown on touch); rotates
-                90° when expanded. initial={false}: thread switches remount the
-                panel, so the chevron renders at its resting angle. */}
+                90° when expanded. */}
             {hasSubagents && (
-              <motion.button
+              <button
                 type="button"
+                data-nav-key={`thread:${tid}:agents`}
                 onClick={(e) => { e.stopPropagation(); onToggleThread(tid); }}
                 className={`shrink-0 flex items-center p-0 bg-transparent border-none cursor-pointer ${isMobile ? '' : 'opacity-0 group-hover:opacity-100 transition-opacity'}`}
-                initial={false}
-                animate={{ rotate: isExpanded ? 90 : 0 }}
-                transition={{ duration: 0.15, ease: 'easeOut' }}
                 aria-label={t(isExpanded ? 'nav.collapseAgents' : 'nav.expandAgents')}
               >
-                <ChevronRight className="h-4 w-4" style={{ color: 'var(--color-text-tertiary)' }} />
-              </motion.button>
+                <ChevronRight
+                  className={`${CHEVRON_CLASS}${isExpanded ? ' rotate-90' : ''}`}
+                  style={{ color: 'var(--color-text-tertiary)' }}
+                />
+              </button>
             )}
             {/* Resting pinned marker — fades (never display-toggles, which
                 would reflow the title) while the hover overlay carries the
@@ -336,42 +314,34 @@ function ThreadTreeRowImpl({
             {(onPinThread || onArchiveThread) && (
               <div className={isMobile ? 'flex items-center gap-0.5 ml-auto shrink-0' : 'nav-panel-row-actions'}>
                 {onPinThread && (
-                  <motion.button
+                  <button
                     type="button"
-                    whileTap={{ scale: 0.85 }}
+                    data-nav-key={`thread:${tid}:pin`}
                     onClick={(e) => { e.stopPropagation(); onPinThread(wsId, tid, !isPinned); }}
-                    className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-(--color-bg-hover)"
+                    className={`flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-(--color-bg-hover) ${PRESS_CLASS}`}
                     title={isPinned ? t('nav.unpinThread') : t('nav.pinThread')}
                     aria-label={isPinned ? t('nav.unpinThread') : t('nav.pinThread')}
                   >
-                    {/* Keyed remount pops the glyph when pin state flips —
-                        click acknowledgment before the row starts its glide. */}
-                    <motion.span
-                      key={isPinned ? 'pinned' : 'unpinned'}
-                      className="flex"
-                      initial={{ scale: 0.6 }}
-                      animate={{ scale: 1 }}
-                      transition={{ type: 'spring', stiffness: 480, damping: 26 }}
-                    >
+                    <kit.PinGlyph pinned={isPinned}>
                       <Pin
                         className="h-3.5 w-3.5"
                         fill={isPinned ? 'currentColor' : 'none'}
                         style={{ color: 'var(--color-text-tertiary)' }}
                       />
-                    </motion.span>
-                  </motion.button>
+                    </kit.PinGlyph>
+                  </button>
                 )}
                 {onArchiveThread && (
-                  <motion.button
+                  <button
                     type="button"
-                    whileTap={{ scale: 0.85 }}
+                    data-nav-key={`thread:${tid}:archive`}
                     onClick={(e) => { e.stopPropagation(); onArchiveThread(wsId, tid); }}
-                    className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-(--color-bg-hover)"
+                    className={`flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-(--color-bg-hover) ${PRESS_CLASS}`}
                     title={t('nav.archiveThread')}
                     aria-label={t('nav.archiveThread')}
                   >
                     <Archive className="h-3.5 w-3.5" style={{ color: 'var(--color-text-tertiary)' }} />
-                  </motion.button>
+                  </button>
                 )}
               </div>
             )}
@@ -405,7 +375,7 @@ export interface WorkspaceTreeRowProps {
   isCurrent: boolean;
   isMobile: boolean;
   /** dnd-kit gating: `true` disables both aspects, the object form keeps the row droppable. */
-  dragDisabled: boolean | { draggable: boolean; droppable: boolean };
+  dragDisabled: DragGate;
   threadsData?: ThreadsData;
   currentThreadId?: string | null;
   expandedThreadIds: Set<string>;
@@ -461,12 +431,13 @@ function WorkspaceTreeRowImpl({
   onArchiveThread,
 }: WorkspaceTreeRowProps) {
   const { t } = useTranslation();
+  const { kit } = useNavTree();
   const wsId = ws.workspace_id;
   const isFlash = ws.status === 'flash';
   const isPinned = Boolean(ws.is_pinned);
   const threads = threadsData?.threads || [];
-  // Row-order signature for framer-motion's layoutDependency: rows re-measure
-  // only when membership or order actually changes, not on every panel render.
+  // Row-order signature for the thread rows' glide: rows re-measure only when
+  // membership or order actually changes, not on every panel render.
   const threadOrderSignature = threads.map((th) => th.thread_id).join('|');
   const threadsLoading = threadsData?.loading || false;
   const isRenaming = rename.active;
@@ -480,12 +451,13 @@ function WorkspaceTreeRowImpl({
   }, [isRenaming, onToggleWorkspace, wsId]);
 
   return (
-    <SortableWorkspace wsId={wsId} disabled={dragDisabled}>
+    <kit.Section wsId={wsId} disabled={dragDisabled}>
       {({ dragHandleProps, isDragging }) => (<>
         {/* Workspace row — doubles as the drag handle for reordering. While
             renaming, click-to-toggle and drag are suppressed so the inline
             input owns the row. */}
         <div
+          data-nav-key="header"
           className="nav-panel-row group"
           style={{ paddingLeft: 10, position: 'relative' }}
           onClick={handleRowClick}
@@ -494,6 +466,7 @@ function WorkspaceTreeRowImpl({
           {workspaceGlyph(ws, isExpanded)}
           {isRenaming ? (
             <input
+              data-nav-key="rename"
               ref={rename.inputRef}
               className="text-sm font-medium bg-transparent border-b flex-1 min-w-0"
               style={{ color: 'var(--color-text-primary)', borderColor: 'var(--color-border-muted)' }}
@@ -520,17 +493,12 @@ function WorkspaceTreeRowImpl({
                   (as thread rows do), so the name keeps the full row width
                   instead of truncating around controls that are not showing. */}
               <div className={isMobile ? 'flex items-center gap-0.5 ml-auto shrink-0' : 'nav-panel-row-actions'}>
-                {/* initial={false}: thread switches remount the panel; the chevron
-                    must render at its resting angle, not animate to it. Hidden
-                    until the row is hovered (always visible on touch). */}
-                <motion.span
-                  className="shrink-0 flex items-center"
-                  initial={false}
-                  animate={{ rotate: isExpanded ? 90 : 0 }}
-                  transition={{ duration: 0.15, ease: 'easeOut' }}
-                >
-                  <ChevronRight className="h-4 w-4" style={{ color: 'var(--color-text-tertiary)' }} />
-                </motion.span>
+                <span className="shrink-0 flex items-center">
+                  <ChevronRight
+                    className={`${CHEVRON_CLASS}${isExpanded ? ' rotate-90' : ''}`}
+                    style={{ color: 'var(--color-text-tertiary)' }}
+                  />
+                </span>
                 {/* Right-aligned row actions: new thread + options (pin / rename).
                     Hover-revealed on desktop, always shown on touch. */}
                 {(onNewThread || showWsMenu) && (
@@ -538,6 +506,7 @@ function WorkspaceTreeRowImpl({
                     {onNewThread && (
                       <button
                         type="button"
+                        data-nav-key="new-thread"
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => { e.stopPropagation(); onNewThread(wsId); }}
                         className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-(--color-border-muted)"
@@ -552,6 +521,7 @@ function WorkspaceTreeRowImpl({
                         <DropdownMenuTrigger asChild>
                           <button
                             type="button"
+                            data-nav-key="options"
                             onPointerDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
                             className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-(--color-border-muted)"
@@ -595,84 +565,53 @@ function WorkspaceTreeRowImpl({
             while this section is the one being dragged so the lifted item
             shrinks to header height (clean gap), and the DragOverlay chip
             carries the visual instead. */}
-        <AnimatePresence initial={false}>
-          {isExpanded && !isDragging && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2, ease: 'easeInOut' }}
-              style={{ overflow: 'hidden' }}
+        <kit.Collapse show={isExpanded && !isDragging}>
+          {!threadsLoading && threads.length === 0 && (
+            <div
+              className="text-xs px-2 py-1"
+              style={{ paddingLeft: 34, color: 'var(--color-icon-muted)' }}
             >
-              {!threadsLoading && threads.length === 0 && (
-                <div
-                  className="text-xs px-2 py-1"
-                  style={{ paddingLeft: 34, color: 'var(--color-icon-muted)' }}
-                >
-                  {t('nav.noConversations')}
-                </div>
-              )}
-              <AnimatePresence initial={false}>
-                {threads.map((thread) => (
-                  // layout="position": pin/unpin repartitions and chat bumps
-                  // glide to their new slot instead of teleporting; enter/exit
-                  // collapse covers archive + unarchive/new rows.
-                  // initial={false} on the Presence keeps the first paint of an
-                  // expanded workspace static.
-                  <motion.div
-                    key={thread.thread_id}
-                    layout="position"
-                    // Without a layoutDependency every panel render re-measures
-                    // every row (getBoundingClientRect + projection walk); the
-                    // id signature scopes that to genuine reorders.
-                    layoutDependency={threadOrderSignature}
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{
-                      layout: { duration: 0.22, ease: [0.22, 1, 0.36, 1] },
-                      height: { duration: 0.18, ease: 'easeInOut' },
-                      opacity: { duration: 0.15, ease: 'easeInOut' },
-                    }}
-                    style={{ overflow: 'hidden' }}
-                  >
-                    <ThreadTreeRow
-                      wsId={wsId}
-                      thread={thread}
-                      isCurrentThread={thread.thread_id === currentThreadId}
-                      isExpanded={expandedThreadIds.has(thread.thread_id)}
-                      isMobile={isMobile}
-                      agents={thread.thread_id === currentThreadId ? agents : undefined}
-                      activeAgentId={activeAgentId}
-                      onToggleThread={onToggleThread}
-                      onNavigateThread={onNavigateThread}
-                      onSelectAgent={onSelectAgent}
-                      onRemoveAgent={onRemoveAgent}
-                      onPinThread={onPinThread}
-                      onArchiveThread={onArchiveThread}
-                    />
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-              {/* Show more — next page of threads for this workspace */}
-              {onLoadMoreThreads && typeof threadsData?.total === 'number'
-                && threads.length < threadsData.total && !threadsLoading && (
-                <div
-                  className="nav-panel-row"
-                  style={{ paddingLeft: 44 }}
-                  onClick={(e) => { e.stopPropagation(); onLoadMoreThreads(wsId); }}
-                >
-                  <ChevronsDown className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
-                  <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                    {t('nav.showMore')}
-                  </span>
-                </div>
-              )}
-            </motion.div>
+              {t('nav.noConversations')}
+            </div>
           )}
-        </AnimatePresence>
+          <kit.ThreadList>
+            {threads.map((thread) => (
+              <kit.ThreadItem key={thread.thread_id} order={threadOrderSignature}>
+                <ThreadTreeRow
+                  wsId={wsId}
+                  thread={thread}
+                  isCurrentThread={thread.thread_id === currentThreadId}
+                  isExpanded={expandedThreadIds.has(thread.thread_id)}
+                  isMobile={isMobile}
+                  agents={thread.thread_id === currentThreadId ? agents : undefined}
+                  activeAgentId={activeAgentId}
+                  onToggleThread={onToggleThread}
+                  onNavigateThread={onNavigateThread}
+                  onSelectAgent={onSelectAgent}
+                  onRemoveAgent={onRemoveAgent}
+                  onPinThread={onPinThread}
+                  onArchiveThread={onArchiveThread}
+                />
+              </kit.ThreadItem>
+            ))}
+          </kit.ThreadList>
+          {/* Show more: the next page of threads for this workspace */}
+          {onLoadMoreThreads && typeof threadsData?.total === 'number'
+            && threads.length < threadsData.total && !threadsLoading && (
+            <div
+              className="nav-panel-row"
+              style={{ paddingLeft: 44 }}
+              onClick={(e) => { e.stopPropagation(); onLoadMoreThreads(wsId); }}
+            >
+              <ChevronsDown className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+              <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                {t('nav.showMore')}
+              </span>
+            </div>
+          )}
+        </kit.Collapse>
       </>)}
-    </SortableWorkspace>
+    </kit.Section>
   );
 }
 

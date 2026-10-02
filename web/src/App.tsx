@@ -1,5 +1,4 @@
 import React, { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { MotionConfig } from 'framer-motion';
 import { I18nProvider } from 'react-aria-components';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router';
 import AppSidebar from './components/Sidebar/AppSidebar';
@@ -18,16 +17,20 @@ import { AUTH_BROADCAST_CHANNEL, type AuthBroadcastMessage } from './lib/oauthPo
 import { OnboardingProvider, OnboardingHostGate } from './pages/Onboarding';
 import { ThreadLifecycleFeed } from './lib/threadLifecycle/ThreadLifecycleFeed';
 import { markBooted, watchStaleBuild } from './lib/staleBuild';
+import { lazyWithMotion } from './lib/lazyWithMotion';
 import './App.css';
 
 // Login carries the market-tape canvas subsystem (~2k lines that only a
 // logged-out visitor ever renders) — split it out of the main bundle.
+// Login, reset and the legal pages animate nothing, so they stay on plain
+// React.lazy: lazyWithMotion would fetch framer before the logged-out first
+// screen could render. One that gains motion moves to lazyWithMotion.
 const LoginPage = React.lazy(() => import('./pages/Login/LoginPage'));
 // The public share route reuses the chat transcript renderer, so a static import
 // pulled the whole ChatAgent tree — plus the markdown and chart vendors it reaches
 // — into the entry chunk that every visitor loads before login.
-const SharePage = React.lazy(() => import('./pages/SharedChat/SharePage'));
-const SetupWizard = React.lazy(() => import('./pages/Setup/SetupWizard'));
+const SharePage = lazyWithMotion(() => import('./pages/SharedChat/SharePage'));
+const SetupWizard = lazyWithMotion(() => import('./pages/Setup/SetupWizard'));
 const PrivacyPolicy = React.lazy(() => import('./pages/Legal/PrivacyPolicy'));
 const Legal = React.lazy(() => import('./pages/Legal/Legal'));
 const ResetPassword = React.lazy(() => import('./pages/Login/ResetPassword'));
@@ -350,10 +353,6 @@ function App() {
   );
 
   return (
-    // reducedMotion="user": every framer-motion transform/layout animation
-    // app-wide collapses to instant for prefers-reduced-motion users (opacity
-    // still animates) — no per-component wiring.
-    <MotionConfig reducedMotion="user">
     <AriaLocale>
     <Routes>
       <Route path={APP_ENTRY_PATH} element={appEntryElement} />
@@ -417,7 +416,6 @@ function App() {
       } />
     </Routes>
     </AriaLocale>
-    </MotionConfig>
   );
 }
 

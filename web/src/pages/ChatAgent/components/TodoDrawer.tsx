@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion } from '@/lib/framer';
 import StepperList, { StepperTrack, EASING, type AgentPlanItem } from '@/components/ui/stepper-track';
 
 export interface TodoItem {

@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion, AnimatePresence } from "@/lib/framer"
 import { Plus, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ProviderCard } from "./ProviderCard"

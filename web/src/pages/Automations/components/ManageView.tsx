@@ -1,6 +1,6 @@
 import React, { useLayoutEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion } from '@/lib/framer';
 import { MobileBottomSheet } from '@/components/ui/mobile-bottom-sheet';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useScrollMemory } from '@/lib/scrollMemory';

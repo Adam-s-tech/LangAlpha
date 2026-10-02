@@ -38,7 +38,6 @@ export interface SkillInfo {
 
 function uploadConfig(onProgress: ((percent: number) => void) | null) {
   return {
-    headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: onProgress
       ? (e: { loaded: number; total?: number }) => {
           if (e.total) onProgress(Math.round((e.loaded / e.total) * 100));

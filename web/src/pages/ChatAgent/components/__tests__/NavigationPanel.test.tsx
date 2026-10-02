@@ -9,7 +9,7 @@
  * currentThreadId so the rows mount on first render.
  */
 import React from 'react';
-import { describe, it, expect, vi, type Mock } from 'vitest';
+import { beforeAll, describe, it, expect, vi, type Mock } from 'vitest';
 import { render as rtlRender, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
@@ -18,6 +18,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import NavigationPanel from '../NavigationPanel';
 import { resetNavPanelExpansion, forgetNavPanelExpansion, expandedWorkspaces } from '../navExpansionStore';
 import { toSidebarAgentRow } from '../../session/subagents/subagentStatus';
+import { loadNavTreeKit } from '../navTreeKit';
+
+// The panel paints with a static kit until the interactive one loads. Load it
+// up front so these cases run against the tree people actually use.
+beforeAll(() => loadNavTreeKit());
 
 // `t()` identity mock — we don't depend on bundled English copy here, but
 // the component reads i18n keys for some labels and we want the fallback

@@ -1,6 +1,6 @@
 import React, { memo, useState } from 'react';
 import { SPRING_FOLD } from './liveZoneTiming';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 import { ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { categorizeTool, getToolIcon, getCompletedRowTitle, getCompletedSummary } from '../toolDisplayConfig';

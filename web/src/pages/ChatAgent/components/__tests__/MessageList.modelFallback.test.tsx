@@ -17,7 +17,7 @@ import { MessageContentSegments } from '../MessageList';
 // Mocks (same shape as MessageList.lifecycle.test.tsx, keep the module light)
 // ---------------------------------------------------------------------------
 
-vi.mock('framer-motion', async () => {
+vi.mock('@/lib/framer', async () => {
   const React = await vi.importActual<typeof import('react')>('react');
   const FRAMER_ONLY_PROPS = new Set([
     'initial', 'animate', 'exit', 'transition', 'variants',

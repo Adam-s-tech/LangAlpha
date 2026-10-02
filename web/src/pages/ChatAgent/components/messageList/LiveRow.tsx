@@ -7,7 +7,7 @@ import {
   useMotionValue,
   useReducedMotion,
   type AnimationPlaybackControls,
-} from 'framer-motion';
+} from '@/lib/framer';
 import { SPRING_SNAPPY, EXIT_TWEEN } from './liveZoneTiming';
 
 /**

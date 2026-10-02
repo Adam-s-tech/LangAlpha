@@ -105,7 +105,7 @@ vi.mock('@/components/ui/use-toast', () => ({ toast: vi.fn() }));
 // every bulk action (each target calls a raw API function rather than a
 // mutation hook, so one fan-out invalidates once instead of N times). Both are
 // stubbed here. A `...actual` spread alone leaves everything it doesn't name
-// pointing at real axios, so the bulk calls have to be listed explicitly or
+// pointing at the real API client, so the bulk calls have to be listed explicitly or
 // the first bulk test written against this file goes to the network.
 // `formatApiErrorDetail` stays real — the error copy the toasts render is
 // exactly what's under test.

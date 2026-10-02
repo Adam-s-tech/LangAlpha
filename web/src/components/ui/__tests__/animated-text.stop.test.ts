@@ -10,7 +10,7 @@ import { renderHook, act } from '@testing-library/react';
 type Opts = { duration: number; onUpdate: (v: number) => void; onComplete: () => void };
 let clock = 0;
 const live = new Set<object>();
-vi.mock('framer-motion', () => ({
+vi.mock('@/lib/framer', () => ({
   animate: (from: number, to: number, opts: Opts) => {
     const createdAt = clock;
     let finished = false;

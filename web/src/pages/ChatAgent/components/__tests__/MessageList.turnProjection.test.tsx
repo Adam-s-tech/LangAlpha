@@ -18,7 +18,7 @@ import { MessageActionsProvider, type MessageActions } from '../messageList/Mess
 import { computeTurnTails, projectTurns, visibleProjection } from '../messageList/turnProjection';
 import type { MessageRecord } from '../messageList/types';
 
-vi.mock('framer-motion', async () => {
+vi.mock('@/lib/framer', async () => {
   const ReactActual = await vi.importActual<typeof import('react')>('react');
   const FRAMER_ONLY_PROPS = new Set([
     'initial', 'animate', 'exit', 'transition', 'variants',

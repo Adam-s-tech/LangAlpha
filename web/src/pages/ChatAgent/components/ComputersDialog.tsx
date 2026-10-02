@@ -8,7 +8,7 @@
  */
 import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from '@/lib/framer';
 import { ChevronDown, Cpu, Pencil, Play, Square, Star } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';

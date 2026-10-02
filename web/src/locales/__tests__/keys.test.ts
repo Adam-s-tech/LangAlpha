@@ -274,3 +274,32 @@ describe('locale key parity (src-wide)', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+// ── Whole-catalog coverage ────────────────────────────────
+//
+// i18n.ts loads no fallback language, so a zh-CN visitor sees a raw key for
+// anything zh-CN.json cannot resolve, including keys built at runtime that
+// the sweep above cannot see. So every en-US key has to resolve in zh-CN the
+// way i18next resolves it there. zh has one plural form, `other`, so a plural
+// family is covered by its `_other` variant or by the bare key.
+
+function leaves(obj: unknown, prefix = ''): string[] {
+  if (!obj || typeof obj !== 'object') return [prefix];
+  return Object.entries(obj as Record<string, unknown>).flatMap(([k, v]) => leaves(v, prefix ? `${prefix}.${k}` : k));
+}
+
+const PLURAL = /^(.*?)(_ordinal)?_(zero|one|two|few|many|other)$/;
+
+describe('zh-CN covers the whole en-US catalog', () => {
+  it('every en-US key resolves in zh-CN', () => {
+    const missing = leaves(enUS).filter((key) => {
+      const plural = PLURAL.exec(key);
+      if (!plural) return typeof lookup(zhCN, key) !== 'string';
+      const [, base, ordinal = ''] = plural;
+      return typeof lookup(zhCN, `${base}${ordinal}_other`) !== 'string' && typeof lookup(zhCN, base) !== 'string';
+    });
+    if (missing.length > 0) {
+      throw new Error(`en-US keys zh-CN cannot resolve (${missing.length}):\n${missing.map((k) => '  - ' + k).join('\n')}`);
+    }
+  });
+});

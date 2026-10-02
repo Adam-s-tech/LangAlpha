@@ -1,7 +1,8 @@
 /* eslint-disable react-refresh/only-export-components -- entry file, not a module */
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import i18n from '@/i18n';
+import i18n, { initI18n } from '@/i18n';
+import { switchLocale } from '@/lib/locale';
 import '@/index.css';
 import { ANNOUNCEMENTS, PAGE_INTROS } from '@/pages/Onboarding/registry';
 import { PageIntroModal } from '@/pages/Onboarding/engine/PageIntroModal';
@@ -71,7 +72,7 @@ function Preview() {
     document.body.style.background = 'var(--color-bg-page)';
   }, [theme]);
   useEffect(() => {
-    i18n.changeLanguage(locale);
+    void switchLocale(i18n, locale);
   }, [locale]);
 
   const intro = PAGE_INTROS.find((i) => i.id === introId) ?? PAGE_INTROS[0];
@@ -149,8 +150,10 @@ function Preview() {
   );
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <Preview />
-  </StrictMode>
+void initI18n().then(() =>
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <Preview />
+    </StrictMode>
+  ),
 );

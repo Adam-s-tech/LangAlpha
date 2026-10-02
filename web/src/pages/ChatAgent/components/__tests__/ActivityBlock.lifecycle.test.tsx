@@ -9,8 +9,8 @@ import ActivityBlock from '../ActivityBlock';
 // ---------------------------------------------------------------------------
 
 // Browser tests own animation frames; these assertions own row identity and disclosure state.
-vi.mock('framer-motion', async (importOriginal) => ({
-  ...await importOriginal<typeof import('framer-motion')>(),
+vi.mock('@/lib/framer', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/framer')>(),
   AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 

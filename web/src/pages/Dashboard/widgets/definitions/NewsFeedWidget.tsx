@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion } from '@/lib/framer';
 import { Newspaper, Clock, Search, X } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { useDashboardContext } from '../framework/DashboardDataContext';

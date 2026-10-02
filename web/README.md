@@ -38,7 +38,7 @@ React frontend for LangAlpha — a vibe investing agent with AI-powered research
 | Charts | `lightweight-charts` (TradingView), Recharts, embedded TradingView widgets |
 | Schema validation | `zod` (per-widget config schemas at the prefs boundary) |
 | Auth | `@supabase/supabase-js` |
-| HTTP | Axios |
+| HTTP | `fetch` client (`api/client.ts`) |
 | Markdown | `react-markdown`, `remark-gfm`, `remark-math`, `remark-cjk-friendly`, `rehype-katex`, `rehype-raw`, `react-syntax-highlighter` |
 | Math | `katex`, `rehype-katex` |
 | Code Editor | `@monaco-editor/react` |
@@ -52,10 +52,10 @@ React frontend for LangAlpha — a vibe investing agent with AI-powered research
 
 ```
 src/
-├── api/                    # Axios client with Bearer token interceptor
+├── api/                    # API client: fetch with the Bearer token and a 401 retry
 ├── assets/                 # Static assets (SVG, PNG)
 ├── components/
-│   ├── Main/               # Lazy-loaded route definitions with AnimatePresence transitions
+│   ├── Main/               # Lazy-loaded route definitions with a CSS fade between routes
 │   ├── Sidebar/            # Navigation sidebar
 │   └── ui/                 # Reusable UI primitives (button, card, dialog, toast, etc.)
 ├── contexts/               # AuthContext (Supabase session), ThemeContext (light/dark)

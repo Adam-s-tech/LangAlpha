@@ -36,7 +36,7 @@ export async function getComputers(): Promise<ComputersResponse> {
  * Create a computer. The tier is picked here because it is the machine's
  * property, not a project's. In platform mode this is the metered route: a
  * refusal arrives as a 429 whose `detail.message` is the platform's own
- * wording, which the shared axios interceptor puts on `err.rateLimitInfo`.
+ * wording, which the shared API client puts on `err.rateLimitInfo`.
  */
 export async function createComputer(body: ComputerCreate = {}): Promise<Computer> {
   const { data } = await api.post<Computer>(

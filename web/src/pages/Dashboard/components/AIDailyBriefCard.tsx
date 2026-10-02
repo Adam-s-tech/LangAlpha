@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Sparkles, ArrowRight, Newspaper, Clock, ChevronDown } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 import { Loader } from '@/components/ui/loader';
 import { useTranslation } from 'react-i18next';
 import TopicBadge from './TopicBadge';

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion, AnimatePresence } from "@/lib/framer"
 import { ChevronRight, Lightbulb } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ModelSelector } from "./ModelSelector"

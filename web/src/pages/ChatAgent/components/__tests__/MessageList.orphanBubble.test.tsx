@@ -16,7 +16,7 @@ import '@testing-library/jest-dom';
 import { renderWithProviders } from '@/test/utils';
 import MessageList, { isOrphanAssistantMessage } from '../MessageList';
 
-vi.mock('framer-motion', async () => {
+vi.mock('@/lib/framer', async () => {
   const ReactActual = await vi.importActual<typeof import('react')>('react');
   const FRAMER_ONLY_PROPS = new Set([
     'initial', 'animate', 'exit', 'transition', 'variants',

@@ -172,7 +172,7 @@ export function ordersQueryParams(
   return params;
 }
 
-/** The server reads a repeated `status`, which axios would bracket; spell it out. */
+/** The server reads a repeated `status`, and plain params carry scalars only; spell it out. */
 function ordersSearchParams(params: Record<string, string | string[] | number>): URLSearchParams {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {

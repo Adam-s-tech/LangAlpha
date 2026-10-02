@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { SPRING_FOLD } from './liveZoneTiming';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/framer';
 import { formatWorkedFor } from '@/lib/elapsed';
 import { announceAnchoredToggle } from '../../utils/anchoredToggle';
 

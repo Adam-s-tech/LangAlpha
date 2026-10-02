@@ -5,7 +5,12 @@ import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { lastInputWasPointer } from "@/lib/inputModality"
 import { useIsMobile } from "@/hooks/useIsMobile"
-import { useSwipeToDismiss } from "@/hooks/useSwipeToDismiss"
+
+// A sheet whose gesture fails to load still opens and closes, it just does not
+// swipe. index.html's preload listener reports a chunk a deploy removed.
+const DialogSwipe = React.lazy(() =>
+  import("./dialog-swipe").catch(() => ({ default: () => null }))
+)
 
 const Dialog = DialogPrimitive.Root
 
@@ -66,14 +71,12 @@ const DialogContent = React.forwardRef<
 
   // Hidden close button ref — clicking it triggers Radix's onOpenChange(false)
   const closeRef = React.useRef<HTMLButtonElement>(null);
+  const dismiss = React.useCallback(() => closeRef.current?.click(), []);
 
-  // State-backed container node so the dragY subscriber re-attaches on portal remount
+  // State-backed nodes so the swipe binding re-attaches on portal remount
   const [containerNode, setContainerNode] = React.useState<HTMLDivElement | null>(null);
-
-  const { contentRef, handleRef, dragY } = useSwipeToDismiss({
-    onDismiss: () => closeRef.current?.click(),
-    enabled: swipeEnabled,
-  });
+  const [contentNode, setContentNode] = React.useState<HTMLDivElement | null>(null);
+  const [handleNode, setHandleNode] = React.useState<HTMLDivElement | null>(null);
 
   // Merge forwarded ref + container state setter
   const containerRefCb = React.useCallback((node: HTMLDivElement | null) => {
@@ -81,14 +84,6 @@ const DialogContent = React.forwardRef<
     if (typeof ref === 'function') ref(node);
     else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
   }, [ref]);
-
-  // Apply dragY as CSS `translate` on the outer container (independent of CSS `transform` animations)
-  React.useEffect(() => {
-    if (!swipeEnabled || !containerNode) return;
-    return dragY.on('change', (v) => {
-      containerNode.style.translate = `0 ${v}px`;
-    });
-  }, [swipeEnabled, dragY, containerNode]);
 
   // Mobile bottom-sheet with swipe: 2-layer structure
   // Outer: flex column container for positioning + translate transform
@@ -106,7 +101,7 @@ const DialogContent = React.forwardRef<
         >
           {/* Drag handle */}
           <div
-            ref={handleRef}
+            ref={setHandleNode}
             className="flex justify-center pt-3 pb-1 shrink-0 cursor-grab active:cursor-grabbing"
             style={{ touchAction: 'none' }}
           >
@@ -117,7 +112,7 @@ const DialogContent = React.forwardRef<
           </div>
           {/* Scrollable content — mirrors MobileBottomSheet inner div */}
           <div
-            ref={contentRef}
+            ref={setContentNode}
             className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden grid gap-4 px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] *:min-w-0"
             style={{ overscrollBehaviorY: 'contain' }}
           >
@@ -125,6 +120,15 @@ const DialogContent = React.forwardRef<
           </div>
           {/* Hidden close button for swipe dismiss */}
           <DialogPrimitive.Close ref={closeRef} className="hidden" aria-hidden />
+          {/* Content renders only while open, so this loads on first open. */}
+          <React.Suspense fallback={null}>
+            <DialogSwipe
+              container={containerNode}
+              content={contentNode}
+              handle={handleNode}
+              onDismiss={dismiss}
+            />
+          </React.Suspense>
         </DialogPrimitive.Content>
       </DialogPortal>
     );

@@ -1,12 +1,12 @@
 import React, { Suspense } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router';
-import { motion, AnimatePresence } from 'framer-motion';
 import PageLoading from '@/components/PageLoading/PageLoading';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useSyncUserLocale } from '@/hooks/useSyncUserLocale';
 import { ContextOverflowPill } from '@/components/ui/ContextOverflowPill';
 import NetworkBanner from '@/components/NetworkBanner/NetworkBanner';
 import { StaleBuildBoundary } from '@/components/StaleBuildBoundary';
+import { lazyWithMotion } from '@/lib/lazyWithMotion';
 
 // Chunk thunks shared by the lazy components and preloadRouteChunk — import()
 // is deduped by the module system, so a preload and the lazy mount share one
@@ -24,14 +24,15 @@ const routeChunks = {
   connectors: () => import('../../pages/Plugins/Plugins'),
 };
 
-const Dashboard = React.lazy(routeChunks.dashboard);
-const ChatAgent = React.lazy(routeChunks.chat);
-const MarketView = React.lazy(routeChunks.market);
+const Dashboard = lazyWithMotion(routeChunks.dashboard);
+const ChatAgent = lazyWithMotion(routeChunks.chat);
+const MarketView = lazyWithMotion(routeChunks.market);
+// Animates nothing, so it skips the framer download (see lib/lazyWithMotion).
 const NewsDetailPage = React.lazy(routeChunks.news);
-const Automations = React.lazy(routeChunks.automations);
-const Orders = React.lazy(routeChunks.orders);
-const Plugins = React.lazy(routeChunks.plugins);
-const Settings = React.lazy(routeChunks.settings);
+const Automations = lazyWithMotion(routeChunks.automations);
+const Orders = lazyWithMotion(routeChunks.orders);
+const Plugins = lazyWithMotion(routeChunks.plugins);
+const Settings = lazyWithMotion(routeChunks.settings);
 
 /** Start downloading the chunk for `pathname` without rendering it, so the
  * shell can warm the target route while the /users/me gate is still
@@ -72,7 +73,7 @@ function Main() {
   // rejection (pinned in src/lib/__tests__/staleBuild.test.tsx). The boundary is keyed by
   // route so navigating away from a dead chunk clears the error, and a key on
   // the outside remounts Suspense along with it. Desktop already remounts this
-  // subtree through AnimatePresence, but mobile renders it directly, and a
+  // subtree through the keyed fade wrapper, but mobile renders it directly, and a
   // freshly mounted Suspense boundary has no previous content to hold — so it
   // must show its fallback, and with the router's transition-wrapped updates
   // every first navigation to a route flashed the pane spinner where it used to
@@ -99,7 +100,7 @@ function Main() {
     </Suspense>
   );
 
-  // On mobile, skip AnimatePresence — instant page switches feel snappier. The
+  // On mobile, skip the fade: instant page switches feel snappier. The
   // wrapper is not cosmetic symmetry with the desktop branch below: it carries
   // the same `minHeight: 0`, which is the only thing that lets the route shrink
   // when the banner takes part of the column. Without it a route root pinned
@@ -125,25 +126,21 @@ function Main() {
   return (
     <div className="main">
       <NetworkBanner />
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={pageKey}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.15, ease: 'easeInOut' }}
-          // `minHeight: 0` is what lets flex actually shrink this when the
-          // banner takes part of the column. A flex item defaults to
-          // `min-height: auto`, so without it a tall route (the dashboard grid)
-          // refuses to go below its min-content height and hangs out of the
-          // shell instead. It only sizes THIS wrapper though: a route root that
-          // pins itself to the viewport instead of its container overflows the
-          // shrunken column by exactly the banner's height (see AGENTS.md).
-          style={{ height: '100%', minHeight: 0 }}
-        >
-          {routes}
-        </motion.div>
-      </AnimatePresence>
+      {/* Keyed on the section so a new one mounts fresh and fades in. */}
+      <div
+        key={pageKey}
+        className="route-fade-in"
+        // `minHeight: 0` is what lets flex actually shrink this when the
+        // banner takes part of the column. A flex item defaults to
+        // `min-height: auto`, so without it a tall route (the dashboard grid)
+        // refuses to go below its min-content height and hangs out of the
+        // shell instead. It only sizes THIS wrapper though: a route root that
+        // pins itself to the viewport instead of its container overflows the
+        // shrunken column by exactly the banner's height (see AGENTS.md).
+        style={{ height: '100%', minHeight: 0 }}
+      >
+        {routes}
+      </div>
       <ContextOverflowPill />
     </div>
   );

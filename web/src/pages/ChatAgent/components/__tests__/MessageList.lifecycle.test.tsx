@@ -35,7 +35,7 @@ import { MessageContentSegments } from '../MessageList';
 // stripped), AnimatePresence is a passthrough (exits unmount synchronously),
 // `animate` (used by useAnimatedText) is a no-op. `motion.create` mirrors the
 // real API used by TextShimmer.
-vi.mock('framer-motion', async () => {
+vi.mock('@/lib/framer', async () => {
   const React = await vi.importActual<typeof import('react')>('react');
   const FRAMER_ONLY_PROPS = new Set([
     'initial', 'animate', 'exit', 'transition', 'variants',

@@ -1,4 +1,4 @@
-import type { Transition } from 'framer-motion';
+import type { Transition } from '@/lib/framer';
 import { DURATION, EASE_OUT } from '@/lib/motion';
 
 /** A pane's content arriving when what it shows changes: a short fade with a

@@ -1,4 +1,5 @@
-import { z } from 'zod';
+import * as z from 'zod/mini';
+import { en } from 'zod/locales';
 
 /**
  * Client-side validation for user-configured MCP servers — a mirror of the
@@ -147,7 +148,7 @@ export function collectVaultRefs(mapping: Record<string, string> | undefined): s
 }
 
 const secretMapSchema = (kind: 'env' | 'header') =>
-  z.record(z.string(), z.string()).superRefine((mapping, ctx) => {
+  z.record(z.string(), z.string()).check(z.superRefine((mapping, ctx) => {
     // HTTP field names are case-insensitive and the relay folds them, so two
     // spellings of one header would put the value nobody configured on the
     // wire. Mirrors `_validate_header_map`; env names are case-sensitive.
@@ -183,7 +184,7 @@ const secretMapSchema = (kind: 'env' | 'header') =>
         });
       }
     }
-  });
+  }));
 
 // ---------------------------------------------------------------------------
 // URL policy (sse/http) — SSRF hardening, mirrors `validate_remote_url`.
@@ -313,42 +314,46 @@ function isDisallowedIp(host: string): boolean {
 
 // Shape only: whether the sandbox reserves the name depends on the name the
 // row is saved under, which `validateMcpServer` is told and the schema is not.
-const nameField = z.string().regex(NAME_RE, NAME_SHAPE_MESSAGE);
+const nameField = z.string().check(z.regex(NAME_RE, NAME_SHAPE_MESSAGE));
 
-const descriptionField = z.string().max(DESCRIPTION_MAX).default('');
-const instructionField = z.string().max(INSTRUCTION_MAX).default('');
-const exposureField = z.enum(EXPOSURE_MODES).default('summary');
+const descriptionField = z._default(z.string().check(z.maxLength(DESCRIPTION_MAX)), '');
+const instructionField = z._default(z.string().check(z.maxLength(INSTRUCTION_MAX)), '');
+const exposureField = z._default(z.enum(EXPOSURE_MODES), 'summary');
 // Off (default) = tool discovery runs secret-less. On = resolve vault secrets
 // during discovery (for servers that need auth even to list tools).
-const discoveryUsesSecretsField = z.boolean().optional().default(false);
+const discoveryUsesSecretsField = z._default(z.boolean(), false);
 
-const urlField = z.string().superRefine((url, ctx) => {
+const urlField = z.string().check(z.superRefine((url, ctx) => {
   const reason = validateRemoteUrl(url);
   if (reason) ctx.addIssue({ code: 'custom', message: reason });
-});
+}));
 
 // stdio args: literals + embedded `${vault:NAME}` refs are fine; a malformed
 // vault ref or a bare host-env placeholder is rejected (mirrors env/header).
-const argsField = z
-  .array(z.string())
-  .default([])
-  .superRefine((args, ctx) => {
-    args.forEach((arg, i) => {
-      const reason = validateArg(arg);
-      if (reason) ctx.addIssue({ code: 'custom', message: reason, path: [i] });
-    });
-  });
+// The check sits inside the default: `.check()` on a default copies its def,
+// which freezes one `[]` that every parse would then share.
+const argsField = z._default(
+  z.array(z.string()).check(
+    z.superRefine((args, ctx) => {
+      args.forEach((arg, i) => {
+        const reason = validateArg(arg);
+        if (reason) ctx.addIssue({ code: 'custom', message: reason, path: [i] });
+      });
+    }),
+  ),
+  [],
+);
 
 const stdioSchema = z.object({
   name: nameField,
   transport: z.literal('stdio'),
-  command: z
-    .string()
-    .trim()
-    .min(1, 'command is required')
-    .max(256, 'command is too long'),
+  command: z.string().check(
+    z.trim(),
+    z.minLength(1, 'command is required'),
+    z.maxLength(256, 'command is too long'),
+  ),
   args: argsField,
-  env: secretMapSchema('env').default({}),
+  env: z._default(secretMapSchema('env'), {}),
   description: descriptionField,
   instruction: instructionField,
   tool_exposure_mode: exposureField,
@@ -359,7 +364,7 @@ const sseSchema = z.object({
   name: nameField,
   transport: z.literal('sse'),
   url: urlField,
-  headers: secretMapSchema('header').default({}),
+  headers: z._default(secretMapSchema('header'), {}),
   description: descriptionField,
   instruction: instructionField,
   tool_exposure_mode: exposureField,
@@ -370,7 +375,7 @@ const httpSchema = z.object({
   name: nameField,
   transport: z.literal('http'),
   url: urlField,
-  headers: secretMapSchema('header').default({}),
+  headers: z._default(secretMapSchema('header'), {}),
   description: descriptionField,
   instruction: instructionField,
   tool_exposure_mode: exposureField,
@@ -385,6 +390,11 @@ const SCHEMA_BY_TRANSPORT = {
   http: httpSchema,
 } as const;
 
+// The modal shows zod's own message for an issue that carries none of its own
+// (a description over the cap, a non-string arg). `zod/mini` ships no locale,
+// so English is supplied per parse rather than installed globally.
+const localeError = en().localeError;
+
 /**
  * Validate a raw form object, returning either ok or the list of errors.
  * `keepName` is the name an edited row is saved under (see `serverNameError`).
@@ -397,7 +407,7 @@ export function validateMcpServer(
   | { ok: false; errors: Array<{ path: string; message: string }> } {
   const transport = (input as { transport?: keyof typeof SCHEMA_BY_TRANSPORT })?.transport;
   const schema = (transport && SCHEMA_BY_TRANSPORT[transport]) || stdioSchema;
-  const result = schema.safeParse(input);
+  const result = schema.safeParse(input, { error: localeError });
   const errors = result.success
     ? []
     : result.error.issues.map((i) => ({

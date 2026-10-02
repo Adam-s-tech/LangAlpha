@@ -23,6 +23,21 @@
 .enter-fade-up-d5 { animation-delay: 80ms; }
 .enter-fade-up-d6 { animation-delay: 160ms; }
 
+/* === Route entrance ===
+
+   Main keys the desktop route wrapper on the top-level section, so a new
+   section mounts fresh and fades in. Opacity only: a transform, even one that
+   ends at none, makes the wrapper the containing block for every fixed
+   descendant for as long as it runs. */
+@keyframes route-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.route-fade-in {
+  animation: route-fade-in 150ms ease-in-out;
+}
+
 /* === Dialog overlay fade ===
 
    The one animation the Radix dialog layer draws for itself. It is a keyframe
@@ -198,6 +213,12 @@
 .download-progress-fill[data-indeterminate] {
   width: 40%;
   animation: download-progress-slide 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-fade-in {
+    animation: none;
+  }
 }
 
 /* Still, but not absent: the text carries the state. */

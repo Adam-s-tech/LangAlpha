@@ -26,6 +26,8 @@ declare global {
     __LA_BOOTED__?: boolean;
     /** Set by index.html when it detects a dead build asset post-boot. */
     __LA_STALE_BUILD__?: StaleReason;
+    /** index.html's bounded reload, for a boot failure its listeners miss. */
+    __LA_RECOVER__?: (reason: StaleReason) => void;
   }
   interface WindowEventMap {
     'la:stale-build': CustomEvent<StaleReason>;
@@ -296,11 +298,21 @@ export function watchStaleBuild(): () => void {
   // another app, and a BFCache restore, which can run a document that has been
   // parked for days. All three land on the same 60s throttle.
   const onResume = () => void checkForNewBuild();
+  // A language switch whose catalog failed. Safari's import error names no URL
+  // and a chunk with no dependencies gets no preload link, so neither half has
+  // anything to classify; ask the server instead. Past the throttle, because
+  // this is one user action, and without an answer the switch just does nothing.
+  const onCatalogFailed = (_lng: string, _ns: string, err: unknown) => {
+    if (isStaleBuildError(err)) return reportStaleBuild('catalog');
+    lastChecked = 0;
+    void checkForNewBuild();
+  };
 
   window.addEventListener(STALE_BUILD_EVENT, onStale);
   document.addEventListener('visibilitychange', onVisibility);
   window.addEventListener('pageshow', onResume);
   window.addEventListener('focus', onResume);
+  i18n.on('failedLoading', onCatalogFailed);
 
   // index.html may have fired before React mounted and the listener attached.
   if (window.__LA_STALE_BUILD__) reportStaleBuild(window.__LA_STALE_BUILD__);
@@ -310,6 +322,7 @@ export function watchStaleBuild(): () => void {
     document.removeEventListener('visibilitychange', onVisibility);
     window.removeEventListener('pageshow', onResume);
     window.removeEventListener('focus', onResume);
+    i18n.off('failedLoading', onCatalogFailed);
   };
 }
 

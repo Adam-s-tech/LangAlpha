@@ -16,7 +16,7 @@ import MessageList from '../MessageList';
 import { MessageActionsProvider, type MessageActions } from '../messageList/MessageActionsContext';
 import type { MessageRecord } from '../messageList/types';
 
-vi.mock('framer-motion', async () => {
+vi.mock('@/lib/framer', async () => {
   const ReactActual = await vi.importActual<typeof import('react')>('react');
   const FRAMER_ONLY_PROPS = new Set([
     'initial', 'animate', 'exit', 'transition', 'variants',
@@ -33,7 +33,7 @@ vi.mock('framer-motion', async () => {
       return createEl(Comp, domProps, children);
     };
   return {
-    ...await vi.importActual<typeof import('framer-motion')>('framer-motion'),
+    ...await vi.importActual<typeof import('@/lib/framer')>('@/lib/framer'),
     motion: new Proxy({} as Record<string, unknown>, {
       get: (_t, key: string) => (key === 'create' ? make : make(key)),
     }),

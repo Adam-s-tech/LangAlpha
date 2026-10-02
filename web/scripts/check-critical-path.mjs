@@ -21,7 +21,12 @@ import { join } from 'node:path'
 // `rolldown-runtime` is the bundler's shared module runtime (under 1 kB gz).
 // Rolldown emits it whenever the build has more than one chunk, and no config
 // removes it, so it is eager by construction rather than by an import.
-const EXPECTED = ['index', 'rolldown-runtime', 'vendor-dnd', 'vendor-motion', 'vendor-react']
+//
+// vendor-motion and vendor-dnd load after first paint: the sidebar tree swaps
+// them in at idle (navTreeKit), a dialog sheet loads its swipe on first open,
+// and each lazy root that animates brings framer with it (lib/lazyWithMotion).
+// An eager framer-motion or dnd-kit import puts them back here.
+const EXPECTED = ['index', 'rolldown-runtime', 'vendor-react']
 
 // Measured against platform mode, which is what ships (oss builds land ~60 kB
 // lower). Headroom is deliberately thin — routine growth should be visible here,
@@ -178,10 +183,29 @@ const expected = [...EXPECTED].sort()
 // all: stale-build recovery depends on the document being refetched every load,
 // so every byte in it is paid on every visit, forever. Leaving it outside the
 // ceiling is how an inline script grows without anything noticing.
-const bytes = assets.reduce(
-  (n, f) => n + gzipSync(readFileSync(join(outDir, 'assets', f))).length,
-  gzipSync(html).length,
-)
+const gz = (f) => gzipSync(readFileSync(join(outDir, 'assets', f))).length
+
+// --- locale catalog ----------------------------------------------------------
+//
+// Each locale's catalog is a chunk of its own, so none of them is a src/href
+// above, yet every first visit fetches one: nothing renders until the active
+// catalog is in, and the inline preload (scripts/locale-preload.ts) starts it
+// alongside the entry. The largest counts, since that is what some visitor
+// pays. A build without the preload fails here rather than reading light while
+// every visitor waits on a request that only starts once the entry has run.
+const catalogs = [...html.matchAll(/"([A-Za-z]{2,3}-[A-Za-z0-9]+)":"[^"]*\/assets\/([^"]+\.js)"/g)]
+  .map(([, locale, file]) => ({ locale, bytes: gz(file) }))
+
+if (!catalogs.length) {
+  console.error(`\n✗ no locale catalog preload in ${indexPath}`)
+  console.error('  scripts/locale-preload.ts did not run, so the catalog request waits')
+  console.error('  for the entry to run, and this gate cannot count it.\n')
+  process.exit(1)
+}
+
+const catalog = catalogs.reduce((a, b) => (b.bytes > a.bytes ? b : a))
+
+const bytes = assets.reduce((n, f) => n + gz(f), gzipSync(html).length + catalog.bytes)
 const kb = bytes / 1024
 
 const added = eager.filter((c) => !expected.includes(c))
@@ -190,7 +214,7 @@ const overBudget = kb > MAX_EAGER_KB
 
 if (added.length || removed.length || overBudget) {
   console.error('\n✗ critical path changed\n')
-  console.error(`  chunks:   ${eager.join(', ')}`)
+  console.error(`  chunks:   ${eager.join(', ')} + ${catalog.locale} catalog`)
   console.error(`  expected: ${expected.join(', ')}`)
   console.error(`  payload:  ${kb.toFixed(1)} kB gz (ceiling ${MAX_EAGER_KB} kB)`)
   if (added.length) {
@@ -215,4 +239,4 @@ if (added.length || removed.length || overBudget) {
   process.exit(1)
 }
 
-console.log(`✓ critical path: ${eager.join(', ')} — ${kb.toFixed(1)} kB gz (ceiling ${MAX_EAGER_KB} kB)`)
+console.log(`✓ critical path: ${eager.join(', ')} + ${catalog.locale} catalog — ${kb.toFixed(1)} kB gz (ceiling ${MAX_EAGER_KB} kB)`)

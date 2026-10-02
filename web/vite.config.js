@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import fs from 'fs'
 import path from 'path'
+import { localePreload } from './scripts/locale-preload.ts'
 
 // Shared by the entry and the lazy vendors — see codeSplitting below.
 const EAGER_SHARED = new Set(['clsx', 'use-sync-external-store'])
@@ -114,7 +115,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: env.VITE_CDN_BASE || '/',
-    plugins: [react(), emitVersionManifest(), pdfjsWasm()],
+    plugins: [react(), emitVersionManifest(), pdfjsWasm(), localePreload(path.resolve(import.meta.dirname, 'src/locales'))],
     resolve: {
       alias: [
         { find: '@', replacement: path.resolve(import.meta.dirname, './src') },

@@ -1,9 +1,10 @@
-import { lazy, Suspense, useRef } from 'react';
+import { Suspense, useRef } from 'react';
+import { lazyWithMotion } from '@/lib/lazyWithMotion';
 import { useOnboarding } from './OnboardingProvider';
 
 // Lazy so the modal + visual-mockup graph (the bulk of the onboarding code)
 // stays out of the main chunk.
-const OnboardingHost = lazy(() =>
+const OnboardingHost = lazyWithMotion(() =>
   import('./OnboardingHost').then((m) => ({ default: m.OnboardingHost }))
 );
 

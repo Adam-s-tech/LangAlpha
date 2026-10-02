@@ -1,7 +1,7 @@
 import { Suspense, useMemo } from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 import { Shield, X } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useConfiguredProviders } from '@/hooks/useConfiguredProviders';

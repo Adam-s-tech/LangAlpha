@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/framer';
 import { useTranslation } from 'react-i18next';
 import { Check, PauseCircle, Play } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';

@@ -38,7 +38,11 @@ const iife = [...source.matchAll(/<script>([\s\S]*?)<\/script>/g)]
   .find((s) => s.includes('__LA_BOOTED__'));
 
 interface Harness {
-  win: Window & typeof globalThis & { __LA_STALE_BUILD__?: string; __LA_BOOTED__?: boolean };
+  win: Window & typeof globalThis & {
+    __LA_STALE_BUILD__?: string;
+    __LA_BOOTED__?: boolean;
+    __LA_RECOVER__?: (reason: string) => void;
+  };
   reloadsScheduled: () => number;
 }
 
@@ -260,6 +264,24 @@ describe('before boot it reloads, but a bounded number of times', () => {
     expect(root.querySelector('button')).toBeTruthy();
   });
 
+  it('still offers the control when the failure arrives before #root is parsed', () => {
+    // WebKit fails a <head> preload for a missing file before the parser has
+    // reached <body>. The one decision this document gets is spent by then, so
+    // the dead end has to wait for #root rather than find nothing and give up.
+    const { win, reloadsScheduled } = boot({ stamp: { n: 2 } });
+    const root = win.document.getElementById('root')!;
+    root.remove();
+    Object.defineProperty(win.document, 'readyState', { configurable: true, value: 'loading' });
+    fireResourceError(win, preloadLink(win, `${ORIGIN}/assets/zh-CN-1111.js`, 'runtime'));
+
+    win.document.body.appendChild(root);
+    win.document.dispatchEvent(new win.Event('DOMContentLoaded'));
+
+    expect(reloadsScheduled()).toBe(0);
+    expect(root.querySelector('[role=alert]')).toBeTruthy();
+    expect(root.querySelector('button')).toBeTruthy();
+  });
+
   it('treats a corrupt attempt count as no attempt yet', () => {
     // Storage this code does not own. Reading a bogus value as "already at the
     // cap" would switch recovery off for the session and say nothing.
@@ -279,6 +301,17 @@ describe('before boot it reloads, but a bounded number of times', () => {
     // up in steps below one, reaching the cap a document later than it should.
     const { win, reloadsScheduled } = boot({ rawStamp });
     firePreloadError(win, deadChunk);
+
+    expect(reloadsScheduled()).toBe(1);
+    expect(JSON.parse(win.sessionStorage.getItem(KEY)!).n).toBe(1);
+  });
+
+  it('takes a boot failure the app hands it, on the same bound', () => {
+    // A catalog on another origin fails with no event this file can classify,
+    // so main.tsx passes the rejection in itself.
+    const { win, reloadsScheduled } = boot();
+    win.__LA_RECOVER__!('resource');
+    win.__LA_RECOVER__!('resource');
 
     expect(reloadsScheduled()).toBe(1);
     expect(JSON.parse(win.sessionStorage.getItem(KEY)!).n).toBe(1);

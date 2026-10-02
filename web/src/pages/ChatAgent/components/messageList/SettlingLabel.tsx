@@ -1,5 +1,5 @@
 import React, { useLayoutEffect, useRef } from 'react';
-import { animate, useReducedMotion } from 'framer-motion';
+import { animate, useReducedMotion } from '@/lib/framer';
 import { EXIT_TWEEN } from './liveZoneTiming';
 
 export function SettlingLabel({ text }: { text: string }): React.ReactElement {

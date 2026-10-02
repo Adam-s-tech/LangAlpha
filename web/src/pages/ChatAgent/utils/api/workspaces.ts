@@ -5,7 +5,7 @@ import { api } from '@/api/client';
 import type { Workspace, WorkspaceQuota, WorkspacesResponse } from '@/types/api';
 import { streamStatusEvents } from './statusStream';
 
-// The shared axios instance sets no global timeout. Workspace-management ops
+// The shared API client sets no global timeout. Workspace-management ops
 // legitimately run tens of seconds (a spec change rebuilds the sandbox,
 // duplicate provisions one), so these bounds are generous — they convert a
 // network hang into a visible failure rather than race the server.

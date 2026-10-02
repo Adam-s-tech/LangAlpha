@@ -196,8 +196,8 @@ export function ConnectedAccounts() {
         queryClient.invalidateQueries({ queryKey: queryKeys.platform.models() });
       }
     } catch (e: unknown) {
-      const axiosError = e as { response?: { data?: { detail?: string } } };
-      setClaudeError(axiosError.response?.data?.detail || t('settings.claudePasteError', 'Failed to exchange code. Please try again.'));
+      const apiError = e as { response?: { data?: { detail?: string } } };
+      setClaudeError(apiError.response?.data?.detail || t('settings.claudePasteError', 'Failed to exchange code. Please try again.'));
     } finally {
       setIsSubmittingClaudeCallback(false);
     }

@@ -3,7 +3,7 @@ import {
   X, Calendar, Hash, ExternalLink, TrendingUp, TrendingDown, Minus, Tag,
   Paperclip,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 import i18n from '@/i18n';
 import { useTranslation } from 'react-i18next';
 import { getNewsArticle } from '../utils/api';

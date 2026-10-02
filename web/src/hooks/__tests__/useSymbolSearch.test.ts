@@ -110,7 +110,7 @@ describe('useSymbolSearch', () => {
     await rest();
     rerender({ q: 'goog' });
     await rest();
-    // The aborted request rejects the way axios does; the hook stays loading
+    // The aborted request rejects the way the API client does; the hook stays loading
     // for the live query rather than settling it as empty.
     await act(async () => { first.reject(Object.assign(new Error('canceled'), { name: 'CanceledError' })); });
     expect(result.current.loading).toBe(true);

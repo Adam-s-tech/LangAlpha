@@ -518,7 +518,7 @@ describe('storm bounds', () => {
     landReply({ data: { session: session(3600, 'late-A') } });
 
     // The read that started as A answers with nothing rather than B's token.
-    // Refusing the stale reply is only half of it: the axios interceptor stamps
+    // Refusing the stale reply is only half of it: the API client stamps
     // whatever comes back with the CURRENT generation, so a token handed over
     // here would look correctly attributed while carrying a request A's UI
     // built -- a mutation included.

@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from '@/lib/framer';
 import { Blocks, Eye, EyeOff } from 'lucide-react';
 import {
   HeaderButton,

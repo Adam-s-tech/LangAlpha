@@ -10,7 +10,7 @@
  * derivation stays covered; resetThreadLifecycle keeps the cases isolated.
  */
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { render as rtlRender, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
@@ -20,6 +20,11 @@ import NavigationPanel from '../NavigationPanel';
 import { useArchiveThreadConfirm } from '../threadArchiveAction';
 import { resetNavPanelExpansion } from '../navExpansionStore';
 import { publishLocalRunning, resetThreadLifecycle } from '@/lib/threadLifecycle/store';
+import { loadNavTreeKit } from '../navTreeKit';
+
+// The panel paints with a static kit until the interactive one loads. Load it
+// up front so these cases run against the tree people actually use.
+beforeAll(() => loadNavTreeKit());
 
 // `t()` identity mock (same as NavigationPanel.test.tsx) — assertions match on
 // keys, not on bundled copy.

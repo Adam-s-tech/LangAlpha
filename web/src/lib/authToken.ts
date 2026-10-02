@@ -441,7 +441,7 @@ export function refreshAccessToken(refused: string | null): Promise<string | nul
 }
 
 /**
- * Bearer headers for the raw `fetch()` calls axios cannot make (SSE, WS).
+ * Bearer headers for the raw `fetch()` streams and sockets outside the API client (SSE, WS).
  * Empty when there is no token, so an unauthenticated call sends no header
  * rather than an empty one.
  */

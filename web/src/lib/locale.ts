@@ -1,6 +1,8 @@
-// Shared locale helpers — deliberately standalone (no i18next/react-i18next
-// import) so hooks/components that are unit-tested with react-i18next mocked can
-// import these without booting i18n.
+import type { i18n as I18n } from 'i18next';
+
+// Shared locale helpers, deliberately standalone (no runtime i18next/react-i18next
+// import; switchLocale takes the instance) so hooks/components that are
+// unit-tested with react-i18next mocked can import these without booting i18n.
 //
 // The `locale` cookie is the single client-side carrier for locale, and because
 // a cookie is server/edge-readable (unlike localStorage) the same choice can
@@ -38,8 +40,28 @@ export function setLocaleCookie(locale: string): void {
   document.cookie = attrs.join('; ');
 }
 
+type LocaleSwitcher = Pick<I18n, 'loadLanguages' | 'hasResourceBundle' | 'changeLanguage'>;
+
+let requested: string | null = null;
+
+/**
+ * Switch the app's language once its catalog is in. Catalogs load on demand
+ * (i18n.ts), and i18next's own changeLanguage switches even when that load
+ * fails, repainting every string as its raw key. So a failed catalog keeps the
+ * current language, and lib/staleBuild.tsx offers the reload that fixes it.
+ * The latest call wins, so a slow catalog cannot land over a later choice.
+ */
+export async function switchLocale(i18n: LocaleSwitcher, locale: Locale): Promise<void> {
+  requested = locale;
+  await i18n.loadLanguages(locale);
+  if (requested !== locale || !i18n.hasResourceBundle(locale, 'translation')) return;
+  await i18n.changeLanguage(locale);
+}
+
 // Resolution order: cookie (explicit / DB-mirrored choice) → browser language
-// (exact, then prefix) → English.
+// (exact, then prefix) → English. scripts/locale-preload.ts mirrors this in
+// index.html to preload the catalog before the bundle runs;
+// lib/__tests__/localePreload.test.ts holds the two together.
 export function detectLocale(): string {
   const cookie = getLocaleCookie();
   if (cookie) return cookie;

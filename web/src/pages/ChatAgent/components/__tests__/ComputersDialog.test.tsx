@@ -192,7 +192,7 @@ describe('ComputersDialog', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(platformMessage);
-    // Not axios's status line, and nothing this client composed.
+    // Not the client's status line, and nothing this dialog composed.
     expect(alert).not.toHaveTextContent('status code 429');
   });
 

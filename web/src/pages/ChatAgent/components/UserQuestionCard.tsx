@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 import { HelpCircle, Check, SkipForward, Send, ChevronRight } from 'lucide-react';
 import Markdown from './Markdown';
 

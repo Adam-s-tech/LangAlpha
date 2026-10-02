@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X, ExternalLink, Sparkles, ChevronDown, Paperclip } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 import { useTranslation } from 'react-i18next';
 import TopicBadge from './TopicBadge';
 import { getInsightDetail } from '../utils/api';

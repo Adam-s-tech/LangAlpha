@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { animate, motion, useMotionValue, useReducedMotion } from 'framer-motion';
+import { animate, motion, useMotionValue, useReducedMotion } from '@/lib/framer';
 import { X } from 'lucide-react';
 import { useBackdropDismiss, useDialogA11y } from '@/hooks/useDialogA11y';
 import { useIsMobile } from '@/hooks/useIsMobile';

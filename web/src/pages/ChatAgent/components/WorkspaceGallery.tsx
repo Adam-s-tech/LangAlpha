@@ -3,7 +3,7 @@ import { Search, ArrowDownUp, GripVertical } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { useParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Computer } from '@/types/api';
 import CreateWorkspaceModal from './CreateWorkspaceModal';

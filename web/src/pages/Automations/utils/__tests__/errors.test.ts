@@ -1,15 +1,13 @@
-import { AxiosError, AxiosHeaders, type AxiosResponse } from 'axios';
 import { describe, expect, it } from 'vitest';
+import { ApiError } from '@/api/client';
 import { mutationErrorMessage } from '../errors';
 
-/** A refused write as axios rejects it: its own message, and on `response`
- *  the body the automations router sent. The bodies below are what that
- *  router answers each request with, the validation lists verbatim. */
-function refused(status: number, body: unknown): AxiosError {
-  const config = { headers: new AxiosHeaders() };
-  const response: AxiosResponse = { status, statusText: '', headers: {}, config, data: body };
-  const code = status >= 500 ? AxiosError.ERR_BAD_RESPONSE : AxiosError.ERR_BAD_REQUEST;
-  return new AxiosError(`Request failed with status code ${status}`, code, config, null, response);
+/** A refused write as the API client rejects it: its own message, and on
+ *  `response` the body the automations router sent. The bodies below are what
+ *  that router answers each request with, the validation lists verbatim. */
+function refused(status: number, body: unknown): ApiError {
+  const code = status >= 500 ? 'ERR_BAD_RESPONSE' : 'ERR_BAD_REQUEST';
+  return new ApiError(`Request failed with status code ${status}`, code, { status, statusText: '', headers: {}, data: body });
 }
 
 describe('mutationErrorMessage', () => {
@@ -98,8 +96,8 @@ describe('mutationErrorMessage', () => {
     );
   });
 
-  it("reads axios's own message when no body came back, and falls back when there is none", () => {
-    expect(mutationErrorMessage(new AxiosError('Network Error', AxiosError.ERR_NETWORK), 'fallback')).toBe('Network Error');
+  it("reads the client's own message when no body came back, and falls back when there is none", () => {
+    expect(mutationErrorMessage(new ApiError('Network Error', 'ERR_NETWORK'), 'fallback')).toBe('Network Error');
     expect(mutationErrorMessage(new Error(''), 'Something went wrong')).toBe('Something went wrong');
   });
 });

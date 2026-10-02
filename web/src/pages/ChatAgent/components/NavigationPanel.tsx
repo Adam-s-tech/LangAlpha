@@ -1,9 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
-import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { DndContext, DragOverlay, closestCenter, PointerSensor, MeasuringStrategy, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragStartEvent, DragEndEvent, Modifier } from '@dnd-kit/core';
-import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { ChevronsDown } from 'lucide-react';
 import { ScrollArea } from '../../../components/ui/scroll-area';
 import { useWorkspaceActions } from './workspaceActions';
@@ -23,6 +20,7 @@ import type { SidebarAgentRow } from '../session/subagents/subagentStatus';
 import { WorkspaceTreeRow, WorkspaceDragChip } from './NavigationRows';
 import type { ThreadsData } from './NavigationRows';
 import { useArchiveThreadConfirm } from './threadArchiveAction';
+import { NavTreeContext, useNavTreeKit } from './navTreeKit';
 import './NavigationPanel.css';
 
 interface NavigationPanelProps {
@@ -66,18 +64,13 @@ interface NavigationPanelProps {
 // deleted id that would otherwise page through the whole workspace.
 const MAX_REVEAL_PAGES = 20;
 
-const DND_MEASURING = { droppable: { strategy: MeasuringStrategy.Always } };
-// Hoisted with DND_MEASURING: dnd-kit memoizes on these objects' identity,
-// and an inline literal rebuilt the drag context on every render of this
-// panel, which re-rendered every sortable workspace row through it.
-const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 8 } };
-
 /**
  * NavigationPanel -- hover-triggered overlay sidebar showing
  * Workspace -> Thread -> Agent hierarchy.
  *
  * The rows themselves live in ./NavigationRows; this file owns the tree's
- * state: expansion, inline rename, drag orchestration, and paging.
+ * state: expansion, inline rename, drag orchestration, and paging. Motion and
+ * drag arrive after first paint through ./navTreeKit.
  *
  * Expansion state lives in ./navExpansionStore (a globalThis-anchored module)
  * so it's shared across every cached panel instance and survives HMR. Keeping
@@ -110,6 +103,9 @@ function NavigationPanel({
 }: NavigationPanelProps) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const navTree = useNavTreeKit(rootRef);
+  const { TreeRoot } = navTree.kit;
   // Duplicate / delete are self-contained (mutations + dialogs) so every host
   // (sidebar tree, mobile drawer) gets the same menu as the gallery card
   // without extra wiring.
@@ -128,9 +124,6 @@ function NavigationPanel({
   const handleArchiveThread = useCallback((wsId: string, threadId: string) => {
     requestArchive(threadId, () => onArchiveThread?.(wsId, threadId));
   }, [requestArchive, onArchiveThread]);
-  // 8px activation distance (same as the gallery's reorder mode) keeps plain
-  // clicks toggling expand/collapse instead of starting a drag.
-  const dndSensors = useSensors(useSensor(PointerSensor, POINTER_SENSOR_OPTIONS));
   // Id of the workspace currently being dragged — drives the DragOverlay chip.
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   // Subscribe to the shared expansion store (navExpansionStore). One panel mounts
@@ -342,6 +335,7 @@ function NavigationPanel({
 
   return (
     <div
+      ref={rootRef}
       className="nav-panel h-full flex flex-col"
     >
       {headerActions && (
@@ -351,15 +345,17 @@ function NavigationPanel({
       )}
       <ScrollArea className="flex-1">
         <div className="py-2">
-          <DndContext
-            sensors={dndSensors}
-            collisionDetection={closestCenter}
-            measuring={DND_MEASURING}
+          <NavTreeContext.Provider value={navTree}>
+          <TreeRoot
+            ids={sortableIds}
             onDragStart={handleWorkspaceDragStart}
             onDragEnd={handleWorkspaceDragEnd}
             onDragCancel={handleWorkspaceDragCancel}
+            clampOverlay={clampChipToBlock}
+            overlay={activeDragWs ? (
+              <WorkspaceDragChip ws={activeDragWs} expanded={expandedWorkspaces.has(activeDragWs.workspace_id)} />
+            ) : null}
           >
-          <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
           {workspaces.map((ws) => {
             const wsId = ws.workspace_id;
             // While a drag is live, rows across the pin boundary from the
@@ -402,23 +398,8 @@ function NavigationPanel({
               />
             );
           })}
-          </SortableContext>
-          {/* Compact lift preview — a content-hugging header pill that follows
-              the cursor, so the dragged section's real size never distorts.
-              Portaled to <body>: the overlay is position:fixed, and any
-              sidebar ancestor gaining a transform/filter/will-change would
-              become its containing block and drift the chip off the cursor
-              (the mount animation's fill mode did exactly that once). zIndex
-              must clear the sidebar's 1000. */}
-          {createPortal(
-            <DragOverlay dropAnimation={null} zIndex={1100} modifiers={[clampChipToBlock]}>
-              {activeDragWs ? (
-                <WorkspaceDragChip ws={activeDragWs} expanded={expandedWorkspaces.has(activeDragWs.workspace_id)} />
-              ) : null}
-            </DragOverlay>,
-            document.body,
-          )}
-          </DndContext>
+          </TreeRoot>
+          </NavTreeContext.Provider>
           {hasMore && (
             <div
               className="nav-panel-row"

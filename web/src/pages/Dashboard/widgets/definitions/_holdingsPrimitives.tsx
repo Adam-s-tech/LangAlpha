@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/framer';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import {

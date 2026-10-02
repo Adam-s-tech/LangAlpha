@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion } from '@/lib/framer';
 import { Check, ChevronRight, MinusCircle, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { OrderStatusPill } from '@/components/orders/OrderStatusPill';

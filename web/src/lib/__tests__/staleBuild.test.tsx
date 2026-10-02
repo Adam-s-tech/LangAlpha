@@ -14,6 +14,7 @@ import {
 } from '../staleBuild';
 import { toast } from '@/components/ui/use-toast';
 import { StaleBuildBoundary } from '@/components/StaleBuildBoundary';
+import i18n from '@/i18n';
 
 vi.mock('@/components/ui/use-toast', () => ({ toast: vi.fn() }));
 
@@ -367,6 +368,40 @@ describe('watchStaleBuild wiring', () => {
     window.dispatchEvent(new CustomEvent(STALE_BUILD_EVENT, { detail: 'preload' }));
     vi.runAllTimers();
     expect(toast).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed catalog that names a build asset', () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const stop = watchStaleBuild();
+    i18n.emit('failedLoading', 'zh-CN', 'translation', new Error(`${CHUNK_MSG}${window.location.origin}/assets/zh-CN-1111.js`));
+    vi.runAllTimers();
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it('asks the server about a failed catalog it cannot classify, inside the throttle too', async () => {
+    // Safari names no URL. A language switch is one user action, so it gets its
+    // answer now rather than from the next resume a minute out.
+    const answer = (build: string) => ({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ build }),
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer('index-CURRENT.js'))
+      .mockResolvedValue(answer('index-NEWER.js'));
+    vi.stubGlobal('fetch', fetchMock);
+    const stop = watchStaleBuild();
+    await checkForNewBuild();
+
+    i18n.emit('failedLoading', 'zh-CN', 'translation', new Error('Importing a module script failed.'));
+    await vi.runAllTimersAsync();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(toast).toHaveBeenCalledTimes(1);
+    stop();
   });
 });
 

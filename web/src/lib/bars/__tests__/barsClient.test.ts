@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock the shared axios client at the module boundary (the repo pattern —
+// Mock the shared API client at the module boundary (the repo pattern —
 // there is no global fetch/network mock).
 const apiMock = vi.hoisted(() => ({ get: vi.fn() }));
 vi.mock('@/api/client', () => ({ api: apiMock }));

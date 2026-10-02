@@ -47,7 +47,7 @@ import { useFileBodyCache, useFileBody } from './filePanel/useFileBody';
 import { useChangedFiles } from './filePanel/useChangedFiles';
 import { countLines } from '../utils/fileLocation';
 import { TabStrip } from './filePanel/TabStrip';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from '@/lib/framer';
 import { TreeColumn } from './filePanel/TreeColumn';
 import { FileCrumbs } from './filePanel/FileCrumbs';
 import { PreviewCrumbs } from './filePanel/PreviewCrumbs';

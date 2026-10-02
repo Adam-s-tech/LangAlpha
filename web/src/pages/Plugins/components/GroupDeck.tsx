@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { motion, useReducedMotion } from 'framer-motion';
+import { motion, useReducedMotion } from '@/lib/framer';
 import { Check, ChevronDown, ChevronUp, Minus } from 'lucide-react';
 import { STACK_THRESHOLD } from '../utils/groupOrigins';
 import type { BulkSelection } from './useBulkSelection';

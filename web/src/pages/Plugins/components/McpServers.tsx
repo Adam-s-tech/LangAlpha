@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from '@/lib/framer';
 import { AlertTriangle, Blocks, Plus, Server } from 'lucide-react';
 import { toast } from '@/components/ui/use-toast';
 import {

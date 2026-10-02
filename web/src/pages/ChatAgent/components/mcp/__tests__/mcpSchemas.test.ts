@@ -281,6 +281,21 @@ describe('mcpSchemas — length caps', () => {
   });
 });
 
+// zod/mini carries no locale, so an issue without a message of its own would
+// read "Invalid input" in the modal unless validateMcpServer supplies English.
+describe('mcpSchemas: messages for issues without their own', () => {
+  it('explains the cap and the type in English', () => {
+    const result = validateMcpServer(stdio({ description: 'a'.repeat(DESCRIPTION_MAX + 1), args: ['ok', 3] }));
+    expect(result).toEqual({
+      ok: false,
+      errors: [
+        { path: 'args.1', message: 'Invalid input: expected string, received number' },
+        { path: 'description', message: `Too big: expected string to have <=${DESCRIPTION_MAX} characters` },
+      ],
+    });
+  });
+});
+
 describe('mcpSchemas — discovery_uses_secrets', () => {
   it('is optional (validates when omitted)', () => {
     expect(validateMcpServer(stdio()).ok).toBe(true);

@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/framer';
 import LangAlphaFab from '@/components/ui/langalpha-fab';
 import { useOnClickOutside } from '@/hooks/useOnClickOutside';
 

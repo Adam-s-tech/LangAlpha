@@ -1,5 +1,5 @@
 import React from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion } from '@/lib/framer';
 import { DURATION, EASE_OUT } from '@/lib/motion';
 
 /**

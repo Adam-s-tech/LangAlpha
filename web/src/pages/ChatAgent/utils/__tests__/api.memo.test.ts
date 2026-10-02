@@ -97,10 +97,9 @@ describe('Memo API utilities', () => {
       await uploadUserMemo(file);
 
       expect(mockPost).toHaveBeenCalledTimes(1);
-      const [url, formData, opts] = mockPost.mock.calls[0];
+      const [url, formData] = mockPost.mock.calls[0];
       expect(url).toBe('/api/v1/memo/user/upload');
       expect(formData).toBeInstanceOf(FormData);
-      expect(opts.headers['Content-Type']).toBe('multipart/form-data');
       // FormData should contain the file under "file"
       const fd = formData as FormData;
       expect(fd.get('file')).toBeInstanceOf(File);
@@ -139,7 +138,7 @@ describe('Memo API utilities', () => {
 
       const [, , opts] = mockPost.mock.calls[0];
       expect(typeof opts.onUploadProgress).toBe('function');
-      // Simulate axios firing the progress event
+      // Simulate the client firing the progress event
       opts.onUploadProgress({ loaded: 50, total: 200 });
       expect(progress).toHaveBeenCalledWith(25);
     });

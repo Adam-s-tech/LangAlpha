@@ -5,7 +5,7 @@ import { relativeTime } from '@/lib/format';
 import { MessageSquareText, MessagesSquare } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/framer';
 import ChatInput from '@/components/ui/chat-input';
 import { useChatInput } from '../../hooks/useChatInput';
 import { useUser } from '@/hooks/useUser';

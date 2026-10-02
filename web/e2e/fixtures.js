@@ -28,7 +28,7 @@ export async function resetMockServer() {
 
 /**
  * Mock REST APIs via page.route() (non-SSE endpoints).
- * The app's axios client hits VITE_API_BASE_URL (mock server on :4100).
+ * The app's API client hits VITE_API_BASE_URL (mock server on :4100).
  * We intercept via page.route() for instant JSON responses on REST endpoints,
  * while SSE endpoints pass through to the mock server for real chunked streaming.
  */

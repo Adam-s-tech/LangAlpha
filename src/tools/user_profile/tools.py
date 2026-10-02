@@ -24,8 +24,14 @@ from src.server.database import portfolio as portfolio_db
 from src.server.database.user import invalidate_user_prefs_cache
 from src.server.models.user import normalize_instrument_type
 from src.server.services.onboarding import maybe_complete_onboarding
+from src.utils.nested import without_keys
 
 logger = logging.getLogger(__name__)
+
+# The tools take the user from the run config, so the model never passes the
+# owner's user_id back, and a tool answer is stored with the thread a public
+# share replays. Each answer drops it from the rows, keeping their own ids.
+_OWNER_ID = frozenset({"user_id"})
 
 
 # ==================== Helpers ====================
@@ -445,7 +451,7 @@ async def get_user_data(
     handler = GET_HANDLERS.get(entity)
     if not handler:
         return {"error": f"Unknown entity: {entity}. Valid entities: {list(GET_HANDLERS.keys())}"}
-    return await handler(config, entity_id)
+    return without_keys(await handler(config, entity_id), _OWNER_ID)
 
 
 @tool
@@ -478,8 +484,7 @@ async def update_user_data(
     if not handler:
         return {"error": f"Unknown entity: {entity}. Valid entities: {list(UPDATE_HANDLERS.keys())}"}
 
-    result = await handler(config, data, replace)
-    return result
+    return without_keys(await handler(config, data, replace), _OWNER_ID)
 
 
 @tool
@@ -504,5 +509,4 @@ async def remove_user_data(
     if not handler:
         return {"error": f"Unknown entity: {entity}. Valid entities: {list(REMOVE_HANDLERS.keys())}"}
 
-    result = await handler(config, identifier)
-    return result
+    return without_keys(await handler(config, identifier), _OWNER_ID)

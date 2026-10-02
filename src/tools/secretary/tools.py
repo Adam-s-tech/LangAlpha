@@ -22,7 +22,14 @@ try:
 except ImportError:
     from langchain_core.tools import InjectedToolCallId
 
+from src.utils.nested import without_keys
+
 logger = logging.getLogger(__name__)
+
+# The tools take the user from the run config, so the owner's user_id in a
+# listed row is nothing the model needs or passes back. The row's own ids, which
+# it does pass back, stay.
+_OWNER_ID = frozenset({"user_id"})
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +319,11 @@ async def _workspaces_list(user_id: str, tool_call_id: str) -> Command:
             user_id=user_id, limit=20
         )
         content = json.dumps(
-            {"success": True, "workspaces": workspaces, "total": total},
+            {
+                "success": True,
+                "workspaces": without_keys(workspaces, _OWNER_ID),
+                "total": total,
+            },
             default=str,
         )
     except Exception as e:
@@ -936,7 +947,11 @@ async def _threads_list(
             )
 
         content = json.dumps(
-            {"success": True, "threads": threads, "total": total},
+            {
+                "success": True,
+                "threads": without_keys(threads, _OWNER_ID),
+                "total": total,
+            },
             default=str,
         )
     except Exception as e:

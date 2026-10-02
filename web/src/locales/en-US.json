@@ -121,6 +121,8 @@
     "workspaces": "Workspaces",
     "workspaceGallery": "Workspace gallery",
     "collapse": "Collapse sidebar",
+    "back": "Back",
+    "forward": "Forward",
     "expand": "Expand sidebar",
     "resize": "Resize sidebar",
     "plugins": "Plugins",

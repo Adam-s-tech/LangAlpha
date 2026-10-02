@@ -490,8 +490,11 @@ class SessionLifecycleMixin:
             f"{sandbox_id} is actually {state!r}; correcting the row"
         )
         # Only a settled provider state authorizes a correction; a transition in
-        # flight is left to finish and be re-read on the next request.
-        if state in ("stopped", "archived"):
+        # flight is left to finish and be re-read on the next request. An
+        # errored sandbox is settled too: no stop will ever finish on it, and
+        # the start's reconnect is what recovers it or rebuilds from the backup,
+        # so a row left 'stopping' would refuse that start forever.
+        if state in ("stopped", "archived", "error"):
             await self._settle_machine_stop(computer_id, ComputerStatus.STOPPED)
         elif state == "running":
             await self._settle_machine_stop(computer_id, ComputerStatus.RUNNING)

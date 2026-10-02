@@ -131,4 +131,5 @@ async def send_subagent_message(
         task_id=task_id,
         content=request.content,
         user_id=x_user_id,
+        input_id=request.input_id,
     )

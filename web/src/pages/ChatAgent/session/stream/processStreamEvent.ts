@@ -29,7 +29,7 @@ import {
 import {
   isSubagentEvent, handleSubagentMessageChunk, handleSubagentToolCallChunks,
   handleSubagentToolCalls, handleSubagentToolCallResult, handleTaskSteeringAccepted,
-  handleWorkflowLifecycle, pushTaskNotice, returnTaskInstruction,
+  handleWorkflowLifecycle, pushTaskNotice, returnTaskInstruction, type DeliveredInstruction,
 } from '../subagents/liveEventHandlers';
 import { getOrCreateTaskRefs, type UpdateSubagentCard } from '../streamRefs';
 import { handleMarketWatchUpdate, type MarketWatchState } from '../marketWatchEvents';
@@ -567,6 +567,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
             handleTaskSteeringAccepted({
               taskId,
               content: event.content as string,
+              entries: event.entries as DeliveredInstruction[] | undefined,
               refs,
               updateSubagentCard: rt.updateSubagentCard,
             });
@@ -594,7 +595,11 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
           if (returnedContent) {
             // The notice goes up whether or not a bubble here was pending: the
             // frame is the server's word, and another tab may have sent it.
-            returnTaskInstruction(taskRefs, returnedContent, rt.t('chat.taskSteeringReturnedNotification'));
+            returnTaskInstruction(
+              taskRefs,
+              { inputId: event.input_id as string | undefined, content: returnedContent },
+              rt.t('chat.taskSteeringReturnedNotification'),
+            );
             rt.updateSubagentCard(taskId, { messages: taskRefs.messages });
           }
         } else if (eventType === 'error' || event.error) {

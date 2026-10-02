@@ -8,6 +8,11 @@
  *
  * A send that fails never reaches the queue, so no stream event will settle
  * its bubble; the send's own failure takes it back.
+ *
+ * Each instruction carries an id the client names before the send goes out,
+ * since the delivery can land before the POST answers. The queue has a second
+ * producer, the main agent's Task update, and one step drains whatever both
+ * queued, so a delivery is settled entry by entry rather than by its text.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
@@ -128,7 +133,18 @@ function harness() {
       };
     });
   const ids = () => card().map((m) => m.id);
-  return { feed, text, steer, startSteer, frame, messages, ids };
+  // The ids the sends carried, in send order.
+  const inputIds = () => vi.mocked(sendSubagentMessage).mock.calls.map((call) => call[3]);
+  // A delivery as the drain frames it: the joined text the subagent reads,
+  // and the queue entries it took.
+  const deliver = (...entries: { input_id: string; content: string }[]) =>
+    feed({
+      event: 'steering_delivered',
+      content: entries.map((entry) => entry.content).join('\n'),
+      count: entries.length,
+      entries,
+    });
+  return { feed, deliver, text, steer, startSteer, frame, messages, ids, inputIds };
 }
 
 describe('useSubagentTabs — steering a streaming subagent', () => {
@@ -147,14 +163,14 @@ describe('useSubagentTabs — steering a streaming subagent', () => {
     ]);
   });
 
-  it('confirms the pending bubble in place when the instruction is delivered', async () => {
-    const { feed, text, steer, frame, messages, ids } = harness();
+  it('confirms the pending bubble itself when the instruction is delivered', async () => {
+    const { deliver, text, steer, frame, messages, ids, inputIds } = harness();
     text('Revenue');
     frame();
     await steer('Focus on margins');
     const bubbleId = ids()[1];
 
-    feed({ event: 'steering_delivered', content: 'Focus on margins' });
+    deliver({ input_id: inputIds()[0], content: 'Focus on margins' });
     text('Margins widened');
     frame();
 
@@ -166,15 +182,98 @@ describe('useSubagentTabs — steering a streaming subagent', () => {
     expect(ids()[1]).toBe(bubbleId);
   });
 
+  it('shows a delivered instruction after the answer that streamed while it waited', async () => {
+    const { deliver, text, steer, frame, messages, inputIds } = harness();
+    text('Revenue');
+    frame();
+    await steer('Focus on margins');
+    deliver({ input_id: inputIds()[0], content: 'Focus on margins' });
+    // Sent before the subagent answered the first; it reads this one after.
+    await steer('Skip 2019');
+    text('Margins widened');
+    frame();
+
+    deliver({ input_id: inputIds()[1], content: 'Skip 2019' });
+    text('2019 dropped');
+    frame();
+
+    expect(messages()).toEqual([
+      { role: 'assistant', content: 'Revenue' },
+      { role: 'user', content: 'Focus on margins' },
+      { role: 'assistant', content: 'Margins widened' },
+      { role: 'user', content: 'Skip 2019' },
+      { role: 'assistant', content: '2019 dropped' },
+    ]);
+  });
+
   it('confirms every instruction one delivery drained, without a second bubble', async () => {
+    const { deliver, text, steer, frame, messages, inputIds } = harness();
+    text('Revenue');
+    frame();
+    await steer('Focus on margins');
+    await steer('Skip 2019');
+
+    // The middleware drains the whole queue before the next model call.
+    const [first, second] = inputIds();
+    deliver({ input_id: first, content: 'Focus on margins' }, { input_id: second, content: 'Skip 2019' });
+
+    expect(messages()).toEqual([
+      { role: 'assistant', content: 'Revenue' },
+      { role: 'user', content: 'Focus on margins' },
+      { role: 'user', content: 'Skip 2019' },
+    ]);
+  });
+
+  it('shows a main agent follow-up drained with the instruction as a bubble of its own', async () => {
+    const { deliver, text, steer, frame, messages, ids, inputIds } = harness();
+    text('Revenue');
+    frame();
+    await steer('Focus on margins');
+    const bubbleId = ids()[1];
+
+    // The main agent's Task update queued into the same run, and one step
+    // took both.
+    deliver(
+      { input_id: inputIds()[0], content: 'Focus on margins' },
+      { input_id: '5d0c2e8a', content: 'Also cover 2024 guidance' },
+    );
+
+    expect(messages()).toEqual([
+      { role: 'assistant', content: 'Revenue' },
+      { role: 'user', content: 'Focus on margins' },
+      { role: 'user', content: 'Also cover 2024 guidance' },
+    ]);
+    expect(ids()[1]).toBe(bubbleId);
+  });
+
+  it('confirms an instruction delivered before its send answered', async () => {
+    let resolve!: (value: unknown) => void;
+    vi.mocked(sendSubagentMessage).mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    const { deliver, text, startSteer, frame, messages, inputIds } = harness();
+    text('Revenue');
+    frame();
+    const sent = startSteer('Focus on margins');
+
+    deliver({ input_id: inputIds()[0], content: 'Focus on margins' });
+    await act(async () => {
+      resolve({});
+      await sent;
+    });
+
+    expect(messages()).toEqual([
+      { role: 'assistant', content: 'Revenue' },
+      { role: 'user', content: 'Focus on margins' },
+    ]);
+  });
+
+  it('confirms by text a delivery framed without its entries', async () => {
     const { feed, text, steer, frame, messages } = harness();
     text('Revenue');
     frame();
     await steer('Focus on margins');
     await steer('Skip 2019');
 
-    // The middleware drains the whole queue before the next model call and
-    // delivers it as one newline-joined instruction.
+    // An older server sends only the newline-joined instruction.
     feed({ event: 'steering_delivered', content: 'Focus on margins\nSkip 2019' });
 
     expect(messages()).toEqual([
@@ -185,17 +284,35 @@ describe('useSubagentTabs — steering a streaming subagent', () => {
   });
 
   it('takes the bubble back when the run ends before delivering it', async () => {
-    const { feed, text, steer, frame, messages } = harness();
+    const { feed, text, steer, frame, messages, inputIds } = harness();
     text('Revenue');
     frame();
     await steer('Focus on margins');
 
-    feed({ event: 'steering_returned', content: 'Focus on margins' });
+    feed({ event: 'steering_returned', content: 'Focus on margins', input_id: inputIds()[0] });
 
     expect(messages()).toEqual([
       { role: 'assistant', content: 'Revenue' },
       { role: 'assistant', notice: 'chat.taskSteeringReturnedNotification' },
     ]);
+  });
+
+  it('takes back the instruction the run returned, not another with the same text', async () => {
+    const { feed, text, steer, frame, messages, ids, inputIds } = harness();
+    text('Revenue');
+    frame();
+    await steer('Skip 2019');
+    await steer('Skip 2019');
+    const second = ids()[2];
+
+    feed({ event: 'steering_returned', content: 'Skip 2019', input_id: inputIds()[0] });
+
+    expect(messages()).toEqual([
+      { role: 'assistant', content: 'Revenue' },
+      { role: 'user', content: 'Skip 2019', isPending: true },
+      { role: 'assistant', notice: 'chat.taskSteeringReturnedNotification' },
+    ]);
+    expect(ids()[1]).toBe(second);
   });
 
   it('takes the bubble back when the send is rejected', async () => {
@@ -204,7 +321,7 @@ describe('useSubagentTabs — steering a streaming subagent', () => {
     vi.mocked(sendSubagentMessage).mockRejectedValueOnce(
       Object.assign(new Error('Request failed with status code 409'), { response: { status: 409 } }),
     );
-    const { text, steer, frame, messages } = harness();
+    const { text, steer, frame, messages, inputIds } = harness();
     text('Revenue');
     frame();
 
@@ -214,7 +331,7 @@ describe('useSubagentTabs — steering a streaming subagent', () => {
       { role: 'assistant', content: 'Revenue' },
       { role: 'assistant', notice: 'chat.taskSteeringReturnedNotification' },
     ]);
-    expect(sendSubagentMessage).toHaveBeenCalledWith('thread-1', 'k7Xm2p', 'Focus on margins');
+    expect(sendSubagentMessage).toHaveBeenCalledWith('thread-1', 'k7Xm2p', 'Focus on margins', inputIds()[0]);
   });
 
   it('says only that it was not sent when the send fails for another reason', async () => {
@@ -236,14 +353,14 @@ describe('useSubagentTabs — steering a streaming subagent', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     let reject!: (err: unknown) => void;
     vi.mocked(sendSubagentMessage).mockReturnValueOnce(new Promise((_, r) => { reject = r; }));
-    const { feed, text, startSteer, frame, messages } = harness();
+    const { feed, text, startSteer, frame, messages, inputIds } = harness();
     text('Revenue');
     frame();
     const sent = startSteer('Focus on margins');
 
     // The run's terminal sweep took the queued entry back, then the send's
     // own liveness recheck answered 409.
-    feed({ event: 'steering_returned', content: 'Focus on margins' });
+    feed({ event: 'steering_returned', content: 'Focus on margins', input_id: inputIds()[0] });
     await act(async () => {
       reject(new Error('Request failed with status code 409'));
       await sent;
@@ -252,6 +369,42 @@ describe('useSubagentTabs — steering a streaming subagent', () => {
     expect(messages()).toEqual([
       { role: 'assistant', content: 'Revenue' },
       { role: 'assistant', notice: 'chat.taskSteeringReturnedNotification' },
+    ]);
+  });
+
+  it('adds no second notice when the send was refused before the run returned it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(sendSubagentMessage).mockRejectedValueOnce(
+      Object.assign(new Error('Request failed with status code 409'), { response: { status: 409 } }),
+    );
+    const { feed, text, steer, frame, messages, inputIds } = harness();
+    text('Revenue');
+    frame();
+
+    await steer('Focus on margins');
+    // The sweep read the entry before the send's recheck took it back.
+    feed({ event: 'steering_returned', content: 'Focus on margins', input_id: inputIds()[0] });
+
+    expect(messages()).toEqual([
+      { role: 'assistant', content: 'Revenue' },
+      { role: 'assistant', notice: 'chat.taskSteeringReturnedNotification' },
+    ]);
+  });
+
+  it('shows an instruction delivered after its send failed in place of the notice', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    // The server queued it, and the answer was lost on the way back.
+    vi.mocked(sendSubagentMessage).mockRejectedValueOnce(new Error('Network Error'));
+    const { deliver, text, steer, frame, messages, inputIds } = harness();
+    text('Revenue');
+    frame();
+
+    await steer('Focus on margins');
+    deliver({ input_id: inputIds()[0], content: 'Focus on margins' });
+
+    expect(messages()).toEqual([
+      { role: 'assistant', content: 'Revenue' },
+      { role: 'user', content: 'Focus on margins' },
     ]);
   });
 });

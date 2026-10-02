@@ -200,6 +200,25 @@ async def test_steer_subagent_meta_run_id_fences_the_queue(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_steer_subagent_queues_the_client_input_id(monkeypatch):
+    """The client names an instruction before sending it, because the delivery
+    can reach its stream before the POST answers; the queued entry carries
+    that name."""
+    from src.server.handlers.chat.steering import steer_subagent
+
+    cache = FakeCache()
+    monkeypatch.setattr(CACHE, lambda: cache)
+    _seed_meta(cache, "t-named", "abc123", "running", task_run_id="run-9")
+
+    result = await steer_subagent(
+        "t-named", "abc123", "go", "u-1", input_id="1b4e28ba-2fa1"
+    )
+
+    (payload,) = _queued(cache, "subagent:steering:tc-remote:run-9")
+    assert payload["input_id"] == result["input_id"] == "1b4e28ba-2fa1"
+
+
+@pytest.mark.asyncio
 async def test_steer_subagent_meta_terminal_is_409(monkeypatch):
     from fastapi import HTTPException
 
@@ -245,6 +264,67 @@ async def test_steer_subagent_reclaims_when_run_settles_mid_push(monkeypatch):
 
     assert exc.value.status_code == 409
     assert cache.client.lists.get("subagent:steering:tc-remote:run-9", []) == []
+
+
+@pytest.mark.asyncio
+async def test_steer_subagent_accepts_an_entry_the_run_already_took(monkeypatch):
+    """The drain delivered the entry, or the sweep returned it, before the
+    recheck: that frame settles it, so the send is not refused as well."""
+    from src.server.handlers.chat.steering import steer_subagent
+
+    cache = FakeCache()
+    monkeypatch.setattr(CACHE, lambda: cache)
+    key = "subagent:steering:tc-remote:run-9"
+    running = {
+        "tool_call_id": "tc-remote",
+        "status": "running",
+        "task_run_id": "run-9",
+    }
+    reads = iter([running, dict(running, status="completed")])
+
+    async def meta(*_args):
+        if cache.client.lists.get(key):
+            cache.client.lists[key].clear()
+        return next(reads)
+
+    with patch(
+        "ptc_agent.agent.middleware.background_subagent.redis_stream.read_task_meta",
+        AsyncMock(side_effect=meta),
+    ):
+        result = await steer_subagent("t-race", "abc123", "go", "u-1", input_id="in-1")
+
+    assert result["success"] is True and result["input_id"] == "in-1"
+
+
+@pytest.mark.asyncio
+async def test_steer_subagent_reclaim_spares_an_accepted_equal_entry(monkeypatch):
+    """The client names the input, so a resend queues the same payload twice.
+    A resend refused mid-push takes back its own entry, not the one already
+    acknowledged."""
+    from fastapi import HTTPException
+
+    from src.server.handlers.chat.steering import steer_subagent
+
+    cache = FakeCache()
+    monkeypatch.setattr(CACHE, lambda: cache)
+
+    running = {
+        "tool_call_id": "tc-remote",
+        "status": "running",
+        "task_run_id": "run-9",
+    }
+    settled = dict(running, status="completed")
+    with patch(
+        "ptc_agent.agent.middleware.background_subagent.redis_stream.read_task_meta",
+        AsyncMock(side_effect=[running, running, running, settled]),
+    ):
+        await steer_subagent("t-race", "abc123", "go", "u-1", input_id="in-1")
+        with pytest.raises(HTTPException) as exc:
+            await steer_subagent("t-race", "abc123", "go", "u-1", input_id="in-1")
+
+    assert exc.value.status_code == 409
+    queued = cache.client.lists["subagent:steering:tc-remote:run-9"]
+    assert [json.loads(p)["input_id"] for p in queued] == ["in-1"]
 
 
 @pytest.mark.asyncio

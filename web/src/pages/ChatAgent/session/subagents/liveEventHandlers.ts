@@ -750,6 +750,12 @@ export function handleWorkflowLifecycle({ taskId, event, refs, updateSubagentCar
   return true;
 }
 
+/** One queue entry a steering delivery took, under the id its sender gave it. */
+export interface DeliveredInstruction {
+  input_id?: string | null;
+  content?: string;
+}
+
 /**
  * Renders a user instruction into a subagent transcript — steering
  * follow-ups (steering_delivered) AND run boundaries (the epoch-opening
@@ -761,13 +767,15 @@ export function handleWorkflowLifecycle({ taskId, event, refs, updateSubagentCar
  * @param {Object} params - Handler parameters
  * @param {string} params.taskId - Task ID (e.g., "task:k7Xm2p")
  * @param {string} params.content - The steering instruction content
+ * @param {Array} params.entries - The queue entries a delivery took, when it names them
  * @param {Object} params.refs - Refs object with subagentStateRefs
  * @param {Function} params.updateSubagentCard - Callback to update subagent card
  * @returns {boolean} True if event was handled
  */
-export function handleTaskSteeringAccepted({ taskId, content, refs, updateSubagentCard }: {
+export function handleTaskSteeringAccepted({ taskId, content, entries, refs, updateSubagentCard }: {
   taskId: string;
   content: string;
+  entries?: DeliveredInstruction[];
   refs: StreamRefs;
   updateSubagentCard: UpdateSubagentCard;
 }): boolean {
@@ -787,21 +795,37 @@ export function handleTaskSteeringAccepted({ taskId, content, refs, updateSubage
     }
   }
 
-  // Confirm the pending bubbles this delivery carries, otherwise insert one
-  const delivered = deliveredInstructionIndexes(updatedMessages, content);
-  for (const i of delivered) {
-    updatedMessages[i] = { ...updatedMessages[i], isPending: false };
+  // Confirm the pending bubble of each entry this delivery took. An entry with
+  // none here, such as the main agent's own follow-up drained in the same
+  // step, gets a bubble of its own.
+  const taken = new Set<number>();
+  const delivered: MessageRecord[] = [];
+  const take = (i: number) => {
+    taken.add(i);
+    delivered.push({ ...updatedMessages[i], isPending: false });
+  };
+  if (entries?.length) {
+    for (const entry of entries) {
+      const i = pendingInstructionIndex(updatedMessages, entry.input_id);
+      if (i !== -1) take(i);
+      else if (entry.content) delivered.push(instructionBubble(entry.content));
+    }
+  } else {
+    const matched = deliveredInstructionIndexes(updatedMessages, content);
+    matched.forEach(take);
+    if (matched.length === 0) delivered.push(instructionBubble(content));
   }
-  if (delivered.length === 0) {
-    updatedMessages.push({
-      id: `followup-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-      role: 'user',
-      content,
-      contentSegments: [{ type: 'text', content, order: 0 }],
-      reasoningProcesses: {},
-      toolCallProcesses: {},
-    });
-  }
+  // A bubble shows where it was sent, but the subagent reads it here: after
+  // everything it streamed since, and ahead of any instruction still waiting.
+  // A notice that gave one of these up goes: a send can fail in transport
+  // after the server queued it.
+  const deliveredIds = new Set(entries?.map((entry) => entry.input_id).filter(Boolean));
+  const rest = updatedMessages.filter((m, i) => !taken.has(i) && !(isTaskNotice(m) && deliveredIds.has(m.inputId as string)));
+  const messages = [
+    ...rest.filter((m) => !isPendingInstruction(m)),
+    ...delivered,
+    ...rest.filter(isPendingInstruction),
+  ];
 
   // Bump runIndex so the next event creates a new assistant message below the user bubble
   taskRefs.runIndex = (taskRefs.runIndex || 0) + 1;
@@ -809,9 +833,20 @@ export function handleTaskSteeringAccepted({ taskId, content, refs, updateSubage
   taskRefs.currentReasoningIdRef.current = null;
   taskRefs.currentToolCallIdRef.current = null;
 
-  taskRefs.messages = updatedMessages;
-  updateSubagentCard(taskId, { messages: updatedMessages });
+  taskRefs.messages = messages;
+  updateSubagentCard(taskId, { messages });
   return true;
+}
+
+function instructionBubble(content: string): MessageRecord {
+  return {
+    id: `followup-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+    role: 'user',
+    content,
+    contentSegments: [{ type: 'text', content, order: 0 }],
+    reasoningProcesses: {},
+    toolCallProcesses: {},
+  };
 }
 
 /** An instruction the user sent a running subagent that it has not been given yet. */
@@ -819,12 +854,20 @@ function isPendingInstruction(m: MessageRecord): boolean {
   return m.role === 'user' && m.isPending === true;
 }
 
+function isTaskNotice(m: MessageRecord): boolean {
+  return m.role === 'assistant' && String(m.id).startsWith('task-notice-');
+}
+
+function pendingInstructionIndex(messages: MessageRecord[], inputId: string | null | undefined): number {
+  return inputId ? messages.findIndex((m) => isPendingInstruction(m) && m.inputId === inputId) : -1;
+}
+
 /**
- * The pending bubbles a delivery confirms. The subagent takes every
- * instruction queued since its last model call at once, joined by newlines,
- * so one delivery can confirm a run of bubbles rather than a single one. The
- * latest match wins: an earlier bubble with the same text may be one whose
- * send failed and never reached the queue.
+ * The pending bubbles a delivery that names no entries confirms, read off its
+ * text alone: an older server's frame, or a captured event from before
+ * entries. The subagent takes every instruction queued since its last model
+ * call at once, joined by newlines, so the match is a run of bubbles, the
+ * latest that fits.
  */
 function deliveredInstructionIndexes(messages: MessageRecord[], content: string): number[] {
   const pending = messages.flatMap((m, i) => (isPendingInstruction(m) ? [i] : []));
@@ -846,8 +889,9 @@ function deliveredInstructionIndexes(messages: MessageRecord[], content: string)
  * whole transcript, and the card keeps a longer list over a shorter one, so a
  * bubble only the card held froze the running message until the delivery.
  */
-export function addPendingTaskInstruction({ taskId, content, subagentStateRefs, updateSubagentCard }: {
+export function addPendingTaskInstruction({ taskId, inputId, content, subagentStateRefs, updateSubagentCard }: {
   taskId: string;
+  inputId: string;
   content: string;
   subagentStateRefs: Record<string, TaskRefs>;
   updateSubagentCard: UpdateSubagentCard | null;
@@ -862,19 +906,32 @@ export function addPendingTaskInstruction({ taskId, content, subagentStateRefs, 
     reasoningProcesses: {},
     toolCallProcesses: {},
     isPending: true,
+    inputId,
   }];
   updateSubagentCard(taskId, { messages: taskRefs.messages });
 }
 
-/** Drops the pending bubble of an instruction the subagent never received. */
-function withdrawPendingInstruction(taskRefs: TaskRefs, content: string): void {
-  const idx = taskRefs.messages.findLastIndex((m) => isPendingInstruction(m) && m.content === content);
-  if (idx !== -1) taskRefs.messages = taskRefs.messages.filter((_, i) => i !== idx);
+/** An instruction the subagent was sent, as the frame that settles it names it. */
+interface SentInstruction {
+  inputId?: string | null;
+  content: string;
 }
 
-/** Whether an instruction is still waiting on the subagent, neither delivered nor returned. */
-export function hasPendingInstruction(taskRefs: TaskRefs, content: string): boolean {
-  return taskRefs.messages.some((m) => isPendingInstruction(m) && m.content === content);
+/** Whether the instruction is still waiting on the subagent, neither delivered nor returned. */
+export function hasPendingInstruction(taskRefs: TaskRefs, inputId: string): boolean {
+  return pendingInstructionIndex(taskRefs.messages, inputId) !== -1;
+}
+
+/**
+ * Drops the pending bubble of an instruction the subagent never received. A
+ * frame with no id, from an entry an older producer queued, is matched by its
+ * text, latest first.
+ */
+function withdrawPendingInstruction(taskRefs: TaskRefs, { inputId, content }: SentInstruction): void {
+  const idx = inputId
+    ? pendingInstructionIndex(taskRefs.messages, inputId)
+    : taskRefs.messages.findLastIndex((m) => isPendingInstruction(m) && m.content === content);
+  if (idx !== -1) taskRefs.messages = taskRefs.messages.filter((_, i) => i !== idx);
 }
 
 /**
@@ -882,7 +939,7 @@ export function hasPendingInstruction(taskRefs: TaskRefs, content: string): bool
  * segment on the last assistant message: a failed task may have no assistant
  * message at all, and a pushed message survives that.
  */
-export function pushTaskNotice(taskRefs: TaskRefs, text: string, detail?: string): void {
+export function pushTaskNotice(taskRefs: TaskRefs, text: string, detail?: string, inputId?: string | null): void {
   const order = ++taskRefs.contentOrderCounterRef.current;
   taskRefs.messages = [...taskRefs.messages, {
     id: `task-notice-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
@@ -891,6 +948,7 @@ export function pushTaskNotice(taskRefs: TaskRefs, text: string, detail?: string
     contentSegments: [{ type: 'notification', content: text, order, detail }],
     reasoningProcesses: {},
     toolCallProcesses: {},
+    ...(inputId ? { inputId } : {}),
   }];
 }
 
@@ -901,7 +959,11 @@ export function pushTaskNotice(taskRefs: TaskRefs, text: string, detail?: string
  * because the card keeps a longer list over a shorter one, so a withdrawal
  * written on its own would never reach it.
  */
-export function returnTaskInstruction(taskRefs: TaskRefs, content: string, notice: string): void {
-  withdrawPendingInstruction(taskRefs, content);
-  pushTaskNotice(taskRefs, notice, content);
+export function returnTaskInstruction(taskRefs: TaskRefs, instruction: SentInstruction, notice: string): void {
+  // Once per instruction: a refused send and the run's own return can both
+  // name it.
+  const { inputId } = instruction;
+  if (inputId && taskRefs.messages.some((m) => isTaskNotice(m) && m.inputId === inputId)) return;
+  withdrawPendingInstruction(taskRefs, instruction);
+  pushTaskNotice(taskRefs, notice, instruction.content, inputId);
 }

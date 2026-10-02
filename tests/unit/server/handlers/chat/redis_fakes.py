@@ -81,14 +81,16 @@ class FakeClient:
             kept = [x for x in lst if x != value]
             self.lists[key] = kept
             return len(lst) - len(kept)
+        # A negative count removes from the tail, as Redis does.
+        order = lst[::-1] if count < 0 else lst
         removed = 0
         out = []
-        for x in lst:
-            if x == value and removed < count:
+        for x in order:
+            if x == value and removed < abs(count):
                 removed += 1
                 continue
             out.append(x)
-        self.lists[key] = out
+        self.lists[key] = out[::-1] if count < 0 else out
         return removed
 
     async def llen(self, key) -> int:

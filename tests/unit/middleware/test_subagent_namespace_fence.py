@@ -839,15 +839,15 @@ async def test_followup_fails_open_when_no_authority_is_readable():
 
 
 # ---------------------------------------------------------------------------
-# terminal sweep: read -> surface -> delete
+# terminal sweep: read -> surface -> remove
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_sweep_deletes_only_after_every_entry_is_surfaced():
-    """The queue must outlive its own archival: DEL runs after the appends,
-    so a crash or spill failure between the two leaves acknowledged input
-    recoverable in Redis instead of silently destroyed."""
+async def test_sweep_removes_only_after_every_entry_is_surfaced():
+    """The queue must outlive its own archival: the removal runs after the
+    appends, so a crash or spill failure between the two leaves acknowledged
+    input recoverable in Redis instead of silently destroyed."""
     from ptc_agent.agent.middleware.background_subagent.run_executor import (
         _return_unconsumed_steering,
     )
@@ -866,7 +866,7 @@ async def test_sweep_deletes_only_after_every_entry_is_surfaced():
         lrange=AsyncMock(
             side_effect=lambda *a: order.append("read") or [payload]
         ),
-        delete=AsyncMock(side_effect=lambda *a: order.append("delete")),
+        lrem=AsyncMock(side_effect=lambda *a: order.append("remove")),
     )
     cache = SimpleNamespace(enabled=True, client=client)
     registry = SimpleNamespace(
@@ -878,16 +878,58 @@ async def test_sweep_deletes_only_after_every_entry_is_surfaced():
     ):
         await _return_unconsumed_steering(registry, task)
 
-    assert order == ["read", "surface", "delete"]
+    assert order == ["read", "surface", "remove"]
     # Identity-exact: the sweep passes the task OBJECT, never re-resolves
     # by tool_call_id (the entry may be evicted or the id reused).
     assert registry.append_event_for_task.await_args.args[0] is task
 
 
 @pytest.mark.asyncio
+async def test_sweep_leaves_an_entry_pushed_behind_its_read():
+    """A send that lands between the read and the removal is not the
+    sweep's to take: its sender sees the terminal meta, reclaims its own
+    entry and refuses. Erasing the key took that entry unsurfaced, and the
+    sender read the miss as an instruction the run had settled."""
+    from ptc_agent.agent.middleware.background_subagent.run_executor import (
+        _return_unconsumed_steering,
+    )
+
+    read = '{"content": "c", "expected_task_run_id": "run-9", "input_id": "i1"}'
+    behind = '{"content": "d", "expected_task_run_id": "run-9", "input_id": "i2"}'
+    task = _live_task("run-9")
+    queue = [read]
+
+    async def _surface(*_a, **_k):
+        task.captured_event_seq += 1
+        queue.append(behind)
+
+    async def _lrem(_key, count, value):
+        assert count == 1
+        if value in queue:
+            queue.remove(value)
+            return 1
+        return 0
+
+    client = SimpleNamespace(
+        lrange=AsyncMock(side_effect=lambda *a: list(queue)),
+        lrem=AsyncMock(side_effect=_lrem),
+    )
+    cache = SimpleNamespace(enabled=True, client=client)
+    registry = SimpleNamespace(append_event_for_task=AsyncMock(side_effect=_surface))
+
+    with patch(
+        "src.utils.cache.redis_cache.get_cache_client", return_value=cache
+    ):
+        await _return_unconsumed_steering(registry, task)
+
+    assert queue == [behind]
+    assert registry.append_event_for_task.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_sweep_keeps_the_queue_when_the_spill_tears_mid_sweep():
     """An append that opens the write circuit means the entries never made
-    the archive — the DEL is skipped so they survive to their TTL as the
+    the archive — the removal is skipped so they survive to their TTL as the
     durable record of what was lost."""
     from ptc_agent.agent.middleware.background_subagent.run_executor import (
         _return_unconsumed_steering,
@@ -901,7 +943,7 @@ async def test_sweep_keeps_the_queue_when_the_spill_tears_mid_sweep():
 
     client = SimpleNamespace(
         lrange=AsyncMock(return_value=[payload]),
-        delete=AsyncMock(),
+        lrem=AsyncMock(),
     )
     cache = SimpleNamespace(enabled=True, client=client)
     registry = SimpleNamespace(append_event_for_task=AsyncMock(side_effect=_torn_append))
@@ -911,14 +953,14 @@ async def test_sweep_keeps_the_queue_when_the_spill_tears_mid_sweep():
     ):
         await _return_unconsumed_steering(registry, task)
 
-    client.delete.assert_not_awaited()
+    client.lrem.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_sweep_withholds_delete_when_appends_do_not_land():
+async def test_sweep_withholds_removal_when_appends_do_not_land():
     """Landed-check backstop: if the appends fail to advance the seq
     counter (whatever the cause), the frames never reached the archive —
-    the DEL must be withheld so the queue survives as the TTL record of
+    the removal must be withheld so the queue survives as the TTL record of
     acknowledged input."""
     from ptc_agent.agent.middleware.background_subagent.run_executor import (
         _return_unconsumed_steering,
@@ -928,7 +970,7 @@ async def test_sweep_withholds_delete_when_appends_do_not_land():
     task = _live_task("run-9")
     client = SimpleNamespace(
         lrange=AsyncMock(return_value=[payload]),
-        delete=AsyncMock(),
+        lrem=AsyncMock(),
     )
     cache = SimpleNamespace(enabled=True, client=client)
     # An append that returns without advancing the seq counter.
@@ -939,20 +981,20 @@ async def test_sweep_withholds_delete_when_appends_do_not_land():
     ):
         await _return_unconsumed_steering(registry, task)
 
-    client.delete.assert_not_awaited()
+    client.lrem.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_sweep_skips_entirely_when_the_circuit_is_already_open():
     """With a torn transport, appends would no-op against the circuit and
-    the delete would erase unsurfaced input — leave everything to TTL."""
+    the removal would erase unsurfaced input — leave everything to TTL."""
     from ptc_agent.agent.middleware.background_subagent.run_executor import (
         _return_unconsumed_steering,
     )
 
     task = _live_task("run-9")
     task.redis_write_failed = True
-    client = SimpleNamespace(lrange=AsyncMock(), delete=AsyncMock())
+    client = SimpleNamespace(lrange=AsyncMock(), lrem=AsyncMock())
     cache = SimpleNamespace(enabled=True, client=client)
     registry = SimpleNamespace(append_event_for_task=AsyncMock())
 
@@ -962,7 +1004,7 @@ async def test_sweep_skips_entirely_when_the_circuit_is_already_open():
         await _return_unconsumed_steering(registry, task)
 
     client.lrange.assert_not_awaited()
-    client.delete.assert_not_awaited()
+    client.lrem.assert_not_awaited()
     registry.append_event_for_task.assert_not_awaited()
 
 

@@ -131,17 +131,26 @@ class SubagentSteeringMiddleware(AgentMiddleware):
             contents = [p["content"] for p in parsed]
             input_ids = [p["input_id"] for p in parsed if p["input_id"]]
             content = "\n".join(contents) if len(contents) > 1 else contents[0]
+            # The user's instructions and the main agent's follow-ups share
+            # this queue and join into one text, so the delivery names each
+            # entry: a client settles its own instruction by id, and shows a
+            # follow-up it never sent as one of its own.
+            delivered = {
+                "content": content,
+                "count": len(parsed),
+                "input_ids": input_ids,
+                "entries": [
+                    {"input_id": p["input_id"], "content": p["content"]}
+                    for p in parsed
+                ],
+            }
             # Stamp the delivered payload so checkpoint-sourced replay can
             # re-emit steering_delivered without the captured SSE stream.
             human_msg = HumanMessage(
                 content=f"[Follow-up Instructions from Orchestrator]\n{content}",
                 additional_kwargs={
                     "lc_source": "steering",
-                    "steering_delivered": {
-                        "content": content,
-                        "count": len(parsed),
-                        "input_ids": input_ids,
-                    },
+                    "steering_delivered": delivered,
                 },
             )
 
@@ -157,12 +166,7 @@ class SubagentSteeringMiddleware(AgentMiddleware):
                     tool_call_id,
                     {
                         "event": "steering_delivered",
-                        "data": {
-                            "agent": agent_id,
-                            "content": content,
-                            "count": len(parsed),
-                            "input_ids": input_ids,
-                        },
+                        "data": {"agent": agent_id, **delivered},
                         "ts": ts,
                     },
                 )

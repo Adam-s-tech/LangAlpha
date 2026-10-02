@@ -142,3 +142,43 @@ describe('projectSubagentHistory workflow-child backfill', () => {
     expect(childBefore.status).toBe('running');
   });
 });
+
+describe('projectSubagentHistory steering', () => {
+  const replayDelivery = (delivery: Record<string, unknown>) => {
+    const rt = makeRuntime();
+    projectSubagentHistory(
+      rt,
+      new Map([
+        [
+          'task:k7Xm2p',
+          {
+            messages: [],
+            events: [
+              { event: 'message_chunk', role: 'assistant', content_type: 'text', content: 'Revenue' },
+              { event: 'steering_delivered', ...delivery },
+            ] as unknown as SSEEvent[],
+          },
+        ],
+      ]),
+    );
+    return (rt.subagentHistory.get().entries['task:k7Xm2p']!.messages as Record<string, unknown>[])
+      .filter((m) => m.role === 'user')
+      .map((m) => m.content);
+  };
+
+  it('replays each entry one delivery took as its own instruction', () => {
+    // The user's instruction and the main agent's follow-up, drained in one step.
+    expect(replayDelivery({
+      content: 'Focus on margins\nAlso cover 2024 guidance',
+      entries: [
+        { input_id: 'a1', content: 'Focus on margins' },
+        { input_id: 'b2', content: 'Also cover 2024 guidance' },
+      ],
+    })).toEqual(['Focus on margins', 'Also cover 2024 guidance']);
+  });
+
+  it('replays a delivery captured before entries as its joined text', () => {
+    expect(replayDelivery({ content: 'Focus on margins\nSkip 2019' }))
+      .toEqual(['Focus on margins\nSkip 2019']);
+  });
+});

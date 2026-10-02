@@ -1480,9 +1480,9 @@
     "agentNotFound": "未找到 Agent",
     "planFeedbackHint": "输入您的反馈意见来修改计划，然后发送。",
     "stoppedChip": "已停止",
-    "workingFor": "已工作 {{duration}}",
-    "workedFor": "工作了 {{duration}}",
-    "worked": "已工作",
+    "workingFor": "工作中 {{duration}}",
+    "workedFor": "已工作 {{duration}}",
+    "worked": "工作过程",
     "thinking": "思考中",
     "stopFailed": "无法停止本次运行，它可能仍在运行。",
     "errorUpstreamHeadline": "模型提供商返回错误",
@@ -1635,7 +1635,7 @@
       "statusCompleted": "已完成",
       "statusFailed": "已失败",
       "statusStopped": "已停止",
-      "hintProvisioning": "正在配置沙盒…",
+      "hintProvisioning": "正在配置沙箱…",
       "hintWorking": "正在后台运行",
       "hintFailed": "运行未完成便已停止",
       "hintStopped": "运行已停止",
@@ -1669,11 +1669,11 @@
     "workspaceStarting": "正在启动工作区...",
     "workspaceRestoring": "正在从存档恢复工作区，约需 60 秒...",
     "workspaceStateHelp": "为什么需要等待？",
-    "workspaceStateStartingTitle": "正在启动沙盒",
-    "workspaceStateStartingBody": "沙盒正在重新连接，通常只需几秒钟。您的文件和对话历史都已保留。",
+    "workspaceStateStartingTitle": "正在启动沙箱",
+    "workspaceStateStartingBody": "沙箱正在重新连接，通常只需几秒钟。您的文件和对话历史都已保留。",
     "workspaceStateArchivedTitle": "正在从冷存储中恢复",
-    "workspaceStateArchivedBody": "闲置超过 7 天的沙盒会被归档以释放算力。唤回时需要下载快照并重启容器，通常需要 60 至 90 秒。",
-    "workspaceStateArchivedFootnote": "您的文件、工具和对话状态都完好无损——沙盒就绪后即可继续对话。",
+    "workspaceStateArchivedBody": "闲置超过 7 天的沙箱会被归档以释放算力。唤回时需要下载快照并重启容器，通常需要 60 至 90 秒。",
+    "workspaceStateArchivedFootnote": "您的文件、工具和对话状态都完好无损，沙箱就绪后即可继续对话。",
     "archiveConfirm": {
       "title": "该对话仍在运行，确定归档？",
       "body": "此对话还有任务正在运行。归档只是把它从列表中隐藏，任务会继续跑完——之后可在“已归档”中找到它和运行结果。",
@@ -3230,7 +3230,7 @@
           },
           "create": {
             "title": "为正式任务创建 PTC 工作区",
-            "body": "涉及数据处理或需要产出交付物的任务，建议交给 PTC 工作区完成，而不是全部留在 Flash。点击“新建工作区”并按任务命名，Agent 会启动专属沙盒，以完整能力执行。"
+            "body": "涉及数据处理或需要产出交付物的任务，建议交给 PTC 工作区完成，而不是全部留在 Flash。点击“新建工作区”并按任务命名，Agent 会启动专属沙箱，以完整能力执行。"
           }
         }
       },
@@ -3289,7 +3289,7 @@
         },
         "createWorkspace": {
           "title": "创建第一个工作区",
-          "desc": "新建一个专属 PTC 工作区，Agent 将在完整沙盒中执行正式分析任务。"
+          "desc": "新建一个专属 PTC 工作区，Agent 将在完整沙箱中执行正式分析任务。"
         },
         "firstChat": {
           "title": "开始第一次分析",

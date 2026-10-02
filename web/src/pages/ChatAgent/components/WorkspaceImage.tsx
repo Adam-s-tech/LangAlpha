@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { authSessionCheck, registerAuthReset } from '@/lib/authResets';
 import { useWorkspaceId, useWorkspaceDownloadFile } from '../contexts/WorkspaceContext';
 import { downloadWorkspaceFile } from '../utils/api';
 import { normalizeFilePath, parseWsPath } from '../utils/filePaths';
@@ -7,6 +8,12 @@ import ImageLightbox from './ImageLightbox';
 
 // Module-level cache: key:path → blobUrl
 const blobCache = new Map<string, string>();
+// Its bytes are the account's files, so a sign-out or account switch revokes
+// and forgets them.
+registerAuthReset(() => {
+  blobCache.forEach((url) => URL.revokeObjectURL(url));
+  blobCache.clear();
+});
 
 function isExternalUrl(src: string): boolean {
   return /^(https?:\/\/|data:|blob:)/i.test(src);
@@ -70,11 +77,22 @@ function WorkspaceImage({ src, alt, ...props }: WorkspaceImageProps) {
       ? effectiveDownloadFn(normalizedPath)
       : downloadWorkspaceFile(workspaceId!, normalizedPath);
 
+    const current = authSessionCheck();
     (fetcher as Promise<string>)
       .then((url) => {
-        if (cancelled) return;
-        blobCache.set(cacheKey, url);
-        setBlobUrl(url);
+        // Nothing will show it, or a sign-out landed first and the file is the
+        // last account's.
+        if (cancelled || !current()) {
+          URL.revokeObjectURL(url);
+          if (!cancelled) setState('error');
+          return;
+        }
+        // Two images of one file fetch at once, and only the cached copy is
+        // revoked at sign-out, so the second to land shows the first's.
+        const landed = blobCache.get(cacheKey);
+        if (landed) URL.revokeObjectURL(url);
+        else blobCache.set(cacheKey, url);
+        setBlobUrl(landed ?? url);
         setState('loaded');
       })
       .catch(() => {

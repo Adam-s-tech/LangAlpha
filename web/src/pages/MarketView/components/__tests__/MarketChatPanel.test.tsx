@@ -37,6 +37,7 @@ const h = vi.hoisted(() => ({
   isLoading: false, // set per-test while a turn streams
   threadId: 'thread-xyz', // mutated per-test to exercise the new-chat case
   pendingInterrupt: null as unknown, // mutated per-test to exercise input gating
+  preferences: null as unknown, // the user's preferences, set per-test
 }));
 
 // API spies — compaction calls straight into the ChatAgent api module. (Stop is
@@ -54,6 +55,10 @@ const ml = vi.hoisted(() => ({
   actions: null as Record<string, unknown> | null,
 }));
 const ci = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
+
+vi.mock('@/hooks/usePreferences', () => ({
+  usePreferences: () => ({ preferences: h.preferences, isLoading: false }),
+}));
 
 vi.mock('@/pages/ChatAgent/hooks/useChatMessages', () => ({
   useChatMessages: () => ({
@@ -104,7 +109,17 @@ vi.mock('@/pages/ChatAgent/components/MessageList', async () => {
   function MessageListStub(props: Record<string, unknown>) {
     ml.props = props;
     ml.actions = useMessageActions() as unknown as Record<string, unknown>;
-    return <div data-testid="message-list" />;
+    // Bubbles carry the markers a turn-end landing looks for.
+    const messages = (props.messages ?? []) as Array<{ id: string; role: string }>;
+    return (
+      <div data-testid="message-list">
+        {messages.map((m) => (
+          <div key={m.id} data-message-id={m.id}>
+            {m.role === 'assistant' && <p data-reply-start="" />}
+          </div>
+        ))}
+      </div>
+    );
   }
   function LiveMessageListStub({ store, ...props }: { store: { get: () => unknown } } & Record<string, unknown>) {
     return <MessageListStub messages={store.get()} {...props} />;
@@ -197,6 +212,8 @@ describe('MarketChatPanel', () => {
     h.threadId = 'thread-xyz';
     h.pendingInterrupt = null;
     h.isLoading = false;
+    h.messages = [{ id: 'm1', role: 'assistant' }];
+    h.preferences = null;
     ml.props = null;
     ml.actions = null;
     ci.props = null;
@@ -370,6 +387,158 @@ describe('MarketChatPanel', () => {
       HTMLElement.prototype.scrollTo = original;
       vi.unstubAllGlobals();
     }
+  });
+
+  describe('when a reply finishes', () => {
+    const REPLY_START = { other_preference: { turn_end_scroll: 'reply_start' } };
+    const observers: { cb: ResizeObserverCallback; targets: Element[] }[] = [];
+    const original = HTMLElement.prototype.scrollTo;
+    const scrollTo = vi.fn();
+    beforeEach(() => {
+      observers.length = 0;
+      vi.stubGlobal('ResizeObserver', class {
+        targets: Element[] = [];
+        constructor(cb: ResizeObserverCallback) {
+          observers.push({ cb, targets: this.targets });
+        }
+        observe(el: Element) {
+          this.targets.push(el);
+        }
+        unobserve() {}
+        disconnect() {}
+      });
+      HTMLElement.prototype.scrollTo = scrollTo as HTMLElement['scrollTo'];
+    });
+    afterEach(() => {
+      HTMLElement.prototype.scrollTo = original;
+      vi.unstubAllGlobals();
+    });
+
+    /** A reader at the end of a thread while a turn streams a reply under
+     *  them. The viewport is 400px; the reply's first line sits `replyAt` px
+     *  down the transcript. */
+    function streamTurn() {
+      h.messages = [{ id: 'u1', role: 'user' }, { id: 'a1', role: 'assistant' }];
+      const { rerender } = renderPanel();
+      const transcript = screen.getByTestId('message-list').parentElement!;
+      const container = transcript.parentElement!;
+      const observer = observers.find((o) => o.targets.includes(transcript))!;
+      const layout = { top: 0, height: 0, replyAt: 0 };
+      Object.defineProperties(container, {
+        scrollTop: { get: () => layout.top, configurable: true },
+        scrollHeight: { get: () => layout.height, configurable: true },
+        clientHeight: { get: () => 400, configurable: true },
+      });
+      scrollTo.mockImplementation(({ top: to }: ScrollToOptions) => {
+        layout.top = to!;
+      });
+      const grow = (to: number) => {
+        layout.height = to;
+        observer.cb([{ contentRect: { height: to } } as ResizeObserverEntry], {} as ResizeObserver);
+      };
+      const nextFrame = () => fireEvent.scroll(container);
+      const userScroll = (to: number) => {
+        layout.top = to;
+        fireEvent.scroll(container);
+      };
+      const setLoading = (loading: boolean) => {
+        h.isLoading = loading;
+        rerender({});
+      };
+
+      grow(1000);
+      nextFrame();
+      h.messages = [...h.messages, { id: 'u2', role: 'user' }, { id: 'a2', role: 'assistant' }];
+      setLoading(true);
+      // jsdom has no layout: the scroller's own top is 0.
+      container.querySelector<HTMLElement>('[data-message-id="a2"] [data-reply-start]')!.getBoundingClientRect =
+        () => ({ top: layout.replyAt - layout.top }) as DOMRect;
+      grow(1600);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 1200 });
+      nextFrame();
+      scrollTo.mockClear();
+      return { container, layout, grow, nextFrame, userScroll, setLoading };
+    }
+
+    it('brings the start of the reply under the viewport top and stops following', () => {
+      h.preferences = REPLY_START;
+      const { container, layout, grow, nextFrame, setLoading } = streamTurn();
+      layout.replyAt = 900;
+      setLoading(false);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 884, behavior: 'smooth' });
+      nextFrame();
+
+      // The settled turn folds its work away above the reply: the line is held
+      // under the viewport top as it moves.
+      layout.replyAt = 700;
+      grow(1400);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 684 });
+      nextFrame();
+
+      // Once the reader takes over, a turn that starts without a send (a
+      // regenerate) grows under them without carrying them off the reply.
+      fireEvent.wheel(container);
+      scrollTo.mockClear();
+      setLoading(true);
+      grow(1500);
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it('follows the next turn when the reader sends while the reply is held', () => {
+      h.preferences = REPLY_START;
+      const { layout, grow, nextFrame, setLoading } = streamTurn();
+      layout.replyAt = 900;
+      setLoading(false);
+      nextFrame();
+      h.handleSendMessage.mockImplementationOnce(() => {
+        h.isLoading = true;
+      });
+      const onSend = ci.props!.onSend as (
+        m: string, plan: boolean, att: unknown[], cmds: unknown[], opts: unknown,
+      ) => void;
+      act(() => onSend('and the next quarter?', false, [], [], {}));
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 1200 });
+      nextFrame();
+      setLoading(true);
+      grow(1700);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 1300 });
+    });
+
+    it('lands at once for a reader who prefers reduced motion', () => {
+      vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce'), media: q, addEventListener() {}, removeEventListener() {} }));
+      h.preferences = REPLY_START;
+      const { layout, setLoading } = streamTurn();
+      layout.replyAt = 900;
+      setLoading(false);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 884, behavior: 'auto' });
+    });
+
+    it('moves nothing when the reply fits on screen', () => {
+      h.preferences = REPLY_START;
+      const { layout, setLoading } = streamTurn();
+      layout.replyAt = 1300;
+      setLoading(false);
+      expect(scrollTo).not.toHaveBeenCalled();
+      expect(layout.top).toBe(1200);
+    });
+
+    it('stays at the end under the default preference', () => {
+      const { layout, setLoading } = streamTurn();
+      layout.replyAt = 900;
+      setLoading(false);
+      expect(scrollTo).not.toHaveBeenCalled();
+      expect(layout.top).toBe(1200);
+    });
+
+    it('leaves a reader who scrolled up where they were', () => {
+      h.preferences = REPLY_START;
+      const { layout, userScroll, setLoading } = streamTurn();
+      layout.replyAt = 900;
+      userScroll(800);
+      setLoading(false);
+      expect(scrollTo).not.toHaveBeenCalled();
+      expect(layout.top).toBe(800);
+    });
   });
 
   it('reads the PTC folder from the workspace detail, which a turn re-reads after a settle', async () => {

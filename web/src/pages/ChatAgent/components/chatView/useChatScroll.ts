@@ -1,36 +1,18 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AT_BOTTOM_PX, NEAR_BOTTOM_PX, isNearBottom } from '../../utils/scrollHelpers';
+import { AT_BOTTOM_PX, NEAR_BOTTOM_PX, createSettleWindow, isNearBottom, type SettleWindow } from '../../utils/scrollHelpers';
 import { createStreamFollow } from './streamFollow';
-import { findMessageElement, resolveScrollContent, resolveScrollViewport } from '../../utils/scrollDom';
+import { anchorTop, findMessageElement, resolveScrollContent, resolveScrollViewport, type AnchorPart } from '../../utils/scrollDom';
 import { scrollMemory } from '@/lib/scrollMemory';
 import { ANCHORED_TOGGLE_EVENT } from '../../utils/anchoredToggle';
 import { useLatestRef } from '@/hooks/useLatestRef';
 
-// Scroll/pin tuning: settle window the pin re-applies through as async media
-// expands; fallback for engines without a `scrollend` event.
-const SETTLE_QUIET_MS = 1500;
-const SETTLE_HARD_CAP_MS = 8000;
+// Fallback for engines without a `scrollend` event.
 const SCROLLEND_FALLBACK_MS = 600;
-// Gap left above a bubble the transcript is pinned to.
-const ANCHOR_OFFSET_PX = 16;
 // How long a toggled row is held in place while its disclosure animates open
 // or shut; longer than the fold spring, shorter than the next streamed chunk.
 const TOGGLE_HOLD_MS = 1000;
 // Breathing room left under a deliverables deck brought into view.
 const REVEAL_GAP_PX = 12;
-
-/** scrollTop that puts bubble `id` just under the viewport top, or `delta` px
- *  into it, or null once it is no longer in the transcript. */
-function anchorTop(c: HTMLElement, id: string, part?: AnchorPart, delta?: number): number | null {
-  const msg = findMessageElement(c, id);
-  if (!msg) return null;
-  // The reply part is the bubble's last prose block, so a turn that opened with
-  // commentary and tool rows lands on the answer; a bubble without prose is
-  // its own start.
-  const el = (part === 'reply' && msg.querySelector<HTMLElement>('[data-reply-start]')) || msg;
-  const gap = delta == null ? ANCHOR_OFFSET_PX : -delta;
-  return Math.max(0, c.scrollTop + el.getBoundingClientRect().top - c.getBoundingClientRect().top - gap);
-}
 
 /** The bubble at the viewport top and how far into it the view starts. */
 function readPlace(c: HTMLElement): { id: string; delta: number } | null {
@@ -84,7 +66,6 @@ function revealTop(c: HTMLElement, id: string): number | null {
  * the bubble), re-measured on every re-apply so media above it finishing layout
  * can't shift the landing.
  */
-export type AnchorPart = 'reply';
 export type PinTarget =
   | { mode: 'bottom' }
   | { mode: 'offset'; top: number }
@@ -193,8 +174,7 @@ export function useChatScroll({
   // Detaches the pending release of the current programmatic scroll (see
   // withProgrammaticScroll); null when no release is pending.
   const programmaticReleaseRef = useRef<(() => void) | null>(null);
-  const settleQuietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const settleHardCapRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settleRef = useRef<SettleWindow | null>(null);
   const restoredForThreadRef = useRef<string | null>(null);
   // Where a mid-thread reader was, by bubble, for a reload of the thread on
   // screen: the replay drops the bubbles in the render that starts it, so the
@@ -294,42 +274,16 @@ export function useChatScroll({
   // that is what the ResizeObserver must watch.
   const getScrollContent = useCallback((c: HTMLElement): HTMLElement => resolveScrollContent(c), []);
 
-  const clearSettleTimers = useCallback(() => {
-    if (settleQuietTimerRef.current) {
-      clearTimeout(settleQuietTimerRef.current);
-      settleQuietTimerRef.current = null;
-    }
-    if (settleHardCapRef.current) {
-      clearTimeout(settleHardCapRef.current);
-      settleHardCapRef.current = null;
-    }
-  }, []);
+  const clearSettleTimers = useCallback(() => settleRef.current?.clear(), []);
 
-  // Arm the settle window: re-pin while content keeps growing, give up after a
-  // 1.5s quiet window (reset on each settle resize) or an 8s hard cap.
+  // Arm the settle window: re-pin while content keeps growing (re-armed on each
+  // settle resize), and drop the pin once it lapses. Created on first use, not
+  // in render, which must not hand it the pin ref.
   const armSettleTimers = useCallback(() => {
-    if (settleQuietTimerRef.current) clearTimeout(settleQuietTimerRef.current);
-    settleQuietTimerRef.current = setTimeout(() => {
-      // Quiet window elapsed — the settle session is over. Tear down BOTH timers
-      // so the next pin session arms a fresh hard cap; otherwise it inherits this
-      // session's stale (shortened or already-elapsed) one and gives up early.
+    settleRef.current ??= createSettleWindow(() => {
       pinTargetRef.current = null;
-      settleQuietTimerRef.current = null;
-      if (settleHardCapRef.current) {
-        clearTimeout(settleHardCapRef.current);
-        settleHardCapRef.current = null;
-      }
-    }, SETTLE_QUIET_MS);
-    if (!settleHardCapRef.current) {
-      settleHardCapRef.current = setTimeout(() => {
-        pinTargetRef.current = null;
-        settleHardCapRef.current = null;
-        if (settleQuietTimerRef.current) {
-          clearTimeout(settleQuietTimerRef.current);
-          settleQuietTimerRef.current = null;
-        }
-      }, SETTLE_HARD_CAP_MS);
-    }
+    });
+    settleRef.current.arm();
   }, []);
 
   const pinToBottom = useCallback(
@@ -709,11 +663,10 @@ export function useChatScroll({
     };
   }, [isActive, isLoadingHistory, historyLoadFailed, currentThreadId, threadId, pinToBottom, reapplyPin, isActiveRef, getScrollContainer, withProgrammaticScroll, armSettleTimers, setPillState, messagesLenRef]);
 
-  // Cleanup pending scroll timers/rAF on unmount.
+  // Cancel pending settle timers and the entry-restore frame on unmount.
   useEffect(() => {
     return () => {
-      if (settleQuietTimerRef.current) clearTimeout(settleQuietTimerRef.current);
-      if (settleHardCapRef.current) clearTimeout(settleHardCapRef.current);
+      settleRef.current?.clear();
       if (entryRestoreRafRef.current != null) cancelAnimationFrame(entryRestoreRafRef.current);
     };
   }, []);

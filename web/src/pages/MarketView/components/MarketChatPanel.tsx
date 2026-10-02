@@ -10,6 +10,9 @@ import LogoLoading from '@/components/ui/logo-loading';
 import ChatInput, { type ChatInputHandle } from '@/components/ui/chat-input';
 import { useStableHandler } from '@/hooks/useStableHandler';
 import { useWorkspace } from '@/hooks/useWorkspace';
+import { usePreferences } from '@/hooks/usePreferences';
+import { readTurnEndScroll } from '@/lib/turnEndScroll';
+import { prefersReducedMotion } from '@/lib/reducedMotion';
 import { LiveMessageList } from '../../ChatAgent/components/MessageList';
 import { MessageActionsProvider, type MessageActions } from '../../ChatAgent/components/messageList/MessageActionsContext';
 import { SubagentTelemetryContext } from '../../ChatAgent/components/SubagentTelemetryContext';
@@ -18,6 +21,7 @@ import { WorkspaceProvider } from '../../ChatAgent/contexts/WorkspaceContext';
 import { useChatMessages } from '../../ChatAgent/hooks/useChatMessages';
 import { DispatchStatusProvider } from '../../ChatAgent/hooks/usePTCDispatchStatus';
 import { useStreamFollow } from '../../ChatAgent/components/chatView/streamFollow';
+import { findTurnReply, useTurnEnd } from '../../ChatAgent/components/chatView/turnEnd';
 import { useActiveThreadPublisher } from '@/lib/threadLifecycle/useActiveThreadPublisher';
 import { flashWorkspaceQuery } from '@/hooks/useFlashWorkspace';
 import { appendPathSuffix, getPreviewUrl, summarizeThread, offloadThread } from '../../ChatAgent/utils/api';
@@ -296,6 +300,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { preferences } = usePreferences();
   const [, setSearchParams] = useSearchParams();
   const [dialogPayload, setDialogPayload] = useState<DialogPayload | null>(null);
   // Port of the preview currently shown — guards against a late URL resolution
@@ -481,7 +486,16 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
   const showTranscript = messages.length > 0 || isLoading || isLoadingHistory;
   // Every send below rejoins the follow, wherever the reader had scrolled:
   // their message and the reply land at the end.
-  const rejoinFollow = useStreamFollow(messagesContainerRef, transcriptRef, showTranscript, isLoading || isLoadingHistory);
+  const { rejoin: rejoinFollow, landOnReply } = useStreamFollow(messagesContainerRef, transcriptRef, showTranscript, isLoading || isLoadingHistory);
+  // "When a reply finishes" applies here as in the main chat, which counts a
+  // pending interrupt or plan feedback as the turn still open.
+  const turnEndScroll = readTurnEndScroll(preferences);
+  useTurnEnd(messages, isLoading || !!pendingInterrupt || !!pendingRejection, () => {
+    if (turnEndScroll !== 'reply_start') return;
+    const c = messagesContainerRef.current;
+    const id = c && findTurnReply(c, messages);
+    if (id) landOnReply(id, prefersReducedMotion() ? 'auto' : 'smooth');
+  });
 
   // Send: shape attachments + chart screenshot like ChatAgent does.
   const handleSend = useCallback(

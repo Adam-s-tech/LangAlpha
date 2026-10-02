@@ -673,13 +673,18 @@ async def _persist_packed(
     failed: list[UnsavedFile] = []
     changed: set[str] = set()
     chunk_count = 0
+    staged: list[str] = []
     for run in _pack_runs(members):
+        # Each run is staged in the room the previous one held, so its pack
+        # removes those chunks first and fails rather than pack beside one.
         out = await pack_direct(
             sandbox,
             [{"path": e.path, "sha256": e.sha256, "size": e.size} for e in run],
             layout=layout,
+            release=staged,
         )
         chunks = out["chunks"]
+        staged = [c["path"] for c in chunks]
         changed.update(out["changed"])
         chunk_count += len(chunks)
         # A chunk is pushed exactly like a file: same presigning, same direct
@@ -698,19 +703,24 @@ async def _persist_packed(
             )
             for c in chunks
         ]
-        chunk_rows, _ = await _persist_blobs(
-            user_id,
-            workspace_id,
-            sandbox,
-            chunk_entries,
-            unlink_after=True,
-            layout=machine,
-        )
+        try:
+            chunk_rows, _ = await _persist_blobs(
+                user_id,
+                workspace_id,
+                sandbox,
+                chunk_entries,
+                unlink_after=True,
+                layout=machine,
+            )
+        except Exception:
+            # No later pack will release a run whose push raised.
+            await _unlink_chunks(sandbox, staged, workspace_id, machine)
+            raise
         available = {r["blob_sha256"] for r in chunk_rows}
         stranded = [c["path"] for c in chunks if c["sha256"] not in available]
         if stranded:
-            # Only a stored chunk leaves with its push, and the next run is
-            # staged in the room a rejected one would still be holding.
+            # Only a stored chunk leaves with its push. The next run's pack
+            # would release a rejected one, but the last run has no next.
             await _unlink_chunks(sandbox, stranded, workspace_id, machine)
         for c in chunks:
             if c["sha256"] not in available:

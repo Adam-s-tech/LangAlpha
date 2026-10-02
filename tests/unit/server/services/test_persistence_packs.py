@@ -274,8 +274,8 @@ async def test_a_pack_set_larger_than_one_run_is_packed_and_pushed_a_run_at_a_ti
     db["scan"].return_value = _scan(*(_entry(p, d) for p, d in files.items()))
     order = []
 
-    def _pack(sandbox, members, *, layout=None):
-        order.append(("pack", [m["path"] for m in members]))
+    def _pack(sandbox, members, *, layout=None, release=None):
+        order.append(("pack", [m["path"] for m in members], release))
         run = [(m["path"], files[m["path"]]) for m in members]
         return {"chunks": [_chunk(run[i : i + 2]) for i in range(0, len(run), 2)], "changed": []}
 
@@ -287,10 +287,15 @@ async def test_a_pack_set_larger_than_one_run_is_packed_and_pushed_a_run_at_a_ti
     db["push"].side_effect = _push
     with patch.object(blobs, "PACK_MAX_BYTES", 6), patch.object(blobs, "PACK_STAGE_MAX_BYTES", 12):
         result = await backup.sync_to_db(WS, _sandbox(), layout=LAYOUT)
+    first_run = [
+        f"_internal/packs/chunk-{_sha(files['f0.txt'] + files['f1.txt'])}",
+        f"_internal/packs/chunk-{_sha(files['f2.txt'] + files['f3.txt'])}",
+    ]
+    # The second run's pack is the one that makes sure the first run is gone.
     assert order == [
-        ("pack", ["f0.txt", "f1.txt", "f2.txt", "f3.txt"]),
+        ("pack", ["f0.txt", "f1.txt", "f2.txt", "f3.txt"], []),
         ("push", 2),
-        ("pack", ["f4.txt"]),
+        ("pack", ["f4.txt"], first_run),
         ("push", 1),
     ]
     rows = _rows(db)
@@ -298,6 +303,23 @@ async def test_a_pack_set_larger_than_one_run_is_packed_and_pushed_a_run_at_a_ti
     assert rows["f3.txt"]["pack_offset"] == 3
     assert rows["f4.txt"]["pack_sha256"] == _sha(files["f4.txt"])
     assert result.synced == 5 and result.errors == 0
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_push_raises_removes_its_chunks(db):
+    """No later run's pack will release them, so they would hold the room the
+    next backup needs until the age sweep."""
+    def registered(user, digests):
+        if CHUNK in digests:
+            raise RuntimeError("registry down")
+        return set()
+
+    db["registered"].side_effect = registered
+    sb = _sandbox()
+    with patch.object(blobs, "unlink_direct", new=AsyncMock(return_value=1)) as unlink:
+        with pytest.raises(RuntimeError, match="registry down"):
+            await backup.sync_to_db(WS, sb, layout=LAYOUT)
+    unlink.assert_awaited_once_with(sb, [f"_internal/packs/chunk-{CHUNK}"], layout=MACHINE_LAYOUT)
 
 
 def test_runs_pack_into_the_chunks_one_pass_over_the_whole_set_writes(tmp_path):

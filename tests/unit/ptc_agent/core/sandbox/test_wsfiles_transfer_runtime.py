@@ -1108,6 +1108,29 @@ def test_pack_with_nothing_to_pack_writes_no_chunk(tmp_path):
     assert os.listdir(tmp_path / "_internal/packs") == []
 
 
+def test_pack_releases_the_previous_runs_chunks_before_writing(tmp_path):
+    first = _pack(tmp_path, _members(tmp_path, {"a.txt": b"aaa"}))["chunks"]
+    members = _members(tmp_path, {"b.txt": b"bbb"})
+    second = rt.pack({
+        "root": str(tmp_path), "out_dir": "_internal/packs", "members": members,
+        "release": [c["path"] for c in first],
+    })["chunks"]
+    assert not (tmp_path / first[0]["path"]).exists()
+    assert (tmp_path / second[0]["path"]).is_file()
+
+
+def test_pack_refuses_to_write_beside_a_chunk_it_could_not_release(tmp_path):
+    """The removals before it are quiet; this is where one that missed is caught."""
+    (tmp_path / "_internal/packs/op-prev/chunk-x").mkdir(parents=True)
+    members = _members(tmp_path, {"b.txt": b"bbb"})
+    with pytest.raises(OSError, match="could not be removed"):
+        rt.pack({
+            "root": str(tmp_path), "out_dir": "_internal/packs", "members": members,
+            "release": ["_internal/packs/op-prev/chunk-x"],
+        })
+    assert os.listdir(tmp_path / "_internal/packs") == ["op-prev"]
+
+
 def test_a_pack_that_fails_part_way_removes_what_it_wrote(tmp_path, monkeypatch):
     """A full disk failed the pack after a chunk was down. Left in place, the
     chunks held the room every later backup needed until the age sweep."""

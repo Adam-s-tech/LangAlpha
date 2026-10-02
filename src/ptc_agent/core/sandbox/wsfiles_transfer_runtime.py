@@ -1514,6 +1514,7 @@ def pack(spec: dict[str, Any]) -> dict[str, Any]:
     # longer than a transfer is allowed to take.
     os.makedirs(base, exist_ok=True)
     _sweep_stale(base, _PACK_STALE_S)
+    _release(root, spec)
     out_dir = tempfile.mkdtemp(prefix="op-", dir=base)
 
     chunks: list[dict[str, Any]] = []
@@ -1599,6 +1600,25 @@ def pack(spec: dict[str, Any]) -> dict[str, Any]:
     if not chunks:
         _rmtree_quiet(out_dir)
     return {"chunks": chunks, "changed": changed}
+
+
+def _release(root: str, spec: dict[str, Any]) -> None:
+    """Remove ``release``, the previous run's chunks, or refuse to pack at all.
+
+    A backup stages its pack set a run at a time, each run in the room the
+    last one held. The push and unlink ops remove chunks quietly, so a chunk
+    they missed is caught here, before the next run is written beside it.
+    """
+    pack_base = _pack_base(spec, root)
+    kept = 0
+    for rel in spec.get("release") or []:
+        path = _resolve_item(root, pack_base, rel)
+        if path is None:
+            continue
+        _unlink_quiet(path)
+        kept += os.path.lexists(path)
+    if kept:
+        raise OSError(f"{kept} chunk(s) from the previous run could not be removed")
 
 
 def _sweep_stale(base: str, max_age_s: float) -> None:

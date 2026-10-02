@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 import { AT_BOTTOM_PX, NEAR_BOTTOM_PX, isNearBottom } from '../../utils/scrollHelpers';
 
 /**
@@ -17,6 +17,8 @@ export interface StreamFollow {
   scrolled(judge?: boolean): boolean;
   /** Moves a following reader to the new bottom, for growth. */
   follow(): void;
+  /** Follows again from the bottom wherever the reader was, for a send. */
+  rejoin(): void;
 }
 
 export function createStreamFollow(c: HTMLElement, following: { current: boolean }): StreamFollow {
@@ -27,7 +29,7 @@ export function createStreamFollow(c: HTMLElement, following: { current: boolean
   // scrolls in between is measured from where the follow put them, or a notch
   // up from there would read as a move down and be pulled back.
   let followTop: number | null = null;
-  return {
+  const stream: StreamFollow = {
     scrolled(judge = true) {
       const from = followTop ?? lastTop;
       const own = followTop !== null && Math.abs(c.scrollTop - followTop) < 1;
@@ -46,7 +48,12 @@ export function createStreamFollow(c: HTMLElement, following: { current: boolean
       followTop = bottom;
       c.scrollTo({ top: bottom });
     },
+    rejoin() {
+      following.current = true;
+      stream.follow();
+    },
   };
+  return stream;
 }
 
 /**
@@ -54,14 +61,16 @@ export function createStreamFollow(c: HTMLElement, following: { current: boolean
  * observation follows too and a thread opens at its end. `shown` re-attaches
  * it when the content mounts. Later growth is followed only while `active`:
  * in a settled transcript it is the reader's own doing, a row opened, and
- * stays where they put it.
+ * stays where they put it. The returned `rejoin` is for a send: the reader's
+ * message and the reply land at the end, so a reader scrolled up would not
+ * see either.
  */
 export function useStreamFollow(
   scroller: RefObject<HTMLElement | null>,
   content: RefObject<HTMLElement | null>,
   shown: boolean,
   active: boolean,
-): void {
+): () => void {
   const activeRef = useRef(active);
   const streamRef = useRef<StreamFollow | null>(null);
   // The commit that ends a turn or a history load carries its last growth,
@@ -93,4 +102,5 @@ export function useStreamFollow(
       ro.disconnect();
     };
   }, [scroller, content, shown]);
+  return useCallback(() => streamRef.current?.rejoin(), []);
 }

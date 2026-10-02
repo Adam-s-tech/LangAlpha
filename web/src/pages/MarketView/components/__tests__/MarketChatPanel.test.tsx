@@ -295,6 +295,83 @@ describe('MarketChatPanel', () => {
     }
   });
 
+  it('takes a reader who scrolled up to the end when they send, and follows the reply', () => {
+    const observers: { cb: ResizeObserverCallback; targets: Element[] }[] = [];
+    vi.stubGlobal('ResizeObserver', class {
+      targets: Element[] = [];
+      constructor(cb: ResizeObserverCallback) {
+        observers.push({ cb, targets: this.targets });
+      }
+      observe(el: Element) {
+        this.targets.push(el);
+      }
+      unobserve() {}
+      disconnect() {}
+    });
+    const original = HTMLElement.prototype.scrollTo;
+    const scrollTo = vi.fn();
+    HTMLElement.prototype.scrollTo = scrollTo as HTMLElement['scrollTo'];
+    try {
+      const { rerender } = renderPanel();
+      const transcript = screen.getByTestId('message-list').parentElement!;
+      const container = transcript.parentElement!;
+      const observer = observers.find((o) => o.targets.includes(transcript))!;
+      let top = 0;
+      let height = 0;
+      Object.defineProperties(container, {
+        scrollTop: { get: () => top, configurable: true },
+        scrollHeight: { get: () => height, configurable: true },
+        clientHeight: { get: () => 400, configurable: true },
+      });
+      scrollTo.mockImplementation(({ top: to }: ScrollToOptions) => {
+        top = to!;
+      });
+      const grow = (to: number) => {
+        height = to;
+        observer.cb([{ contentRect: { height: to } } as ResizeObserverEntry], {} as ResizeObserver);
+      };
+      const nextFrame = () => fireEvent.scroll(container);
+      const userScroll = (to: number) => {
+        top = to;
+        fireEvent.scroll(container);
+      };
+
+      // A settled thread opens at its end, and the reader scrolls up to reread it.
+      grow(1000);
+      nextFrame();
+      userScroll(200);
+      scrollTo.mockClear();
+
+      h.handleSendMessage.mockImplementationOnce(() => {
+        h.isLoading = true;
+      });
+      const onSend = ci.props!.onSend as (
+        m: string, plan: boolean, att: unknown[], cmds: unknown[], opts: unknown,
+      ) => void;
+      act(() => onSend('and the next quarter?', false, [], [], {}));
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 600 });
+      nextFrame();
+
+      // Their message lands, then the reply grows under it.
+      rerender({});
+      grow(1150);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 750 });
+      nextFrame();
+      grow(1400);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 });
+      nextFrame();
+
+      // The follow keeps its rules: a scroll up leaves it again.
+      scrollTo.mockClear();
+      userScroll(800);
+      grow(1500);
+      expect(scrollTo).not.toHaveBeenCalled();
+    } finally {
+      HTMLElement.prototype.scrollTo = original;
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('reads the PTC folder from the workspace detail, which a turn re-reads after a settle', async () => {
     api.getWorkspace.mockResolvedValueOnce({
       workspace_id: 'ws-1',

@@ -477,6 +477,12 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     queryClient.invalidateQueries({ queryKey: queryKeys.threads.byWorkspace(activeWorkspaceId) });
   }, [threadId, symbol, activeWorkspaceId, setSearchParams, queryClient]);
 
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const showTranscript = messages.length > 0 || isLoading || isLoadingHistory;
+  // Every send below rejoins the follow, wherever the reader had scrolled:
+  // their message and the reply land at the end.
+  const rejoinFollow = useStreamFollow(messagesContainerRef, transcriptRef, showTranscript, isLoading || isLoadingHistory);
+
   // Send: shape attachments + chart screenshot like ChatAgent does.
   const handleSend = useCallback(
     (
@@ -555,10 +561,11 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
         ...modelOptions,
         ...(selectionSnapshots.length > 0 ? { chartSelections: selectionSnapshots } : {}),
       });
+      rejoinFollow();
       onClearChartImage();
       chartSelectionStore.clearAll();
     },
-    [symbol, interval, chartImage, chartImageDesc, handleSendMessage, onClearChartImage],
+    [symbol, interval, chartImage, chartImageDesc, handleSendMessage, rejoinFollow, onClearChartImage],
   );
 
   // Stop the running turn (the input's Stop button). Mirrors ChatView: the hook's
@@ -619,10 +626,6 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     }
   }, [threadId, setIsCompacting, insertNotification, t]);
 
-  const transcriptRef = useRef<HTMLDivElement | null>(null);
-  const showTranscript = messages.length > 0 || isLoading || isLoadingHistory;
-  useStreamFollow(messagesContainerRef, transcriptRef, showTranscript, isLoading || isLoadingHistory);
-
   // Subagent navigation — chips deep-link to ChatAgent for full subagent view.
   const handleOpenSubagentTask = useCallback((info: SubagentInfo) => {
     if (!info.subagentId || !threadId || threadId === '__default__') return;
@@ -670,9 +673,11 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
   const stableThumbDown = useStableHandler(handleThumbDown);
   const stableReportWithAgent = useStableHandler((instruction: string) => {
     handleSendMessage(`/self-improve ${instruction}`, false, null, null, {});
+    rejoinFollow();
   });
   const stableWidgetSendPrompt = useStableHandler((text: string) => {
     handleSendMessage(text, false, null, null, {});
+    rejoinFollow();
   });
 
   const messageActions = useMemo<MessageActions>(() => ({

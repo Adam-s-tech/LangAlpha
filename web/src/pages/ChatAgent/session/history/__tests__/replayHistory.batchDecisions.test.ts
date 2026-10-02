@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A batch answered with differing decisions, replayed from the record of them.
  *

@@ -13,6 +13,8 @@ const E2E_AUTH_PORT = Number(process.env.E2E_AUTH_PORT) || 5177;
 // + its parallel index) and e2e/fixtures.js routes the page's API traffic there,
 // so a checkout needs E2E_MOCK_PORT through E2E_MOCK_PORT + workers free.
 const E2E_MOCK_PORT = Number(process.env.E2E_MOCK_PORT) || 4100;
+// Written back resolved so e2e/fixtures.js, read in each worker, gets the same port.
+process.env.E2E_MOCK_PORT = String(E2E_MOCK_PORT);
 // PERF_BUILD only means anything under PERF: the benchmarks are the one caller
 // that wants a production build, and a PERF_BUILD left in the shell must not
 // make an ordinary e2e run wait four minutes for a vite build first.

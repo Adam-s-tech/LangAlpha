@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * The live stream and history replay stamp a launch card from the same tool
  * result, and must leave the same record behind.

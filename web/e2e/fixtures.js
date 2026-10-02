@@ -11,7 +11,7 @@ import { startMockServer } from './mock-sse-server.js';
 // routes the page's API traffic to it, so one worker's reset or one-shot
 // scenario never reaches another's page, and a request that slips past the
 // route fails to connect instead of reading someone else's scenario.
-const APP_API_PORT = Number(process.env.E2E_MOCK_PORT) || 4100;
+const APP_API_PORT = Number(process.env.E2E_MOCK_PORT);
 const WORKER_MOCK_PORT = APP_API_PORT + 1 + Number(process.env.TEST_PARALLEL_INDEX ?? 0);
 const MOCK_SERVER = `http://127.0.0.1:${WORKER_MOCK_PORT}`;
 

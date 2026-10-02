@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import type { OrderSummary } from '@/pages/ChatAgent/utils/api';
 import { HIDDEN, orderAmount, orderLimitPrice, orderSize } from '../utils/format';

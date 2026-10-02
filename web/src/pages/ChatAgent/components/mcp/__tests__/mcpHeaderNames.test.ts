@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import { HEADER_CHOICES, choiceLabel, joinHeader, splitHeader } from '../mcpHeaderNames';
 

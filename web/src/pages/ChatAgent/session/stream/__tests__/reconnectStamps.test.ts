@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import { handleReasoningSignal, handleTextContent, handleToolCalls } from '../mainEventHandlers';
 import { dispatchWithReplayStamp } from '../processStreamEvent';

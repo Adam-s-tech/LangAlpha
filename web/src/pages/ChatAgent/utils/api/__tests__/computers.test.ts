@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Computer client, pinned against payloads captured from the running backend
  * (wt3, :8060) rather than invented: the list and create bodies below are the

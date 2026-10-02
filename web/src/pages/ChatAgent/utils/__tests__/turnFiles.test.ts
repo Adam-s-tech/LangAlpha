@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * What the deliverables strip is allowed to claim a turn produced.
  *

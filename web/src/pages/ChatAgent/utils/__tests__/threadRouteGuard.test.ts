@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * The gate on ChatAgent's redirect-out-of-a-thread-route effect.
  *

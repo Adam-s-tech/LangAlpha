@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A re-raised credit pause has to land back on the card that renders it.
  *

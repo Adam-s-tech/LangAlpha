@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A task that resumed must not replay carrying the reason its previous run
  * stopped for.

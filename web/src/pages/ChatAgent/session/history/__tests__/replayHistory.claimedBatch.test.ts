@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A batch interrupt that replays AFTER the resume that claimed it.
  *

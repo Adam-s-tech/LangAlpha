@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { buildMarketViewUrl, DEFAULT_MARKET_THREAD, MARKET_VIEW_ROUTE_PARAMS, readMarketViewRoute } from '../marketRoute';
 

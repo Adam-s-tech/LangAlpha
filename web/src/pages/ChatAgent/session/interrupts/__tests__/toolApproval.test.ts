@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * An interrupt whose action request names a direct MCP tool (`mcp__*`) is a
  * tool approval, not a plan approval: both projections must write a

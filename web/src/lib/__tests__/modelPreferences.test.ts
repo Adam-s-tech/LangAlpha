@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * The read contract: the new `model_preference` column wins, the legacy
  * `other_preference` still answers for a row (or a tab) the migration has not

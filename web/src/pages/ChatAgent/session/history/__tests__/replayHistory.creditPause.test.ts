@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A credit pause that was resumed must replay as resolved.
  *

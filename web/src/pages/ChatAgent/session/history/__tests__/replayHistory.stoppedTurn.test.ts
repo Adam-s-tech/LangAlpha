@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A hard-stopped turn must replay with its Stopped chip.
  *

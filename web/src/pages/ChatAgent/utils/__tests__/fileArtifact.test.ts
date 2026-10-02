@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A file-operation event is classified by its workspace-relative path.
  *

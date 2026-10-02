@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * The resume settler's fence, and the one board both halves of a resume roll
  * back. Restoring a refused resume's board is correct only on the thread that

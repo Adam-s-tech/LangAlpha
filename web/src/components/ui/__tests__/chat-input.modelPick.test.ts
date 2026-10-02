@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A pick from the composer's model menu writes the account preference, so the
  * choice is kept in one place rather than copied onto the thread. These lock

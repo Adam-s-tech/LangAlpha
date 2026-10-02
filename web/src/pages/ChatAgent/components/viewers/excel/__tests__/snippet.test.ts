@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { buildRangeSnippet, buildWholeSnippet } from '../snippet';
 import { columnName, MAX_COL, MAX_ROW, type CellBox } from '@/pages/ChatAgent/utils/a1';

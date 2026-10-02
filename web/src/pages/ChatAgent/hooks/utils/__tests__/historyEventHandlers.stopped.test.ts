@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * History replay of a stopped turn.
  *

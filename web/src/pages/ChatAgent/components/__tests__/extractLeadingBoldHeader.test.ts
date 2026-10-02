@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Reasoning-row subtitle promotion: confirms we only swap the generic
  * "Reasoning" label when the content really begins with a `**heading**\n\nbody`

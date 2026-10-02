@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import { migrateOnboardingPrefs, emptyOnboardingPrefs } from '../onboardingPrefsSchema';
 import { ONBOARDING_PREFS_VERSION } from '../types';

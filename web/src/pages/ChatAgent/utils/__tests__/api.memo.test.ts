@@ -223,6 +223,9 @@ describe('Memo API utilities', () => {
       URL.revokeObjectURL = vi.fn();
     });
     afterEach(() => {
+      // Here rather than at the end of each test that spies: a failed
+      // assertion skips the rest of its body, and the spy would outlive it.
+      vi.restoreAllMocks();
       URL.createObjectURL = createUrl;
       URL.revokeObjectURL = revokeUrl;
     });
@@ -231,7 +234,7 @@ describe('Memo API utilities', () => {
       mockGet.mockResolvedValue({ data: new Blob(['x']) });
       const click = vi.fn();
       const realCreateElement = document.createElement.bind(document);
-      const createSpy = vi.spyOn(document, 'createElement').mockImplementation(
+      vi.spyOn(document, 'createElement').mockImplementation(
         ((tag: string) => {
           if (tag === 'a') {
             const a = realCreateElement('a') as HTMLAnchorElement;
@@ -246,14 +249,13 @@ describe('Memo API utilities', () => {
 
       expect(click).toHaveBeenCalled();
       expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:fake-url');
-      createSpy.mockRestore();
     });
 
     it('falls back to key as filename when none provided', async () => {
       mockGet.mockResolvedValue({ data: new Blob(['x']) });
       const realCreateElement = document.createElement.bind(document);
       let lastAnchor: HTMLAnchorElement | null = null;
-      const createSpy = vi.spyOn(document, 'createElement').mockImplementation(
+      vi.spyOn(document, 'createElement').mockImplementation(
         ((tag: string) => {
           if (tag === 'a') {
             const a = realCreateElement('a') as HTMLAnchorElement;
@@ -269,7 +271,6 @@ describe('Memo API utilities', () => {
 
       expect(lastAnchor).not.toBeNull();
       expect(lastAnchor!.download).toBe('abc.md');
-      createSpy.mockRestore();
     });
   });
 });

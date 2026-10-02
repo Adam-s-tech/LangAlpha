@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useEffectEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { GripVertical, Settings, MoreVertical, X, Copy, Paperclip } from 'lucide-react';
 import type { WidgetDefinition, WidgetInstance } from '../types';
@@ -79,14 +79,12 @@ export function WidgetFrame({
     });
   };
 
-  // Keep the latest onFitHeight in a ref so the ResizeObserver effect doesn't
-  // tear down / reconnect (and fire a synchronous report) on every parent
-  // render. Parent passes an inline arrow (new identity each render); without
-  // the ref, two fit-to-content widgets can ping-pong parent re-renders.
-  const onFitHeightRef = useRef(onFitHeight);
-  useEffect(() => {
-    onFitHeightRef.current = onFitHeight;
-  }, [onFitHeight]);
+  // Read the latest onFitHeight through an effect event so the ResizeObserver
+  // effect doesn't tear down / reconnect (and fire a synchronous report) on
+  // every parent render. Parent passes an inline arrow (new identity each
+  // render); as a dep, two fit-to-content widgets can ping-pong parent
+  // re-renders.
+  const reportFitHeight = useEffectEvent((totalPx: number) => onFitHeight?.(totalPx));
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -141,7 +139,7 @@ export function WidgetFrame({
       debounceTimer = null;
       if (pending !== lastReported) {
         lastReported = pending;
-        onFitHeightRef.current?.(pending);
+        reportFitHeight(pending);
       }
     };
 
@@ -152,7 +150,7 @@ export function WidgetFrame({
       }
       lastReported = total;
       pending = total;
-      onFitHeightRef.current?.(total);
+      reportFitHeight(total);
     };
 
     const report = () => {

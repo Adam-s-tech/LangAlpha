@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '@/contexts/ThemeContext';
 import { getTVCommonConfig, mapLocaleForTV, resolveScriptSrc } from './tvConfig';
@@ -64,13 +64,12 @@ export function TradingViewEmbed({ scriptKey, config, className, card = false, c
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [retryToken, setRetryToken] = useState(0);
   const builtOnceRef = useRef(false);
-  // Mirror of `status` for use inside the rebuild effect without adding it
-  // to the dep array — the effect would otherwise re-run on every status
-  // flip (including loading→ready), causing a rebuild loop.
-  const statusRef = useRef(status);
-  useEffect(() => {
-    statusRef.current = status;
-  }, [status]);
+  // Reads `status` inside the rebuild effect without adding it to the dep
+  // array: the effect would otherwise re-run on every status flip (including
+  // loading→ready), causing a rebuild loop.
+  const clearStuckError = useEffectEvent(() => {
+    if (status === 'error') setStatus('loading');
+  });
 
   // Stable JSON of config. Effect dependency uses the string so reference
   // changes from inline object literals don't trigger spurious rebuilds.
@@ -87,7 +86,7 @@ export function TradingViewEmbed({ scriptKey, config, className, card = false, c
     // Clear a stuck error overlay when a real config/theme change triggers
     // a rebuild. Skip when healthy so theme toggles across 17 tiles don't
     // flash the loading skeleton.
-    if (statusRef.current === 'error') setStatus('loading');
+    clearStuckError();
 
     let timeoutId: number | null = null;
     let buildTimer: number | null = null;

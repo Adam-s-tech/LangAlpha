@@ -408,5 +408,5 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     ]
   );
 
-  return <OnboardingContext.Provider value={value}>{children}</OnboardingContext.Provider>;
+  return <OnboardingContext value={value}>{children}</OnboardingContext>;
 }

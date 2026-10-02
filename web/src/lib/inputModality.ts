@@ -168,3 +168,18 @@ if (typeof window !== 'undefined') {
 export function lastInputWasPointer(): boolean {
   return pointer;
 }
+
+/**
+ * `onCloseAutoFocus` for a Radix overlay. Radix hands focus back to the trigger
+ * on close so a keyboard user keeps their place, and Chromium carries
+ * :focus-visible across that programmatic move, so an overlay opened and
+ * dismissed with the mouse would leave the trigger ringed until the next click.
+ * Skip the restore when no key was pressed: focus falls to <body>, which is
+ * where clicking anywhere else would have put it anyway.
+ */
+export function closeAutoFocus(userHandler?: (event: Event) => void) {
+  return (event: Event) => {
+    userHandler?.(event);
+    if (!event.defaultPrevented && pointer) event.preventDefault();
+  };
+}

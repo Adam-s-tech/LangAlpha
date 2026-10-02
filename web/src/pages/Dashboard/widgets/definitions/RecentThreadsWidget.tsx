@@ -5,7 +5,8 @@ import { MessagesSquare, ArrowUpRight, MessageSquareText, Zap } from 'lucide-rea
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
-import { getRecentThreads, getWorkspaceThreads } from '@/pages/ChatAgent/utils/api';
+import { getRecentThreads } from '@/pages/ChatAgent/utils/api';
+import { workspaceThreadsQuery } from '@/pages/ChatAgent/utils/threadQueries';
 import { clearChatSession } from '@/pages/ChatAgent/hooks/utils/chatSessionRestore';
 import type { Thread, ThreadsResponse, Workspace } from '@/types/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -238,19 +239,15 @@ function RecentThreadsWidget({ instance }: WidgetRenderProps<RecentThreadsConfig
     return map;
   }, [wsListData]);
 
-  const { data, isLoading } = useQuery<ThreadsResponse>({
-    queryKey: isAllScope
-      ? queryKeys.threads.recent(limit)
-      : targetWorkspaceId
-        ? [...queryKeys.threads.byWorkspace(targetWorkspaceId), limit, 0]
-        : ['threads', 'noop'],
-    queryFn: () =>
-      (isAllScope
-        ? getRecentThreads(limit, 0)
-        : getWorkspaceThreads(targetWorkspaceId!, limit, 0)) as Promise<ThreadsResponse>,
-    enabled: isAllScope || !!targetWorkspaceId,
-    staleTime: 30_000,
-  });
+  const { data, isLoading } = useQuery(
+    isAllScope
+      ? {
+          queryKey: queryKeys.threads.recent(limit),
+          queryFn: () => getRecentThreads(limit, 0) as Promise<ThreadsResponse>,
+          staleTime: 30_000,
+        }
+      : { ...workspaceThreadsQuery(targetWorkspaceId ?? '', limit), enabled: !!targetWorkspaceId },
+  );
 
   const threads = useMemo(() => data?.threads ?? [], [data]);
 

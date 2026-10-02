@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useEffectEvent, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { KeyRound, Plus, X } from 'lucide-react';
 import {
@@ -80,9 +80,8 @@ function useLastPresentByKey<T>(
  * to keep in step with the one the animation is really running.
  */
 function OnFoldGone({ onGone, children }: { onGone: () => void; children: React.ReactNode }) {
-  const latest = useRef(onGone);
-  latest.current = onGone;
-  useEffect(() => () => latest.current(), []);
+  const notifyGone = useEffectEvent(onGone);
+  useEffect(() => () => notifyGone(), []);
   return <>{children}</>;
 }
 

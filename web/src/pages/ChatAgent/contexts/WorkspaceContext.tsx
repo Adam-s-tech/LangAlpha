@@ -16,7 +16,7 @@ interface WorkspaceProviderProps {
 
 export const WorkspaceProvider = ({ workspaceId, downloadFile, children }: WorkspaceProviderProps) => {
   const value = useMemo(() => ({ workspaceId, downloadFile }), [workspaceId, downloadFile]);
-  return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
+  return <WorkspaceContext value={value}>{children}</WorkspaceContext>;
 };
 
 export const useWorkspaceId = () => useContext(WorkspaceContext).workspaceId;

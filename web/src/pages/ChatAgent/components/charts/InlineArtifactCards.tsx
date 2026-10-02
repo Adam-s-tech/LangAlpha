@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Cell,
   LabelList,
@@ -91,30 +91,6 @@ function abbreviateSector(name: string): string {
  *  elsewhere and is fixed in styles/tokens.css, not by this flag.) */
 const NO_KEYBOARD_LAYER = false;
 
-/** Measures container width via ResizeObserver and passes it to children as a render prop.
- *  Replaces ResponsiveContainer to avoid the Recharts width(-1) warning on first render. */
-function MeasuredContainer({ height, children }: { height: number; children: (width: number) => React.ReactNode }): React.ReactElement {
-  const ref = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) => {
-      const w = Math.round(entry.contentRect.width);
-      setWidth((prev) => (prev !== w ? w : prev));
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  return (
-    <div ref={ref} style={{ width: '100%', height, minWidth: 1 }}>
-      {width > 0 && children(width)}
-    </div>
-  );
-}
-
 // ─── InlineStockPriceCard ───────────────────────────────────────────
 
 export function InlineStockPriceCard({ artifact, onClick }: InlineCardProps): React.ReactElement | null {
@@ -173,34 +149,31 @@ export function InlineStockPriceCard({ artifact, onClick }: InlineCardProps): Re
       </div>
 
       {/* Sparkline */}
-      <MeasuredContainer height={isMobile ? 48 : 64}>
-        {(w) => (
-          <AreaChart
-            width={w}
-            height={isMobile ? 48 : 64}
-            data={sparkData}
-            margin={{ top: 4, right: 2, bottom: 2, left: 2 }}
-            accessibilityLayer={NO_KEYBOARD_LAYER}
-          >
-            <defs>
-              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={color} stopOpacity={0.3} />
-                <stop offset="100%" stopColor={color} stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-            <YAxis type="number" domain={['dataMin', 'dataMax']} hide />
-            <Area
-              type="monotone"
-              dataKey="close"
-              stroke={color}
-              strokeWidth={1.5}
-              fill={`url(#${gradientId})`}
-              dot={false}
-              isAnimationActive={false}
-            />
-          </AreaChart>
-        )}
-      </MeasuredContainer>
+      <AreaChart
+        responsive
+        width="100%"
+        height={isMobile ? 48 : 64}
+        data={sparkData}
+        margin={{ top: 4, right: 2, bottom: 2, left: 2 }}
+        accessibilityLayer={NO_KEYBOARD_LAYER}
+      >
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity={0.3} />
+            <stop offset="100%" stopColor={color} stopOpacity={0.02} />
+          </linearGradient>
+        </defs>
+        <YAxis type="number" domain={['dataMin', 'dataMax']} hide />
+        <Area
+          type="monotone"
+          dataKey="close"
+          stroke={color}
+          strokeWidth={1.5}
+          fill={`url(#${gradientId})`}
+          dot={false}
+          isAnimationActive={false}
+        />
+      </AreaChart>
 
       {/* Footer stats */}
       {stats && (
@@ -458,38 +431,35 @@ export function InlineSectorPerformanceCard({ artifact, onClick }: InlineCardPro
       <div style={{ fontWeight: 600, color: 'var(--color-text-primary)', fontSize: sz.headerFs, marginBottom: sz.sectionMb }}>
         {t('toolArtifact.sectorPerformance')}
       </div>
-      <MeasuredContainer height={chartHeight}>
-        {(w) => (
-          <BarChart
-            width={w}
-            height={chartHeight}
-            data={chartData}
-            layout="vertical"
-            margin={{ left: 0, right: isMobile ? 40 : 50, top: 0, bottom: 0 }}
-            accessibilityLayer={NO_KEYBOARD_LAYER}
-          >
-            <XAxis type="number" hide />
-            <YAxis
-              type="category"
-              dataKey="name"
-              width={isMobile ? 80 : 100}
-              tick={{ fill: TEXT_COLOR, fontSize: sz.chartFs }}
-              axisLine={false}
-              tickLine={false}
-            />
-            <Bar dataKey="value" radius={[0, 3, 3, 0]} barSize={isMobile ? 11 : 14} isAnimationActive={false}>
-              {chartData.map((entry, i) => (
-                <Cell key={i} fill={entry.fill} />
-              ))}
-              <LabelList
-                dataKey="label"
-                position="right"
-                style={{ fill: TEXT_COLOR, fontSize: sz.chartFs }}
-              />
-            </Bar>
-          </BarChart>
-        )}
-      </MeasuredContainer>
+      <BarChart
+        responsive
+        width="100%"
+        height={chartHeight}
+        data={chartData}
+        layout="vertical"
+        margin={{ left: 0, right: isMobile ? 40 : 50, top: 0, bottom: 0 }}
+        accessibilityLayer={NO_KEYBOARD_LAYER}
+      >
+        <XAxis type="number" hide />
+        <YAxis
+          type="category"
+          dataKey="name"
+          width={isMobile ? 80 : 100}
+          tick={{ fill: TEXT_COLOR, fontSize: sz.chartFs }}
+          axisLine={false}
+          tickLine={false}
+        />
+        <Bar dataKey="value" radius={[0, 3, 3, 0]} barSize={isMobile ? 11 : 14} isAnimationActive={false}>
+          {chartData.map((entry, i) => (
+            <Cell key={i} fill={entry.fill} />
+          ))}
+          <LabelList
+            dataKey="label"
+            position="right"
+            style={{ fill: TEXT_COLOR, fontSize: sz.chartFs }}
+          />
+        </Bar>
+      </BarChart>
     </div>
   );
 }

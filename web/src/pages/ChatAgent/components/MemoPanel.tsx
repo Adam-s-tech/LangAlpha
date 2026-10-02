@@ -146,35 +146,6 @@ function errToString(err: unknown): string {
   return e?.response?.data?.detail || e?.message || String(err);
 }
 
-// --- Layout breakpoints (panel-relative, not viewport) -------------------
-// The memo panel lives in the file panel, which the user can resize, so the
-// breakpoints are container-relative. Tracked via ResizeObserver.
-const BREAK_HIDE_PROVENANCE = 520; // below this, hide the workspace · path subline
-const BREAK_HIDE_TYPE = 640;       // below this, hide the Type column
-const BREAK_HIDE_SECONDARY = 420;  // below this, hide Size + Uploaded too
-
-
-function useElementWidth(): {
-  ref: React.MutableRefObject<HTMLDivElement | null>;
-  width: number;
-} {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    setWidth(node.getBoundingClientRect().width);
-    const observer = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width ?? 0;
-      setWidth(w);
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-  return { ref, width };
-}
-
-
 // --- Status Badge ---------------------------------------------------------
 
 function StatusBadge({ status }: { status: MemoMetadataStatus | null | undefined }) {
@@ -430,12 +401,6 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
       onCancel={handleDiscardCancel}
     />
   );
-
-  // Panel width drives the responsive layout below.
-  const { ref: bodyRef, width: panelWidth } = useElementWidth();
-  const showProvenance = panelWidth === 0 || panelWidth >= BREAK_HIDE_PROVENANCE;
-  const showType = panelWidth === 0 || panelWidth >= BREAK_HIDE_TYPE;
-  const showSecondary = panelWidth === 0 || panelWidth >= BREAK_HIDE_SECONDARY;
 
   // Bulk-select state — only relevant in the list view, never in detail.
   const [selectMode, setSelectMode] = useState(false);
@@ -1213,11 +1178,11 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
         </div>
       )}
 
-      {/* Body */}
-      <div
-        ref={bodyRef}
-        className="flex-1 min-h-0 overflow-y-auto relative"
-      >
+      {/* Body. The file panel is resizable, so the columns answer to this
+          container's width, not the viewport's: below 640px the Type column
+          goes, below 520px the workspace and path subline, below 420px Size
+          and Uploaded too. */}
+      <div className="@container flex-1 min-h-0 overflow-y-auto relative">
         {isDragOver && (
           <div className="file-panel-drag-overlay">
             <Upload
@@ -1268,27 +1233,21 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
                 <th className="font-medium px-3 py-2">
                   {t('memoPanel.columns.name')}
                 </th>
-                {showType && (
-                  <th className="font-medium px-2 py-2 whitespace-nowrap">
-                    {t('memoPanel.columns.type')}
-                  </th>
-                )}
-                {showSecondary && (
-                  <th className="font-medium px-2 py-2 whitespace-nowrap">
-                    {t('memoPanel.columns.size')}
-                  </th>
-                )}
+                <th className="hidden @min-[640px]:table-cell font-medium px-2 py-2 whitespace-nowrap">
+                  {t('memoPanel.columns.type')}
+                </th>
+                <th className="hidden @min-[420px]:table-cell font-medium px-2 py-2 whitespace-nowrap">
+                  {t('memoPanel.columns.size')}
+                </th>
                 <th className="font-medium px-2 py-2 whitespace-nowrap">
                   {t('memoPanel.columns.status')}
                 </th>
                 <th className="font-medium px-2 py-2">
                   {t('memoPanel.columns.description')}
                 </th>
-                {showSecondary && (
-                  <th className="font-medium px-2 py-2 whitespace-nowrap">
-                    {t('memoPanel.columns.uploaded')}
-                  </th>
-                )}
+                <th className="hidden @min-[420px]:table-cell font-medium px-2 py-2 whitespace-nowrap">
+                  {t('memoPanel.columns.uploaded')}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -1360,9 +1319,9 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
                           >
                             {displayName}
                           </div>
-                          {isSandboxSourced && showProvenance && (
+                          {isSandboxSourced && (
                             <div
-                              className="truncate max-w-56 text-[0.625rem]"
+                              className="hidden @min-[520px]:block truncate max-w-56 text-[0.625rem]"
                               style={{ color: 'var(--color-text-tertiary)' }}
                               title={sourceTitle}
                             >
@@ -1372,22 +1331,18 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
                         </div>
                       </div>
                     </td>
-                    {showType && (
-                      <td
-                        className="px-2 py-2 whitespace-nowrap"
-                        style={{ color: 'var(--color-text-tertiary)' }}
-                      >
-                        {mimeToLabel(entry.mime_type, entry.key)}
-                      </td>
-                    )}
-                    {showSecondary && (
-                      <td
-                        className="px-2 py-2 whitespace-nowrap"
-                        style={{ color: 'var(--color-text-tertiary)' }}
-                      >
-                        {formatBytes(entry.size_bytes)}
-                      </td>
-                    )}
+                    <td
+                      className="hidden @min-[640px]:table-cell px-2 py-2 whitespace-nowrap"
+                      style={{ color: 'var(--color-text-tertiary)' }}
+                    >
+                      {mimeToLabel(entry.mime_type, entry.key)}
+                    </td>
+                    <td
+                      className="hidden @min-[420px]:table-cell px-2 py-2 whitespace-nowrap"
+                      style={{ color: 'var(--color-text-tertiary)' }}
+                    >
+                      {formatBytes(entry.size_bytes)}
+                    </td>
                     <td className="px-2 py-2 whitespace-nowrap">
                       <StatusBadge status={entry.metadata_status} />
                     </td>
@@ -1399,14 +1354,12 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
                         {entry.description || ''}
                       </div>
                     </td>
-                    {showSecondary && (
-                      <td
-                        className="px-2 py-2 whitespace-nowrap"
-                        style={{ color: 'var(--color-text-tertiary)' }}
-                      >
-                        {formatDate(entry.created_at)}
-                      </td>
-                    )}
+                    <td
+                      className="hidden @min-[420px]:table-cell px-2 py-2 whitespace-nowrap"
+                      style={{ color: 'var(--color-text-tertiary)' }}
+                    >
+                      {formatDate(entry.created_at)}
+                    </td>
                   </tr>
                 );
               })}

@@ -1,6 +1,7 @@
 import React from 'react';
 import Editor, { DiffEditor } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
+import { rememberMonaco, saveViewState } from './editorModels';
 
 const EXT_TO_MONACO_LANG: Record<string, string> = {
   py: 'python', js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
@@ -53,11 +54,14 @@ interface CodeEditorProps {
   diffMode?: boolean;
   originalValue?: string;
   editorRef?: React.MutableRefObject<editor.IStandaloneCodeEditor | null>;
+  /** The Monaco model to edit. Given, the model outlives this editor, so undo
+   * history and view state survive a remount, and the caller disposes it. */
+  modelPath?: string;
   onUndoRedoChange?: (state: UndoRedoState) => void;
   onTextSelect?: (selection: TextSelection | null) => void;
 }
 
-export default function CodeEditor({ value, onChange, fileName, readOnly = false, height = '100%', diffMode = false, originalValue, editorRef, onUndoRedoChange, onTextSelect }: CodeEditorProps) {
+export default function CodeEditor({ value, onChange, fileName, readOnly = false, height = '100%', diffMode = false, originalValue, editorRef, modelPath, onUndoRedoChange, onTextSelect }: CodeEditorProps) {
   const language = getLanguageFromFileName(fileName);
   const theme = getTheme();
   const showDiff = diffMode && originalValue != null;
@@ -65,6 +69,20 @@ export default function CodeEditor({ value, onChange, fileName, readOnly = false
   // Track DiffEditor listener disposables to prevent "TextModel got disposed" race
   const diffDisposablesRef = React.useRef<{ dispose(): void }[]>([]);
   const diffDisposedRef = React.useRef(false);
+
+  // The instance goes with this mount; a ref left pointing at it would
+  // drive a disposed editor from the toolbar.
+  const mountedRef = React.useRef<editor.IStandaloneCodeEditor | null>(null);
+  React.useEffect(() => () => {
+    if (editorRef && editorRef.current === mountedRef.current) editorRef.current = null;
+  }, [editorRef]);
+
+  // A kept model's scroll and selection are filed with its session in
+  // editorModels. This is a layout cleanup because the library disposes the
+  // editor in a passive one, and the state has to be read before that.
+  React.useLayoutEffect(() => () => {
+    if (modelPath && mountedRef.current) saveViewState(mountedRef.current);
+  }, [modelPath]);
 
   React.useEffect(() => {
     if (showDiff) {
@@ -81,28 +99,31 @@ export default function CodeEditor({ value, onChange, fileName, readOnly = false
     <div style={{ position: 'relative', height, width: '100%' }}>
       {/* Always-mounted editor — preserves undo stack across diff toggles */}
       <div style={showDiff ? { position: 'absolute', inset: 0, visibility: 'hidden', pointerEvents: 'none' } : { height: '100%' }}>
+        {/* One instance per model: onMount reports the undo state of the model
+            it opens on, and a model swapped into a live instance would leave
+            the toolbar showing the last one's. */}
         <Editor
+          key={modelPath}
           height="100%"
           language={language}
           theme={theme}
           value={value ?? ''}
+          path={modelPath}
+          keepCurrentModel={modelPath != null}
+          saveViewState={false}
+          beforeMount={rememberMonaco}
           onMount={(monacoEditor: editor.IStandaloneCodeEditor) => {
+            mountedRef.current = monacoEditor;
             if (editorRef) editorRef.current = monacoEditor;
-            let undoDepth = 0;
-            let redoDepth = 0;
-            onUndoRedoChange?.({ canUndo: false, canRedo: false });
-            monacoEditor.onDidChangeModelContent((e) => {
-              if (e.isUndoing) {
-                undoDepth--;
-                redoDepth++;
-              } else if (e.isRedoing) {
-                undoDepth++;
-                redoDepth--;
-              } else {
-                undoDepth++;
-                redoDepth = 0;
-              }
-              onUndoRedoChange?.({ canUndo: undoDepth > 0, canRedo: redoDepth > 0 });
+            // Read from the model, not counted from this mount: a kept model
+            // arrives with the history it had when its tab was left.
+            const reportUndoRedo = () => {
+              const model = monacoEditor.getModel();
+              onUndoRedoChange?.({ canUndo: !!model?.canUndo(), canRedo: !!model?.canRedo() });
+            };
+            reportUndoRedo();
+            monacoEditor.onDidChangeModelContent(() => {
+              reportUndoRedo();
               onChange?.(monacoEditor.getValue());
             });
             // Text selection callback for "Add to context"

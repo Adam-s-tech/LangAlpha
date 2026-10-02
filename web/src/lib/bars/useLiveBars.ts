@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useEffectEvent, useRef } from 'react';
 import type { RefObject } from 'react';
 import {
   advanceWatermark,
@@ -97,17 +97,15 @@ export function useLiveBars(
   const nextChangeAtRef = useRef<number | null>(null);
   const armBoundaryRef = useRef<(() => void) | null>(null);
 
-  // Live symbol/interval, synced during render, for the post-await staleness
+  // Symbol/interval as of the last commit, for the post-await staleness
   // re-check (see the poll body).
-  const symbolRef = useRef(symbol);
-  const intervalRef = useRef(interval);
-  symbolRef.current = symbol;
-  intervalRef.current = interval;
+  const liveSymbol = useEffectEvent(() => symbol);
+  const liveInterval = useEffectEvent(() => interval);
 
-  // Callbacks read through refs so a new closure each render doesn't tear down
-  // and re-arm the poll interval.
-  const onBarsRef = useRef(onBars);
-  onBarsRef.current = onBars;
+  // Callbacks read through effect events and refs so a new closure each render
+  // doesn't tear down and re-arm the poll interval. onMeta and onPhase stay on
+  // refs: seedMeta calls them from the loader, outside any effect.
+  const emitBars = useEffectEvent(onBars);
   const onMetaRef = useRef(onMeta);
   onMetaRef.current = onMeta;
   const onPhaseRef = useRef(onPhase);
@@ -154,8 +152,8 @@ export function useLiveBars(
       if (dataRef.current.length === 0) return;
       lastReconcileRef.current = now;
 
-      const sym = symbolRef.current;
-      const iv = intervalRef.current;
+      const sym = liveSymbol();
+      const iv = liveInterval();
       try {
         // Delta-poll: records newer than the stored watermark (server-side
         // `after=`) PLUS the re-served forming head bar, falling back to a full
@@ -164,10 +162,10 @@ export function useLiveBars(
         if (aborted) return;
         // Post-await staleness (belt and braces): the effect re-runs on
         // symbol/interval change (deps) which aborts in-flight polls via the
-        // cleanup, AND we re-check the live refs here to drop a response that
+        // cleanup, AND we re-check the live values here to drop a response that
         // resolved in the window between the render committing a new
         // symbol/interval and that cleanup running.
-        if (symbolRef.current !== sym || intervalRef.current !== iv) return;
+        if (liveSymbol() !== sym || liveInterval() !== iv) return;
 
         // Forward-only against jitter, but a watermark a full bucket older means
         // the server envelope was rebuilt — adopt it or the cursor strands past
@@ -215,7 +213,7 @@ export function useLiveBars(
         if (!changed) return;
 
         dataRef.current = merged;
-        onBarsRef.current(merged, { headChanged });
+        emitBars(merged, { headChanged });
       } catch (err) {
         const e = err as { name?: string };
         if (e?.name === 'AbortError' || e?.name === 'CanceledError') return;

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Dialog,
@@ -46,15 +46,14 @@ function ChangeSpecDialog({ target, onClose, onSubmit, busy, quota, error }: Cha
   // that pick. Opened from a disk warning, the useful default is one step up,
   // but only where the plan allows it, and the quota that says so lands after
   // the dialog opens, so the seed is re-evaluated as it arrives.
-  const targetRef = useRef(target);
-  targetRef.current = target;
+  const readTarget = useEffectEvent(() => target);
   const pickedRef = useRef(false);
   const isOpen = !!target;
   useEffect(() => {
     if (isOpen) pickedRef.current = false;
   }, [isOpen]);
   useEffect(() => {
-    const opened = targetRef.current;
+    const opened = readTarget();
     if (!isOpen || !opened || pickedRef.current) return;
     const current = effectiveTier(opened);
     const up = isDiskAlertLevel(opened.disk?.level) ? nextTier(current) : null;

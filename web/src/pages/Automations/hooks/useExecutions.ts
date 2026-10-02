@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import type { AutomationExecution } from '@/types/automation';
 import { isRunLive } from '../utils/status';
@@ -12,18 +12,19 @@ interface UseExecutionsResult {
 }
 
 const EMPTY: AutomationExecution[] = [];
-const STALE_MS = 5000;
 
-const fetchExecutions = async (automationId: string) =>
-  (await listExecutions(automationId, { limit: 20, offset: 0 })).data;
+const executionsQuery = (automationId: string) =>
+  queryOptions({
+    queryKey: queryKeys.automations.executions(automationId),
+    queryFn: async () => (await listExecutions(automationId, { limit: 20, offset: 0 })).data,
+    staleTime: 5000,
+  });
 
 export function useExecutions(automationId: string): UseExecutionsResult {
   const { data, isLoading } = useQuery({
-    queryKey: queryKeys.automations.executions(automationId),
-    queryFn: () => fetchExecutions(automationId),
+    ...executionsQuery(automationId),
     refetchInterval: (query) => pollMs(!!query.state.data?.executions.some((e) => isRunLive(e.status))),
     refetchIntervalInBackground: false,
-    staleTime: STALE_MS,
   });
 
   return { executions: data?.executions ?? EMPTY, loading: isLoading };
@@ -35,11 +36,7 @@ export function usePrefetchExecutions() {
   const queryClient = useQueryClient();
   return useCallback(
     (automationId: string) => {
-      void queryClient.prefetchQuery({
-        queryKey: queryKeys.automations.executions(automationId),
-        queryFn: () => fetchExecutions(automationId),
-        staleTime: STALE_MS,
-      });
+      void queryClient.prefetchQuery(executionsQuery(automationId));
     },
     [queryClient],
   );

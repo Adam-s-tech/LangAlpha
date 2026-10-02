@@ -92,9 +92,9 @@ export function MessageActionsProvider({
   children: React.ReactNode;
 }): React.ReactElement {
   return (
-    <MessageActionsContext.Provider value={actions}>
+    <MessageActionsContext value={actions}>
       {children}
-    </MessageActionsContext.Provider>
+    </MessageActionsContext>
   );
 }
 

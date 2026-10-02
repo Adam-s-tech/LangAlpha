@@ -23,10 +23,9 @@ import { useEffect, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
-import { queryKeys } from '@/lib/queryKeys';
-
-import { getWorkspace, streamWorkspaceEvents } from '../utils/api';
+import { streamWorkspaceEvents } from '../utils/api';
 import { patchWorkspaceStatusInCaches, warmWorkspace } from '../utils/warmWorkspace';
+import { workspaceDetailQuery } from '../utils/workspaceQueries';
 
 const TERMINAL_STATUSES = new Set(['running', 'error', 'deleted']);
 
@@ -52,9 +51,7 @@ export function useWarmWorkspaceSandbox(
     // a server-side DB read on every navigation to an already-running
     // workspace (the common case). When status is unknown (cold nav), open the
     // stream — warmWorkspace resolves the real status concurrently.
-    const known = queryClient.getQueryData<{ status?: string }>(
-      queryKeys.workspaces.detail(workspaceId),
-    );
+    const known = queryClient.getQueryData(workspaceDetailQuery(workspaceId).queryKey);
     if (known?.status && TERMINAL_STATUSES.has(known.status)) return;
 
     const controller = new AbortController();
@@ -88,22 +85,18 @@ export function useWarmWorkspaceSandbox(
       // 'starting' written by warmWorkspace could be stale — the backend may
       // have reached 'running' after the stream died.
       if (controller.signal.aborted) return;
-      const current = queryClient.getQueryData<{ status?: string }>(
-        queryKeys.workspaces.detail(workspaceId),
-      );
+      const current = queryClient.getQueryData(workspaceDetailQuery(workspaceId).queryKey);
       if (!current?.status || !TERMINAL_STATUSES.has(current.status)) {
         // Fetch the authoritative status and reconcile local state. A bare
         // invalidateQueries can't clear the spinner: in TanStack v5 it only
         // refetches *active* queries, and even on refetch it never updates this
         // hook's local `warming` — so a stream that ends mid-'starting' (600s
         // server timeout or a dropped connection) would pin the spinner on
-        // 'starting' indefinitely.
+        // 'starting' indefinitely. staleTime 0: the stream's own patches just
+        // stamped the entry fresh, and the point is a read past them.
         try {
-          const fresh = await queryClient.fetchQuery({
-            queryKey: queryKeys.workspaces.detail(workspaceId),
-            queryFn: () => getWorkspace(workspaceId),
-          });
-          const status = (fresh as { status?: string })?.status;
+          const fresh = await queryClient.fetchQuery({ ...workspaceDetailQuery(workspaceId), staleTime: 0 });
+          const status = fresh?.status;
           if (status) patchWorkspaceStatusInCaches(queryClient, workspaceId, status);
           if (status !== 'starting') setWarming(false);
         } catch {

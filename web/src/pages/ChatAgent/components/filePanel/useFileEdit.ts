@@ -4,12 +4,14 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { editor } from 'monaco-editor';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/components/ui/use-toast';
+import { disposeEditorModel, newEditorModelPath } from '../viewers/editorModels';
 
 /** One tab's editor, parked while another tab is on screen. */
 interface EditDraft {
   isEditing: boolean;
   editContent: string | null;
   originalContent: string | null;
+  modelPath: string | null;
 }
 
 /** Edit-mode state for FilePanel: full-content load, Monaco editor wiring,
@@ -43,6 +45,8 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, fileContent, set
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showDiff, setShowDiff] = useState(false);
   const [originalContent, setOriginalContent] = useState<string | null>(null);
+  // The Monaco model this edit session types into, one per session.
+  const [modelPath, setModelPath] = useState<string | null>(null);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -62,12 +66,13 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, fileContent, set
   const [ownerTab, setOwnerTab] = useState(tabId);
   if (ownerTab !== tabId) {
     if (dropped.current === ownerTab) dropped.current = null;
-    else drafts.current.set(ownerTab, { isEditing, editContent, originalContent });
+    else drafts.current.set(ownerTab, { isEditing, editContent, originalContent, modelPath });
     const parked = drafts.current.get(tabId);
     setOwnerTab(tabId);
     setIsEditing(parked?.isEditing ?? false);
     setEditContent(parked?.editContent ?? null);
     setOriginalContent(parked?.originalContent ?? null);
+    setModelPath(parked?.modelPath ?? null);
     setShowDiff(false);
     setSaveError(null);
   }
@@ -78,11 +83,25 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, fileContent, set
     // swap has committed: a render React throws away and retries would
     // otherwise find nothing parked the second time.
     drafts.current.delete(tabId);
-    // The Monaco instance belongs to the mount that is going away with the tab.
-    editorRef.current = null;
-    setCanUndo(false);
-    setCanRedo(false);
   }, [tabId]);
+
+  // A session's model is disposed once neither the editor nor a parked draft
+  // can come back to it: after a save, a cancel, a closed tab or a deleted file.
+  const models = useRef(new Set<string>());
+  useEffect(() => {
+    const live = new Set<string>();
+    if (isEditing && modelPath) live.add(modelPath);
+    for (const d of drafts.current.values()) if (d.isEditing && d.modelPath) live.add(d.modelPath);
+    for (const path of models.current) {
+      if (live.has(path)) continue;
+      disposeEditorModel(path);
+      models.current.delete(path);
+    }
+  });
+  useEffect(() => {
+    const owned = models.current;
+    return () => owned.forEach(disposeEditorModel);
+  }, []);
 
   const isSaving = savingFile !== null && savingFile === selectedFile;
   const hasUnsavedChanges = isEditing && editContent !== null && editContent !== fileContent;
@@ -120,6 +139,9 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, fileContent, set
         setSaveError(t('filePanel.fileTooLarge'));
         return;
       }
+      const path = newEditorModelPath(selectedFile);
+      models.current.add(path);
+      setModelPath(path);
       setEditContent(fullContent);
       setOriginalContent(fullContent);
       setFileContent(fullContent);
@@ -228,6 +250,7 @@ export function useFileEdit({ tabId, workspaceId, selectedFile, fileContent, set
     originalContent,
     setOriginalContent,
     editorRef,
+    modelPath,
     canUndo,
     setCanUndo,
     canRedo,

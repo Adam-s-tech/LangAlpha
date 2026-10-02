@@ -24,8 +24,8 @@ export function CreditPausePendingProvider({
     [creditPauses],
   );
   return (
-    <CreditPausePendingContext.Provider value={pending}>
+    <CreditPausePendingContext value={pending}>
       {children}
-    </CreditPausePendingContext.Provider>
+    </CreditPausePendingContext>
   );
 }

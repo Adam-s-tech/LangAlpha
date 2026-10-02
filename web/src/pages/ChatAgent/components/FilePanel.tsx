@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState, Suspense } from 'react';
+import React, { useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState, Suspense } from 'react';
 import { TextSelect, Upload } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -238,8 +238,8 @@ function FilePanel({
   // bytes written over while it was away and stamp that write as read. With
   // no observer left, marking stale issues no request; the active tab
   // re-reads on the way back in.
-  const dropBodies = useStableHandler(() => cache.invalidate());
-  useEffect(() => () => dropBodies(), [dropBodies]);
+  const dropBodies = useEffectEvent(() => cache.invalidate());
+  useEffect(() => () => dropBodies(), []);
 
   const downloads = useFileDownloads({ workspaceId, triggerDownloadFn, workspaceStatus: wsData?.status });
   const fileError = downloads.errorFor(selectedFile) ?? readError;
@@ -264,14 +264,14 @@ function FilePanel({
   // wrapper that owns the close button therefore has to ask before it unmounts
   // the panel, and can only know to when the panel says so. Reporting clean on
   // the way out keeps it from asking about a panel that is already gone.
-  const reportDirty = useStableHandler((dirty: boolean) => onDirtyChange?.(dirty));
-  useEffect(() => { reportDirty(edit.hasAnyUnsavedChanges); }, [edit.hasAnyUnsavedChanges, reportDirty]);
-  useEffect(() => () => reportDirty(false), [reportDirty]);
+  const reportDirty = useEffectEvent((dirty: boolean) => onDirtyChange?.(dirty));
+  useEffect(() => { reportDirty(edit.hasAnyUnsavedChanges); }, [edit.hasAnyUnsavedChanges]);
+  useEffect(() => () => reportDirty(false), []);
 
   // Reported on mount too, for a strip restored with a chart in front.
-  const reportActiveKind = useStableHandler((kind: FileTab['kind'] | null) => onActiveTabKindChange?.(kind));
-  useEffect(() => { reportActiveKind(activeTab.kind); }, [activeTab.kind, reportActiveKind]);
-  useEffect(() => () => reportActiveKind(null), [reportActiveKind]);
+  const reportActiveKind = useEffectEvent((kind: FileTab['kind'] | null) => onActiveTabKindChange?.(kind));
+  useEffect(() => { reportActiveKind(activeTab.kind); }, [activeTab.kind]);
+  useEffect(() => () => reportActiveKind(null), []);
 
   const { selectionTooltip, contentWrapperRef, contextMenu, setContextMenu, handleContentMouseUp, handleEditorTextSelect, handleAddSelectionContext } =
     useSelectionContext({ selectedFile, fileContent, onAddContext });
@@ -570,7 +570,7 @@ function FilePanel({
   }, []);
 
   return (
-    <RouteLeaveGuardContext.Provider value={guardLeave}>
+    <RouteLeaveGuardContext value={guardLeave}>
     <div className="file-panel" ref={panelRef} onKeyDown={tree.onEscape}>
       <TabStrip
         tabs={tabs.tabs}
@@ -738,6 +738,7 @@ function FilePanel({
                   originalContent: edit.originalContent,
                   showDiff: edit.showDiff,
                   editorRef: edit.editorRef,
+                  editorModelPath: edit.modelPath,
                   onEditorChange: edit.handleEditorChange,
                   onUndoRedoChange: edit.handleUndoRedoChange,
                   onEditorTextSelect: handleEditorTextSelect,
@@ -836,7 +837,7 @@ function FilePanel({
         />
       )}
     </div>
-    </RouteLeaveGuardContext.Provider>
+    </RouteLeaveGuardContext>
   );
 }
 

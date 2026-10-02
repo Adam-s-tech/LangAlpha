@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
 import { SPRING_FOLD } from './liveZoneTiming';
 import { animate, useReducedMotion, type AnimationPlaybackControls } from '@/lib/framer';
 
@@ -45,8 +45,7 @@ export function FoldPanel({ open, children }: FoldPanelProps): React.ReactElemen
   const heightRef = useRef(0);
   const controlsRef = useRef<AnimationPlaybackControls | null>(null);
   const reduceMotion = useReducedMotion();
-  const reduceRef = useRef(reduceMotion);
-  reduceRef.current = reduceMotion;
+  const readReduceMotion = useEffectEvent(() => reduceMotion);
   // A close tweens down what was there. The same commit that closes the
   // panel re-renders its blocks for the folded turn (an accordion told to
   // shut), and a body collapsing under a shrinking clip reads as two motions.
@@ -84,7 +83,7 @@ export function FoldPanel({ open, children }: FoldPanelProps): React.ReactElemen
       // reopened to full height at a tenth of its ink until the next close.
       controlsRef.current?.stop();
       controlsRef.current = null;
-      if (reduceRef.current) { outer.style.opacity = '1'; finish(); return; }
+      if (readReduceMotion()) { outer.style.opacity = '1'; finish(); return; }
       phaseRef.current = 'opening';
       outer.style.opacity = '1';
       // The neighbour's gap landed with this commit; cancel it in the same
@@ -124,7 +123,7 @@ export function FoldPanel({ open, children }: FoldPanelProps): React.ReactElemen
       heightRef.current = 0;
       setMounted(false);
     };
-    if (reduceRef.current) { finish(); return; }
+    if (readReduceMotion()) { finish(); return; }
     // Freeze the open box at its px height before the tween, never from auto.
     // Only reads happen here: a turn folds every panel in one commit, and a
     // write between two panels' reads would force a layout for each. The

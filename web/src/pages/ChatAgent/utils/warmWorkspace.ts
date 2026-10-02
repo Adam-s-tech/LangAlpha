@@ -14,7 +14,8 @@ import { QueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import type { ComputersResponse, Workspace, WorkspacesResponse } from '@/types/api';
 
-import { getWorkspace, startWorkspace } from './api';
+import { startWorkspace } from './api';
+import { workspaceDetailQuery } from './workspaceQueries';
 
 const inFlight = new Map<string, Promise<void>>();
 
@@ -49,8 +50,8 @@ export function patchWorkspaceStatusInCaches(
   status: string,
   computerId?: string,
 ): void {
-  queryClient.setQueryData<Workspace | undefined>(
-    queryKeys.workspaces.detail(workspaceId),
+  queryClient.setQueryData(
+    workspaceDetailQuery(workspaceId).queryKey,
     (prev) => prev
       ? { ...prev, status, ...(computerId ? { computer_id: computerId } : {}) }
       : prev,
@@ -131,21 +132,14 @@ export function warmWorkspace(
   const existing = inFlight.get(workspaceId);
   if (existing) return existing;
 
-  const cached = queryClient.getQueryData<Workspace>(
-    queryKeys.workspaces.detail(workspaceId),
-  );
+  const cached = queryClient.getQueryData(workspaceDetailQuery(workspaceId).queryKey);
   if (cached && cached.status && !['stopped', 'running'].includes(cached.status)) {
     return Promise.resolve();
   }
 
   const p = (async () => {
     try {
-      const detail =
-        cached ??
-        (await queryClient.fetchQuery({
-          queryKey: queryKeys.workspaces.detail(workspaceId),
-          queryFn: () => getWorkspace(workspaceId),
-        }));
+      const detail = cached ?? (await queryClient.fetchQuery(workspaceDetailQuery(workspaceId)));
       if (!detail?.status || !['stopped', 'running'].includes(detail.status)) return;
 
       const resp = await startWorkspace(workspaceId, { lazy: true });
@@ -154,9 +148,7 @@ export function warmWorkspace(
       // a fast 'running' (or 'error') before this slower patch lands; without
       // the guard, 'starting' would clobber it and wedge the UI on 'starting'
       // until the next refetch.
-      const current = queryClient.getQueryData<Workspace>(
-        queryKeys.workspaces.detail(workspaceId),
-      );
+      const current = queryClient.getQueryData(workspaceDetailQuery(workspaceId).queryKey);
       if (!current?.status || current.status === 'stopped') {
         if (detail.computer_id) {
           patchComputerStatusInCaches(queryClient, detail.computer_id, resp.status);

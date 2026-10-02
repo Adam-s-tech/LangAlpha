@@ -10,9 +10,8 @@ import ChatInput from '@/components/ui/chat-input';
 import { useChatInput } from '../../hooks/useChatInput';
 import { useUser } from '@/hooks/useUser';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
-import { getWorkspaceThreads } from '@/pages/ChatAgent/utils/api';
-import { queryKeys } from '@/lib/queryKeys';
-import type { Thread, ThreadsResponse } from '@/types/api';
+import { workspaceThreadsQuery } from '@/pages/ChatAgent/utils/threadQueries';
+import type { Thread } from '@/types/api';
 import { registerWidget } from '../framework/WidgetRegistry';
 import { useWidgetContextExport } from '../framework/contextSnapshot';
 import { wrapWidgetContext } from '../framework/snapshotSerializers';
@@ -75,14 +74,9 @@ function ConversationWidget({ instance }: WidgetRenderProps<ConversationConfig>)
   const { data: wsData } = useWorkspaces({ limit: 100 });
   const firstWsId = wsData?.workspaces?.[0]?.workspace_id;
 
-  const { data: threadsData } = useQuery<ThreadsResponse>({
-    queryKey: firstWsId
-      ? [...queryKeys.threads.byWorkspace(firstWsId), 4, 0]
-      : ['threads', 'noop'],
-    queryFn: () =>
-      getWorkspaceThreads(firstWsId!, 4, 0) as Promise<ThreadsResponse>,
+  const { data: threadsData } = useQuery({
+    ...workspaceThreadsQuery(firstWsId ?? '', 4),
     enabled: !!firstWsId,
-    staleTime: 30_000,
   });
 
   const recentThreads = useMemo<Thread[]>(

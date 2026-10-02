@@ -3,7 +3,7 @@ import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries 
 import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import { useNavigate, useParams } from 'react-router';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   PieChart, Pie, Cell, Legend, LabelList,
   LineChart, Line, ReferenceLine,
 } from 'recharts';
@@ -531,35 +531,33 @@ export function SectorPerformanceChart({ data }: DataProps): React.ReactElement 
       <h4 style={{ color: 'var(--color-text-primary)', fontSize: '0.875rem', fontWeight: 600, marginBottom: 12 }}>
         {t('toolArtifact.sectorPerformance')}
       </h4>
-      <ResponsiveContainer width="100%" minWidth={1} height={Math.max(chartData.length * 36, 200)}>
-        <BarChart data={chartData} layout="vertical" margin={{ left: 10, right: 50 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} horizontal={false} />
-          <XAxis
-            type="number"
-            tick={{ fill: TEXT_COLOR, fontSize: 11 }}
-            axisLine={{ stroke: GRID_COLOR }}
-            tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+      <BarChart responsive width="100%" height={Math.max(chartData.length * 36, 200)} data={chartData} layout="vertical" margin={{ left: 10, right: 50 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} horizontal={false} />
+        <XAxis
+          type="number"
+          tick={{ fill: TEXT_COLOR, fontSize: 11 }}
+          axisLine={{ stroke: GRID_COLOR }}
+          tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+        />
+        <YAxis
+          type="category"
+          dataKey="name"
+          width={120}
+          tick={{ fill: TEXT_COLOR, fontSize: 11 }}
+          axisLine={{ stroke: GRID_COLOR }}
+        />
+        <Tooltip content={<DarkTooltip formatter={(v: number) => formatPct(v)} />} />
+        <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+          {chartData.map((entry, i) => (
+            <Cell key={i} fill={entry.fill} />
+          ))}
+          <LabelList
+            dataKey="label"
+            position="right"
+            style={{ fill: TEXT_COLOR, fontSize: 11 }}
           />
-          <YAxis
-            type="category"
-            dataKey="name"
-            width={120}
-            tick={{ fill: TEXT_COLOR, fontSize: 11 }}
-            axisLine={{ stroke: GRID_COLOR }}
-          />
-          <Tooltip content={<DarkTooltip formatter={(v: number) => formatPct(v)} />} />
-          <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-            {chartData.map((entry, i) => (
-              <Cell key={i} fill={entry.fill} />
-            ))}
-            <LabelList
-              dataKey="label"
-              position="right"
-              style={{ fill: TEXT_COLOR, fontSize: 11 }}
-            />
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
+        </Bar>
+      </BarChart>
     </div>
   );
 }
@@ -593,27 +591,25 @@ export const PerformanceBarChart = memo(function PerformanceBarChart({ performan
       <h4 style={{ color: 'var(--color-text-primary)', fontSize: '0.8125rem', fontWeight: 600, marginBottom: 8 }}>
         {t('toolArtifact.pricePerformance')}
       </h4>
-      <ResponsiveContainer width="100%" minWidth={1} height={180}>
-        <BarChart data={chartData} margin={{ left: -20, right: 10 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
-          <XAxis
-            dataKey="name"
-            tick={{ fill: TEXT_COLOR, fontSize: 11 }}
-            axisLine={{ stroke: GRID_COLOR }}
-          />
-          <YAxis
-            tick={{ fill: TEXT_COLOR, fontSize: 11 }}
-            axisLine={{ stroke: GRID_COLOR }}
-            tickFormatter={(v: number) => `${v.toFixed(0)}%`}
-          />
-          <Tooltip content={<DarkTooltip formatter={(v: number) => formatPct(v)} />} />
-          <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-            {chartData.map((entry, i) => (
-              <Cell key={i} fill={entry.fill} />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
+      <BarChart responsive width="100%" height={180} data={chartData} margin={{ left: -20, right: 10 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+        <XAxis
+          dataKey="name"
+          tick={{ fill: TEXT_COLOR, fontSize: 11 }}
+          axisLine={{ stroke: GRID_COLOR }}
+        />
+        <YAxis
+          tick={{ fill: TEXT_COLOR, fontSize: 11 }}
+          axisLine={{ stroke: GRID_COLOR }}
+          tickFormatter={(v: number) => `${v.toFixed(0)}%`}
+        />
+        <Tooltip content={<DarkTooltip formatter={(v: number) => formatPct(v)} />} />
+        <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+          {chartData.map((entry, i) => (
+            <Cell key={i} fill={entry.fill} />
+          ))}
+        </Bar>
+      </BarChart>
     </div>
   );
 });
@@ -647,28 +643,26 @@ export const AnalystRatingsChart = memo(function AnalystRatingsChart({ ratings }
         {t('toolArtifact.analystRatings')}
       </h4>
       <div style={{ position: 'relative' }}>
-        <ResponsiveContainer width="100%" minWidth={1} height={200}>
-          <PieChart>
-            <Pie
-              data={chartData}
-              cx="50%"
-              cy="50%"
-              innerRadius={50}
-              outerRadius={75}
-              dataKey="value"
-              stroke="none"
-            >
-              {chartData.map((entry) => (
-                <Cell key={entry.name} fill={ANALYST_COLORS[entry.name] || 'var(--color-icon-muted)'} />
-              ))}
-            </Pie>
-            <Legend
-              wrapperStyle={{ fontSize: 11, color: TEXT_COLOR }}
-              formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>}
-            />
-            <Tooltip content={<DarkTooltip formatter={(v: number) => `${v} (${((v / total) * 100).toFixed(0)}%)`} />} />
-          </PieChart>
-        </ResponsiveContainer>
+        <PieChart responsive width="100%" height={200}>
+          <Pie
+            data={chartData}
+            cx="50%"
+            cy="50%"
+            innerRadius={50}
+            outerRadius={75}
+            dataKey="value"
+            stroke="none"
+          >
+            {chartData.map((entry) => (
+              <Cell key={entry.name} fill={ANALYST_COLORS[entry.name] || 'var(--color-icon-muted)'} />
+            ))}
+          </Pie>
+          <Legend
+            wrapperStyle={{ fontSize: 11, color: TEXT_COLOR }}
+            formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>}
+          />
+          <Tooltip content={<DarkTooltip formatter={(v: number) => `${v} (${((v / total) * 100).toFixed(0)}%)`} />} />
+        </PieChart>
         {/* Center consensus label */}
         <div
           style={{
@@ -716,30 +710,28 @@ export const RevenueBreakdownChart = memo(function RevenueBreakdownChart({ reven
         <h5 style={{ color: TEXT_COLOR, fontSize: '0.75rem', fontWeight: 500, marginBottom: 4 }}>
           {title}
         </h5>
-        <ResponsiveContainer width="100%" minWidth={1} height={180}>
-          <PieChart>
-            <Pie
-              data={data}
-              cx="50%"
-              cy="50%"
-              innerRadius={35}
-              outerRadius={55}
-              dataKey="value"
-              stroke="none"
-            >
-              {data.map((_, i) => (
-                <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-              ))}
-            </Pie>
-            <Legend
-              wrapperStyle={{ fontSize: 10, color: TEXT_COLOR }}
-              formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>}
-            />
-            <Tooltip
-              content={<DarkTooltip formatter={(v: number) => `${formatNumber(v)} (${((v / total) * 100).toFixed(1)}%)`} />}
-            />
-          </PieChart>
-        </ResponsiveContainer>
+        <PieChart responsive width="100%" height={180}>
+          <Pie
+            data={data}
+            cx="50%"
+            cy="50%"
+            innerRadius={35}
+            outerRadius={55}
+            dataKey="value"
+            stroke="none"
+          >
+            {data.map((_, i) => (
+              <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+            ))}
+          </Pie>
+          <Legend
+            wrapperStyle={{ fontSize: 10, color: TEXT_COLOR }}
+            formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>}
+          />
+          <Tooltip
+            content={<DarkTooltip formatter={(v: number) => `${formatNumber(v)} (${((v / total) * 100).toFixed(1)}%)`} />}
+          />
+        </PieChart>
       </div>
     );
   };
@@ -772,17 +764,15 @@ export const QuarterlyRevenueChart = memo(function QuarterlyRevenueChart({ data 
       <h4 style={{ color: 'var(--color-text-primary)', fontSize: '0.8125rem', fontWeight: 600, marginBottom: 8 }}>
         {t('toolArtifact.quarterlyRevenue')}
       </h4>
-      <ResponsiveContainer width="100%" minWidth={1} height={220}>
-        <BarChart data={data} margin={{ left: -10, right: 10 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
-          <XAxis dataKey="period" tick={{ fill: TEXT_COLOR, fontSize: 10 }} axisLine={{ stroke: GRID_COLOR }} />
-          <YAxis tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => formatNumber(v).replace('$', '')} />
-          <Tooltip content={<DarkTooltip formatter={(v: number) => formatNumber(v)} />} />
-          <Legend wrapperStyle={{ fontSize: 11, color: TEXT_COLOR }} formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>} />
-          <Bar dataKey="revenue" name={t('toolArtifact.revenue')} fill="var(--color-accent-primary)" radius={[4, 4, 0, 0]} />
-          <Bar dataKey="netIncome" name={t('toolArtifact.netIncome')} fill={GREEN} radius={[4, 4, 0, 0]} />
-        </BarChart>
-      </ResponsiveContainer>
+      <BarChart responsive width="100%" height={220} data={data} margin={{ left: -10, right: 10 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+        <XAxis dataKey="period" tick={{ fill: TEXT_COLOR, fontSize: 10 }} axisLine={{ stroke: GRID_COLOR }} />
+        <YAxis tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => formatNumber(v).replace('$', '')} />
+        <Tooltip content={<DarkTooltip formatter={(v: number) => formatNumber(v)} />} />
+        <Legend wrapperStyle={{ fontSize: 11, color: TEXT_COLOR }} formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>} />
+        <Bar dataKey="revenue" name={t('toolArtifact.revenue')} fill="var(--color-accent-primary)" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="netIncome" name={t('toolArtifact.netIncome')} fill={GREEN} radius={[4, 4, 0, 0]} />
+      </BarChart>
     </div>
   );
 });
@@ -809,18 +799,16 @@ export const MarginsChart = memo(function MarginsChart({ data }: ChartArrayDataP
       <h4 style={{ color: 'var(--color-text-primary)', fontSize: '0.8125rem', fontWeight: 600, marginBottom: 8 }}>
         {t('toolArtifact.profitMargins')}
       </h4>
-      <ResponsiveContainer width="100%" minWidth={1} height={220}>
-        <LineChart data={chartData} margin={{ left: -10, right: 10 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
-          <XAxis dataKey="period" tick={{ fill: TEXT_COLOR, fontSize: 10 }} axisLine={{ stroke: GRID_COLOR }} />
-          <YAxis tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => `${v.toFixed(0)}%`} />
-          <Tooltip content={<DarkTooltip formatter={(v: number) => `${v?.toFixed(1)}%`} />} />
-          <Legend wrapperStyle={{ fontSize: 11, color: TEXT_COLOR }} formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>} />
-          <Line type="monotone" dataKey="grossMargin" name={t('toolArtifact.grossMargin')} stroke="var(--color-accent-primary)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
-          <Line type="monotone" dataKey="operatingMargin" name={t('toolArtifact.operatingMargin')} stroke={MA_ORANGE} strokeWidth={2} dot={{ r: 3 }} connectNulls />
-          <Line type="monotone" dataKey="netMargin" name={t('toolArtifact.netMargin')} stroke={GREEN} strokeWidth={2} dot={{ r: 3 }} connectNulls />
-        </LineChart>
-      </ResponsiveContainer>
+      <LineChart responsive width="100%" height={220} data={chartData} margin={{ left: -10, right: 10 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+        <XAxis dataKey="period" tick={{ fill: TEXT_COLOR, fontSize: 10 }} axisLine={{ stroke: GRID_COLOR }} />
+        <YAxis tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => `${v.toFixed(0)}%`} />
+        <Tooltip content={<DarkTooltip formatter={(v: number) => `${v?.toFixed(1)}%`} />} />
+        <Legend wrapperStyle={{ fontSize: 11, color: TEXT_COLOR }} formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>} />
+        <Line type="monotone" dataKey="grossMargin" name={t('toolArtifact.grossMargin')} stroke="var(--color-accent-primary)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+        <Line type="monotone" dataKey="operatingMargin" name={t('toolArtifact.operatingMargin')} stroke={MA_ORANGE} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+        <Line type="monotone" dataKey="netMargin" name={t('toolArtifact.netMargin')} stroke={GREEN} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+      </LineChart>
     </div>
   );
 });
@@ -836,17 +824,15 @@ export const EarningsSurpriseChart = memo(function EarningsSurpriseChart({ data 
       <h4 style={{ color: 'var(--color-text-primary)', fontSize: '0.8125rem', fontWeight: 600, marginBottom: 8 }}>
         {t('toolArtifact.epsActualVsEstimate')}
       </h4>
-      <ResponsiveContainer width="100%" minWidth={1} height={220}>
-        <BarChart data={data} margin={{ left: -10, right: 10 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
-          <XAxis dataKey="period" tick={{ fill: TEXT_COLOR, fontSize: 10 }} axisLine={{ stroke: GRID_COLOR }} />
-          <YAxis tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => `$${v.toFixed(2)}`} />
-          <Tooltip content={<DarkTooltip formatter={(v: number) => `$${v?.toFixed(2)}`} />} />
-          <Legend wrapperStyle={{ fontSize: 11, color: TEXT_COLOR }} formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>} />
-          <Bar dataKey="epsActual" name={t('toolArtifact.epsActual')} fill={GREEN} radius={[4, 4, 0, 0]} />
-          <Bar dataKey="epsEstimate" name={t('toolArtifact.epsEstimate')} fill="var(--color-icon-muted)" radius={[4, 4, 0, 0]} />
-        </BarChart>
-      </ResponsiveContainer>
+      <BarChart responsive width="100%" height={220} data={data} margin={{ left: -10, right: 10 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+        <XAxis dataKey="period" tick={{ fill: TEXT_COLOR, fontSize: 10 }} axisLine={{ stroke: GRID_COLOR }} />
+        <YAxis tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => `$${v.toFixed(2)}`} />
+        <Tooltip content={<DarkTooltip formatter={(v: number) => `$${v?.toFixed(2)}`} />} />
+        <Legend wrapperStyle={{ fontSize: 11, color: TEXT_COLOR }} formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>} />
+        <Bar dataKey="epsActual" name={t('toolArtifact.epsActual')} fill={GREEN} radius={[4, 4, 0, 0]} />
+        <Bar dataKey="epsEstimate" name={t('toolArtifact.epsEstimate')} fill="var(--color-icon-muted)" radius={[4, 4, 0, 0]} />
+      </BarChart>
     </div>
   );
 });
@@ -862,19 +848,17 @@ export const CashFlowChart = memo(function CashFlowChart({ data }: ChartArrayDat
       <h4 style={{ color: 'var(--color-text-primary)', fontSize: '0.8125rem', fontWeight: 600, marginBottom: 8 }}>
         {t('toolArtifact.cashFlowQuarterly')}
       </h4>
-      <ResponsiveContainer width="100%" minWidth={1} height={220}>
-        <BarChart data={data} margin={{ left: -10, right: 10 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
-          <XAxis dataKey="period" tick={{ fill: TEXT_COLOR, fontSize: 10 }} axisLine={{ stroke: GRID_COLOR }} />
-          <YAxis tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => formatNumber(v).replace('$', '')} />
-          <Tooltip content={<DarkTooltip formatter={(v: number) => formatNumber(v)} />} />
-          <Legend wrapperStyle={{ fontSize: 11, color: TEXT_COLOR }} formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>} />
-          <ReferenceLine y={0} stroke={GRID_COLOR} />
-          <Bar dataKey="operatingCashFlow" name={t('toolArtifact.operatingCF')} fill="var(--color-accent-primary)" radius={[4, 4, 0, 0]} />
-          <Bar dataKey="capitalExpenditure" name={t('toolArtifact.capEx')} fill={RED} radius={[4, 4, 0, 0]} />
-          <Bar dataKey="freeCashFlow" name={t('toolArtifact.freeCF')} fill={GREEN} radius={[4, 4, 0, 0]} />
-        </BarChart>
-      </ResponsiveContainer>
+      <BarChart responsive width="100%" height={220} data={data} margin={{ left: -10, right: 10 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+        <XAxis dataKey="period" tick={{ fill: TEXT_COLOR, fontSize: 10 }} axisLine={{ stroke: GRID_COLOR }} />
+        <YAxis tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => formatNumber(v).replace('$', '')} />
+        <Tooltip content={<DarkTooltip formatter={(v: number) => formatNumber(v)} />} />
+        <Legend wrapperStyle={{ fontSize: 11, color: TEXT_COLOR }} formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>} />
+        <ReferenceLine y={0} stroke={GRID_COLOR} />
+        <Bar dataKey="operatingCashFlow" name={t('toolArtifact.operatingCF')} fill="var(--color-accent-primary)" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="capitalExpenditure" name={t('toolArtifact.capEx')} fill={RED} radius={[4, 4, 0, 0]} />
+        <Bar dataKey="freeCashFlow" name={t('toolArtifact.freeCF')} fill={GREEN} radius={[4, 4, 0, 0]} />
+      </BarChart>
     </div>
   );
 });

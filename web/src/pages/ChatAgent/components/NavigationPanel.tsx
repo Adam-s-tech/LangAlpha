@@ -345,7 +345,7 @@ function NavigationPanel({
       )}
       <ScrollArea className="flex-1">
         <div className="py-2">
-          <NavTreeContext.Provider value={navTree}>
+          <NavTreeContext value={navTree}>
           <TreeRoot
             ids={sortableIds}
             onDragStart={handleWorkspaceDragStart}
@@ -399,7 +399,7 @@ function NavigationPanel({
             );
           })}
           </TreeRoot>
-          </NavTreeContext.Provider>
+          </NavTreeContext>
           {hasMore && (
             <div
               className="nav-panel-row"

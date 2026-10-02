@@ -83,7 +83,9 @@ function WorkspaceGallery({ onWorkspaceSelect, prefetchThreads }: WorkspaceGalle
   const preSortByRef = useRef(sortBy); // sort mode before entering reorder
   const isSearching = debouncedSearch.length > 0;
 
-  // Flash workspace query (idempotent POST -- creates if not exists)
+  // Flash workspace query (idempotent POST -- creates if not exists). The
+  // reorder list shows the whole record, not just its id, so here it goes
+  // stale after five minutes rather than never.
   const { data: flashWs, isLoading: isFlashLoading } = useQuery({
     ...flashWorkspaceQuery(queryClient),
     staleTime: 5 * 60_000,

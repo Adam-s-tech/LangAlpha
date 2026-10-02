@@ -14,8 +14,9 @@ import {
   type ThreadRecord,
   type ThreadsData,
 } from '@/lib/navThreadsStore';
-import type { ResourceTier, WorkspacesResponse } from '@/types/api';
+import type { ResourceTier, ThreadsResponse, WorkspacesResponse } from '@/types/api';
 import { getWorkspaces, getWorkspaceThreads, reorderWorkspaces, updateThread } from '../utils/api';
+import { workspaceThreadsQuery } from '../utils/threadQueries';
 import { pinWorkspaceRow, renameWorkspaceRow } from './workspaceRowActions';
 import { useNavPrefs } from '../utils/navPrefs';
 import { denialMessage } from '../utils/denialMessage';
@@ -40,18 +41,7 @@ export interface NavWorkspace {
 // the hook rather than reaching into the store module.
 export type { ThreadRecord, ThreadsData } from '@/lib/navThreadsStore';
 
-interface ThreadsResponse {
-  threads: ThreadRecord[];
-  total?: number;
-  [key: string]: unknown;
-}
-
 const NAV_WS_PARAMS = { limit: 20, includeFlash: true };
-
-// Page size is part of the key (mirrors the dashboard widgets' thread keys):
-// the queryFn fetches `pageSize` rows, so changing that pref must miss the
-// cache and refetch instead of replaying the previous page size.
-const threadPageKey = (wsId: string, pageSize: number) => [...queryKeys.threads.byWorkspace(wsId), pageSize, 0];
 
 // Session-stable nav ordering. The server sorts threads (and, within the
 // 'custom' workspace sort, unpinned workspaces) by updated_at DESC, so the item
@@ -476,11 +466,7 @@ export function useNavigationData(currentWorkspaceId: string, { enabled = true }
       // observers of their own.
       queryClient.invalidateQueries({ queryKey: queryKeys.threads.byWorkspace(wsId) });
       try {
-        await queryClient.fetchQuery({
-          queryKey: threadPageKey(wsId, threadPageSize),
-          queryFn: () => getWorkspaceThreads(wsId, threadPageSize, 0),
-          staleTime: 0,
-        });
+        await queryClient.fetchQuery({ ...workspaceThreadsQuery(wsId, threadPageSize), staleTime: 0 });
       } catch (e) {
         // Refetch failure: release the freeze anyway — re-snapshotting from
         // the optimistically patched cache beats a stuck frozen order.
@@ -514,10 +500,8 @@ export function useNavigationData(currentWorkspaceId: string, { enabled = true }
   }, [showAll, workspaceLimit, allFetched.length, totalCount]);
 
   const { isLoading: currentWsThreadsLoading } = useQuery({
-    queryKey: threadPageKey(currentWorkspaceId, threadPageSize),
-    queryFn: () => getWorkspaceThreads(currentWorkspaceId, threadPageSize, 0),
+    ...workspaceThreadsQuery(currentWorkspaceId, threadPageSize),
     enabled: enabled && !!currentWorkspaceId,
-    staleTime: 30_000,
   });
 
   // Every workspace whose page-0 rows this tree renders: the current one plus
@@ -540,13 +524,11 @@ export function useNavigationData(currentWorkspaceId: string, { enabled = true }
   // lifecycle-feed resync — see CACHE_ONLY_META for what that opt-in attests to.
   const pageData = useQueries({
     queries: observedWsIds.map((wsId) => ({
-      queryKey: threadPageKey(wsId, threadPageSize),
-      queryFn: () => getWorkspaceThreads(wsId, threadPageSize, 0),
+      ...workspaceThreadsQuery(wsId, threadPageSize),
       enabled: false,
       meta: CACHE_ONLY_META,
-      staleTime: 30_000,
     })),
-    combine: (results) => results.map((r) => r.data as ThreadsResponse | undefined),
+    combine: (results) => results.map((r) => r.data),
   });
 
   // Each workspace keeps its previous ThreadsData object while its rows are
@@ -616,7 +598,8 @@ export function useNavigationData(currentWorkspaceId: string, { enabled = true }
       }));
     };
 
-    const cached = queryClient.getQueryData(threadPageKey(wsId, threadPageSize)) as ThreadsResponse | undefined;
+    const threadsKey = workspaceThreadsQuery(wsId, threadPageSize).queryKey;
+    const cached = queryClient.getQueryData(threadsKey);
     if (cached) {
       mergeFetched(cached);
       return;
@@ -627,13 +610,7 @@ export function useNavigationData(currentWorkspaceId: string, { enabled = true }
       [wsId]: { threads: prev[wsId]?.threads || [], loading: true, total: prev[wsId]?.total },
     }));
 
-    queryClient.fetchQuery({
-      queryKey: threadPageKey(wsId, threadPageSize),
-      queryFn: () => getWorkspaceThreads(wsId, threadPageSize, 0),
-      staleTime: 30_000,
-    }).then((data: unknown) => {
-      mergeFetched(data as ThreadsResponse);
-    }).catch(() => {
+    queryClient.fetchQuery(workspaceThreadsQuery(wsId, threadPageSize)).then(mergeFetched).catch(() => {
       setSharedWorkspaceThreads(prev => ({
         ...prev,
         [wsId]: { threads: prev[wsId]?.threads || [], loading: false, total: prev[wsId]?.total },
@@ -679,10 +656,9 @@ export function useNavigationData(currentWorkspaceId: string, { enabled = true }
       // back to the cache entry, which the render path treats as the authority
       // for both. Without this a stale cached total keeps the button alive
       // after the server list shrank (rows archived from another surface).
-      queryClient.setQueryData(threadPageKey(wsId, threadPageSize), (old: unknown) => {
-        const prev = old as ThreadsResponse | undefined;
-        return { ...(prev ?? {}), threads: pageRows.slice(0, threadPageSize), total: data.total ?? prev?.total };
-      });
+      queryClient.setQueryData(workspaceThreadsQuery(wsId, threadPageSize).queryKey, (prev) => ({
+        limit: threadPageSize, offset: 0, ...prev, threads: pageRows.slice(0, threadPageSize), total: data.total ?? prev?.total,
+      }));
       absorbThreadOrder(wsId, order);
       setSharedWorkspaceThreads(prev => ({
         ...prev,

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useEffectEvent, useState } from 'react';
 import {
   X, Calendar, Hash, ExternalLink, TrendingUp, TrendingDown, Minus, Tag,
   Paperclip,
@@ -545,8 +545,7 @@ function NewsDetailModal({ newsId, onClose, fallbackUrl, fallback }: NewsDetailM
 
   // Read the latest fallback at fetch time without re-running the effect when
   // the parent hands us a fresh object for the same newsId.
-  const fallbackRef = useRef(fallback);
-  fallbackRef.current = fallback;
+  const readFallback = useEffectEvent(() => fallback);
 
   const handleAttach = () => {
     if (!article || !newsId) return;
@@ -566,7 +565,7 @@ function NewsDetailModal({ newsId, onClose, fallbackUrl, fallback }: NewsDetailM
       return;
     }
     // Seed with the clicked row's known fields so the modal renders instantly.
-    const seed = fallbackToArticle(fallbackRef.current);
+    const seed = fallbackToArticle(readFallback());
     let cancelled = false;
     setArticle(seed);
     setFetchFailed(false);

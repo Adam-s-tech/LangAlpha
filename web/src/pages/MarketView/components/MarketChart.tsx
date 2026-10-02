@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState, useImperativeHandle, forwardRef, useCallback, useLayoutEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useImperativeHandle, useCallback, useLayoutEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { createChart, createTextWatermark, ColorType, CrosshairMode, PriceScaleMode, LineType, LineStyle, AreaSeries, BaselineSeries, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
 import type { AreaData, IChartApi, ISeriesApi, ITextWatermarkPluginApi, LogicalRange, MouseEventParams, Time, UTCTimestamp } from 'lightweight-charts';
@@ -157,7 +157,7 @@ const MIN_DRAG_PX = 4;
  */
 const PRICE_LINE_RESET = { priceLineColor: '', title: '' } as const;
 
-const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>(({
+const MarketChart = React.memo(function MarketChart({
   symbol,
   interval = '1day',
   workspaceId,
@@ -180,7 +180,8 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   toolbarLeadKey,
   toolbarTrail,
   toolbarSubrow,
-}, ref) => {
+  ref,
+}: MarketChartProps & { ref?: React.Ref<MarketChartHandle> }) {
   const { t } = useTranslation();
   const { theme } = useTheme();
   const ct = getChartTheme(theme as 'dark' | 'light');
@@ -2431,8 +2432,6 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       </div>
     </div>
   );
-}));
-
-MarketChart.displayName = 'MarketChart';
+});
 
 export default MarketChart;

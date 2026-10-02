@@ -315,7 +315,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     getSubagentHistory,
     resolveSubagentIdToAgentId,
     hydrateTaskTranscript,
-    addSubagentInstruction,
+    sendSubagentInstruction,
   } = useChatMessages(workspaceId, threadId, updateTodoListCard as (todoData: Record<string, unknown>) => void, updateSubagentCard, finalizePendingTodos, handleOnboardingRelatedToolComplete, handleFileArtifact, handleOpenPreviewFromStream, agentMode, clearSubagentCards, handleWorkspaceCreated, 'web');
 
   // Fallback-suggestion pill action: adopt the model that actually answered —
@@ -436,7 +436,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     setActiveAgentId,
     cards,
     updateSubagentCard,
-    addSubagentInstruction,
+    sendSubagentInstruction,
     getSubagentHistory,
     resolveSubagentIdToAgentId,
     hydrateTaskTranscript,
@@ -1688,7 +1688,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                 ) : activeAgent && activeAgent.type !== WORKFLOW_TASK_TYPE ? (
                   // Workflow runs are script-driven and take no steering input —
                   // the run detail above is their whole surface.
-                  <SubagentStatusBar agent={activeAgent} threadId={threadId} onInstructionSent={handleSubagentInstruction} />
+                  <SubagentStatusBar agent={activeAgent} onSendInstruction={handleSubagentInstruction} />
                 ) : null}
               </div>
             </div>

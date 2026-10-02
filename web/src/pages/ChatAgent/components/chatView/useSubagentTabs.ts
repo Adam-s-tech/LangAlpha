@@ -46,7 +46,7 @@ export function useSubagentTabs({
   setActiveAgentId,
   cards,
   updateSubagentCard,
-  addSubagentInstruction,
+  sendSubagentInstruction,
   getSubagentHistory,
   resolveSubagentIdToAgentId,
   hydrateTaskTranscript,
@@ -64,7 +64,7 @@ export function useSubagentTabs({
   setActiveAgentId: Dispatch<SetStateAction<string>>;
   cards: CardStateAPI['cards'];
   updateSubagentCard: CardStateAPI['updateSubagentCard'];
-  addSubagentInstruction: ChatMessagesAPI['addSubagentInstruction'];
+  sendSubagentInstruction: ChatMessagesAPI['sendSubagentInstruction'];
   getSubagentHistory: ChatMessagesAPI['getSubagentHistory'];
   resolveSubagentIdToAgentId: ChatMessagesAPI['resolveSubagentIdToAgentId'];
   hydrateTaskTranscript: ChatMessagesAPI['hydrateTaskTranscript'];
@@ -230,11 +230,13 @@ export function useSubagentTabs({
     : null;
 
   // Callback: user sent an instruction to the active subagent via the status bar.
-  // Immediately show it as a pending user message (breathing animation).
-  const handleSubagentInstruction = useCallback((content: string) => {
-    if (!activeAgent) return;
-    addSubagentInstruction(activeAgent.id, content);
-  }, [activeAgent, addSubagentInstruction]);
+  // The agent is fixed at send time, so a tab switch while the request is out
+  // cannot misroute the take-back of a failed send.
+  const handleSubagentInstruction = useCallback(async (content: string) => {
+    const agentId = activeAgent?.id;
+    if (!agentId) return;
+    await sendSubagentInstruction(threadId, agentId, content);
+  }, [activeAgent, threadId, sendSubagentInstruction]);
 
   // Refresh subagent card with latest data from history or inline status.
   // Ensures status/currentTool are accurate regardless of stale streaming data.

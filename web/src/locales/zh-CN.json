@@ -1724,6 +1724,7 @@
     "taskErrorNotification": "子任务运行失败",
     "taskStoppedNotification": "子任务运行已停止",
     "taskSteeringReturnedNotification": "引导消息已退回 · 运行在送达前已结束",
+    "taskSteeringNotSentNotification": "引导消息未发送",
     "viewSummary": "查看摘要",
     "hideSummary": "隐藏摘要",
     "offloadedArgsNotification": "工具参数已转存 · {{count}} 个工具",

@@ -866,8 +866,42 @@ export function addPendingTaskInstruction({ taskId, content, subagentStateRefs, 
   updateSubagentCard(taskId, { messages: taskRefs.messages });
 }
 
-/** Drops the pending bubble of an instruction the run ended without taking. */
-export function withdrawPendingTaskInstruction(taskRefs: TaskRefs, content: string): void {
+/** Drops the pending bubble of an instruction the subagent never received. */
+function withdrawPendingInstruction(taskRefs: TaskRefs, content: string): void {
   const idx = taskRefs.messages.findLastIndex((m) => isPendingInstruction(m) && m.content === content);
   if (idx !== -1) taskRefs.messages = taskRefs.messages.filter((_, i) => i !== idx);
+}
+
+/** Whether an instruction is still waiting on the subagent, neither delivered nor returned. */
+export function hasPendingInstruction(taskRefs: TaskRefs, content: string): boolean {
+  return taskRefs.messages.some((m) => isPendingInstruction(m) && m.content === content);
+}
+
+/**
+ * Appends a notice to a task transcript as a message of its own rather than a
+ * segment on the last assistant message: a failed task may have no assistant
+ * message at all, and a pushed message survives that.
+ */
+export function pushTaskNotice(taskRefs: TaskRefs, text: string, detail?: string): void {
+  const order = ++taskRefs.contentOrderCounterRef.current;
+  taskRefs.messages = [...taskRefs.messages, {
+    id: `task-notice-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+    role: 'assistant',
+    content: '',
+    contentSegments: [{ type: 'notification', content: text, order, detail }],
+    reasoningProcesses: {},
+    toolCallProcesses: {},
+  }];
+}
+
+/**
+ * Takes back an instruction the subagent never received, whether the run
+ * ended before taking it or the send itself failed: its pending bubble goes
+ * and a notice carrying its text takes its place. The two travel together
+ * because the card keeps a longer list over a shorter one, so a withdrawal
+ * written on its own would never reach it.
+ */
+export function returnTaskInstruction(taskRefs: TaskRefs, content: string, notice: string): void {
+  withdrawPendingInstruction(taskRefs, content);
+  pushTaskNotice(taskRefs, notice, content);
 }

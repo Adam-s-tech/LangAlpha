@@ -293,6 +293,19 @@ def test_backfill_root_uses_yaml_even_with_provider_override(monkeypatch, migrat
     assert "COALESCE(NULLIF(config->>'sandbox_working_dir', ''), '/srv/old-root')" in sql
 
 
+def test_backfill_reads_the_app_env_overlay_the_runtime_reads(monkeypatch, migration, tmp_path):
+    config = tmp_path / "agent_config.yaml"
+    config.write_text("sandbox: {provider: daytona}\nfilesystem: {working_directory: /home/base}")
+    (tmp_path / "agent_config.prod.yaml").write_text(
+        "sandbox: {provider: docker}\nfilesystem: {working_directory: /srv/overlay}"
+    )
+    monkeypatch.setenv("PTC_CONFIG_FILE", str(config))
+    monkeypatch.delenv("SANDBOX_PROVIDER", raising=False)
+    monkeypatch.setenv("APP_ENV", "prod")
+    assert migration[0]._backfill_kind() == "docker"
+    assert migration[0]._backfill_root() == "/srv/overlay"
+
+
 def test_the_downgrade_removes_every_column_it_added(migration):
     module, op = migration
     module.downgrade()

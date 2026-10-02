@@ -47,7 +47,31 @@ def _backfill_config() -> dict:
         config_path = next((p / "agent_config.yaml" for p in
                             (cwd, root, Path.home() / ".ptc-agent")
                             if (p / "agent_config.yaml").is_file()), None)
-    return (yaml.safe_load(config_path.read_text()) or {}) if config_path else {}
+    if not config_path:
+        return {}
+    return _with_overlay(config_path, yaml.safe_load(config_path.read_text()) or {})
+
+
+def _with_overlay(path: Path, config: dict) -> dict:
+    # The runtime layers <stem>.<APP_ENV><suffix> over the file it found, so a
+    # deployment whose edits live in an overlay runs with them, and the rows
+    # backfilled here must agree with what it reads.
+    app_env = os.getenv("APP_ENV", "").strip()
+    overlay = path.with_name(f"{path.stem}.{app_env}{path.suffix}")
+    if not app_env or not overlay.is_file():
+        return config
+    return _merged(config, yaml.safe_load(overlay.read_text()) or {})
+
+
+def _merged(base, overlay):
+    # Maps merge, anything else replaces, and a null sets nothing at any depth.
+    if not isinstance(overlay, dict):
+        return overlay
+    merged = dict(base) if isinstance(base, dict) else {}
+    for key, value in overlay.items():
+        if value is not None:
+            merged[key] = _merged(merged.get(key), value)
+    return merged
 
 
 def _backfill_root() -> str:

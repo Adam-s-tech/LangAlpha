@@ -1,0 +1,43 @@
+name: Yahoo live
+
+# The yfinance tests call Yahoo Finance itself, so they fail when Yahoo changes
+# something nobody here touched (its news endpoint was withdrawn once and took
+# the general integration job down with it). They run here instead, only when a
+# change could be the cause: yfinance code, these tests, or the dependency set
+# that pins the yfinance version. They need no secrets, so fork PRs run too.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "plugins/yfinance/**"
+      - "mcp_servers/_yf_common.py"
+      - "src/data_client/yfinance/**"
+      - "tests/integration/test_yf_mcp_live.py"
+      - "tests/integration/test_yfinance_live.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/yahoo-live.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "plugins/yfinance/**"
+      - "mcp_servers/_yf_common.py"
+      - "src/data_client/yfinance/**"
+      - "tests/integration/test_yf_mcp_live.py"
+      - "tests/integration/test_yfinance_live.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/yahoo-live.yml"
+  workflow_dispatch:
+
+jobs:
+  yahoo-live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+      - run: uv sync --group dev --extra test
+      - run: uv run pytest tests/integration/ -v --tb=short -m yahoo

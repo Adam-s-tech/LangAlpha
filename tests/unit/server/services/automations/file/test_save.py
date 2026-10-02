@@ -4,10 +4,11 @@ name already taken does, and the report."""
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from psycopg.errors import StringDataRightTruncation
+from psycopg.errors import CheckViolation, StringDataRightTruncation
 
 from ptc_agent.agent.backends.db_json_route import UserDataValidationError
 from src.server.services.automations import lifecycle
@@ -226,6 +227,22 @@ class TestTakenName:
         assert exc.value.error_type == "schema_error"
         assert "too long" in exc.value.hint
         assert CREATED not in db.rows
+
+    @pytest.mark.asyncio
+    async def test_a_value_a_constraint_refuses_is_refused_without_quoting_the_row(self, db, backend, caplog):
+        refused = CheckViolation("Failing row contains (Sell all TSLA)")
+        lifecycle.create_automation.side_effect = refused
+
+        with caplog.at_level(logging.WARNING), pytest.raises(UserDataValidationError) as exc:
+            await backend.awrite_text(NEW_PATH, json.dumps(NEW))
+
+        assert exc.value.error_type == "schema_error"
+        assert "(CheckViolation)" in exc.value.hint
+        assert "Sell all TSLA" not in exc.value.message
+        assert CREATED not in db.rows
+        (logged,) = [r for r in caplog.records if "refused by a constraint" in r.getMessage()]
+        assert f"CheckViolation sqlstate={refused.sqlstate}" in logged.getMessage()
+        assert "Sell all TSLA" not in caplog.text
 
 
 class TestServedState:

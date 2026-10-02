@@ -48,6 +48,7 @@ from src.config.settings import (
     get_allowed_origins,
 )
 from src.observability import init_otel, init_otel_runtime, shutdown_otel_runtime
+from src.observability.private_query import drop_span_query
 from src.server.services.runs.executor import LocalRunExecutor
 from src.server.services.background_registry_store import BackgroundRegistryStore
 from src.server.utils.api import find_malformed_route_ids  # TEMP (malformed-id-diag)
@@ -968,7 +969,7 @@ if _otel_enabled:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-        FastAPIInstrumentor.instrument_app(app)
+        FastAPIInstrumentor.instrument_app(app, server_request_hook=drop_span_query)
     except Exception as _otel_exc:  # noqa: BLE001
         logger.warning("FastAPIInstrumentor.instrument_app failed: %s", _otel_exc)
 

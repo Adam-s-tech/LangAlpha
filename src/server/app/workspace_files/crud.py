@@ -20,6 +20,7 @@ from src.server.utils.api import CurrentUserId, require_workspace_owner
 from src.server.services.persistence.transfer import scan_cap_bytes
 from ptc_agent.agent.backends.db_json_route import DbJsonRoute
 from ptc_agent.core.sandbox.runtime import STREAM_CHUNK_BYTES
+from ptc_agent.core.paths import logged_path
 from src.server.utils.uploads import read_capped
 from src.utils.storage import is_storage_enabled
 from src.server.utils.error_sanitization import (
@@ -143,7 +144,7 @@ async def _load_virtual_file(route: type[DbJsonRoute], path: str, user_id: str) 
     try:
         text = await route.load(path, user_id)
     except Exception:
-        logger.exception("virtual file read failed", extra={"path": path})
+        logger.exception("virtual file read failed", extra={"path": logged_path(path)})
         raise HTTPException(status_code=500, detail=route.read_failure) from None
     if text is None:
         raise HTTPException(status_code=404, detail="File not found")

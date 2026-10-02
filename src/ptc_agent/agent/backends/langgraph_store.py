@@ -17,6 +17,7 @@ from langgraph.store.base import BaseStore
 from ptc_agent.agent.backends.results import EditTextResult
 from ptc_agent.agent.backends.sandbox import SandboxBackend
 from ptc_agent.agent.backends.store_cache import RequestScopedStoreCache
+from src.observability.private_errors import failure
 
 logger = structlog.get_logger(__name__)
 
@@ -36,6 +37,15 @@ class InvalidStoreKeyError(ValueError):
 
 class StoreContentTooLargeError(ValueError):
     """Raised when a write would exceed ``MAX_CONTENT_BYTES``."""
+
+
+class StoreContentInvalidError(ValueError):
+    """Raised for text the store cannot hold."""
+
+
+#: A store value is JSON in Postgres, which holds no NUL character, and the
+#: write would otherwise fail as an outage.
+_NUL_REFUSAL = "Stored text cannot hold a NUL character (\\x00); keep binary content in a workspace file."
 
 
 class StoreListingIncomplete(RuntimeError):
@@ -312,6 +322,8 @@ class StoreBackend:
             logger.debug("write rejected on read-only tier", path=file_path)
             raise ReadOnlyStoreError(self._read_only_error)
         key = self._path_to_key(file_path)
+        if "\x00" in content:
+            raise StoreContentInvalidError(_NUL_REFUSAL)
         content_bytes = len(content.encode("utf-8"))
         if content_bytes > MAX_CONTENT_BYTES:
             raise StoreContentTooLargeError(
@@ -354,8 +366,9 @@ class StoreBackend:
                         timeout_s=_STORE_OP_TIMEOUT_S,
                     )
                     return False
-                except Exception:
-                    logger.exception("store awrite_text failed", path=file_path)
+                except Exception as exc:
+                    fields, trace = failure(exc)
+                    logger.error("store awrite_text failed", path=file_path, exc_info=trace, **fields)
                     return False
                 if self._cache is not None:
                     self._cache.invalidate(namespace, key)
@@ -394,6 +407,8 @@ class StoreBackend:
                 "success": False,
                 "error": "old_string and new_string are identical",
             }
+        if "\x00" in new_string:
+            return {"success": False, "error": _NUL_REFUSAL}
         namespace = self._namespace()
         try:
             async with namespace_write_lock(self._store, namespace):
@@ -470,7 +485,9 @@ class StoreBackend:
                         "error": "Long-term store timed out. Retry shortly.",
                     }
                 except Exception as exc:
-                    logger.exception("store aedit_text failed", path=file_path)
+                    # The agent gets the text, which quotes its own file.
+                    fields, trace = failure(exc)
+                    logger.error("store aedit_text failed", path=file_path, exc_info=trace, **fields)
                     return {"success": False, "error": str(exc)}
                 if self._cache is not None:
                     self._cache.invalidate(namespace, key)

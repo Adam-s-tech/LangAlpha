@@ -28,6 +28,7 @@ from ptc_agent.core.paths import (
     HIDDEN_DIR_NAMES,
     SandboxLayout,
     WorkspaceLayout,
+    logged_path,
     strip_previous_dir_name,
 )
 from ptc_agent.core.sandbox.runtime import STREAM_CHUNK_BYTES
@@ -172,7 +173,7 @@ async def _present_virtual_file(client_path: str, user_id: str) -> bool:
         return client_path.rsplit("/", 1)[-1] in await route.names(user_id)
     except Exception:
         # Resolved as before; the read that follows reports the failure.
-        logger.exception("virtual file listing failed", extra={"path": client_path})
+        logger.exception("virtual file listing failed", extra={"path": logged_path(client_path)})
         return True
 
 

@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 
-from ptc_agent.core.paths import SandboxLayout
+from ptc_agent.core.paths import logged_path
 from ptc_agent.core.sandbox.livefs_mount import CallContext
 from ptc_agent.core.sandbox.livefs_runtime.protocol import (
     CALL_HEADER,
@@ -24,6 +24,7 @@ from ptc_agent.core.sandbox.livefs_runtime.protocol import (
     MOUNT,
     PREFIX,
     PROVISIONAL_HEADER,
+    Refusal,
     etag,
 )
 from src.server.app import setup
@@ -43,9 +44,6 @@ router = APIRouter(prefix=PREFIX, tags=["Livefs"])
 
 #: A change's outcome fields (None ones left out) and the response it answers with.
 _Change = Callable[[LivefsTree], Awaitable[tuple[dict[str, Any], Any]]]
-
-#: The tail of the automations folder in a sandbox path and a mount path alike.
-_AUTOMATIONS = SandboxLayout.AUTOMATIONS_DIR.removeprefix(SandboxLayout.AGENTS_DIR)
 
 
 async def _caller(
@@ -82,18 +80,14 @@ def _error(exc: LivefsError) -> JSONResponse:
 
 def _logged(outcome: dict[str, Any]) -> dict[str, Any]:
     """An outcome as the log keeps it. The report names the user's
-    automations, and so does an automation's file name, which is derived from
-    its name and which a refusal quotes, so in that folder the log keeps the
-    folder alone. The tool result carries all of it."""
-    kept = {k: v for k, v in outcome.items() if k != "report"}
-    named = False
+    automations and a refusal's text quotes what it refused (a file name, a
+    holding), so the log keeps the refusal's code; an automation's file is
+    named after it, so in that folder the log keeps the folder alone. The
+    tool result carries all of it."""
+    kept = {k: v for k, v in outcome.items() if k not in ("report", "error")}
     for key in ("path", "from"):
-        folder, marker, _ = (kept.get(key) or "").partition(_AUTOMATIONS + "/")
-        if marker:
-            kept[key] = folder + _AUTOMATIONS
-            named = True
-    if named:
-        kept.pop("error", None)
+        if kept.get(key):
+            kept[key] = logged_path(kept[key])
     return kept
 
 
@@ -146,7 +140,7 @@ async def _mutation(
     try:
         fields, response = await change(LivefsTree(identity, setup.store, context))
     except LivefsError as exc:
-        refused = {"op": op, "path": exc.path, "ok": False, "error": exc.message}
+        refused = {"op": op, "path": exc.path, "ok": False, "code": exc.code, "error": exc.message}
         await _not_made(request, identity, call_id, context, refused)
         return _error(exc)
     except Exception:
@@ -156,6 +150,7 @@ async def _mutation(
             "op": op,
             "path": f"{MOUNT}/{path.strip('/')}",
             "ok": False,
+            "code": Refusal.UNAVAILABLE,
             "error": "the server failed; retry",
         }
         await _not_made(request, identity, call_id, context, failed)

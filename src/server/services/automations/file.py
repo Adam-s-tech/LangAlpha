@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -33,7 +34,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import HTTPException
-from psycopg.errors import DataError, UniqueViolation
+from psycopg.errors import DataError, IntegrityError, UniqueViolation
 from pydantic import BaseModel, ConfigDict, ValidationError, ValidationInfo, field_validator
 
 from ptc_agent.agent.backends.db_json_route import (
@@ -64,6 +65,8 @@ from src.server.models.automation import (
 from src.server.services.automations import lifecycle
 from src.server.services.llm import user_models
 from src.utils.timezone_utils import zone_or_none
+
+logger = logging.getLogger(__name__)
 
 _FILE_NAME = re.compile(AUTOMATION_FILE_NAME)
 
@@ -802,6 +805,20 @@ class AutomationFile(DbJsonFile[dict[str, Any] | None, Document, FilePlan]):
             except DataError as exc:
                 # A value the column cannot hold: the content's fault, not an outage.
                 problems.add("", f"a value is too long or out of range for its column ({type(exc).__name__})")
+            except IntegrityError as exc:
+                # A value a constraint refuses (a check, a required column, a
+                # row it names that is gone), told by the constraint's name:
+                # the error's text quotes the row.
+                rule = exc.diag.constraint_name
+                logger.warning(
+                    "automation file save refused by a constraint: %s sqlstate=%s constraint=%s column=%s",
+                    type(exc).__name__,
+                    exc.sqlstate,
+                    rule,
+                    exc.diag.column_name,
+                )
+                named = f"the {rule} rule" if rule else "a rule"
+                problems.add("", f"a value breaks {named} on its column ({type(exc).__name__})")
             return _REFUSED
 
         if delete := plan.delete:

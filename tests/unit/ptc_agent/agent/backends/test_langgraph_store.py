@@ -15,6 +15,7 @@ from langgraph.store.memory import InMemoryStore
 from ptc_agent.agent.backends.langgraph_store import (
     MAX_CONTENT_BYTES,
     InvalidStoreKeyError,
+    StoreContentInvalidError,
     StoreContentTooLargeError,
     StoreBackend,
 )
@@ -161,6 +162,19 @@ class TestWriteRead:
             await backend.awrite_text(USER_PREFIX + "huge.md", oversized)
         # Nothing was written
         assert await backend.aread_text(USER_PREFIX + "huge.md") is None
+
+    @pytest.mark.asyncio
+    async def test_a_nul_is_refused_with_why_before_the_store_sees_it(self, store, sandbox_backend):
+        """Postgres stores no NUL in text, and its refusal quotes the row."""
+        backend = _make_backend(store, sandbox_backend)
+        with pytest.raises(StoreContentInvalidError, match="NUL"):
+            await backend.awrite_text(USER_PREFIX + "nul.md", "private\x00text")
+        assert await backend.aread_text(USER_PREFIX + "nul.md") is None
+
+        await backend.awrite_text(USER_PREFIX + "notes.md", "before")
+        result = await backend.aedit_text(USER_PREFIX + "notes.md", "before", "after\x00")
+        assert result["success"] is False and "NUL" in result["error"]
+        assert await backend.aread_text(USER_PREFIX + "notes.md") == "before"
 
     @pytest.mark.asyncio
     async def test_awrite_accepts_content_at_exact_cap(self, store, sandbox_backend):

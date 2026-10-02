@@ -19,6 +19,7 @@ from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from psycopg.errors import StringDataRightTruncation
 
 from ptc_agent.agent.backends import db_json_route
 from ptc_agent.agent.backends.db_json_route import UserDataValidationError
@@ -382,6 +383,20 @@ class TestWrite:
         assert exc.value.error_type == "server_error"
         assert "don't add test entries" in exc.value.hint
         assert conn.outcome == "rolled back"
+
+    @pytest.mark.asyncio
+    async def test_a_value_the_column_cannot_hold_is_the_contents_problem(self, backend, mock_io, conn):
+        _serve(mock_io, "v1")
+        await backend.aread_range(PORTFOLIO_PATH)
+        mock_io.diff_portfolio.return_value = MagicMock(deletes=[])
+        mock_io.write_portfolio_diff.side_effect = StringDataRightTruncation("value too long for (Sell all TSLA)")
+
+        with pytest.raises(UserDataValidationError) as exc:
+            await backend.awrite_text(PORTFOLIO_PATH, '{"holdings":[]}')
+
+        assert exc.value.error_type == "schema_error"
+        assert "(StringDataRightTruncation)" in exc.value.hint
+        assert "Sell all TSLA" not in exc.value.message
 
 
 class TestPreferenceWrite:

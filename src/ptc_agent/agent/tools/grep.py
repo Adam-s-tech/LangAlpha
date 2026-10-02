@@ -7,6 +7,8 @@ import structlog
 from langchain_core.tools import BaseTool, tool
 
 from ptc_agent.agent.backends import FilesystemBackend
+from ptc_agent.core.paths import logged_path
+from src.observability.private_errors import failure
 
 logger = structlog.get_logger(__name__)
 
@@ -69,7 +71,7 @@ def create_grep_tool(backend: FilesystemBackend) -> BaseTool:
                 re.compile(pattern)
             except re.error as e:
                 error_msg = f"Invalid regex pattern: {e}"
-                logger.error(error_msg, pattern=pattern)
+                logger.info("Invalid regex pattern", pattern_length=len(pattern))
                 return f"ERROR: {error_msg}"
 
             # Normalize virtual path to absolute sandbox path
@@ -77,11 +79,11 @@ def create_grep_tool(backend: FilesystemBackend) -> BaseTool:
 
             logger.info(
                 "Grepping content",
-                pattern=pattern,
-                path=search_path,
-                normalized_path=normalized_path,
+                pattern_length=len(pattern),
+                path=logged_path(search_path),
+                normalized_path=logged_path(normalized_path),
                 output_mode=output_mode,
-                glob=glob,
+                glob_length=len(glob) if glob else 0,
                 type=type,
                 case_insensitive=i,
             )
@@ -89,7 +91,7 @@ def create_grep_tool(backend: FilesystemBackend) -> BaseTool:
             # Validate normalized path
             if backend.filesystem_config.enable_path_validation and not backend.validate_path(search_path):
                 error_msg = f"Access denied: {search_path} is not in allowed directories"
-                logger.error(error_msg, path=search_path)
+                logger.error("Access denied: path outside the allowed directories", path=logged_path(search_path))
                 return f"ERROR: {error_msg}"
 
             results = await backend.agrep_rich(
@@ -109,7 +111,7 @@ def create_grep_tool(backend: FilesystemBackend) -> BaseTool:
             )
 
             if not results:
-                logger.info("No matches found", pattern=pattern, path=search_path)
+                logger.info("No matches found", path=logged_path(search_path))
                 return f"No matches found for pattern '{pattern}' in '{search_path}'"
 
             # Format output based on mode, virtualizing paths for agent
@@ -139,8 +141,7 @@ def create_grep_tool(backend: FilesystemBackend) -> BaseTool:
 
             logger.info(
                 "Grep completed successfully",
-                pattern=pattern,
-                path=search_path,
+                path=logged_path(search_path),
                 output_mode=output_mode,
                 results_count=len(results),
             )
@@ -149,13 +150,8 @@ def create_grep_tool(backend: FilesystemBackend) -> BaseTool:
 
         except Exception as e:
             error_msg = f"Failed to grep content: {e!s}"
-            logger.error(
-                error_msg,
-                pattern=pattern,
-                path=search_path,
-                error=str(e),
-                exc_info=True,
-            )
+            fields, trace = failure(e)
+            logger.error("Failed to grep content", path=logged_path(search_path), exc_info=trace, **fields)
             return f"ERROR: {error_msg}"
 
     return grep

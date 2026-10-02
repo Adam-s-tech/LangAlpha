@@ -465,7 +465,7 @@ async def execute_bash_command(
             "Executing bash command",
             bash_id=bash_id,
             command_hash=command_hash,
-            command=command[:100],
+            command_length=len(command),
             working_dir=working_dir,
         )
 

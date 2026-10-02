@@ -18,6 +18,7 @@ except ModuleNotFoundError:  # imported as a package module (tests)
     from mcp_servers._bootstrap import MCPServer
 
 import math
+from datetime import datetime, timezone
 
 import yfinance as yf
 
@@ -227,6 +228,38 @@ def get_insider_roster(ticker: str) -> _OUT_GET_INSIDER_ROSTER:
         )
 
 
+def _search_news(yf_symbol: str, count: int) -> list[dict]:
+    """News from Yahoo's search endpoint, in the shape ``get_news`` returns.
+
+    yfinance reads news from an endpoint Yahoo has stopped serving (it answers
+    404, which yfinance turns into an empty list), while search still carries
+    headlines. Each item is reshaped into the ``content`` layout the primary
+    endpoint used, so callers see one format. Search cannot filter by tab.
+    """
+    try:
+        items = yf.Search(yf_symbol, news_count=count, max_results=0).news
+    except Exception:  # noqa: BLE001 - the primary path already returned nothing
+        return []
+    articles = []
+    for item in items or []:
+        published = item.get("providerPublishTime")
+        articles.append(
+            {
+                "id": item.get("uuid"),
+                "content": {
+                    "title": item.get("title"),
+                    "contentType": item.get("type"),
+                    "pubDate": datetime.fromtimestamp(published, timezone.utc).isoformat()
+                    if isinstance(published, (int, float))
+                    else None,
+                    "provider": {"displayName": item.get("publisher")},
+                    "canonicalUrl": {"url": item.get("link")},
+                },
+            }
+        )
+    return articles
+
+
 _OUT_GET_NEWS = output_model(
     "GetNewsOut", envelope_schema(RECORDS, frame=("symbol",))
 )
@@ -252,6 +285,8 @@ def get_news(ticker: str, count: int = 10, tab: str = "news") -> _OUT_GET_NEWS:
     symbol, yf_symbol, _ = boundary(ticker)
     try:
         articles = yf.Ticker(yf_symbol).get_news(count=count, tab=tab)
+        if not articles and tab.lower() != "press releases":
+            articles = _search_news(yf_symbol, count)
         if not articles:
             return make_response([], source=SOURCE, symbol=symbol)
         data = [clean_value(item) for item in articles]

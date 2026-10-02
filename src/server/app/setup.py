@@ -1151,7 +1151,6 @@ app.add_exception_handler(SandboxTransientError, _sandbox_unreachable_handler)
 # Import routers
 from src.server.app.threads import router as threads_router
 from src.server.app.sessions import router as sessions_router
-from src.server.app.cache import router as cache_router
 from src.server.app.utilities import health_router
 from src.server.app.computers import router as computers_router
 from src.server.app.workspaces import router as workspaces_router
@@ -1229,7 +1228,6 @@ app.include_router(
 app.include_router(
     chart_annotations_router
 )  # /api/v1/workspaces/{id}/chart-annotations - Agent-drawn chart annotations
-app.include_router(cache_router)  # /api/v1/cache/* - Cache management
 app.include_router(market_data_router)  # /api/v1/market-data/* - Market data proxy
 app.include_router(
     bars_router

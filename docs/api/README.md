@@ -35,7 +35,6 @@ docs/api/
 ├── 74-calendar/                 # Economic & earnings calendar
 ├── 78-insights/                 # AI market insights
 ├── 79-sec-proxy/                # SEC EDGAR document proxy
-├── 80-cache/                    # Cache management
 ├── 85-public/                   # Public shared thread access
 ├── 87-skills/                   # Agent skills (platform, user and workspace tiers)
 └── 90-websocket/                # Real-time market data WebSocket
@@ -163,7 +162,6 @@ User identification is handled via:
 | Calendar | Economic & earnings calendar | `/api/v1/calendar` |
 | Insights | AI market insights | `/api/v1/insights` |
 | SEC Proxy | SEC EDGAR document proxy | `/api/v1/sec-proxy` |
-| Cache | Cache stats & management | `/api/v1/cache` |
 | Public | Shared thread access (no auth) | `/api/v1/public` |
 | Skills | Agent skills: platform tier plus user/workspace uploads | `/api/v1/skills` |
 | WebSocket | Real-time market data streaming | `/ws/v1/market-data` |

@@ -11,6 +11,7 @@ import os
 from datetime import datetime, date
 from typing import Any, Optional
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import redis.asyncio as redis
@@ -180,8 +181,11 @@ class RedisCacheClient:
 
             # Test connection
             await self.client.ping()
+            # The URL's userinfo is the AUTH password; name only the server.
+            target = urlsplit(self.url)
             logger.info(
-                f"Redis cache connected: {self.url} "
+                f"Redis cache connected: {target.scheme}://"
+                f"{target.netloc.rpartition('@')[2]}{target.path} "
                 f"(pool max={self.max_connections}, acquire_timeout={pool_timeout}s, "
                 f"health_check=30s)"
             )

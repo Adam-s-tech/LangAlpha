@@ -8,11 +8,19 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from ptc_agent.agent.middleware.large_result_eviction import TOO_LARGE_TOOL_MSG
-from src.server.services.history.reader import TaskHistory, ThreadHistory, TurnSlice
+from src.server.services.history.reader import TaskHistory, ThreadHistory
 from src.server.services.history.replay import (
     CheckpointReplayUnavailable,
     build_checkpoint_replay_items,
     build_sse_replay_items,
+)
+from tests.unit.server.services.history.replay_builders import (
+    THREAD,
+    _cache_probe,
+    _mock_reader,
+    _query,
+    _response,
+    _turn,
 )
 
 _EVICTION_POINTER = TOO_LARGE_TOOL_MSG.format(
@@ -22,45 +30,6 @@ _EVICTION_POINTER = TOO_LARGE_TOOL_MSG.format(
 )
 
 pytestmark = pytest.mark.asyncio
-
-THREAD = "thread-r"
-
-
-def _turn(ordinal, messages, user="hello", turn_index=None, new_ui_records=None):
-    return TurnSlice(
-        turn_ordinal=ordinal,
-        input_checkpoint_id=f"cp-in-{ordinal}",
-        end_checkpoint_id=f"cp-end-{ordinal}",
-        user_message=HumanMessage(content=user, id=f"h-{ordinal}"),
-        messages=messages,
-        turn_index=turn_index,
-        new_ui_records=new_ui_records or [],
-    )
-
-
-def _query(turn_index, content="hello", qtype="user"):
-    return {"turn_index": turn_index, "content": content, "type": qtype, "created_at": "t0"}
-
-
-def _response(turn_index, sse_events=None, status="completed"):
-    return {
-        "conversation_response_id": f"resp-{turn_index}",
-        "sse_events": sse_events or [],
-        "status": status,
-    }
-
-
-def _mock_reader(monkeypatch, history, task_messages=None, task_history=None):
-    reader = MagicMock()
-    reader.aget_thread_history = AsyncMock(return_value=history)
-    reader.aget_task_history = AsyncMock(
-        return_value=task_history or TaskHistory(messages=task_messages or [])
-    )
-    monkeypatch.setattr(
-        "src.server.services.history.replay.CheckpointHistoryReader.get_instance",
-        lambda: reader,
-    )
-    return reader
 
 
 async def test_legacy_backfilled_steering_falls_back(monkeypatch):
@@ -1461,34 +1430,6 @@ async def test_errored_run_committed_copy_is_not_resurrected(monkeypatch):
     # The committed copy renders once (projected); the capture-only tail
     # survives; the phantom stays consumed.
     assert chunks == ["the full final text", "and then it died"]
-
-
-def _cache_probe(monkeypatch):
-    """Absorb cache writes; return the list of cached tail checkpoint ids."""
-    from src.server.services.history import replay as replay_module
-    from src.server.services.history.replay import task_lane as task_lane_module
-
-    async def fake_details(thread_id, task_ids):
-        return {}
-
-    async def fake_live(thread_id, task_ids):
-        return set()
-
-    cached: list[str] = []
-
-    async def fake_store(thread_id, tail_checkpoint_id, fingerprint, items):
-        cached.append(tail_checkpoint_id)
-
-    async def fake_delete(thread_id, turn_keys):
-        pass
-
-    monkeypatch.setattr(task_lane_module, "resolve_task_details", fake_details)
-    monkeypatch.setattr(
-        replay_module.projection_cache, "live_task_streams", fake_live
-    )
-    monkeypatch.setattr(replay_module.projection_cache, "store_turn", fake_store)
-    monkeypatch.setattr(replay_module.projection_cache, "delete_turns", fake_delete)
-    return cached
 
 
 async def test_lossy_lane_awaiting_collector_stays_uncacheable(monkeypatch):

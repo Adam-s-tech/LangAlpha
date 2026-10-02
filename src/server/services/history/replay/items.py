@@ -7,6 +7,7 @@ from typing import Any
 
 from src.server.database.runs import lifecycle as tl_db
 from src.server.database.provenance import provenance_row_to_event
+from src.server.services.history.replay import stopped, stored_merge
 from src.server.services.runs.sse_producer import build_credit_usage_data
 from src.server.utils.error_sanitization import (
     sanitize_error_text as _sanitize_error_text,
@@ -219,6 +220,22 @@ def _error_item(
     return {"event": "error", "data": data}
 
 
+def terminal_items(
+    thread_id: str,
+    response: dict[str, Any] | None,
+    turn_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """The closing events a turn's response row owes its replay, in wire order.
+
+    Neither is in the stored events (both are yielded live after the persist
+    snapshot). The stop close reads ``turn_items``, so it is computed before
+    the error item is appended by the caller.
+    """
+    stop = stopped.stop_close_item(thread_id, response, turn_items)
+    error = _error_item(thread_id, response)
+    return [item for item in (stop, error) if item]
+
+
 def _enrich(
     item: dict[str, Any],
     thread_id: str,
@@ -240,18 +257,28 @@ def _stub_turn_items(
 ) -> list[dict[str, Any]]:
     """A persisted turn with no committed boundary: the in-flight active turn
     (frontend attaches to the live run via /status + run_id) or a run that
-    never checkpointed. The user_message stub — plus the terminal error for an
-    errored run — is the whole replay. Never cached."""
+    never checkpointed. The user_message stub, plus the terminal error or stop
+    close the response row records, is the whole replay. Never cached.
+
+    A stopped or failed turn replays its stored rows as a lane that projected
+    nothing, since nothing the user watched stream is on the committed
+    branch. A stop during bring-up has no such rows; a turn that streamed
+    lands here when the finalize's tip read failed and left the commit
+    pointer behind its boundary.
+    """
     response = responses_by_turn.get(turn_index)
+    response_id = str(response.get("conversation_response_id")) if response else None
     items = [
         _user_message_item(thread_id, q, response)
         for q in queries_by_turn.get(turn_index, [])
     ]
-    error_item = _error_item(thread_id, response)
-    if error_item:
-        response_id = (
-            str(response.get("conversation_response_id")) if response else None
+    turn_items: list[dict[str, Any]] = []
+    resurrect_lanes = stopped.resurrect_lanes(response, frozenset())
+    if resurrect_lanes:
+        turn_items = stored_merge._merge_stored_payloads(
+            [], stored_merge._stored_events(response), resurrect_lanes
         )
-        _enrich(error_item, thread_id, turn_index, response_id)
-        items.append(error_item)
-    return items
+    turn_items += terminal_items(thread_id, response, turn_items)
+    for item in turn_items:
+        _enrich(item, thread_id, turn_index, response_id)
+    return items + turn_items

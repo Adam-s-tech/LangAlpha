@@ -55,6 +55,7 @@ from src.server.database.share_links import KIND_APP
 from src.server.services.file_grants import grant_prefix, mint_file_grant, seconds_left
 from src.server.utils.api import PageViewer, Viewer
 from src.server.services.history.replay.items import run_completed_at
+from src.server.services.history.replay.stopped import stop_close_item
 
 logger = logging.getLogger(__name__)
 
@@ -451,8 +452,12 @@ async def replay_shared_thread(share_token: str):
                 continue
 
             sse_events = response.get("sse_events")
-            if not (isinstance(sse_events, list) and sse_events):
-                continue
+            if not isinstance(sse_events, list):
+                sse_events = []
+            # A stop during bring-up can archive nothing and still owes its close.
+            stop_close = stop_close_item(thread_id, response, sse_events)
+            if stop_close:
+                sse_events = [*sse_events, stop_close]
 
             for item in sse_events:
                 if not isinstance(item, dict):

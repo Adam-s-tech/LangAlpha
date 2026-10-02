@@ -70,6 +70,7 @@ const NODE_FILES = [
   'src/pages/ChatAgent/session/history/__tests__/replayHistory.claimedInterrupts.test.ts',
   'src/pages/ChatAgent/session/history/__tests__/replayHistory.creditPause.test.ts',
   'src/pages/ChatAgent/session/history/__tests__/replayHistory.orderDecisions.test.ts',
+  'src/pages/ChatAgent/session/history/__tests__/replayHistory.stoppedTurn.test.ts',
   'src/pages/ChatAgent/session/history/__tests__/replayHistory.taskStopReason.test.ts',
   'src/pages/ChatAgent/session/history/__tests__/replayHistory.toolApprovalReraise.test.ts',
   'src/pages/ChatAgent/session/interrupts/__tests__/answerBoard.test.ts',

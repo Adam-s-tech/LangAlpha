@@ -8,6 +8,7 @@ from typing import Any
 
 from ptc_agent.agent.middleware.large_result_eviction import TOO_LARGE_TOOL_MSG
 from src.server.services.history.replay import widgets
+from src.server.services.history.replay.lanes import agent_lane
 
 
 # Stable prefix of the pointer LargeResultEvictionMiddleware substitutes for an
@@ -117,14 +118,6 @@ def _replay_main_lane_from_storage(
 _ANCHORABLE_CONTENT_TYPES = frozenset({"reasoning_signal", "reasoning", "text"})
 
 
-# Task-run terminals where the live capture can exceed the checkpoint: a run
-# that raised or was killed mid-write streamed output whose message never
-# committed. completed/interrupted runs end on a committed boundary, and a
-# completed run's archive may hold phantom partials from a mid-stream model
-# retry — resurrecting those would double-render.
-_LOSSY_TERMINAL_STATUSES = frozenset({"error", "cancelled"})
-
-
 # Only these classes prove a lane's archive landed: the collector and the
 # stop drain both replay the captured stream from its start (the opener is
 # always first), while the live root path persists a task's custom
@@ -153,10 +146,6 @@ def _normalize_image_targets(text: str) -> str:
     return _IMAGE_MD_RE.sub(_basename, text)
 
 
-def _lane(agent: Any) -> str:
-    return agent if isinstance(agent, str) and agent.startswith("task:") else "main"
-
-
 def _message_lane_ordinals(
     out: list[dict[str, Any]],
 ) -> tuple[dict[str, int], dict[str, int]]:
@@ -180,7 +169,7 @@ def _message_lane_ordinals(
         message_id = data.get("id")
         if not message_id or message_id in ordinal_by_id:
             continue
-        lane = _lane(data.get("agent"))
+        lane = agent_lane(data.get("agent"))
         ordinal_by_id[message_id] = counters.get(lane, 0)
         counters[lane] = ordinal_by_id[message_id] + 1
     return ordinal_by_id, counters
@@ -198,7 +187,7 @@ def _anchor_key(
         content_type, message_id = data.get("content_type"), data.get("id")
         if content_type not in _ANCHORABLE_CONTENT_TYPES or message_id not in ordinals:
             return None
-        return ("message_chunk", _lane(data.get("agent")), ordinals[message_id], content_type)
+        return ("message_chunk", agent_lane(data.get("agent")), ordinals[message_id], content_type)
     if event_type == "tool_calls":
         tool_call_ids = tuple(
             tc.get("id") for tc in data.get("tool_calls") or [] if tc.get("id")
@@ -229,11 +218,12 @@ def _merge_stored_payloads(
     projected position of their nearest preceding stored anchor, reproducing
     their original mid-turn placement instead of piling up at the end.
 
-    ``resurrect_lanes``: lanes whose claimed run died mid-write. Their stored
-    rows beyond everything the checkpoint enumerates (see
+    ``resurrect_lanes``: lanes whose run died mid-write (``stopped.resurrect_lanes``).
+    Their stored rows beyond everything the checkpoint enumerates (see
     ``_is_lost_transcript_row``) are real output the user saw live that no
-    checkpoint holds — replayed after the lane's last projected item instead
-    of being dropped as unanchored.
+    checkpoint holds, replayed after the lane's last projected item (the
+    turn's end when nothing projected for the lane) instead of being dropped
+    as unanchored.
     """
     stored = [e for e in stored_events if _valid_stored(e)]
     if not stored:
@@ -275,9 +265,15 @@ def _merge_stored_payloads(
             # Last occurrence wins so an anchor covers its whole message group
             # (e.g. both reasoning-signal items share one key).
             index_by_key[key] = idx
+        if item["event"] == "tool_calls":
+            # The checkpoint holds a parallel round as one row, the live archive
+            # as one row per call: each call's row anchors on the round.
+            for tc in item["data"].get("tool_calls") or []:
+                if tc.get("id"):
+                    index_by_key[("tool_calls", tc["id"])] = idx
 
     def duration_key(data: dict[str, Any]) -> tuple | None:
-        lane = _lane(data.get("agent"))
+        lane = agent_lane(data.get("agent"))
         if lane not in shifted_lanes:
             return _anchor_key("message_chunk", data, stored_ordinals)
         twin = committed_pairs.get(data.get("id"))
@@ -289,9 +285,12 @@ def _merge_stored_payloads(
 
     last_lane_index: dict[str, int] = {}
     for idx, item in enumerate(turn_items):
-        last_lane_index[_lane(item["data"].get("agent"))] = idx
+        last_lane_index[agent_lane(item["data"].get("agent"))] = idx
+    # A main lane stopped inside its first model call projects nothing.
+    turn_end = len(turn_items) - 1
 
     inserts_after: dict[int, list[dict[str, Any]]] = {}
+    resurrected_ids: set[str] = set()
     anchor_idx = -1  # before the first projected item
     for event in stored:
         key = _anchor_key(event["event"], event["data"], stored_ordinals)
@@ -300,16 +299,19 @@ def _merge_stored_payloads(
             continue
         if _is_lost_transcript_row(
             event, key, stored_ordinals, projected_lane_counts,
-            resurrect_lanes, last_lane_index, committed_stored_ids,
+            resurrect_lanes, committed_stored_ids, resurrected_ids,
         ):
             # Anchor the resurrection point too, so following stored rows
             # (the run's error, further lost rows) keep their relative order.
             anchor_idx = max(
-                anchor_idx, last_lane_index[_lane(event["data"].get("agent"))]
+                anchor_idx,
+                last_lane_index.get(agent_lane(event["data"].get("agent")), turn_end),
             )
             inserts_after.setdefault(anchor_idx, []).append(
                 {"event": event["event"], "data": dict(event["data"])}
             )
+            if event["event"] == "message_chunk" and event["data"].get("id"):
+                resurrected_ids.add(event["data"]["id"])
             continue
         if event["event"] in _PASSTHROUGH_EVENTS or id(event) in extra_widget_ids:
             inserts_after.setdefault(anchor_idx, []).append(
@@ -369,29 +371,37 @@ def _is_lost_transcript_row(
     stored_ordinals: dict[str, int],
     projected_lane_counts: dict[str, int],
     resurrect_lanes: set[str] | frozenset[str],
-    last_lane_index: dict[str, int],
     committed_stored_ids: set[str],
+    resurrected_ids: set[str],
 ) -> bool:
     """Stored transcript content the checkpoint never committed.
 
-    Reachable only for lanes whose claimed run died mid-write: a message
-    whose lane ordinal lies beyond every projected message, or a tool round
-    with no projected twin, was streamed live but never checkpointed.
-    Anchored rows never reach here (they are consumed as duplicates),
-    empty-content chunks (the stop path's synthetic close) stay dropped,
-    and a misaligned committed copy (``committed_stored_ids``) is the
-    checkpointed message wearing a shifted ordinal, not lost output.
+    Reachable only for lanes whose run died mid-write: a message whose lane
+    ordinal lies beyond every projected message, or a tool round with no
+    projected twin, was streamed live but never checkpointed. Anchored rows
+    never reach here (they are consumed as duplicates), and a misaligned
+    committed copy (``committed_stored_ids``) is the checkpointed message
+    wearing a shifted ordinal, not lost output.
+
+    Of the empty-content chunks only the stop path's synthetic
+    ``finish_reason: "stopped"`` close passes, and only for a message this
+    merge already resurrected (``resurrected_ids``): it is the row that marks
+    that partial as stopped, and it always follows the message it closes.
     """
     data = event["data"]
-    lane = _lane(data.get("agent"))
-    if lane not in resurrect_lanes or lane not in last_lane_index:
+    lane = agent_lane(data.get("agent"))
+    if lane not in resurrect_lanes:
         return False
     if event["event"] == "message_chunk":
         content = data.get("content")
         message_id = data.get("id")
+        if not content:
+            return (
+                data.get("finish_reason") == "stopped"
+                and message_id in resurrected_ids
+            )
         return (
             isinstance(content, str)
-            and bool(content)
             and data.get("content_type") in _ANCHORABLE_CONTENT_TYPES
             and message_id in stored_ordinals
             and stored_ordinals[message_id] >= projected_lane_counts.get(lane, 0)
@@ -474,7 +484,7 @@ def _lane_message_signatures(
         chunk = data.get("content")
         if not isinstance(chunk, str):
             continue
-        lane = _lane(data.get("agent"))
+        lane = agent_lane(data.get("agent"))
         if lane not in lanes:
             continue
         if message_id not in lane_of:

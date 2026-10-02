@@ -52,6 +52,7 @@ from src.server.services.history.projector import (
 from src.server.services.history.reader import CheckpointHistoryReader
 from src.server.utils.checkpoint_helpers import CheckpointBranchTipNotFound
 from src.server.services.history.replay import items
+from src.server.services.history.replay import stopped
 from src.server.services.history.replay import stored_merge
 from src.server.services.history.replay import task_lane
 from src.server.services.history.replay import widgets
@@ -340,15 +341,16 @@ async def _build_and_backfill(
             )
         else:
             turn_items = stored_merge._merge_stored_payloads(
-                turn_items, stored_events, lane.turn_lossy_lanes
+                turn_items,
+                stored_events,
+                stopped.resurrect_lanes(response, lane.turn_lossy_lanes),
             )
 
         _fill_token_thresholds(turn_items)
         # Terminal error: never in stored events (persisted before it is
-        # yielded live), so it appends after the merge on every turn.
-        error_item = items._error_item(thread_id, response)
-        if error_item:
-            turn_items.append(error_item)
+        # yielded live), so it appends after the merge on every turn. A user
+        # stop's close is read off the same row (see stopped.stop_close_item).
+        turn_items += items.terminal_items(thread_id, response, turn_items)
 
         # After the stored-events merge so both projected and stored-copy
         # artifacts are covered, and before caching: the watermark is a fact
@@ -371,7 +373,8 @@ async def _build_and_backfill(
         # archive — caching before it lands would freeze the loss for the
         # cache TTL. A stored transcript-class row clears the debt: those
         # classes are written only by the atomic archive writers (collector,
-        # stop drain), never by the live root path.
+        # stop drain), never by the live root path. A lossy main lane owes
+        # nothing: its rows land in the finalize CAS that sets the status.
         awaiting_archive = set(lane.turn_lossy_lanes)
         for i in turn_items:
             d = i.get("data") or {}
@@ -522,10 +525,11 @@ def build_sse_replay_items(
     Same ``{"event", "data"}`` shape as the checkpoint path, so the endpoint
     emits either source through one loop. The terminal error event is
     synthesized from the response row here too — it is yielded live *after*
-    the persist snapshot, so stored events never contain it.
+    the persist snapshot, so stored events never contain it. So is a user
+    stop's close when the archive lacks one.
     """
     out: list[dict[str, Any]] = []
-    errors_emitted: set[str] = set()
+    terminals_emitted: set[str] = set()
     for query in queries:
         if not isinstance(query, dict):
             continue
@@ -535,18 +539,19 @@ def build_sse_replay_items(
             str(response.get("conversation_response_id")) if response else None
         )
         out.append(items._user_message_item(thread_id, query, response))
-        for event in stored_merge._stored_events(response):
-            if not stored_merge._valid_stored(event):
-                continue
-            item = {"event": event["event"], "data": dict(event["data"])}
+        turn_items = [
+            {"event": event["event"], "data": dict(event["data"])}
+            for event in stored_merge._stored_events(response)
+            if stored_merge._valid_stored(event)
+        ]
+        if response_id and response_id not in terminals_emitted:
+            terminals = items.terminal_items(thread_id, response, turn_items)
+            if terminals:
+                terminals_emitted.add(response_id)
+                turn_items += terminals
+        for item in turn_items:
             items._enrich(item, thread_id, turn_index, response_id)
-            out.append(item)
-        if response_id and response_id not in errors_emitted:
-            error_item = items._error_item(thread_id, response)
-            if error_item:
-                errors_emitted.add(response_id)
-                items._enrich(error_item, thread_id, turn_index, response_id)
-                out.append(error_item)
+        out.extend(turn_items)
     return out
 
 

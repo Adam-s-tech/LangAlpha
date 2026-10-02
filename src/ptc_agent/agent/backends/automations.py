@@ -89,7 +89,7 @@ first, which is refused or becomes an automation of its own.
   "delivery": ["slack"],
   "max_failures": 3,
   "state": {
-    "automation_id": "6f1c2b1e-5d0a-4a57-9a8e-2f0b7c1d9e10",
+    "automation_id": "00000000-0000-4000-8000-000000000001",
     "next_run_at": "2026-09-29T09:00:00-04:00",
     "last_run": {"status": "completed", "at": "2026-09-28T09:01:12-04:00"}
   }

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { LineChart, Line, YAxis, Tooltip } from 'recharts';
 import { motion, AnimatePresence, type PanInfo } from '@/lib/framer';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { useTranslation } from 'react-i18next';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
 import { grouped2 } from '@/lib/format';
@@ -44,6 +45,7 @@ const INDEX_HEADER_ROW =
 const INDEX_HEADER_QUOTE = 'shrink-0 @min-[14rem]:text-right';
 
 function IndexCardContent({ index }: { index: IndexData }) {
+  const { t } = useTranslation();
   const locale = useLocale();
   const hasQuote = index.quoteAvailable !== false;
   const pos = index.isPositive;
@@ -158,7 +160,7 @@ function IndexCardContent({ index }: { index: IndexData }) {
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-              No chart data
+              {t('dashboard.widgets.marketsOverview.noChartData')}
             </span>
           </div>
         )}
@@ -212,6 +214,7 @@ const swipeVariants = {
 };
 
 function IndexStackWidget({ indices }: { indices: IndexData[] }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [current, setCurrent] = useState(0);
   const [direction, setDirection] = useState(0);
@@ -316,7 +319,7 @@ function IndexStackWidget({ indices }: { indices: IndexData[] }) {
           <button
             key={i}
             onClick={() => goTo(i)}
-            aria-label={`Show ${indices[i]?.name}`}
+            aria-label={t('dashboard.widgets.marketsOverview.showIndex', { name: indices[i]?.name })}
             className="rounded-full transition-all duration-200"
             style={{
               width: i === current ? 18 : 6,

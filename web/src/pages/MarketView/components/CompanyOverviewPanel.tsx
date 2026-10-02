@@ -1,5 +1,6 @@
 import React from 'react';
 import { X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Loader } from '@/components/ui/loader';
 import {
   PerformanceBarChart,
@@ -83,6 +84,7 @@ function QuoteStat({ label, value }: QuoteStatProps) {
 }
 
 function QuoteSummary({ data }: QuoteSummaryProps) {
+  const { t } = useTranslation();
   const { symbol, name, quote } = data;
   if (!quote) return null;
 
@@ -105,16 +107,16 @@ function QuoteSummary({ data }: QuoteSummaryProps) {
         )}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
-        {quote.open != null && <QuoteStat label="Open" value={`$${quote.open.toFixed(2)}`} />}
-        {quote.previousClose != null && <QuoteStat label="Prev Close" value={`$${quote.previousClose.toFixed(2)}`} />}
+        {quote.open != null && <QuoteStat label={t('marketView.header.open')} value={`$${quote.open.toFixed(2)}`} />}
+        {quote.previousClose != null && <QuoteStat label={t('marketView.header.prevClose')} value={`$${quote.previousClose.toFixed(2)}`} />}
         {quote.dayLow != null && quote.dayHigh != null && (
-          <QuoteStat label="Day Range" value={`$${quote.dayLow.toFixed(2)} - $${quote.dayHigh.toFixed(2)}`} />
+          <QuoteStat label={t('marketView.header.dayRange')} value={`$${quote.dayLow.toFixed(2)} - $${quote.dayHigh.toFixed(2)}`} />
         )}
         {quote.yearLow != null && quote.yearHigh != null && (
-          <QuoteStat label="52W Range" value={`$${quote.yearLow.toFixed(2)} - $${quote.yearHigh.toFixed(2)}`} />
+          <QuoteStat label={t('marketView.header.range52w')} value={`$${quote.yearLow.toFixed(2)} - $${quote.yearHigh.toFixed(2)}`} />
         )}
-        {quote.volume != null && <QuoteStat label="Volume" value={formatNumber(quote.volume).replace('$', '')} />}
-        {quote.marketCap != null && <QuoteStat label="Market Cap" value={formatNumber(quote.marketCap)} />}
+        {quote.volume != null && <QuoteStat label={t('marketView.header.volume')} value={formatNumber(quote.volume).replace('$', '')} />}
+        {quote.marketCap != null && <QuoteStat label={t('marketView.header.marketCap')} value={formatNumber(quote.marketCap)} />}
         {quote.pe != null && <QuoteStat label="P/E" value={quote.pe.toFixed(2)} />}
         {quote.eps != null && <QuoteStat label="EPS" value={`$${quote.eps.toFixed(2)}`} />}
       </div>
@@ -123,15 +125,16 @@ function QuoteSummary({ data }: QuoteSummaryProps) {
 }
 
 export default function CompanyOverviewPanel({ symbol: _symbol, visible, onClose, data, loading }: CompanyOverviewPanelProps) {
+  const { t } = useTranslation();
   if (!visible) return null;
 
-  const error = !data && !loading ? 'No data available' : null;
+  const error = !data && !loading ? t('marketView.overview.noData') : null;
 
   return (
     <div className="company-overview-panel">
       <div className="company-overview-header">
-        <h3>Company Overview</h3>
-        <button className="company-overview-close" onClick={onClose}>
+        <h3>{t('marketView.companyOverview')}</h3>
+        <button className="company-overview-close" onClick={onClose} aria-label={t('common.close')}>
           <X size={16} />
         </button>
       </div>
@@ -141,7 +144,7 @@ export default function CompanyOverviewPanel({ symbol: _symbol, visible, onClose
           <span aria-hidden="true" className="shrink-0">
             <Loader size={16} className="text-current" />
           </span>
-          Loading...
+          {t('common.loading')}
         </div>
       )}
 

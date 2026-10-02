@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { useToast } from '@/components/ui/use-toast';
 import './MarketView.css';
 import StockHeader from './components/StockHeader';
@@ -84,18 +85,26 @@ interface ChartMetadata {
   [key: string]: unknown;
 }
 
-const QUICK_QUERIES = [
-  'Analyze the technical setup of {symbol}',
-  'What are the key support and resistance levels for {symbol}?',
-  'Summarize the trend and momentum indicators for {symbol}',
-  'What signals are the moving averages showing for {symbol}?',
-  'Analyze the RSI and volume patterns for {symbol}',
-  'Identify any chart patterns forming on {symbol}',
-  'How is {symbol} performing relative to its 52-week range?',
-  "What's the MACD crossover status for {symbol}?",
-];
+// Literal keys so the catalog key test sees every question.
+const QUICK_QUERY_KEYS = [
+  'marketView.quickQuery.q1',
+  'marketView.quickQuery.q2',
+  'marketView.quickQuery.q3',
+  'marketView.quickQuery.q4',
+  'marketView.quickQuery.q5',
+  'marketView.quickQuery.q6',
+  'marketView.quickQuery.q7',
+  'marketView.quickQuery.q8',
+] as const;
+
+function pickQuickQueryIndices(): number[] {
+  return QUICK_QUERY_KEYS.map((_, i) => i)
+    .sort(() => Math.random() - 0.5)
+    .slice(0, 2);
+}
 
 function MarketViewInner() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
@@ -178,24 +187,24 @@ function MarketViewInner() {
     savePref('mode', mode);
   }, [mode]);
 
-  const pickRandomQueries = useCallback((symbol: string): string[] => {
-    const shuffled = [...QUICK_QUERIES].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, 2).map(q => q.replace('{symbol}', symbol));
-  }, []);
-
-  const [quickQueries, setQuickQueries] = useState<string[]>(() => pickRandomQueries(selectedStock));
+  // Indices, not text: the picks survive a language switch and only the words re-translate.
+  const [quickQueryPicks, setQuickQueryPicks] = useState<number[]>(pickQuickQueryIndices);
+  const quickQueries = useMemo(
+    () => quickQueryPicks.map((i) => t(QUICK_QUERY_KEYS[i], { symbol: selectedStock })),
+    [quickQueryPicks, selectedStock, t],
+  );
 
   // Persist user preferences to localStorage (dedicated effects — no other side effects)
   useEffect(() => { savePref('symbol', selectedStock); }, [selectedStock]);
   useEffect(() => { savePref('interval', selectedInterval); }, [selectedInterval]);
 
   useEffect(() => {
-    setQuickQueries(pickRandomQueries(selectedStock));
-  }, [selectedStock, pickRandomQueries]);
+    setQuickQueryPicks(pickQuickQueryIndices());
+  }, [selectedStock]);
 
   const handleShuffleQueries = useCallback(() => {
-    setQuickQueries(pickRandomQueries(selectedStock));
-  }, [selectedStock, pickRandomQueries]);
+    setQuickQueryPicks(pickQuickQueryIndices());
+  }, []);
 
   // Resizable chat panel
   const [chatPanelWidth, setChatPanelWidth] = useState<number>(() =>
@@ -504,8 +513,8 @@ function MarketViewInner() {
         if (!workspaceId) {
           toast({
             variant: 'destructive',
-            title: 'No workspace selected',
-            description: 'Please create a workspace first to use PTC mode.',
+            title: t('marketView.chatHistory.noWorkspace'),
+            description: t('marketView.chatPanel.noWorkspaceToast'),
           });
           return;
         }
@@ -530,14 +539,14 @@ function MarketViewInner() {
         console.error('Error setting up PTC mode:', error);
         toast({
           variant: 'destructive',
-          title: 'Error',
-          description: 'Failed to set up PTC mode. Please try again.',
+          title: t('common.error'),
+          description: t('marketView.chatPanel.ptcSetupFailed'),
         });
       }
     }
     setChartImage(null);
     setChartImageDesc(null);
-  }, [handleFastModeSend, navigate, toast, chartImage, chartImageDesc, mode, selectedWorkspaceId, selectedStock, selectedInterval]);
+  }, [handleFastModeSend, navigate, toast, t, chartImage, chartImageDesc, mode, selectedWorkspaceId, selectedStock, selectedInterval]);
 
   const handleSidebarSymbolClick = useCallback((symbol: string) => {
     setSelectedStock(symbol);
@@ -655,7 +664,7 @@ function MarketViewInner() {
               prefillMessage={prefillMessage}
               onClearPrefill={() => setPrefillMessage('')}
               hasExternalContext={hasChartSelectionForChart}
-              placeholder="Ask about this stock..."
+              placeholder={t('marketView.chatPanel.askStockPlaceholder')}
               // The desktop panel waits out the same check: until the list
               // confirms the restored workspace there is none to send to, and
               // a send would clear the draft into the no-workspace toast.
@@ -793,7 +802,6 @@ function MarketViewInner() {
                   onQuickQuery={handleQuickQuery}
                   onShuffleQueries={handleShuffleQueries}
                   onNavigateSubagent={(tid, taskId) => navigate(`/chat/t/${tid}/${taskId}`)}
-                  placeholder="What would you like to know?"
                   onReturnToChat={chatReturnPath ? () => navigate(chatReturnPath) : undefined}
                   onJumpToChart={handleJumpToChart}
                 />

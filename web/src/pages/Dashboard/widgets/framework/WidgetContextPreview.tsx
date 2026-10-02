@@ -7,6 +7,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import Markdown from '@/pages/ChatAgent/components/Markdown';
+import { useTranslation } from 'react-i18next';
 import { useLocale } from '@/hooks/useLocale';
 import { createDateFormatter } from '@/lib/format';
 import type { WidgetContextSnapshot } from './contextSnapshot';
@@ -62,7 +63,7 @@ const formatTimestamp = createDateFormatter({
  *  links, ISO timestamps become localized dates, scalar arrays become inline
  *  comma-joined lists, and deeply-nested branches collapse to a code dump
  *  past `maxDepth` so the modal stays bounded. */
-function renderStructuredValue(v: unknown, depth: number, locale: string, maxDepth = 4): React.ReactNode {
+function renderStructuredValue(v: unknown, depth: number, locale: string, emptyLabel: string, maxDepth = 4): React.ReactNode {
   if (v === null || v === undefined || v === '') {
     return <span style={{ color: 'var(--color-text-tertiary)' }}>—</span>;
   }
@@ -90,7 +91,7 @@ function renderStructuredValue(v: unknown, depth: number, locale: string, maxDep
   }
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   if (Array.isArray(v)) {
-    if (v.length === 0) return <span style={{ color: 'var(--color-text-tertiary)' }}>(empty)</span>;
+    if (v.length === 0) return <span style={{ color: 'var(--color-text-tertiary)' }}>{emptyLabel}</span>;
     const allScalar = v.every(
       (x) => typeof x === 'string' || typeof x === 'number' || typeof x === 'boolean',
     );
@@ -99,7 +100,7 @@ function renderStructuredValue(v: unknown, depth: number, locale: string, maxDep
     return (
       <ol className="list-decimal pl-5 space-y-3">
         {v.map((x, i) => (
-          <li key={i}>{renderStructuredValue(x, depth + 1, locale, maxDepth)}</li>
+          <li key={i}>{renderStructuredValue(x, depth + 1, locale, emptyLabel, maxDepth)}</li>
         ))}
       </ol>
     );
@@ -107,7 +108,7 @@ function renderStructuredValue(v: unknown, depth: number, locale: string, maxDep
   if (typeof v === 'object') {
     if (depth >= maxDepth) return <code className="text-xs">{JSON.stringify(v)}</code>;
     const entries = Object.entries(v as Record<string, unknown>);
-    if (entries.length === 0) return <span style={{ color: 'var(--color-text-tertiary)' }}>(empty)</span>;
+    if (entries.length === 0) return <span style={{ color: 'var(--color-text-tertiary)' }}>{emptyLabel}</span>;
     return (
       <dl className="space-y-1.5">
         {entries.map(([k, val]) => (
@@ -119,7 +120,7 @@ function renderStructuredValue(v: unknown, depth: number, locale: string, maxDep
               {humanizeKey(k)}
             </dt>
             <dd className="wrap-break-word text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-              {renderStructuredValue(val, depth + 1, locale, maxDepth)}
+              {renderStructuredValue(val, depth + 1, locale, emptyLabel, maxDepth)}
             </dd>
           </div>
         ))}
@@ -135,7 +136,8 @@ function renderStructuredValue(v: unknown, depth: number, locale: string, maxDep
  *  dump. New snapshots emit `text` and use the Markdown path instead. */
 function StructuredDataFallback({ data }: { data: unknown }) {
   const locale = useLocale();
-  return <div className="text-sm">{renderStructuredValue(data, 0, locale)}</div>;
+  const { t } = useTranslation();
+  return <div className="text-sm">{renderStructuredValue(data, 0, locale, t('dashboard.widgets.contextPreview.empty'))}</div>;
 }
 
 /**
@@ -155,6 +157,7 @@ export function WidgetContextPreview({
   snapshot: WidgetContextPreviewShape | null;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const open = snapshot !== null;
   const markdownBody = useMemo(() => {
     if (!snapshot?.text) return '';
@@ -194,7 +197,7 @@ export function WidgetContextPreview({
             <StructuredDataFallback data={snapshot.data} />
           ) : (
             <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-              (no preview content)
+              {t('dashboard.widgets.contextPreview.noContent')}
             </p>
           )}
         </div>

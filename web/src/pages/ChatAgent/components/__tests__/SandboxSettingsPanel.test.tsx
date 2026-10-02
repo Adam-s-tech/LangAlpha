@@ -172,7 +172,7 @@ describe('provider-specific overview and storage', () => {
     });
     await openTab(/overview/i);
 
-    await waitFor(() => expect(screen.getByText('Always on')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Always-on')).toBeInTheDocument());
     expect(screen.queryByText(/auto-stop: 0m/i)).not.toBeInTheDocument();
   });
 

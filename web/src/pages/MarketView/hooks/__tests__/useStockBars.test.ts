@@ -140,7 +140,7 @@ describe('useStockBars', () => {
   });
 
   it('surfaces a soft error (no data + error) as a query error', async () => {
-    fetchStockData.mockResolvedValue({ data: [], error: 'No data available' });
+    fetchStockData.mockResolvedValue({ data: [], error: 'Data conversion failed' });
     const { result } = renderBars('AAPL', '1day');
 
     await waitFor(() => expect(result.current.isError).toBe(true));

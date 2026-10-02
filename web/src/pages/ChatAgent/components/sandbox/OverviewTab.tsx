@@ -5,6 +5,8 @@ import { useTranslation } from 'react-i18next';
 import { Loader } from '@/components/ui/loader';
 import { useLocale } from '@/hooks/useLocale';
 import { createDateFormatter } from '@/lib/format';
+import type { ComputerStatus } from '@/types/api';
+import { COMPUTER_STATUS_UI, computerStatusUi } from '../computerStatusUi';
 import type { SandboxStats } from './sandboxTypes';
 
 // The fields Date#toLocaleDateString() prints by default.
@@ -28,34 +30,36 @@ const TERMINAL_STATES = new Set([
   'deleted',
 ]);
 
-// Wire values are provider identifiers, not user copy. Unmapped values must not
-// reach the screen: daytona's SDK coerces anything it doesn't recognize to
-// 'unknown_default_open_api', and a bare capitalize would render that verbatim.
-const STATE_LABELS: Record<string, string> = {
-  running: 'Running',
-  stopped: 'Stopped',
-  starting: 'Starting',
-  stopping: 'Stopping',
-  archiving: 'Archiving',
-  archived: 'Archived',
-  restoring: 'Restoring',
-  resizing: 'Resizing',
-  creating: 'Creating',
-  destroying: 'Destroying',
-  destroyed: 'Destroyed',
-  pausing: 'Pausing',
-  paused: 'Paused',
-  resuming: 'Resuming',
-  snapshotting: 'Snapshotting',
-  forking: 'Forking',
-  error: 'Error',
-  deleted: 'Deleted',
-  build_failed: 'Build failed',
-  pending_build: 'Pending build',
-  building_snapshot: 'Building snapshot',
-  pulling_snapshot: 'Pulling snapshot',
-  unknown: 'Unknown',
+// Wire values are provider identifiers, not user copy. States a computer can
+// be in read `computerStatusUi`; these are the ones only the sandbox provider
+// reports. Literal keys keep them visible to the catalog key test. Anything
+// else, such as daytona's 'unknown_default_open_api' coercion, must not reach
+// the screen verbatim.
+const PROVIDER_STATE_LABEL_KEY: Record<string, { labelKey: string }> = {
+  archiving: { labelKey: 'computer.overview.state.archiving' },
+  archived: { labelKey: 'computer.overview.state.archived' },
+  restoring: { labelKey: 'computer.overview.state.restoring' },
+  resizing: { labelKey: 'computer.overview.state.resizing' },
+  destroying: { labelKey: 'computer.overview.state.destroying' },
+  destroyed: { labelKey: 'computer.overview.state.destroyed' },
+  pausing: { labelKey: 'computer.overview.state.pausing' },
+  paused: { labelKey: 'computer.overview.state.paused' },
+  resuming: { labelKey: 'computer.overview.state.resuming' },
+  snapshotting: { labelKey: 'computer.overview.state.snapshotting' },
+  forking: { labelKey: 'computer.overview.state.forking' },
+  build_failed: { labelKey: 'computer.overview.state.build_failed' },
+  pending_build: { labelKey: 'computer.overview.state.pending_build' },
+  building_snapshot: { labelKey: 'computer.overview.state.building_snapshot' },
+  pulling_snapshot: { labelKey: 'computer.overview.state.pulling_snapshot' },
+  unknown: { labelKey: 'computer.overview.state.unknown' },
 };
+
+function stateLabelUi(state: string): { labelKey: string; fallback?: string } {
+  // hasOwn: a wire value like '__proto__' must not resolve to a prototype member.
+  if (Object.hasOwn(COMPUTER_STATUS_UI, state)) return COMPUTER_STATUS_UI[state as ComputerStatus];
+  if (Object.hasOwn(PROVIDER_STATE_LABEL_KEY, state)) return PROVIDER_STATE_LABEL_KEY[state];
+  return computerStatusUi(null);
+}
 
 interface OverviewTabProps {
   stats: SandboxStats;
@@ -77,13 +81,12 @@ export function OverviewTab({ stats, isRunning, actionLoading, refreshing, onSta
   const isTransitioning =
     actionLoading || (!!stats.state && !TERMINAL_STATES.has(stats.state) &&
       !(stats.state === 'creating' && recoverableCreating));
-  const stateLabel = stats.state
-    ? (STATE_LABELS[stats.state] ?? 'Updating')
-    : 'Unknown';
+  const stateUi = stateLabelUi(stats.state || 'unknown');
+  const stateLabel = t(stateUi.labelKey, stateUi.fallback ?? '');
   const resourceCards = [
     { icon: Cpu, label: 'CPU', value: stats.resources.cpu != null ? `${stats.resources.cpu} vCPU` : '---' },
-    { icon: MemoryStick, label: 'Memory', value: stats.resources.memory != null ? `${stats.resources.memory} GiB` : '---' },
-    { icon: HardDrive, label: 'Disk', value: stats.resources.disk != null ? `${stats.resources.disk} GiB` : '---' },
+    { icon: MemoryStick, label: t('computer.overview.memory'), value: stats.resources.memory != null ? `${stats.resources.memory} GiB` : '---' },
+    { icon: HardDrive, label: t('computer.overview.disk'), value: stats.resources.disk != null ? `${stats.resources.disk} GiB` : '---' },
     { icon: MonitorCog, label: 'GPU', value: stats.resources.gpu != null ? `${stats.resources.gpu} GPU` : '---' },
   ];
 
@@ -150,12 +153,12 @@ export function OverviewTab({ stats, isRunning, actionLoading, refreshing, onSta
           <div>
             <div className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
               {isTransitioning
-                ? (actionLoading ? 'Updating...' : `${stateLabel}...`)
+                ? (actionLoading ? t('computer.overview.transition', { state: t('computer.statusUpdating') }) : t('computer.overview.transition', { state: stateLabel }))
                 : stateLabel}
             </div>
             {stats.created_at && (
               <div className="text-xs mt-0.5" style={{ color: 'var(--color-text-tertiary)' }}>
-                Created {createdDate(new Date(stats.created_at), locale)}
+                {t('computer.overview.created', { date: createdDate(new Date(stats.created_at), locale) })}
               </div>
             )}
           </div>
@@ -165,16 +168,16 @@ export function OverviewTab({ stats, isRunning, actionLoading, refreshing, onSta
             <span className="text-xs px-2 py-1 rounded" style={{ color: 'var(--color-text-tertiary)', backgroundColor: 'var(--color-bg-card)' }}>
               {/* 0 disables auto-stop entirely, so rendering "0m" states the opposite */}
               {stats.auto_stop_interval === 0
-                ? 'Always on'
-                : `Auto-stop: ${stats.auto_stop_interval}m`}
+                ? t('computer.alwaysOn')
+                : t('computer.overview.autoStop', { minutes: stats.auto_stop_interval })}
             </span>
           )}
           {/* Never disabled. In a transitional state every other control here is,
               and nothing polls — without this the panel has no way to advance. */}
           <button
             onClick={onRefresh}
-            aria-label="Refresh sandbox status"
-            title="Refresh status"
+            aria-label={t('computer.overview.refreshAria')}
+            title={t('computer.overview.refresh')}
             className="flex items-center gap-1.5 px-2 py-1.5 text-xs rounded-md transition-colors hover:bg-foreground/10"
             style={{ color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-muted)' }}
           >
@@ -194,7 +197,7 @@ export function OverviewTab({ stats, isRunning, actionLoading, refreshing, onSta
               style={{ color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-muted)' }}
             >
               <Archive className="h-3 w-3" />
-              Archive
+              {t('computer.overview.archive')}
             </button>
           )}
           {isRunning ? (
@@ -225,7 +228,7 @@ export function OverviewTab({ stats, isRunning, actionLoading, refreshing, onSta
       {/* Sandbox ID */}
       {stats.sandbox_id && (
         <div className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-          Sandbox ID: <span className="font-mono">{stats.sandbox_id}</span>
+          {t('computer.overview.sandboxId')} <span className="font-mono">{stats.sandbox_id}</span>
         </div>
       )}
     </div>

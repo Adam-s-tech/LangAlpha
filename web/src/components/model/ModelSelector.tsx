@@ -1,15 +1,16 @@
 import { useId, useMemo } from "react"
+import { useTranslation } from "react-i18next"
 import { Select } from "@/components/ui/select"
 import type { ProviderModelsData } from "./types"
 import type { ModelAccess } from "@/types/platform"
 import type { ModelMetadataEntry } from "@/hooks/useFilteredModels"
 import { modelLabel } from "@/lib/modelLabel"
 
-const ACCESS_LABELS: Record<ModelAccess, string> = {
-  platform: "platform",
-  byok: "BYOK",
-  oauth: "OAuth",
-  locked: "locked",
+const ACCESS_LABEL_KEYS: Record<ModelAccess, string> = {
+  platform: "settings.modelAccess.platform",
+  byok: "settings.modelAccess.byok",
+  oauth: "settings.modelAccess.oauth",
+  locked: "settings.modelAccess.locked",
 }
 
 export interface ModelSelectorProps {
@@ -42,11 +43,12 @@ export function ModelSelector({
   onChange,
   models,
   filterProviders,
-  placeholder = "Select a model...",
+  placeholder,
   required = false,
   modelAccess,
   metadata,
 }: ModelSelectorProps) {
+  const { t } = useTranslation()
   const id = useId()
 
   const filteredModels = useMemo(() => {
@@ -112,7 +114,7 @@ export function ModelSelector({
           onChange={(e) => onChange(e.target.value)}
           required={required}
         >
-          <option value="">{placeholder}</option>
+          <option value="">{placeholder ?? t("settings.selectModel")}</option>
           {Object.entries(filteredModels).map(([provider, providerData]) => {
             const modelList = providerData.models ?? []
             if (modelList.length === 0) return null
@@ -123,7 +125,7 @@ export function ModelSelector({
               <optgroup key={provider} label={displayName}>
                 {modelList.map((m) => {
                   const access = modelAccess?.[m]
-                  const suffix = access ? ` (${ACCESS_LABELS[access]})` : ""
+                  const suffix = access ? ` (${t(ACCESS_LABEL_KEYS[access])})` : ""
                   return (
                     <option key={m} value={m}>
                       {modelLabel(m, metadata)}{suffix}
@@ -139,7 +141,7 @@ export function ModelSelector({
           className="text-sm py-2"
           style={{ color: "var(--color-text-tertiary)" }}
         >
-          No models available
+          {t("settings.noModelsAvailable")}
         </p>
       )}
     </div>

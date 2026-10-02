@@ -1297,7 +1297,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                 onClick={handleNavExpand}
                 className="p-2 rounded-md transition-colors shrink-0"
                 style={{ color: 'var(--color-text-primary)' }}
-                title="Menu"
+                title={t('sidebar.menu')}
               >
                 <Menu className="h-5 w-5" />
               </button>

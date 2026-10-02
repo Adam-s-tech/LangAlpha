@@ -126,7 +126,8 @@
     "expand": "Expand sidebar",
     "resize": "Resize sidebar",
     "plugins": "Plugins",
-    "orders": "Orders"
+    "orders": "Orders",
+    "menu": "Menu"
   },
   "account": {
     "menuLabel": "Account menu"
@@ -382,6 +383,15 @@
       "compactionModel": "Compaction model",
       "compactionModelDesc": "Used for compacting long conversation context.",
       "defaultsToFlash": "Defaults to flash model"
+    },
+    "manageProvidersDesc": "Add or remove API keys, custom providers, and models",
+    "selectModel": "Select a model...",
+    "noModelsAvailable": "No models available",
+    "modelAccess": {
+      "platform": "platform",
+      "byok": "BYOK",
+      "oauth": "OAuth",
+      "locked": "locked"
     }
   },
   "dashboard": {
@@ -467,8 +477,6 @@
         "tipBody": "Click a widget to drop it at the next open slot on your dashboard.",
         "totalCount": "{{count}} total widgets",
         "noMatches": "No widgets match your search.",
-        "hintClickToSelect": "Click to select · double-click or",
-        "hintToAdd": "to add",
         "hintAddSentence": "Click to select · double-click or <enter/> to add",
         "cancel": "Cancel",
         "addWidget": "Add widget",
@@ -848,7 +856,9 @@
       },
       "marketsOverview": {
         "title": "Markets Overview",
-        "description": "Live tiles for major indices with sparklines."
+        "description": "Live tiles for major indices with sparklines.",
+        "noChartData": "No chart data",
+        "showIndex": "Show {{name}}"
       },
       "insightBrief": {
         "title": "AI Daily Brief",
@@ -998,6 +1008,10 @@
         "flash": "Flash",
         "empty": "No recent threads",
         "emptyHint": "Start a conversation to fill this log."
+      },
+      "contextPreview": {
+        "empty": "(empty)",
+        "noContent": "(no preview content)"
       }
     },
     "classic": {
@@ -1319,6 +1333,35 @@
       "criticalBody": "Only {{free}} left. Saving files and running code will start to fail in every workspace on this computer.",
       "openBreakdown": "Open storage breakdown",
       "dismiss": "Dismiss"
+    },
+    "overview": {
+      "state": {
+        "archiving": "Archiving",
+        "archived": "Archived",
+        "restoring": "Restoring",
+        "resizing": "Resizing",
+        "destroying": "Destroying",
+        "destroyed": "Destroyed",
+        "pausing": "Pausing",
+        "paused": "Paused",
+        "resuming": "Resuming",
+        "snapshotting": "Snapshotting",
+        "forking": "Forking",
+        "build_failed": "Build failed",
+        "pending_build": "Pending build",
+        "building_snapshot": "Building snapshot",
+        "pulling_snapshot": "Pulling snapshot",
+        "unknown": "Unknown"
+      },
+      "memory": "Memory",
+      "disk": "Disk",
+      "transition": "{{state}}...",
+      "created": "Created {{date}}",
+      "autoStop": "Auto-stop: {{minutes}}m",
+      "refreshAria": "Refresh sandbox status",
+      "refresh": "Refresh status",
+      "archive": "Archive",
+      "sandboxId": "Sandbox ID:"
     }
   },
   "thread": {
@@ -3068,7 +3111,9 @@
         "unavailable": "Not available",
         "reconnecting": "Reconnecting",
         "disconnected": "Disconnected"
-      }
+      },
+      "range52w": "52W Range",
+      "marketCap": "Market Cap"
     },
     "symbolSearch": {
       "switchSymbol": "Change symbol, currently {{symbol}}",
@@ -3097,13 +3142,39 @@
       "startConversation": "Start a conversation by typing a message below",
       "defaultPlaceholder": "What would you like to know?",
       "returnToChat": "Return to Chat",
-      "openInChat": "Open in Chat"
+      "openInChat": "Open in Chat",
+      "noWorkspaceToast": "Please create a workspace first to use PTC mode.",
+      "ptcSetupFailed": "Failed to set up PTC mode. Please try again.",
+      "askStockPlaceholder": "Ask about this stock..."
     },
     "chart": {
       "clearAnnotations": "Clear",
       "clearAnnotationsTitle": "Clear annotations from the chart (kept in chat — click the artifact to restore)",
       "modeLabel": "Mode",
-      "newsEventAria": "News event: {{title}}"
+      "newsEventAria": "News event: {{title}}",
+      "overlay": "Overlay",
+      "toolPercentScale": "Percentage scale",
+      "toolMagnet": "Magnet mode",
+      "toolBaseline": "Baseline vs previous close",
+      "toolAnnotations": "Toggle annotations",
+      "toolLogScale": "Log scale",
+      "toolZoomIn": "Zoom in",
+      "toolZoomOut": "Zoom out",
+      "toolAutoFit": "Auto fit",
+      "toolFitAll": "Fit all data",
+      "toolScrollLatest": "Scroll to latest",
+      "indicators": "Indicators",
+      "tools": "Tools",
+      "view": "View",
+      "chartTools": "Chart tools",
+      "chartSettings": "Chart settings",
+      "chartAria": "K-line chart",
+      "loadingHistory": "Loading history",
+      "loadingData": "Fetching real-time market data…",
+      "errorTitle": "Data loading failed",
+      "errorIntraday": "Intraday data is not available. The market may be closed. Try the 1D interval.",
+      "errorNotFound": "Stock data not found",
+      "errorLoad": "Failed to load data"
     },
     "selection": {
       "toolTooltip": "Select a region or price level to ask the agent",
@@ -3136,6 +3207,31 @@
       "chipRegion": "Region · {{symbol}} {{timeframe}}",
       "chipPriceLevel": "Price ${{price}} · {{symbol}} {{timeframe}}",
       "removeChip": "Remove selection"
+    },
+    "overview": {
+      "noData": "No data available"
+    },
+    "sidebar": {
+      "remove": "Remove",
+      "show": "Show watchlist and portfolio",
+      "collapse": "Collapse",
+      "portfolio": "Portfolio",
+      "livePrices": "Live prices",
+      "addToWatchlist": "Add to watchlist",
+      "addHolding": "Add holding",
+      "emptyWatchlist": "No stocks in your watchlist yet. Click + to add one.",
+      "emptyPortfolio": "No holdings in your portfolio yet. Click + to add one.",
+      "viewAll": "View all"
+    },
+    "quickQuery": {
+      "q1": "Analyze the technical setup of {{symbol}}",
+      "q2": "What are the key support and resistance levels for {{symbol}}?",
+      "q3": "Summarize the trend and momentum indicators for {{symbol}}",
+      "q4": "What signals are the moving averages showing for {{symbol}}?",
+      "q5": "Analyze the RSI and volume patterns for {{symbol}}",
+      "q6": "Identify any chart patterns forming on {{symbol}}",
+      "q7": "How is {{symbol}} performing relative to its 52-week range?",
+      "q8": "What's the MACD crossover status for {{symbol}}?"
     }
   },
   "onboarding": {

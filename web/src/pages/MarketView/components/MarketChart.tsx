@@ -212,7 +212,8 @@ const MarketChart = React.memo(function MarketChart({
 
   const [loading, setLoading] = useState<boolean>(true);
   const [scrollLoading, setScrollLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+  // A server message shows as sent; a fallback of ours is a catalog key so it follows the language.
+  const [error, setError] = useState<{ text: string } | { kind: 'intraday' | 'notFound' | 'load' } | null>(null);
   const [_lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null);
   const [rsiValue, setRsiValue] = useState<string | null>(null);
 
@@ -1787,10 +1788,9 @@ const MarketChart = React.memo(function MarketChart({
             return;
           }
           clearChartSeries();
-          const fallbackMsg = interval !== '1day'
-            ? 'Intraday data not available — market may be closed. Try the 1D interval.'
-            : 'Stock data not found';
-          setError(result?.error || fallbackMsg);
+          setError(result?.error
+            ? { text: result.error }
+            : { kind: interval !== '1day' ? 'intraday' : 'notFound' });
           if (typeof onStockMeta === 'function') onStockMeta(null);
         }
       } catch (err: unknown) {
@@ -1802,7 +1802,7 @@ const MarketChart = React.memo(function MarketChart({
         }
         console.error('Failed to load stock data:', err);
         clearChartSeries();
-        setError(err instanceof Error ? err.message : 'Failed to load data');
+        setError(err instanceof Error ? { text: err.message } : { kind: 'load' });
       } finally {
         if (!abortController.signal.aborted) {
           setLoading(false);
@@ -1978,7 +1978,7 @@ const MarketChart = React.memo(function MarketChart({
         </div>
       </div>
       <div className="dropdown-section">
-        <span className="indicator-toggles-label">Overlay</span>
+        <span className="indicator-toggles-label">{t('marketView.chart.overlay')}</span>
         <div className="indicator-toggles">
           {Object.entries(OVERLAY_LABELS).map(([key, label]) => (
             <button
@@ -2002,7 +2002,7 @@ const MarketChart = React.memo(function MarketChart({
         type="button"
         className={`chart-tool-btn${priceScaleMode === PriceScaleMode.Percentage ? ' chart-tool-btn-active' : ''}`}
         onClick={() => handleTogglePriceScale(PriceScaleMode.Percentage)}
-        title="Percentage Scale"
+        title={t('marketView.chart.toolPercentScale')}
       >
         %
       </button>
@@ -2010,7 +2010,7 @@ const MarketChart = React.memo(function MarketChart({
         type="button"
         className={`chart-tool-btn${magnetMode ? ' chart-tool-btn-active' : ''}`}
         onClick={() => setMagnetMode((v) => !v)}
-        title="Magnet Mode"
+        title={t('marketView.chart.toolMagnet')}
       >
         M
       </button>
@@ -2018,7 +2018,7 @@ const MarketChart = React.memo(function MarketChart({
         type="button"
         className={`chart-tool-btn${showBaseline ? ' chart-tool-btn-active' : ''}`}
         onClick={() => setShowBaseline((v) => !v)}
-        title="Baseline vs Previous Close"
+        title={t('marketView.chart.toolBaseline')}
       >
         B
       </button>
@@ -2026,7 +2026,7 @@ const MarketChart = React.memo(function MarketChart({
         type="button"
         className={`chart-tool-btn${annotationsVisible ? ' chart-tool-btn-active' : ''}`}
         onClick={handleToggleAnnotations}
-        title="Toggle Annotations"
+        title={t('marketView.chart.toolAnnotations')}
       >
         T
       </button>
@@ -2085,15 +2085,15 @@ const MarketChart = React.memo(function MarketChart({
         type="button"
         className={`chart-tool-btn${priceScaleMode === PriceScaleMode.Logarithmic ? ' chart-tool-btn-active' : ''}`}
         onClick={() => handleTogglePriceScale(PriceScaleMode.Logarithmic)}
-        title="Log Scale"
+        title={t('marketView.chart.toolLogScale')}
       >
         Log
       </button>
-      <button type="button" className="chart-tool-btn" onClick={handleZoomIn} title="Zoom In"><Plus size={14} /></button>
-      <button type="button" className="chart-tool-btn" onClick={handleZoomOut} title="Zoom Out"><Minus size={14} /></button>
-      <button type="button" className="chart-tool-btn" onClick={handleAutoNormalize} title="Auto Fit"><Maximize2 size={14} /></button>
-      <button type="button" className="chart-tool-btn" onClick={handleFitAll} title="Fit All Data"><Minimize2 size={14} /></button>
-      <button type="button" className="chart-tool-btn" onClick={handleScrollToRealTime} title="Scroll to Latest"><RotateCcw size={14} /></button>
+      <button type="button" className="chart-tool-btn" onClick={handleZoomIn} title={t('marketView.chart.toolZoomIn')}><Plus size={14} /></button>
+      <button type="button" className="chart-tool-btn" onClick={handleZoomOut} title={t('marketView.chart.toolZoomOut')}><Minus size={14} /></button>
+      <button type="button" className="chart-tool-btn" onClick={handleAutoNormalize} title={t('marketView.chart.toolAutoFit')}><Maximize2 size={14} /></button>
+      <button type="button" className="chart-tool-btn" onClick={handleFitAll} title={t('marketView.chart.toolFitAll')}><Minimize2 size={14} /></button>
+      <button type="button" className="chart-tool-btn" onClick={handleScrollToRealTime} title={t('marketView.chart.toolScrollLatest')}><RotateCcw size={14} /></button>
     </>
   );
 
@@ -2179,7 +2179,7 @@ const MarketChart = React.memo(function MarketChart({
                   type="button"
                   className={`chart-tool-btn${indicatorsOpen ? ' chart-tool-btn-active' : ''}`}
                   onClick={() => { setIndicatorsOpen((v) => !v); setToolsOpen(false); setViewOpen(false); }}
-                  title="Indicators"
+                  title={t('marketView.chart.indicators')}
                 >
                   <SlidersHorizontal size={14} />
                 </button>
@@ -2237,7 +2237,7 @@ const MarketChart = React.memo(function MarketChart({
                   type="button"
                   className={`chart-tool-btn${toolsOpen ? ' chart-tool-btn-active' : ''}`}
                   onClick={() => { setToolsOpen((v) => !v); setIndicatorsOpen(false); setViewOpen(false); }}
-                  title="Chart Tools"
+                  title={t('marketView.chart.chartTools')}
                 >
                   <Settings2 size={14} />
                 </button>
@@ -2262,7 +2262,7 @@ const MarketChart = React.memo(function MarketChart({
                     type="button"
                     className={`chart-tool-btn${viewOpen ? ' chart-tool-btn-active' : ''}`}
                     onClick={() => { setViewOpen((v) => !v); setIndicatorsOpen(false); setToolsOpen(false); }}
-                    title="Chart Settings"
+                    title={t('marketView.chart.chartSettings')}
                   >
                     <Menu size={14} />
                   </button>
@@ -2279,11 +2279,11 @@ const MarketChart = React.memo(function MarketChart({
                       {toolbarLevel >= 3 && (
                         <>
                           {/* Indicators section */}
-                          <div className="compact-menu-section-label">Indicators</div>
+                          <div className="compact-menu-section-label">{t('marketView.chart.indicators')}</div>
                           {renderIndicatorsContent()}
                           {/* Tools section */}
                           <div className="compact-menu-divider" />
-                          <div className="compact-menu-section-label">Tools</div>
+                          <div className="compact-menu-section-label">{t('marketView.chart.tools')}</div>
                           <div className="dropdown-tool-grid">
                             {renderToolsContent()}
                           </div>
@@ -2291,7 +2291,7 @@ const MarketChart = React.memo(function MarketChart({
                         </>
                       )}
                       {/* View section */}
-                      <div className="compact-menu-section-label">View</div>
+                      <div className="compact-menu-section-label">{t('marketView.chart.view')}</div>
                       <div className="dropdown-tool-grid compact-menu-view-grid">
                         {renderViewButtons()}
                       </div>
@@ -2332,7 +2332,7 @@ const MarketChart = React.memo(function MarketChart({
             className="charts-container chart-wheel-capture"
             onWheel={(e) => e.stopPropagation()}
             role="region"
-            aria-label="K-line chart"
+            aria-label={t('marketView.chart.chartAria')}
           >
             <div
               ref={chartContainerRef}
@@ -2386,20 +2386,25 @@ const MarketChart = React.memo(function MarketChart({
               )}
               {scrollLoading && (
                 <div className="chart-scroll-loading">
-                  <Loader size={16} label="Loading history" style={{ color: 'var(--color-text-secondary)' }} />
+                  <Loader size={16} label={t('marketView.chart.loadingHistory')} style={{ color: 'var(--color-text-secondary)' }} />
                 </div>
               )}
             </div>
           </div>
           {loading && (
             <div className="chart-loading">
-              <div className="chart-loading-shimmer">Fetching real-time market data…</div>
+              <div className="chart-loading-shimmer">{t('marketView.chart.loadingData')}</div>
             </div>
           )}
           {error && (
             <div className="chart-error">
-              <div className="chart-error-title">Data Loading Failed</div>
-              <div>{error}</div>
+              <div className="chart-error-title">{t('marketView.chart.errorTitle')}</div>
+              <div>
+                {'text' in error ? error.text
+                  : error.kind === 'intraday' ? t('marketView.chart.errorIntraday')
+                  : error.kind === 'notFound' ? t('marketView.chart.errorNotFound')
+                  : t('marketView.chart.errorLoad')}
+              </div>
             </div>
           )}
 

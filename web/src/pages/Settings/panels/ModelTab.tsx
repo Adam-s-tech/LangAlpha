@@ -470,7 +470,7 @@ export function ModelTab() {
                 {t('settings.manageProviders', 'Manage providers')}
               </span>
               <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                Add or remove API keys, custom providers, and models
+                {t('settings.manageProvidersDesc')}
               </span>
             </div>
             <Settings2 className="h-5 w-5 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />

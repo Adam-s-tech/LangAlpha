@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Minus } from 'lucide-react';
@@ -30,17 +30,12 @@ export function MobileNavDrawer({ visible, slideIn, onMinimize, isActive, worksp
   const { t } = useTranslation();
   const navigate = useNavigate();
 
-  // Read back the tree's rows without making the new-thread handler depend on
-  // them — the handler is an input to the hook that produces them.
-  const navWorkspacesRef = useRef<NavWorkspace[]>([]);
-
   // MOBILE INTENT: the drawer's ✎ opens a BLANK thread in that workspace, so a
   // one-tap new chat needs no second stop on the gallery. `__default__` + a
   // workspaceId in route state resolves to a brand-new thread (ChatAgent only
   // restores a stored session for the bare /chat route). The desktop sidebar
   // deliberately differs; see AppSidebar's openWorkspaceHome.
-  const handleNewThread = useCallback((wsId: string) => {
-    const ws = navWorkspacesRef.current.find((w) => w.workspace_id === wsId);
+  const handleNewThread = useCallback((wsId: string, ws: NavWorkspace | undefined) => {
     const status = ws?.status || null;
     navigate('/chat/t/__default__', {
       state: {
@@ -58,9 +53,6 @@ export function MobileNavDrawer({ visible, slideIn, onMinimize, isActive, worksp
     agents,
     onNewThread: handleNewThread,
     fallbackWorkspaceName: workspaceName,
-  });
-  useLayoutEffect(() => {
-    navWorkspacesRef.current = navTreeProps.workspaces;
   });
 
   // NavigationPanel is memoized, and this node is one of its props: built

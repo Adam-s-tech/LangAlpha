@@ -143,15 +143,10 @@ function AppSidebar({ collapsed, onToggleCollapse, width, onWidthChange }: AppSi
   const sidebarAgents = useSidebarAgents();
   const agentsSlice = sidebarAgents && sidebarAgents.threadId === currentThreadId ? sidebarAgents : null;
 
-  // Read back the tree's rows without making the new-thread handler depend on
-  // them — the handler is an input to the hook that produces them.
-  const workspacesRef = useRef<NavWorkspace[]>([]);
-
   // DESKTOP INTENT: the tree's ✎ opens the workspace HOME (thread gallery —
   // centered composer + recent tasks, Codex-style D14), not a blank thread.
   // The mobile drawer deliberately differs; see ChatView's handleNewThread.
-  const openWorkspaceHome = useCallback((wsId: string) => {
-    const ws = workspacesRef.current.find((w) => w.workspace_id === wsId);
+  const openWorkspaceHome = useCallback((wsId: string, ws: NavWorkspace | undefined) => {
     navigate(`/chat/${wsId}`, {
       state: {
         workspaceName: ws?.name || 'Workspace',
@@ -166,7 +161,6 @@ function AppSidebar({ collapsed, onToggleCollapse, width, onWidthChange }: AppSi
     agents: agentsSlice,
     onNewThread: openWorkspaceHome,
   });
-  workspacesRef.current = navTreeProps.workspaces;
 
   // New chat opens the workspace gallery — picking (or creating) the workspace
   // is part of starting a conversation. The tree's per-workspace ✎ skips the

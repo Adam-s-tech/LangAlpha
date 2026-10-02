@@ -26,9 +26,10 @@ export interface UseNavTreePropsOptions {
   /**
    * REQUIRED per surface: the hosts deliberately diverge (desktop opens the
    * workspace home, mobile opens a fresh default thread), so neither inherits
-   * a default that would silently drift from the other.
+   * a default that would silently drift from the other. `ws` is the tree's
+   * row for the workspace, undefined while the list does not have it.
    */
-  onNewThread: (wsId: string) => void;
+  onNewThread: (wsId: string, ws: NavWorkspace | undefined) => void;
   /** Route-state name to fall back on before the tree has loaded the workspace row. */
   fallbackWorkspaceName?: string;
 }
@@ -40,7 +41,7 @@ export function useNavTreeProps({
   currentWorkspaceId,
   currentThreadId,
   agents,
-  onNewThread,
+  onNewThread: openNewThread,
   fallbackWorkspaceName,
 }: UseNavTreePropsOptions) {
   const navigate = useNavigate();
@@ -62,6 +63,11 @@ export function useNavTreeProps({
   const findWorkspace = useCallback(
     (wsId: string): NavWorkspace | undefined => workspaces.find((ws) => ws.workspace_id === wsId),
     [workspaces],
+  );
+
+  const onNewThread = useCallback(
+    (wsId: string) => openNewThread(wsId, findWorkspace(wsId)),
+    [openNewThread, findWorkspace],
   );
 
   // Route-state contract: the workspace name/status ride along so ChatAgent

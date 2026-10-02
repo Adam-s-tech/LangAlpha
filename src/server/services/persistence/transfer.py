@@ -132,6 +132,11 @@ PACK_CUTOFF = 256 * 1024
 #: early: raising this past the threshold would drop the sandbox's only copy
 #: of a chunk whose parts the server has yet to assemble.
 PACK_MAX_BYTES = 32 * 1024 * 1024
+#: What a backup stages on the sandbox's disk at once: the pack set is packed
+#: and pushed a run of whole chunks at a time, each run's chunks gone before
+#: the next is written. Staged whole, a backup needed free disk equal to every
+#: small file in the workspace, so a nearly full disk could never back up.
+PACK_STAGE_MAX_BYTES = 2 * PACK_MAX_BYTES
 PACK_DIR = SandboxLayout.PACKS_DIR
 
 # What one transfer may hold in memory at once on the paths that move bytes

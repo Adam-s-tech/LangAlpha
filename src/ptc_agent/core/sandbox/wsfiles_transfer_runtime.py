@@ -1551,41 +1551,51 @@ def pack(spec: dict[str, Any]) -> dict[str, Any]:
         )
         current = None
 
-    for member in members:
-        rel = member["path"]
-        expected_size = int(member["size"])
-        expected_sha = member.get("sha256")
-        abs_path = _resolve_under_root(root, rel)
-        if abs_path is None:
-            changed.append(rel)
-            continue
-        # Small by contract, so the whole member is read before anything is
-        # written: a member that fails to verify must leave no bytes behind.
-        try:
-            with open(abs_path, "rb") as f:
-                data = f.read(expected_size + 1)
-        except OSError:
-            changed.append(rel)
-            continue
-        if len(data) != expected_size or (expected_sha is not None and hashlib.sha256(data).hexdigest() != expected_sha):
-            changed.append(rel)
-            continue
-        if current is not None and current["members"] and current["size"] + expected_size > max_bytes:
-            close_chunk()
-        if current is None:
-            current = open_chunk()
-        current["file"].write(data)
-        current["hash"].update(data)
-        current["members"].append(
-            {
-                "path": rel,
-                "offset": current["size"],
-                "size": expected_size,
-                "sha256": expected_sha or hashlib.sha256(data).hexdigest(),
-            }
-        )
-        current["size"] += expected_size
-    close_chunk()
+    try:
+        for member in members:
+            rel = member["path"]
+            expected_size = int(member["size"])
+            expected_sha = member.get("sha256")
+            abs_path = _resolve_under_root(root, rel)
+            if abs_path is None:
+                changed.append(rel)
+                continue
+            # Small by contract, so the whole member is read before anything is
+            # written: a member that fails to verify must leave no bytes behind.
+            try:
+                with open(abs_path, "rb") as f:
+                    data = f.read(expected_size + 1)
+            except OSError:
+                changed.append(rel)
+                continue
+            if len(data) != expected_size or (expected_sha is not None and hashlib.sha256(data).hexdigest() != expected_sha):
+                changed.append(rel)
+                continue
+            if current is not None and current["members"] and current["size"] + expected_size > max_bytes:
+                close_chunk()
+            if current is None:
+                current = open_chunk()
+            current["file"].write(data)
+            current["hash"].update(data)
+            current["members"].append(
+                {
+                    "path": rel,
+                    "offset": current["size"],
+                    "size": expected_size,
+                    "sha256": expected_sha or hashlib.sha256(data).hexdigest(),
+                }
+            )
+            current["size"] += expected_size
+        close_chunk()
+    except BaseException:
+        # A pack that dies part way, a full disk being the usual cause, would
+        # leave every chunk it wrote until the age sweep. That is the room
+        # the next backup needs, so a disk that filled once stayed full.
+        if current is not None:
+            with contextlib.suppress(OSError):
+                current["file"].close()
+        _rmtree_quiet(out_dir)
+        raise
     if not chunks:
         _rmtree_quiet(out_dir)
     return {"chunks": chunks, "changed": changed}

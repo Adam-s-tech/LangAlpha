@@ -38,6 +38,8 @@ from src.server.services.persistence.transfer import (
     transfer_mode,
     INPROCESS_MAX_INFLIGHT_BYTES,
     MULTIPART_THRESHOLD_BYTES,
+    PACK_MAX_BYTES,
+    PACK_STAGE_MAX_BYTES,
     SINGLE_PUT_MAX_BYTES,
     ByteBudget,
     pack_direct,
@@ -622,7 +624,9 @@ async def _persist_packed(
 
     The pack set is rewritten whole whenever a member changed, appeared or
     left, so a workspace never trails half-dead chunks and a restore stays
-    a handful of GETs. When nothing changed and every member already
+    a handful of GETs. It is staged a run of chunks at a time
+    (``_pack_runs``), so a backup never needs more free disk than
+    ``PACK_STAGE_MAX_BYTES``. When nothing changed and every member already
     points at a pack, the only work is a metadata refresh for rows whose
     stamp moved. A file that only recently shrank below the cutoff, or
     was stored per object before packs existed, reads as a set change
@@ -657,71 +661,106 @@ async def _persist_packed(
                 )
         return rows, [], len(members)
 
-    out = await pack_direct(
-        sandbox,
-        [{"path": e.path, "sha256": e.sha256, "size": e.size} for e in members],
-        layout=layout,
-    )
-    chunks = out["chunks"]
-    changed = set(out["changed"])
-    # A chunk is pushed exactly like a file: same presigning, same direct
-    # path with relay fallback, same registry. It just is not a file the
-    # user has, so it is removed from the sandbox once pushed.
-    chunk_entries = [
-        ScanEntry(
-            path=c["path"],
-            kind="file",
-            size=int(c["size"]),
-            mtime_ns=0,
-            mode=0,
-            sha256=c["sha256"],
-            symlink_target=None,
-            is_binary=True,
-        )
-        for c in chunks
-    ]
-    # The chunks themselves belong to the machine, not to the project folder
-    # the members came from, so they push and unlink at the computer root;
-    # ``_entry_abs_path`` reads their absolute paths as such.
-    chunk_rows, _ = await _persist_blobs(
-        user_id,
-        workspace_id,
-        sandbox,
-        chunk_entries,
-        unlink_after=True,
-        layout=_machine_layout(layout),
-    )
-    available = {r["blob_sha256"] for r in chunk_rows}
-
     def unsaved_member(path: str, reason: UnsavedReason) -> UnsavedFile:
         e = by_path.get(path)
         return UnsavedFile(path, reason, e.size if e else None)
 
+    # The chunks themselves belong to the machine, not to the project folder
+    # the members came from, so they push and unlink at the computer root;
+    # ``_entry_abs_path`` reads their absolute paths as such.
+    machine = _machine_layout(layout)
     rows = []
-    unsaved = [unsaved_member(path, "changed") for path in sorted(changed)]
-    for c in chunks:
-        if c["sha256"] not in available:
-            # The old rows survive, still pointing at the previous chunk,
-            # which stays referenced and restorable; next sync retries.
-            unsaved.extend(unsaved_member(m["path"], "failed") for m in c["members"])
-            continue
-        for m in c["members"]:
-            e = by_path.get(m["path"])
-            if e is None:
+    failed: list[UnsavedFile] = []
+    changed: set[str] = set()
+    chunk_count = 0
+    for run in _pack_runs(members):
+        out = await pack_direct(
+            sandbox,
+            [{"path": e.path, "sha256": e.sha256, "size": e.size} for e in run],
+            layout=layout,
+        )
+        chunks = out["chunks"]
+        changed.update(out["changed"])
+        chunk_count += len(chunks)
+        # A chunk is pushed exactly like a file: same presigning, same direct
+        # path with relay fallback, same registry. It just is not a file the
+        # user has, so it is removed from the sandbox once pushed.
+        chunk_entries = [
+            ScanEntry(
+                path=c["path"],
+                kind="file",
+                size=int(c["size"]),
+                mtime_ns=0,
+                mode=0,
+                sha256=c["sha256"],
+                symlink_target=None,
+                is_binary=True,
+            )
+            for c in chunks
+        ]
+        chunk_rows, _ = await _persist_blobs(
+            user_id,
+            workspace_id,
+            sandbox,
+            chunk_entries,
+            unlink_after=True,
+            layout=machine,
+        )
+        available = {r["blob_sha256"] for r in chunk_rows}
+        stranded = [c["path"] for c in chunks if c["sha256"] not in available]
+        if stranded:
+            # Only a stored chunk leaves with its push, and the next run is
+            # staged in the room a rejected one would still be holding.
+            await _unlink_chunks(sandbox, stranded, workspace_id, machine)
+        for c in chunks:
+            if c["sha256"] not in available:
+                # The old rows survive, still pointing at the previous chunk,
+                # which stays referenced and restorable; next sync retries.
+                failed.extend(unsaved_member(m["path"], "failed") for m in c["members"])
                 continue
-            db = existing.get(e.path)
-            is_binary = db.get("is_binary") if _content_matches(db, e) else None
-            rows.append(_pack_row(e, c["sha256"], m["offset"], is_binary=is_binary))
+            for m in c["members"]:
+                e = by_path.get(m["path"])
+                if e is None:
+                    continue
+                db = existing.get(e.path)
+                is_binary = db.get("is_binary") if _content_matches(db, e) else None
+                rows.append(_pack_row(e, c["sha256"], m["offset"], is_binary=is_binary))
+
+    unsaved = [unsaved_member(path, "changed") for path in sorted(changed)] + failed
     if changed:
         logger.info(
             f"{len(changed)} small file(s) in workspace {workspace_id} changed "
             f"during packing and will be picked up next pass"
         )
     logger.info(
-        f"Packed {len(rows)} file(s) into {len(chunks)} chunk(s) "
+        f"Packed {len(rows)} file(s) into {chunk_count} chunk(s) "
         f"for workspace {workspace_id}"
     )
     return rows, unsaved, 0
+
+
+def _pack_runs(members: list[ScanEntry]) -> list[list[ScanEntry]]:
+    """Split the pack set into runs of whole chunks, staged one run at a time.
+
+    The cuts fall where the pack op closes a chunk anyway: path order, with a
+    chunk closing before the member that would overflow it. Each run then packs
+    into the chunks one pass over the whole set would have written, so an
+    unchanged chunk still finds its digest in the registry and is not uploaded.
+    """
+    per_run = max(PACK_STAGE_MAX_BYTES // PACK_MAX_BYTES, 1)
+    runs: list[list[ScanEntry]] = [[]]
+    closed = 0
+    open_bytes: int | None = None
+    for e in sorted(members, key=lambda e: e.path):
+        if open_bytes is not None and open_bytes + e.size > PACK_MAX_BYTES:
+            closed += 1
+            open_bytes = None
+            if closed == per_run:
+                runs.append([])
+                closed = 0
+        runs[-1].append(e)
+        open_bytes = (open_bytes or 0) + e.size
+    return [run for run in runs if run]
 
 
 def _batched_by_weight(

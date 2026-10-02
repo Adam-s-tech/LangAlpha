@@ -6,6 +6,7 @@ the unit-suite tripwire and only ever talk to 127.0.0.1.
 """
 
 import base64
+import errno
 import hashlib
 import os
 import socket
@@ -1104,6 +1105,24 @@ def test_pack_drops_a_member_that_changed_or_vanished(tmp_path):
 
 def test_pack_with_nothing_to_pack_writes_no_chunk(tmp_path):
     assert _pack(tmp_path, []) == {"chunks": [], "changed": []}
+    assert os.listdir(tmp_path / "_internal/packs") == []
+
+
+def test_a_pack_that_fails_part_way_removes_what_it_wrote(tmp_path, monkeypatch):
+    """A full disk failed the pack after a chunk was down. Left in place, the
+    chunks held the room every later backup needed until the age sweep."""
+    members = _members(tmp_path, {f"f{i}.bin": bytes([i]) * 4 for i in range(5)})
+    real_replace, closed = os.replace, []
+
+    def replace(src, dst):
+        closed.append(dst)
+        if len(closed) == 2:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(rt.os, "replace", replace)
+    with pytest.raises(OSError):
+        _pack(tmp_path, members, max_bytes=10)
     assert os.listdir(tmp_path / "_internal/packs") == []
 
 

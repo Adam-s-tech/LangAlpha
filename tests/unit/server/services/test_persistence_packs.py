@@ -9,6 +9,7 @@ chunk does to the manifest, and how a restore or a read addresses a member.
 from __future__ import annotations
 
 import hashlib
+import random
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ptc_agent.core.paths import SandboxLayout
+from ptc_agent.core.sandbox import wsfiles_transfer_runtime as rt
 from src.server.services.persistence import backup, blobs, resolve, restore
 from src.server.services.persistence.resolve import resolve_file_bytes
 from src.server.services.persistence.transfer import PACK_CUTOFF, PACK_MAX_BYTES, ScanEntry, ScanResult
@@ -252,11 +254,71 @@ async def test_a_chunk_the_store_rejected_withholds_its_members_rows(db):
     db["push"].side_effect = lambda sb, items, layout=None: {
         i["sha256"]: {"status": "failed" if i["sha256"] == CHUNK else "ok"} for i in items
     }
-    result = await backup.sync_to_db(WS, _sandbox(), layout=LAYOUT)
+    sb = _sandbox()
+    with patch.object(blobs, "unlink_direct", new=AsyncMock(return_value=1)) as unlink:
+        result = await backup.sync_to_db(WS, sb, layout=LAYOUT)
     rows = _rows(db)
     assert set(rows) == {"big.bin"}
     assert result.errors == 2 and result.synced == 1
     assert {(f.path, f.reason) for f in result.unsaved} == {("a.txt", "failed"), ("b.txt", "failed")}
+    # Only a stored chunk leaves with its push; the next run needs the room.
+    unlink.assert_awaited_once_with(sb, [f"_internal/packs/chunk-{CHUNK}"], layout=MACHINE_LAYOUT)
+
+
+@pytest.mark.asyncio
+async def test_a_pack_set_larger_than_one_run_is_packed_and_pushed_a_run_at_a_time(db):
+    """Staged whole, a backup needed free disk for every small file at once, so
+    a nearly full sandbox could never back up. Each run is pushed, and so off
+    the disk, before the next one is packed."""
+    files = {f"f{i}.txt": bytes([97 + i]) * 3 for i in range(5)}
+    db["scan"].return_value = _scan(*(_entry(p, d) for p, d in files.items()))
+    order = []
+
+    def _pack(sandbox, members, *, layout=None):
+        order.append(("pack", [m["path"] for m in members]))
+        run = [(m["path"], files[m["path"]]) for m in members]
+        return {"chunks": [_chunk(run[i : i + 2]) for i in range(0, len(run), 2)], "changed": []}
+
+    def _push(sandbox, items, *, layout=None):
+        order.append(("push", len(items)))
+        return {i["sha256"]: {"status": "ok"} for i in items}
+
+    db["pack"].side_effect = _pack
+    db["push"].side_effect = _push
+    with patch.object(blobs, "PACK_MAX_BYTES", 6), patch.object(blobs, "PACK_STAGE_MAX_BYTES", 12):
+        result = await backup.sync_to_db(WS, _sandbox(), layout=LAYOUT)
+    assert order == [
+        ("pack", ["f0.txt", "f1.txt", "f2.txt", "f3.txt"]),
+        ("push", 2),
+        ("pack", ["f4.txt"]),
+        ("push", 1),
+    ]
+    rows = _rows(db)
+    assert rows["f3.txt"]["pack_sha256"] == _sha(files["f2.txt"] + files["f3.txt"])
+    assert rows["f3.txt"]["pack_offset"] == 3
+    assert rows["f4.txt"]["pack_sha256"] == _sha(files["f4.txt"])
+    assert result.synced == 5 and result.errors == 0
+
+
+def test_runs_pack_into_the_chunks_one_pass_over_the_whole_set_writes(tmp_path):
+    """An unchanged chunk dedups against the registry only while the runs cut
+    exactly where the pack op closes a chunk. Zero-length members included."""
+    rng = random.Random(7)
+    files = {f"d{i % 3}/f{i:03d}": rng.randbytes(rng.randint(0, 40)) for i in range(60)}
+    for rel, data in files.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_bytes(data)
+    entries = [_entry(p, d) for p, d in files.items()]
+
+    def pack(run):
+        members = [{"path": e.path, "sha256": e.sha256, "size": e.size} for e in run]
+        spec = {"root": str(tmp_path), "out_dir": "_internal/packs", "max_bytes": 100, "members": members}
+        return [c["sha256"] for c in rt.pack(spec)["chunks"]]
+
+    with patch.object(blobs, "PACK_MAX_BYTES", 100), patch.object(blobs, "PACK_STAGE_MAX_BYTES", 300):
+        runs = [pack(run) for run in blobs._pack_runs(entries)]
+    assert len(runs) > 1 and all(len(chunks) <= 3 for chunks in runs)
+    assert [sha for chunks in runs for sha in chunks] == pack(entries)
 
 
 @pytest.mark.asyncio

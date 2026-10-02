@@ -72,6 +72,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
   const setMessagesForHandlers = rt.setMessages as unknown as (
     updater: (prev: Record<string, unknown>[]) => Record<string, unknown>[]
   ) => void;
+  const queueMessagesForHandlers = rt.queueMessages as unknown as typeof setMessagesForHandlers;
   // Snapshot of the old assistant message's content order at the time the user
   // sent a steering message.  Used to roll back any content that leaked into the
   // old bubble due to stream-mode multiplexing (custom events can arrive after
@@ -136,6 +137,10 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
 
   const dispatch = (event: SSEEvent): void => {
     const eventType = event.event || 'message_chunk';
+    // Only token chunks wait for the frame. Anything else first applies the
+    // chunks queued ahead of it, in this task, so a state change it makes
+    // (loading, an interrupt, an error) never renders before the text.
+    if (eventType !== 'message_chunk' && eventType !== 'tool_call_chunks') rt.flushMessages();
 
     // Check if this is a subagent event — filtered from the main chat view
     // and (critically) from the main reconnect cursor: task-lane frames
@@ -215,6 +220,13 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
     // Subagent steering_delivered events are handled in the isSubagent block below.
     if (eventType === 'steering_delivered' && !isSubagent) {
       const oldAssistantId = assistantMessageId;
+      // Use closure-local snapshot or fall back to the shared ref
+      // (steering_accepted only arrives on the secondary POST stream, so
+      // the closure-local steeringAtOrder is typically null — the shared
+      // ref is set by handleSendSteering on the secondary stream). Read
+      // here, not in the updater: both are nulled below, before React runs
+      // an updater it did not compute eagerly.
+      const effectiveSteeringAtOrder = steeringAtOrder ?? refs.steeringAtOrderRef?.current ?? null;
 
       // 1. Roll back old assistant message to the snapshot taken at steering_accepted
       //    time, removing any content that leaked due to stream-mode multiplexing.
@@ -224,12 +236,6 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
           if (msg.id !== oldAssistantId) return msg;
           if (msg.role !== 'assistant') return msg;
           const aMsg = msg as AssistantMessage;
-
-          // Use closure-local snapshot or fall back to the shared ref
-          // (steering_accepted only arrives on the secondary POST stream, so
-          // the closure-local steeringAtOrder is typically null — the shared
-          // ref is set by handleSendSteering on the secondary stream).
-          const effectiveSteeringAtOrder = steeringAtOrder ?? refs.steeringAtOrderRef?.current ?? null;
 
           // If no snapshot — or snapshot is non-positive / NaN (steering
           // arrived before any ordered content was emitted, or `_eventId`
@@ -629,6 +635,9 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
       deps.clearModelStatus();
       const contentType = event.content_type || 'text';
       const eventId = event._eventId as number | undefined;
+      // A replayed backlog skips the queue: it is applied in one synchronous
+      // pass so the reconnected turn appears in a single render, already typed.
+      const chunkSetter = refs.isReconnect ? setMessagesForHandlers : queueMessagesForHandlers;
 
       // Handle reasoning_signal events
       if (contentType === 'reasoning_signal') {
@@ -651,7 +660,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
           assistantMessageId,
           content: event.content as string,
           refs,
-          setMessages: setMessagesForHandlers,
+          setMessages: chunkSetter,
         })) {
           return;
         }
@@ -664,7 +673,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
           content: event.content as string,
           finishReason: event.finish_reason,
           refs,
-          setMessages: setMessagesForHandlers,
+          setMessages: chunkSetter,
           eventId,
           phase: event.phase,
         })) {
@@ -746,7 +755,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
       handleToolCallChunks({
         assistantMessageId,
         chunks: (event.tool_call_chunks || []) as unknown as Record<string, unknown>[],
-        setMessages: setMessagesForHandlers,
+        setMessages: refs.isReconnect ? setMessagesForHandlers : queueMessagesForHandlers,
       });
       return;
     } else if (eventType === 'artifact') {

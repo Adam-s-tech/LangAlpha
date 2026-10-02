@@ -60,7 +60,7 @@ function CardDownloadItem({ file, onDownloadFile }: {
   return (
     <DropdownMenuItem onSelect={() => onDownloadFile(file.path, file.workspaceId)} disabled={state !== 'idle'}>
       <Download className="h-3.5 w-3.5" />
-      {downloadLabel(state, t('chat.turnFiles.download'))}
+      {downloadLabel(state, t('chat.turnFiles.download'), t)}
     </DropdownMenuItem>
   );
 }

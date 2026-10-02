@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { FunctionSquare } from 'lucide-react';
 import { createFormatter } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import {
   boxOf,
   columnName,
@@ -115,9 +116,13 @@ function resolveBox(sheet: SheetData, box: CellBox): CellBox {
 }
 
 export default function ExcelViewer({ data, filePath, focusCell, focusSeq, onAddContext }: ExcelViewerProps) {
-  // Cell text is formatted once in parseWorkbook and re-parsed only when
-  // `data` changes; `t` here is for the chrome around the grid, not the cells.
+  // Cell text is formatted once in parseWorkbook, in the locale of that
+  // moment, and re-parsed only when `data` changes; a language switch reaches
+  // the chrome around the grid, not the cells, so it cannot reset the sheet
+  // and selection the reader is on.
   const { t } = useTranslation();
+  const locale = useLocale();
+  const parseLocale = useEffectEvent(() => locale);
   const [sheets, setSheets] = useState<SheetData[] | null>(null);
   const [parseError, setParseError] = useState<Error | null>(null);
   const [activeSheet, setActiveSheet] = useState(0);
@@ -140,7 +145,7 @@ export default function ExcelViewer({ data, filePath, focusCell, focusSeq, onAdd
     setSel(null);
     setOffer(null);
     setParseError(null);
-    parseWorkbook(data)
+    parseWorkbook(data, parseLocale())
       .then((result) => {
         if (cancelled) return;
         setSheets(result);
@@ -335,13 +340,13 @@ export default function ExcelViewer({ data, filePath, focusCell, focusSeq, onAdd
   const columns = Array.from({ length: sheet.colCount }, (_, i) => i + 1);
   const notes: string[] = [];
   if (sheet.totalRows > sheet.rows.length) {
-    notes.push(t('excelViewer.rowsShown', { shown: integer(sheet.rows.length), total: integer(sheet.totalRows) }));
+    notes.push(t('excelViewer.rowsShown', { shown: integer(sheet.rows.length, locale), total: integer(sheet.totalRows, locale) }));
   }
   if (sheet.totalCols > sheet.colCount) {
-    notes.push(t('excelViewer.colsShown', { shown: integer(sheet.colCount), total: integer(sheet.totalCols) }));
+    notes.push(t('excelViewer.colsShown', { shown: integer(sheet.colCount, locale), total: integer(sheet.totalCols, locale) }));
   }
   if (sheet.uncalculated > 0) {
-    notes.push(t('excelViewer.uncalculated', { count: sheet.uncalculated, n: integer(sheet.uncalculated) }));
+    notes.push(t('excelViewer.uncalculated', { count: sheet.uncalculated, n: integer(sheet.uncalculated, locale) }));
   }
 
   return (

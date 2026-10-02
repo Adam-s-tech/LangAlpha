@@ -39,7 +39,8 @@ export function handleReasoningSignal({ assistantMessageId, signalContent, refs,
   // completion the backlog carried would take a live turn rather than fold,
   // and a replayed thought would start its clock at the reconnect instant.
   const fromBacklog = refs.isReconnect;
-  const completedAt = fromBacklog ? 1 : Date.now();
+  const now = Date.now();
+  const completedAt = fromBacklog ? 1 : now;
 
   if (signalContent === 'start') {
     // Reasoning process has started - create new reasoning process
@@ -67,7 +68,7 @@ export function handleReasoningSignal({ assistantMessageId, signalContent, refs,
             isReasoning: true,
             reasoningComplete: false,
             order: currentOrder,
-            _startedAt: fromBacklog ? undefined : Date.now(),
+            _startedAt: fromBacklog ? undefined : now,
           },
         };
 
@@ -277,6 +278,12 @@ export function handleToolCalls({ assistantMessageId, toolCalls, finishReason: _
     const toolCallId = toolCall.id;
 
     if (toolCallId) {
+      // Taken on arrival like `createdAt`, even for a call already recorded
+      // (a skipped counter value orders nothing): run from the updater, it
+      // would count after chunks that arrived later.
+      const arrivalOrder = eventId != null
+        ? eventId + toolIndex * 0.01
+        : ++contentOrderCounterRef.current;
       setMessages((prev: MessageRecord[]) =>
         prev.map((msg: MessageRecord) => {
           if (msg.id !== assistantMessageId) return msg;
@@ -287,9 +294,7 @@ export function handleToolCalls({ assistantMessageId, toolCalls, finishReason: _
           let currentOrder: number;
 
           if (!toolCallProcesses[toolCallId]) {
-            currentOrder = eventId != null
-              ? eventId + toolIndex * 0.01
-              : ++contentOrderCounterRef.current;
+            currentOrder = arrivalOrder;
 
             contentSegments.push({
               type: 'tool_call',
@@ -517,6 +522,8 @@ export function handleTodoUpdate({ assistantMessageId, artifactType, artifactId,
   const baseTodoListId = artifactId || `todo-list-base-${Date.now()}`;
   // Create a unique segment ID that includes timestamp to ensure chronological ordering
   const segmentId = `${baseTodoListId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  // Always create a new segment for each todo_update event to preserve chronological order
+  const currentOrder = eventId != null ? eventId : ++contentOrderCounterRef.current;
 
   setMessages((prev: MessageRecord[]) => {
     const updated = prev.map((msg: MessageRecord) => {
@@ -524,9 +531,6 @@ export function handleTodoUpdate({ assistantMessageId, artifactType, artifactId,
 
       const todoListProcesses = { ...((msg.todoListProcesses as Record<string, unknown>) || {}) };
       const contentSegments = [...((msg.contentSegments as Record<string, unknown>[]) || [])];
-
-      // Always create a new segment for each todo_update event to preserve chronological order
-      const currentOrder = eventId != null ? eventId : ++contentOrderCounterRef.current;
 
       // Add new segment at the current chronological position
       contentSegments.push({
@@ -582,6 +586,7 @@ export function handleHtmlWidget({ assistantMessageId, artifactType, artifactId,
 
   const { html, title } = payload;
   const segmentId = `widget-${artifactId}`;
+  const currentOrder = eventId != null ? eventId : ++contentOrderCounterRef.current;
 
   setMessages((prev: MessageRecord[]) => {
     const updated = prev.map((msg: MessageRecord) => {
@@ -593,8 +598,6 @@ export function handleHtmlWidget({ assistantMessageId, artifactType, artifactId,
       // Prevent duplicates (e.g. on SSE reconnect replay)
       const segmentExists = contentSegments.some((s: Record<string, unknown>) => s.widgetId === segmentId);
       if (segmentExists) return msg;
-
-      const currentOrder = eventId != null ? eventId : ++contentOrderCounterRef.current;
 
       contentSegments.push({
         type: 'html_widget',
@@ -638,6 +641,7 @@ export function handleToolCallChunks({ assistantMessageId, chunks, setMessages }
   setMessages: SetMessages;
 }): void {
   if (!chunks || !Array.isArray(chunks)) return;
+  const seenAt = Date.now();
 
   chunks.forEach((chunk: ToolCallChunkRecord) => {
     const key = `${chunk.index ?? 0}`;
@@ -646,7 +650,7 @@ export function handleToolCallChunks({ assistantMessageId, chunks, setMessages }
       prev.map((msg: MessageRecord) => {
         if (msg.id !== assistantMessageId) return msg;
         const pending = { ...((msg.pendingToolCallChunks as Record<string, Record<string, unknown>>) || {}) };
-        const existing = pending[key] || { toolName: null, chunkCount: 0, argsLength: 0, firstSeenAt: Date.now() };
+        const existing = pending[key] || { toolName: null, chunkCount: 0, argsLength: 0, firstSeenAt: seenAt };
 
         pending[key] = {
           toolName: chunk.name || existing.toolName,

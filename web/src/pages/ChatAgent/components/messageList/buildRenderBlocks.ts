@@ -3,6 +3,7 @@ import { INLINE_ARTIFACT_TOOLS, isInlineArtifactReady } from '../charts/InlineAr
 import { normalizeSubagentText } from './normalizeSubagentText';
 import { isUserProfileReadmePath } from '../../utils/agentPaths';
 import { MIN_LIVE_EXPOSURE_MS } from './liveZoneTiming';
+import { inOrder } from './messageText';
 import type { ContentSegmentRecord, ToolCallProcessRecord } from './types';
 import type { ActivityItem, ToolActivityItem, LiveState, ToolCallData, ToolCallResultData } from './activityTypes';
 
@@ -102,37 +103,34 @@ export type RenderBlock =
   | NotificationRenderBlock
   | HtmlWidgetRenderBlock;
 
-/** Sort segments by `order` and merge consecutive text segments into one group. */
+/** Sort segments by `order` and merge consecutive text segments into one group.
+ *  A streaming reply holds one text segment per chunk and this runs on every
+ *  chunk, so a run is joined once when it closes rather than rebuilt per
+ *  segment: the per-segment rebuild made each chunk cost the length of the
+ *  reply in allocations. */
 export function groupSegments(segments: ContentSegmentRecord[]): ContentSegmentRecord[] {
-    const sorted = [...segments].sort((a, b) => a.order - b.order);
     const groups: ContentSegmentRecord[] = [];
-    let currentTextGroup: ContentSegmentRecord | null = null;
-
-    for (const segment of sorted) {
+    let run: ContentSegmentRecord[] = [];
+    const closeRun = () => {
+      if (!run.length) return;
+      const first = run[0];
+      groups.push({
+        type: 'text',
+        content: run.length === 1 ? first.content : run.map((s) => s.content || '').join(''),
+        order: first.order,
+        lastOrder: run[run.length - 1].order,
+      });
+      run = [];
+    };
+    for (const segment of inOrder(segments)) {
       if (segment.type === 'text') {
-        if (currentTextGroup) {
-          const prev: ContentSegmentRecord = currentTextGroup;
-          currentTextGroup = {
-            ...prev,
-            content: (prev.content || '') + (segment.content || ''),
-            lastOrder: segment.order,
-          };
-          // Replace the last entry (the current text group) with the updated one
-          groups[groups.length - 1] = currentTextGroup;
-        } else {
-          currentTextGroup = {
-            type: 'text',
-            content: segment.content,
-            order: segment.order,
-            lastOrder: segment.order,
-          };
-          groups.push(currentTextGroup);
-        }
+        run.push(segment);
       } else {
-        currentTextGroup = null;
+        closeRun();
         groups.push(segment);
       }
     }
+    closeRun();
     return groups;
 }
 
@@ -161,6 +159,7 @@ export function buildRenderBlocks(
     isStreaming,
     isSubagentView,
     preparing,
+    now = Date.now(),
   }: {
     reasoningProcesses: Record<string, Record<string, unknown>>;
     toolCallProcesses: Record<string, ToolCallProcessRecord>;
@@ -171,6 +170,9 @@ export function buildRenderBlocks(
      *  prose, under the key that block will have, so the row and the call
      *  are one element. */
     preparing?: boolean;
+    /** The clock live exposure is measured against. A component passes its
+     *  own, so a timer that advances it is visibly an input of the build. */
+    now?: number;
   },
 ): { blocks: RenderBlock[]; nextExpiry: number | null; pinnedLive: boolean; pinnedSettledAt: number | null } {
     const filtered = groupedSegments.filter((s) => {
@@ -214,7 +216,6 @@ export function buildRenderBlocks(
       let pinnedLive = false;
       let pinnedSettledAt: number | null = null;
 
-      const now = Date.now();
       // Stream end folds just-COMPLETED items into the accordion immediately
       // instead of waiting out the cooldown. It does NOT evict in-progress work:
       // always-live tools (TaskOutput) are kept live by the active branch below

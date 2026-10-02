@@ -1,5 +1,6 @@
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useTheme } from '@/contexts/ThemeContext';
 import { Loader } from '@/components/ui/loader';
 import SyntaxHighlighter, { oneDark, oneLight } from '../SyntaxHighlighter';
 import Markdown from '../Markdown';
@@ -70,6 +71,7 @@ export interface FileViewerProps {
 export function FileViewer(props: FileViewerProps): React.ReactElement {
   const { path, body, loading, error, isEditing = false, focus = NO_FOCUS } = props;
   const { t } = useTranslation();
+  const { theme } = useTheme();
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const ext = getFileExtension(path);
   const fileName = path.split('/').pop() || path;
@@ -202,7 +204,7 @@ export function FileViewer(props: FileViewerProps): React.ReactElement {
       ) : body?.content != null ? (
         <SyntaxHighlighter
           language={EXT_TO_LANG[ext] || 'text'}
-          style={typeof window !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'light' ? oneLight : oneDark}
+          style={theme === 'light' ? oneLight : oneDark}
           customStyle={{ margin: 0, padding: 0, backgroundColor: 'transparent', fontSize: '0.75rem', lineHeight: '1.6' }}
           codeTagProps={{ style: { backgroundColor: 'transparent' } }}
           showLineNumbers

@@ -16,6 +16,7 @@ import { Disclosure } from '@/components/ui/Disclosure';
 import { ModalShell } from '@/components/ui/ModalShell';
 import { Loader } from '@/components/ui/loader';
 import { ToggleSwitch } from '@/components/ui/switch';
+import { useLocale } from '@/hooks/useLocale';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { Computer } from '@/types/api';
@@ -159,6 +160,7 @@ function ComputerRow({
   onToggleAlwaysOn,
 }: ComputerRowProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const rowRef = useRef<HTMLDivElement>(null);
   const breakdownId = useId();
   const [expanded, setExpanded] = useState(initiallyExpanded);
@@ -228,7 +230,7 @@ function ComputerRow({
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between gap-2 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
           <span style={disk && disk.level !== 'healthy' ? { color: diskLevelColor(disk.level) } : undefined}>
-            {disk ? diskUsageLabel(t, disk) : t('computer.disk.unknown', 'Storage not measured yet')}
+            {disk ? diskUsageLabel(t, disk, locale) : t('computer.disk.unknown', 'Storage not measured yet')}
           </span>
           <button
             type="button"
@@ -345,6 +347,7 @@ function EditableName({ name, onCommit }: { name: string; onCommit: (name: strin
 
 function StorageBreakdown({ computer, enabled }: { computer: Computer; enabled: boolean }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const { data, isLoading, isError } = useComputerStorage(computer.computer_id, { enabled });
 
   if (isLoading) {
@@ -382,7 +385,7 @@ function StorageBreakdown({ computer, enabled }: { computer: Computer; enabled: 
       {rows.map((w) => (
         <li key={w.workspace_id} className="flex items-center justify-between gap-3">
           <span className="truncate">{w.name}</span>
-          <span className="shrink-0 tabular-nums" style={{ color: 'var(--color-text-tertiary)' }}>{formatBytes(w.bytes)}</span>
+          <span className="shrink-0 tabular-nums" style={{ color: 'var(--color-text-tertiary)' }}>{formatBytes(w.bytes, locale)}</span>
         </li>
       ))}
       {data.other_bytes > 0 && (
@@ -390,7 +393,7 @@ function StorageBreakdown({ computer, enabled }: { computer: Computer; enabled: 
           <span className="truncate" style={{ color: 'var(--color-text-tertiary)' }}>
             {t('computer.disk.other', 'System, caches and shared files')}
           </span>
-          <span className="shrink-0 tabular-nums" style={{ color: 'var(--color-text-tertiary)' }}>{formatBytes(data.other_bytes)}</span>
+          <span className="shrink-0 tabular-nums" style={{ color: 'var(--color-text-tertiary)' }}>{formatBytes(data.other_bytes, locale)}</span>
         </li>
       )}
     </ul>

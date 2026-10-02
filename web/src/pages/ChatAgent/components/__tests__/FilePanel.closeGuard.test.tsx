@@ -21,6 +21,7 @@ vi.mock('@/pages/ChatAgent/utils/api', async (importOriginal) => {
   };
 });
 vi.mock('@/hooks/useWorkspace', () => ({ useWorkspace: () => ({ data: { status: 'running', name: 'ws' } }) }));
+vi.mock('@/contexts/ThemeContext', () => ({ useTheme: () => ({ theme: 'dark' }) }));
 vi.mock('@/pages/ChatAgent/components/FilePanelMemo', () => ({
   memoMimeForName: () => null,
   useAddToMemo: () => vi.fn(),

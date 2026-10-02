@@ -16,6 +16,7 @@ import {
   useUpdatePluginFromZip,
 } from '@/hooks/usePlugins';
 import { createDateFormatter } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import {
   formatApiErrorDetail,
   triggerPluginExportDownload,
@@ -52,6 +53,7 @@ export function PluginDetail({
   onOpenComponent: (kind: 'mcp' | 'skill', name: string) => void;
 }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const labelId = useId();
   const toggleMutation = useTogglePlugin();
   const deleteMutation = useDeletePlugin();
@@ -346,12 +348,12 @@ export function PluginDetail({
             )}
             {plugin.installed_at && (
               <DetailField label={t('plugins.detail.installed')}>
-                {formatDate(new Date(plugin.installed_at))}
+                {formatDate(new Date(plugin.installed_at), locale)}
               </DetailField>
             )}
             {plugin.updated_at && (
               <DetailField label={t('plugins.detail.updated')}>
-                {formatDate(new Date(plugin.updated_at))}
+                {formatDate(new Date(plugin.updated_at), locale)}
               </DetailField>
             )}
           </div>

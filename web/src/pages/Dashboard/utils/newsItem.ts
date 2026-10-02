@@ -32,12 +32,17 @@ export interface DashboardNewsItem {
   sentiments?: NewsSentimentItem[] | null;
 }
 
-/** Map raw /news results into the normalized DashboardNewsItem shape. */
-export function mapNewsResults(results: Record<string, unknown>[]): DashboardNewsItem[] {
+/** Map raw /news results into the normalized DashboardNewsItem shape. `time`
+ *  is stamped in `locale` relative to `now`. */
+export function mapNewsResults(
+  results: Record<string, unknown>[],
+  locale: string,
+  now: number,
+): DashboardNewsItem[] {
   return results.map((r) => ({
     id: r.id as string,
     title: r.title as string,
-    time: relativeTime(r.published_at as string | null | undefined),
+    time: relativeTime(r.published_at as string | null | undefined, locale, now),
     publishedAt: (r.published_at as string) || null,
     isHot: r.has_sentiment as boolean,
     source: (r.source as Record<string, unknown> | undefined)?.name as string || '',

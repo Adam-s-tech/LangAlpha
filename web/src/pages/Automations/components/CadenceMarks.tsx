@@ -1,6 +1,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useHomeTimezone } from '@/hooks/useHomeTimezone';
+import { useLocale } from '@/hooks/useLocale';
 import { cn } from '@/lib/utils';
 import { describeSchedule, parseSchedule, scheduleDays } from '../utils/cron';
 import { awayZoneName } from '../utils/schedule';
@@ -19,7 +20,8 @@ import './CadenceMarks.css';
 
 /** Monday-first flags; a day that is off is drawn faded, not left out. */
 export function WeekStrip({ days }: { days: boolean[] }) {
-  const initials = weekdayInitials();
+  const locale = useLocale();
+  const initials = weekdayInitials(locale);
   return (
     <span className="automation-mono automations-week" aria-hidden="true">
       {initials.map((initial, i) => (
@@ -57,18 +59,19 @@ export function UnsetMark() {
  *  trigger) written underneath. */
 export function Cadence({ template: tpl }: { template: AutomationTemplate }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const homeZone = useHomeTimezone();
   const d = tpl.defaults;
 
   if (d.trigger_type === 'cron' && d.cron_expression) {
     const schedule = parseSchedule(d.cron_expression);
-    const zone = awayZoneName(d.timezone, homeZone);
+    const zone = awayZoneName(d.timezone, homeZone, locale);
     return (
       <>
-        <span className="sr-only">{[describeSchedule(schedule), zone].filter(Boolean).join(' · ')}</span>
+        <span className="sr-only">{[describeSchedule(schedule, t, locale), zone].filter(Boolean).join(' · ')}</span>
         <WeekStrip days={scheduleDays(schedule)} />
         <span className="automation-mono automations-cadence-sub" aria-hidden="true">
-          {['hour' in schedule && formatTimeOfDay(schedule.hour, schedule.minute), zone].filter(Boolean).join(' · ')}
+          {['hour' in schedule && formatTimeOfDay(schedule.hour, schedule.minute, locale), zone].filter(Boolean).join(' · ')}
         </span>
       </>
     );

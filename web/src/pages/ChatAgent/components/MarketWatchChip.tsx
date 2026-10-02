@@ -1,9 +1,9 @@
 import { useTranslation } from 'react-i18next';
+import { useLocale } from '@/hooks/useLocale';
 import { createDateFormatter } from '@/lib/format';
 import PulseDot from '@/components/ui/pulse-dot';
 
 // Locale-aware clock (matches the prior `toLocaleTimeString()` shape: h:m:s).
-// The component calls useTranslation() so it re-renders on a locale switch.
 const formatWatchTime = createDateFormatter({ timeStyle: 'medium' });
 
 interface MarketWatchChipProps {
@@ -25,12 +25,13 @@ interface MarketWatchChipProps {
  */
 export default function MarketWatchChip({ symbols, lastUpdate, onClick }: MarketWatchChipProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
   if (!symbols || symbols.length === 0) return null;
 
   const joined = symbols.join(', ');
   const title = lastUpdate
     ? t('chat.marketWatch.chipTitleUpdated', {
-        time: formatWatchTime(lastUpdate * 1000),
+        time: formatWatchTime(lastUpdate * 1000, locale),
         defaultValue: 'Live prices for watched tickers — updated {{time}}',
       })
     : t('chat.marketWatch.chipTitle', {

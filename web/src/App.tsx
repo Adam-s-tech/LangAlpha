@@ -11,6 +11,7 @@ import AuthConfirm from './pages/Login/AuthConfirm';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from './contexts/AuthContext';
 import { useIsMobile } from './hooks/useIsMobile';
+import { useLocale } from './hooks/useLocale';
 import { useSetupGate } from './hooks/useSetupGate';
 import { isPlatformMode, APP_ENTRY_PATH } from './config/hostMode';
 import { AUTH_BROADCAST_CHANNEL, type AuthBroadcastMessage } from './lib/oauthPopup';
@@ -323,8 +324,8 @@ function AuthenticatedShell() {
  *  typeahead order, the controls' own labels) rather than the browser's. A
  *  component of its own, so a language switch re-renders only what reads it. */
 function AriaLocale({ children }: { children: React.ReactNode }) {
-  const { i18n } = useTranslation();
-  return <I18nProvider locale={i18n.language}>{children}</I18nProvider>;
+  const locale = useLocale();
+  return <I18nProvider locale={locale}>{children}</I18nProvider>;
 }
 
 function App() {

@@ -114,6 +114,21 @@ describe('useAnimatedText catch-up', () => {
     expect(text.startsWith(result.current)).toBe(true);
   });
 
+  it('shows text that exists at mount in the first render, with nothing to type', () => {
+    // A bubble that mounts with its reply already in (a reconnect catch-up)
+    // must not commit empty first: without a paint between the two commits it
+    // lays out at zero height, then jumps to full height as a layout shift.
+    const renders: string[] = [];
+    const text = 'seed ' + words(60);
+    const { result } = renderHook(() => {
+      const shown = useAnimatedText(text, { enabled: true });
+      renders.push(shown);
+      return shown;
+    });
+    expect(renders[0]).toBe(text);
+    expect(result.current).toBe(text);
+  });
+
   it('shows a finished message in full when it was never animating', () => {
     const { result } = renderHook(() => useAnimatedText('a finished reply', { enabled: false }));
     expect(result.current).toBe('a finished reply');

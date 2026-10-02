@@ -156,9 +156,10 @@ test.describe('streaming smoothness', () => {
     await page.waitForTimeout(1500);
     const m = await page.evaluate(() => window.__smooth.stop());
     let profile = null;
+    let cpuProfile = null;
     if (PROFILE) {
-      const { profile: p } = await cdp.send('Profiler.stop');
-      profile = summarizeProfile(p);
+      ({ profile: cpuProfile } = await cdp.send('Profiler.stop'));
+      profile = summarizeProfile(cpuProfile);
     }
     let trace = null;
     if (TRACE) {
@@ -182,7 +183,7 @@ test.describe('streaming smoothness', () => {
       profile,
       trace,
     };
-    writeRun('streaming', run, testInfo);
+    writeRun('streaming', run, testInfo, cpuProfile);
 
     const { durationMs, fps, gapP95, gapMax, framesOver50, frozenMs, loafCount, loafMaxMs, mutations } = m;
     console.log(`[perf ${run.label}] ${durationMs}ms fps=${fps} p95=${gapP95}ms max=${gapMax}ms >50ms=${framesOver50} frozen=${frozenMs}ms loaf=${loafCount}/${loafMaxMs}ms mutations=${mutations}`);

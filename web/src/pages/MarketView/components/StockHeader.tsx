@@ -9,6 +9,7 @@ import { compactNumberFixed2, fixed2, signedFixed2 } from '@/lib/format';
 import { DASH, fixed2OrDash as fmt, type StockQuoteModel } from '../hooks/useStockQuoteModel';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useTranslation } from 'react-i18next';
+import { useLocale } from '@/hooks/useLocale';
 import type { ConnectionStatus, DataLevel } from '../hooks/useMarketDataWS';
 
 interface ChartMeta {
@@ -46,6 +47,7 @@ function getVenueStatusLabel(sym: string | null | undefined, status: string): st
 
 const StockHeader = ({ symbol, quote: q, chartMeta: _chartMeta, onToggleOverview, onOpenWatchlist, wsStatus, wsHasData = false, wsDataLevel = null, ginlixDataEnabled: _ginlixDataEnabled = true, onSwitchSymbol, headerActions }: StockHeaderProps) => {
   const { t } = useTranslation();
+  const locale = useLocale();
   const {
     headline, status, tickAt, changePercent,
     previousClose, open, high, low, fiftyTwoWeekHigh, fiftyTwoWeekLow, averageVolume, shownVolume, volumeIsAverage,
@@ -109,10 +111,10 @@ const StockHeader = ({ symbol, quote: q, chartMeta: _chartMeta, onToggleOverview
           {/* In an extended session the headline is the official close, stable
               across refreshes and intervals; the session move rides beneath it
               against its own anchor, in session color. */}
-          <div className={`stock-price ${headline.tone}`}>{fmt(headline.price)}</div>
+          <div className={`stock-price ${headline.tone}`}>{fmt(headline.price, locale)}</div>
           {(headline.change != null && headline.pct != null) ? (
             <div className={`stock-change ${headline.tone}`}>
-              {signedFixed2(headline.change)} {signedFixed2(headline.pct)}%
+              {signedFixed2(headline.change, locale)} {signedFixed2(headline.pct, locale)}%
             </div>
           ) : !ext && (
             <div className={`stock-change ${headline.tone}`}>{DASH}</div>
@@ -147,52 +149,52 @@ const StockHeader = ({ symbol, quote: q, chartMeta: _chartMeta, onToggleOverview
         <div className="stock-metrics">
           <div className="metric-item">
             <span className="metric-label">Prev Close</span>
-            <span className="metric-value">{fmt(previousClose)}</span>
+            <span className="metric-value">{fmt(previousClose, locale)}</span>
           </div>
           <div className="metric-item">
             <span className="metric-label">Open
               <span className="metrics-discrepancy-hint" title="Values are aggregated from intraday data and may differ slightly from daily figures shown on the chart.">!</span>
             </span>
-            <span className="metric-value">{fmt(open)}</span>
+            <span className="metric-value">{fmt(open, locale)}</span>
           </div>
           <div className="metric-item">
             <span className="metric-label">Low</span>
-            <span className="metric-value">{fmt(low)}</span>
+            <span className="metric-value">{fmt(low, locale)}</span>
           </div>
           <div className="metric-item">
             <span className="metric-label">High</span>
-            <span className="metric-value">{fmt(high)}</span>
+            <span className="metric-value">{fmt(high, locale)}</span>
           </div>
           <div className="metric-item">
             <span className="metric-label">52 wk high</span>
-            <span className="metric-value">{fmt(fiftyTwoWeekHigh)}</span>
+            <span className="metric-value">{fmt(fiftyTwoWeekHigh, locale)}</span>
           </div>
           <div className="metric-item">
             <span className="metric-label">52 wk low</span>
-            <span className="metric-value">{fmt(fiftyTwoWeekLow)}</span>
+            <span className="metric-value">{fmt(fiftyTwoWeekLow, locale)}</span>
           </div>
           <div className="metric-item">
             <span className="metric-label">Avg Vol (3M)</span>
             <span className="metric-value">
-              {averageVolume != null ? compactNumberFixed2(averageVolume) : DASH}
+              {averageVolume != null ? compactNumberFixed2(averageVolume, locale) : DASH}
             </span>
           </div>
           <div className="metric-item">
             <span className="metric-label">{volumeIsAverage ? 'Avg Vol (3M)' : 'Volume'}</span>
             <span className="metric-value">
-              {shownVolume != null ? compactNumberFixed2(shownVolume) : DASH}
+              {shownVolume != null ? compactNumberFixed2(shownVolume, locale) : DASH}
             </span>
           </div>
           <div className="metric-item">
             <span className="metric-label">Day Range</span>
             <span className="metric-value">
-              {hasDayRange ? `${fixed2(low)} – ${fixed2(high)}` : DASH}
+              {hasDayRange ? `${fixed2(low, locale)} – ${fixed2(high, locale)}` : DASH}
             </span>
           </div>
           <div className="metric-item">
             <span className="metric-label">{ext ? 'Change % incl. ext' : 'Change %'}</span>
             <span className={`metric-value ${(changePercent ?? 0) < 0 ? 'negative' : 'positive'}`}>
-              {changePercent != null ? `${signedFixed2(changePercent)}%` : DASH}
+              {changePercent != null ? `${signedFixed2(changePercent, locale)}%` : DASH}
             </span>
           </div>
           {!isMobile && onOpenWatchlist && (

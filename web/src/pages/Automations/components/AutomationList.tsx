@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { motion } from '@/lib/framer';
 import { ChevronRight } from 'lucide-react';
 import { useHomeTimezone } from '@/hooks/useHomeTimezone';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { relativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { Automation } from '@/types/automation';
@@ -32,6 +34,8 @@ interface AutomationListProps {
 
 export function AutomationList({ groups, readings, selectedId, onSelect, keyboardNav = false }: AutomationListProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   const homeZone = useHomeTimezone();
   const finished = groups.find((g) => g.group === 'finished');
   const [finishedOpen, setFinishedOpen] = useState(
@@ -106,9 +110,9 @@ export function AutomationList({ groups, readings, selectedId, onSelect, keyboar
       case 'state':
         return t(row.labelKey);
       case 'reading':
-        return distanceLabel(readings.get(a.automation_id)?.reading ?? null, t);
+        return distanceLabel(readings.get(a.automation_id)?.reading ?? null, t, locale);
       default:
-        return relativeTime(row.at);
+        return relativeTime(row.at, locale, now);
     }
   };
 
@@ -175,7 +179,7 @@ export function AutomationList({ groups, readings, selectedId, onSelect, keyboar
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="automations-list-name">{a.name}</span>
-                      <span className="automation-mono automations-list-sub">{scheduleLine(a, t, homeZone)}</span>
+                      <span className="automation-mono automations-list-sub">{scheduleLine(a, t, homeZone, locale)}</span>
                     </span>
                     <span className="automation-mono automations-list-trailing">{trailing(a, group)}</span>
                   </button>

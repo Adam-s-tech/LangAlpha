@@ -132,15 +132,24 @@ export function createThemeResolver<K extends string>(
  * the stamp is still the outgoing theme), re-read in a passive effect where
  * the stamp is guaranteed current. Only a genuinely different resolver result
  * schedules the second render, so a steady-state mount costs nothing extra.
+ *
+ * The re-read lands in state rather than being repeated in render: a render
+ * that calls `resolve` again with the same arguments is served from the
+ * compiler's cache, so a bare re-render would hand back the literals.
  */
 export function useThemeTokens<K extends string>(
   resolve: (theme: ResolvedTheme) => Record<K, string>,
   theme: ResolvedTheme,
 ): Record<K, string> {
-  const [, bump] = useState(0);
-  const tokens = resolve(theme);
+  const [settled, setSettled] = useState<{
+    resolve: typeof resolve;
+    theme: ResolvedTheme;
+    tokens: Record<K, string>;
+  } | null>(null);
+  const tokens = settled?.resolve === resolve && settled.theme === theme ? settled.tokens : resolve(theme);
   useEffect(() => {
-    if (resolve(theme) !== tokens) bump((n) => n + 1);
+    const current = resolve(theme);
+    if (current !== tokens) setSettled({ resolve, theme, tokens: current });
   }, [resolve, theme, tokens]);
   return tokens;
 }

@@ -115,7 +115,7 @@ export function FileErrorDisplay({ error, onRetry, onDownload, downloadState = '
             onClick={onDownload}
             disabled={downloadState !== 'idle'}
           >
-            {downloadLabel(downloadState, t('filePanel.error.download'))}
+            {downloadLabel(downloadState, t('filePanel.error.download'), t)}
           </button>
         )}
       </div>

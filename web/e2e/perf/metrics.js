@@ -12,7 +12,23 @@ export function installSmoothProbe() {
     running: false, t0: 0, t1: 0,
     frameGaps: [], loaf: [], longTasks: [],
     mutations: 0, nodesAdded: 0, nodesRemoved: 0, charDataChanges: 0, attrChanges: 0,
+    commits: 0,
   });
+  // React commits, through the DevTools hook React calls on every commit in
+  // production builds too (without a priority there, so no lane split).
+  if (!window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
+    window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+      supportsFiber: true, renderers: new Map(),
+      inject() { return 1; },
+      checkDCE() {},
+      onCommitFiberRoot() {
+        if (S.running) S.commits += 1;
+      },
+      onCommitFiberUnmount() {},
+      onPostCommitFiberRoot() {},
+      setStrictMode() {},
+    };
+  }
   let last = 0;
   function loop(ts) {
     if (S.running) {
@@ -47,6 +63,7 @@ export function installSmoothProbe() {
   S.start = (root) => {
     S.frameGaps = []; S.loaf = []; S.longTasks = [];
     S.mutations = 0; S.nodesAdded = 0; S.nodesRemoved = 0; S.charDataChanges = 0; S.attrChanges = 0;
+    S.commits = 0;
     mo = new MutationObserver((records) => {
       S.mutations += records.length;
       for (const r of records) {
@@ -86,6 +103,7 @@ export function installSmoothProbe() {
       longTaskMaxMs: Math.round(S.longTasks.reduce((m, d) => Math.max(m, d), 0)),
       mutations: S.mutations, nodesAdded: S.nodesAdded, nodesRemoved: S.nodesRemoved,
       charDataChanges: S.charDataChanges, attrChanges: S.attrChanges,
+      commits: S.commits,
     };
   };
 }

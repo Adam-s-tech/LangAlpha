@@ -40,7 +40,7 @@ export default defineConfig({
       // so the smoothness benchmark (e2e/perf) measures shipped code rather than
       // the dev JSX runtime and HMR client. Everything else is identical.
       command: PERF_BUILD
-        ? `npx vite build --outDir dist-perf && npx vite preview --port ${E2E_PORT} --outDir dist-perf`
+        ? `npx vite build --outDir dist-perf${process.env.PERF_UNMINIFIED ? ' --minify false' : ''} && npx vite preview --port ${E2E_PORT} --outDir dist-perf`
         : `npm run dev -- --port ${E2E_PORT}`,
       port: E2E_PORT,
       timeout: PERF_BUILD ? 240_000 : 60_000,

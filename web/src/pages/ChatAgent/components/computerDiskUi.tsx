@@ -6,6 +6,7 @@
  */
 import { useTranslation } from 'react-i18next';
 
+import { useLocale } from '@/hooks/useLocale';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { ComputerDisk, ComputerDiskLevel, ResourceTier } from '@/types/api';
@@ -51,11 +52,11 @@ export function nextTier(tier: ResourceTier): ResourceTier | null {
   return index >= 0 && index < TIER_ORDER.length - 1 ? TIER_ORDER[index + 1] : null;
 }
 
-export function diskUsageLabel(t: Translate, disk: ComputerDisk): string {
+export function diskUsageLabel(t: Translate, disk: ComputerDisk, locale: string): string {
   return t('computer.disk.usage', '{{used}} of {{total}} used, {{free}} free', {
-    used: formatBytes(disk.used_bytes),
-    total: formatBytes(disk.total_bytes),
-    free: formatBytes(disk.free_bytes),
+    used: formatBytes(disk.used_bytes, locale),
+    total: formatBytes(disk.total_bytes, locale),
+    free: formatBytes(disk.free_bytes, locale),
   });
 }
 
@@ -67,6 +68,7 @@ interface DiskBarProps {
 /** Thin usage bar. The label beside it carries the numbers; the bar is the glance. */
 export function DiskBar({ disk, className }: DiskBarProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const ratio = disk.total_bytes > 0 ? Math.min(1, Math.max(0, disk.used_bytes / disk.total_bytes)) : 0;
   return (
     <div
@@ -77,7 +79,7 @@ export function DiskBar({ disk, className }: DiskBarProps) {
       aria-valuemax={disk.total_bytes}
       aria-valuenow={disk.used_bytes}
       aria-label={t('computer.disk.label', 'Storage')}
-      aria-valuetext={diskUsageLabel(t, disk)}
+      aria-valuetext={diskUsageLabel(t, disk, locale)}
     >
       <div
         className="h-full rounded-full transition-[width] duration-300"

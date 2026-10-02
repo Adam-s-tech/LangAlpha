@@ -1,12 +1,13 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import { useLocale } from '@/hooks/useLocale';
 import { fixed2, signedFixed2 } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { MeterReading } from '../utils/price';
 import './PriceMeter.css';
 
-function formatValue(reading: MeterReading, v: number): string {
-  return reading.unit === 'pct' ? `${signedFixed2(v)}%` : fixed2(v);
+function formatValue(reading: MeterReading, v: number, locale: string): string {
+  return reading.unit === 'pct' ? `${signedFixed2(v, locale)}%` : fixed2(v, locale);
 }
 
 /**
@@ -17,6 +18,7 @@ function formatValue(reading: MeterReading, v: number): string {
  */
 export function PriceMeter({ reading, symbol }: { reading: MeterReading; symbol: string }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const { current, threshold } = reading;
   const span = Math.abs(threshold - current);
   const floor = reading.unit === 'pct' ? 0.5 : Math.abs(current) * 0.01;
@@ -43,9 +45,9 @@ export function PriceMeter({ reading, symbol }: { reading: MeterReading; symbol:
       {/* Each number sits at the end of the track its mark is on. */}
       <div className={cn('automation-mono automation-meter-scale', cur > thr && 'flex-row-reverse')}>
         <span>
-          <span style={{ color: 'var(--color-text-secondary)' }}>{symbol}</span> {formatValue(reading, current)}
+          <span style={{ color: 'var(--color-text-secondary)' }}>{symbol}</span> {formatValue(reading, current, locale)}
         </span>
-        <span>{t('automation.firesAt', { value: formatValue(reading, threshold) })}</span>
+        <span>{t('automation.firesAt', { value: formatValue(reading, threshold, locale) })}</span>
       </div>
     </div>
   );

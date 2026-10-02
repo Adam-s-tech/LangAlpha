@@ -12,6 +12,7 @@ import {
 import { Autocomplete, SearchField } from '@/components/ui/aria-search-field';
 import { currentTimezoneName, isKnownTimezone } from '@/lib/deviceTimezone';
 import { formatTimezoneName } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import { formatUtcOffset } from '@/lib/timezones';
 import { cn } from '@/lib/utils';
 import {
@@ -56,7 +57,8 @@ export default function TimezonePicker({
   triggerClassName,
   'aria-label': ariaLabel,
 }: TimezonePickerProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
+  const locale = useLocale();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   // Taken again on every opening, so the offsets are the ones in force that day.
@@ -68,28 +70,28 @@ export default function TimezonePicker({
 
   // The shortlist is always built: Select refuses to open on an empty list.
   const homeZone = useMemo(
-    () => (homeId ? describeZone(homeId, now, i18n.language) : undefined),
-    [homeId, now, i18n.language],
+    () => (homeId ? describeZone(homeId, now, locale) : undefined),
+    [homeId, now, locale],
   );
   const common = useMemo(
     () =>
       [...new Set([...COMMON_TIMEZONES, selected])]
         .filter((id) => id && id !== homeId)
-        .map((id) => describeZone(id, now, i18n.language))
+        .map((id) => describeZone(id, now, locale))
         .sort(byOffset),
-    [homeId, selected, now, i18n.language],
+    [homeId, selected, now, locale],
   );
 
-  useEffect(() => warmZoneSearch(i18n.language), [i18n.language]);
+  useEffect(() => warmZoneSearch(locale), [locale]);
 
   // Every other zone is described only once the picker opens, for search.
   const zones = useMemo(() => {
     if (!open) return [];
     const ids = allTimezones();
     return (selected && !ids.includes(selected) ? [...ids, selected] : ids).map((id) =>
-      describeZone(id, now, i18n.language),
+      describeZone(id, now, locale),
     );
-  }, [open, selected, now, i18n.language]);
+  }, [open, selected, now, locale]);
   const results = useMemo(
     () => searchZones(zones, query, new Set([...(homeId ? [homeId] : []), ...COMMON_TIMEZONES])),
     [zones, query, homeId],
@@ -123,7 +125,7 @@ export default function TimezonePicker({
           className="min-w-0 flex-1 truncate data-placeholder:text-(--color-text-tertiary)"
           data-placeholder={value ? undefined : ''}
         >
-          {value ? formatTimezoneName(value) : placeholder}
+          {value ? formatTimezoneName(value, locale) : placeholder}
         </span>
       </SelectTrigger>
       <SelectPopover

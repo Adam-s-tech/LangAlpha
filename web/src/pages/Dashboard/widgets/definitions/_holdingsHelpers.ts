@@ -27,7 +27,7 @@ export function portfolioSummary(rows: PortfolioRow[]): PortfolioSummary[] {
 
 /** Render the portfolio summary as the leading markdown line for snapshot
  *  exporters. Multi-currency portfolios get one NAV line per currency. */
-export function formatPortfolioNavMarkdownLine(summaries: PortfolioSummary[]): string {
+export function formatPortfolioNavMarkdownLine(summaries: PortfolioSummary[], locale: string): string {
   return summaries
     .filter((summary) => summary.totalValue !== 0)
     .map((summary) => {
@@ -35,7 +35,7 @@ export function formatPortfolioNavMarkdownLine(summaries: PortfolioSummary[]): s
         return `**NAV (${summary.currency})** ${formatPortfolioMoneyCode(summary.totalValue, summary.currency)}`;
       }
       const sign = summary.totalPl >= 0 ? '+' : '-';
-      return `**NAV (${summary.currency})** ${formatPortfolioMoneyCode(summary.totalValue, summary.currency)} (cost ${formatPortfolioMoneyCode(summary.totalCost, summary.currency)}, P/L ${sign}${formatPortfolioMoneyCode(Math.abs(summary.totalPl), summary.currency)} / ${sign}${fmtPct(Math.abs(summary.totalPlPct))}%)`;
+      return `**NAV (${summary.currency})** ${formatPortfolioMoneyCode(summary.totalValue, summary.currency)} (cost ${formatPortfolioMoneyCode(summary.totalCost, summary.currency)}, P/L ${sign}${formatPortfolioMoneyCode(Math.abs(summary.totalPl), summary.currency)} / ${sign}${fmtPct(Math.abs(summary.totalPlPct), locale)}%)`;
     })
     .join('\n');
 }

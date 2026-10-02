@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { X, Upload, FileText, CheckCircle2, Circle, AlertCircle } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { Input } from '../../../components/ui/input';
+import { useLocale } from '@/hooks/useLocale';
 import { formatBytes } from '@/lib/format';
 import type { Workspace } from '@/types/api';
 import { startWorkspace, uploadWorkspaceFile } from '../utils/api';
@@ -31,6 +32,7 @@ type FileUploadStatus = 'pending' | 'uploading' | 'done' | 'failed';
  */
 function CreateWorkspaceModal({ isOpen, onClose, onCreate, onComplete }: CreateWorkspaceModalProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
 
   // Lock body scroll while modal is open
   useEffect(() => {
@@ -414,7 +416,7 @@ function CreateWorkspaceModal({ isOpen, onClose, onCreate, onComplete }: CreateW
                   <div key={file.name} className="cwm-file-item">
                     <FileText className="h-4 w-4 cwm-file-icon" />
                     <span className="cwm-file-name">{file.name}</span>
-                    <span className="cwm-file-size">{formatBytes(file.size)}</span>
+                    <span className="cwm-file-size">{formatBytes(file.size, locale)}</span>
                     <button
                       type="button"
                       className="cwm-file-remove"

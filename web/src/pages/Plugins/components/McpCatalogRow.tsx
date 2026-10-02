@@ -24,6 +24,7 @@ import type { CatalogServer } from '@/pages/ChatAgent/utils/api';
 import { brokerageArt, mcpServerArt } from '@/lib/brandArt';
 import { useFlashWorkspace } from '@/hooks/useFlashWorkspace';
 import type { Brokerage } from '../brokerages';
+import { useNow } from '@/hooks/useNow';
 import { isEffectivelyEnabled, isPluginOwned } from '../utils/provenance';
 import {
   ConnectButton,
@@ -124,7 +125,8 @@ export function McpCatalogRow({
   // Only while a verdict can still arrive. Afterwards the slot goes quiet: a
   // row with no verdict is a row with no verdict, and Connect already treats
   // one leniently.
-  const checking = probeStillLanding(server);
+  const now = useNow(5_000, (at) => probeStillLanding(server, at));
+  const checking = probeStillLanding(server, now);
   // What the row can still claim from OAuth. A revoked connection is history
   // once the headers answer on their own: discovery reads a revoked claim as no
   // claim and issues the header grant, so the row has to say the server is

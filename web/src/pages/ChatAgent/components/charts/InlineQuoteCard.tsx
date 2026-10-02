@@ -1,6 +1,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { useLocale } from '@/hooks/useLocale';
 import { createFormatter, createDateFormatter } from '@/lib/format';
 import {
   GREEN,
@@ -85,10 +86,10 @@ function toQuoteDisplay(q: Record<string, unknown>): QuoteDisplay {
 const TABULAR: React.CSSProperties = { fontVariantNumeric: 'tabular-nums' };
 
 // No currency symbol — quotes can be non-USD and the artifact has no currency
-// field. Locale-aware via lib/format so it re-renders on a locale switch.
+// field. Locale-aware via lib/format; the caller passes `useLocale()`.
 const quotePriceFormat = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
-function fmtQuotePrice(price: number): string {
-  return quotePriceFormat(price);
+function fmtQuotePrice(price: number, locale: string): string {
+  return quotePriceFormat(price, locale);
 }
 
 function fmtSigned(value: number): string {
@@ -136,12 +137,13 @@ const localTitleFormat = createDateFormatter({
   year: 'numeric', month: 'numeric', day: 'numeric',
   hour: 'numeric', minute: 'numeric', second: 'numeric',
 });
-function localTitle(asOfTs?: number): string | undefined {
-  return asOfTs != null ? localTitleFormat(asOfTs) : undefined;
+function localTitle(asOfTs: number | undefined, locale: string): string | undefined {
+  return asOfTs != null ? localTitleFormat(asOfTs, locale) : undefined;
 }
 
 function QuoteHero({ d, asOf, asOfTs }: { d: QuoteDisplay; asOf?: string; asOfTs?: number }): React.ReactElement {
   const { t } = useTranslation();
+  const locale = useLocale();
   const isMobile = useIsMobile();
   const sz = isMobile ? SIZES_MOBILE : SIZES_DESKTOP;
   const color = (d.changePct ?? 0) >= 0 ? GREEN : RED;
@@ -167,7 +169,7 @@ function QuoteHero({ d, asOf, asOfTs }: { d: QuoteDisplay; asOf?: string; asOfTs
         )}
         {(d.asOfLocal ?? asOf) && (
           <span
-            title={localTitle(asOfTs)}
+            title={localTitle(asOfTs, locale)}
             style={{ marginLeft: 'auto', fontSize: sz.labelFs, color: TEXT_COLOR, ...TABULAR }}
           >
             {d.asOfLocal ?? asOf}
@@ -177,7 +179,7 @@ function QuoteHero({ d, asOf, asOfTs }: { d: QuoteDisplay; asOf?: string; asOfTs
       <div style={{ display: 'flex', alignItems: 'baseline', gap: isMobile ? 8 : 10, marginBottom: d.extPrice != null ? 2 : sz.sectionMb }}>
         {d.price != null && (
           <span style={{ fontSize: isMobile ? '1.125rem' : '1.375rem', fontWeight: 700, color: 'var(--color-text-primary)', ...TABULAR }}>
-            {fmtQuotePrice(d.price)}
+            {fmtQuotePrice(d.price, locale)}
           </span>
         )}
         {d.changePct != null && (
@@ -191,7 +193,7 @@ function QuoteHero({ d, asOf, asOfTs }: { d: QuoteDisplay; asOf?: string; asOfTs
           <span style={{ color: extColor, fontWeight: 600, fontSize: sz.labelFs }}>
             {extendedHoursLabel(t, d.status, 'long')}
           </span>
-          <span style={{ fontWeight: 600, color: 'var(--color-text-primary)', ...TABULAR }}>{fmtQuotePrice(d.extPrice)}</span>
+          <span style={{ fontWeight: 600, color: 'var(--color-text-primary)', ...TABULAR }}>{fmtQuotePrice(d.extPrice, locale)}</span>
           {d.extChangePct != null && (
             <span style={{ color: (d.extChangePct >= 0 ? GREEN : RED), fontWeight: 500, ...TABULAR }}>
               {d.extChange != null ? `${fmtSigned(d.extChange)} (${formatPct(d.extChangePct)})` : formatPct(d.extChangePct)}
@@ -202,20 +204,20 @@ function QuoteHero({ d, asOf, asOfTs }: { d: QuoteDisplay; asOf?: string; asOfTs
       {d.low != null && d.high != null && d.price != null && d.high > d.low && (
         <div style={{ display: 'flex', alignItems: 'center', gap: sz.gap, marginBottom: sz.sectionMb }}>
           <span style={{ fontSize: sz.labelFs, color: TEXT_COLOR, ...TABULAR }}>
-            {t('toolArtifact.low')} {fmtQuotePrice(d.low)}
+            {t('toolArtifact.low')} {fmtQuotePrice(d.low, locale)}
           </span>
           <QuoteRangeStrip d={d} hero />
           <span style={{ fontSize: sz.labelFs, color: TEXT_COLOR, ...TABULAR }}>
-            {t('toolArtifact.high')} {fmtQuotePrice(d.high)}
+            {t('toolArtifact.high')} {fmtQuotePrice(d.high, locale)}
           </span>
         </div>
       )}
       <div style={{ display: 'flex', gap: isMobile ? 8 : 14, fontSize: sz.labelFs, color: TEXT_COLOR, flexWrap: 'wrap' }}>
         {d.open != null && (
-          <span>{t('toolArtifact.open')} <b style={{ fontWeight: 500, color: 'var(--color-text-secondary)', ...TABULAR }}>{fmtQuotePrice(d.open)}</b></span>
+          <span>{t('toolArtifact.open')} <b style={{ fontWeight: 500, color: 'var(--color-text-secondary)', ...TABULAR }}>{fmtQuotePrice(d.open, locale)}</b></span>
         )}
         {d.prevClose != null && (
-          <span>{t('toolArtifact.prevClose')} <b style={{ fontWeight: 500, color: 'var(--color-text-secondary)', ...TABULAR }}>{fmtQuotePrice(d.prevClose)}</b></span>
+          <span>{t('toolArtifact.prevClose')} <b style={{ fontWeight: 500, color: 'var(--color-text-secondary)', ...TABULAR }}>{fmtQuotePrice(d.prevClose, locale)}</b></span>
         )}
         {d.volume != null && (
           <span>{t('toolArtifact.vol')} <b style={{ fontWeight: 500, color: 'var(--color-text-secondary)', ...TABULAR }}>{formatCompactNumber(d.volume)}</b></span>
@@ -233,6 +235,7 @@ function QuoteHero({ d, asOf, asOfTs }: { d: QuoteDisplay; asOf?: string; asOfTs
  */
 export function InlineQuoteCard({ artifact, onClick }: InlineCardProps): React.ReactElement | null {
   const { t } = useTranslation();
+  const locale = useLocale();
   const isMobile = useIsMobile();
   const sz = isMobile ? SIZES_MOBILE : SIZES_DESKTOP;
   const { quotes, as_of: asOf, as_of_ts: asOfTs } = (artifact || {}) as {
@@ -260,7 +263,7 @@ export function InlineQuoteCard({ artifact, onClick }: InlineCardProps): React.R
             </span>
             {asOf && (
               <span
-                title={localTitle(asOfTs)}
+                title={localTitle(asOfTs, locale)}
                 style={{ marginLeft: 'auto', fontSize: sz.labelFs, color: TEXT_COLOR, ...TABULAR }}
               >
                 {asOf}
@@ -292,13 +295,13 @@ export function InlineQuoteCard({ artifact, onClick }: InlineCardProps): React.R
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: sz.gap, flexShrink: 0 }}>
                     {d.asOfLocal && !isMobile && (
-                      <span title={localTitle(asOfTs)} style={{ fontSize: sz.badgeFs, color: TEXT_COLOR, ...TABULAR }}>
+                      <span title={localTitle(asOfTs, locale)} style={{ fontSize: sz.badgeFs, color: TEXT_COLOR, ...TABULAR }}>
                         {d.asOfLocal}
                       </span>
                     )}
                     {d.extPrice != null && !isMobile ? (
                       <span style={{ fontSize: sz.badgeFs, color: MARKET_STATUS_COLORS[d.status || ''] || TEXT_COLOR, ...TABULAR }}>
-                        {extendedHoursLabel(t, d.status, 'short')} {fmtQuotePrice(d.extPrice)}
+                        {extendedHoursLabel(t, d.status, 'short')} {fmtQuotePrice(d.extPrice, locale)}
                         {d.extChangePct != null ? ` ${formatPct(d.extChangePct)}` : ''}
                       </span>
                     ) : d.status && d.status !== 'open' ? (
@@ -309,7 +312,7 @@ export function InlineQuoteCard({ artifact, onClick }: InlineCardProps): React.R
                     <QuoteRangeStrip d={d} />
                     {d.price != null && (
                       <span style={{ color: 'var(--color-text-primary)', fontWeight: 500, ...TABULAR }}>
-                        {fmtQuotePrice(d.price)}
+                        {fmtQuotePrice(d.price, locale)}
                       </span>
                     )}
                     {d.changePct != null && (

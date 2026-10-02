@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState, useMemo } from 'react';
 import { ArrowLeft, BookMarked, FileText, RefreshCw, X } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { formatBytes } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { useTranslation } from 'react-i18next';
 import {
   useUserMemory,
@@ -30,12 +32,11 @@ interface MemoryPanelProps {
   onOpenFile?: OpenFileHandler;
 }
 
-function formatTime(iso: string | null): string {
+function formatTime(iso: string | null, now: number): string {
   if (!iso) return '';
   try {
     const d = new Date(iso);
-    const now = new Date();
-    const sameDay = d.toDateString() === now.toDateString();
+    const sameDay = d.toDateString() === new Date(now).toDateString();
     if (sameDay) {
       return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
@@ -62,6 +63,8 @@ export default function MemoryPanel({
   onOpenFile,
 }: MemoryPanelProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   const [tier, setTier] = useState<Tier>(targetTier ?? 'user');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [notFoundKey, setNotFoundKey] = useState<string | null>(null);
@@ -343,8 +346,8 @@ export default function MemoryPanel({
               <div className="text-sm truncate">{entry.key}</div>
               <div className="text-[0.625rem]"
                    style={{ color: 'var(--color-text-tertiary)' }}>
-                {formatBytes(entry.size)}
-                {entry.modified_at && ` · ${formatTime(entry.modified_at)}`}
+                {formatBytes(entry.size, locale)}
+                {entry.modified_at && ` · ${formatTime(entry.modified_at, now)}`}
               </div>
             </div>
           </button>

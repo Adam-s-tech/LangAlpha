@@ -23,11 +23,17 @@ export function mode() {
   };
 }
 
-/** Write one run as perf-results/<kind>-<label>-<ts>-<repeat>.json, stamped with the mode. */
-export function writeRun(kind, run, testInfo) {
+/**
+ * Write one run as perf-results/<kind>-<label>-<ts>-<repeat>.json, stamped with
+ * the mode. A raw CPU profile lands beside it as .cpuprofile: the summary keeps
+ * self time only, and the inclusive time a component and its hooks cost is
+ * read from the whole tree (DevTools opens the file too).
+ */
+export function writeRun(kind, run, testInfo, cpuProfile) {
   const dir = path.resolve('perf-results');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${kind}-${run.label}-${Date.now()}-${testInfo.repeatEachIndex}.json`);
   fs.writeFileSync(file, JSON.stringify({ ...run, mode: mode() }, null, 2));
+  if (cpuProfile) fs.writeFileSync(file.replace(/\.json$/, '.cpuprofile'), JSON.stringify(cpuProfile));
   return file;
 }

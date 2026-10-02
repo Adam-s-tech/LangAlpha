@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useLocale } from '@/hooks/useLocale';
 import { EmbedFallback } from './EmbedFallback';
 import { mapLocaleForTV } from './tvConfig';
 import './tvEmbed.css';
@@ -146,7 +146,7 @@ export function TradingViewWebComponent({
   card = false,
 }: Props) {
   const { theme } = useTheme();
-  const { i18n } = useTranslation();
+  const locale = useLocale();
   const hostRef = useRef<HTMLDivElement>(null);
   const elRef = useRef<HTMLElement | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -159,7 +159,7 @@ export function TradingViewWebComponent({
   // neighbor widgets edit, the grid layout shifts, or edit-mode toggles.
   const configKey = JSON.stringify(config);
 
-  const tvLocale = mapLocaleForTV(i18n.language);
+  const tvLocale = mapLocaleForTV(locale);
 
   const retry = useCallback(() => {
     loaderPromises.delete(`${tvLocale}:${element}`);

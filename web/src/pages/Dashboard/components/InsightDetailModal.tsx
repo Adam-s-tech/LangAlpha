@@ -11,7 +11,7 @@ import { Loader } from '@/components/ui/loader';
 import { useToast } from '@/components/ui/use-toast';
 import { ContextBus } from '@/lib/contextBus';
 import { buildInsightWidgetSnapshot, normalizeInsight } from '../utils/insightFetch';
-import i18n from '@/i18n';
+import { useLocale } from '@/hooks/useLocale';
 
 interface InsightTopic {
   text: string;
@@ -47,11 +47,11 @@ interface InsightDetailModalProps {
   onClose: () => void;
 }
 
-function formatDate(dateString: string | undefined): string {
+function formatDate(dateString: string | undefined, locale: string): string {
   if (!dateString) return '';
   try {
     const d = new Date(dateString);
-    return d.toLocaleDateString(i18n.language, {
+    return d.toLocaleDateString(locale, {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -81,6 +81,7 @@ function InsightBody({
   onAttach?: () => void;
 }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -125,7 +126,7 @@ function InsightBody({
           )}
           {detail.completed_at && (
             <span className="text-[0.6875rem] sm:text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-              {formatDate(detail.completed_at)}
+              {formatDate(detail.completed_at, locale)}
             </span>
           )}
           {onAttach && (

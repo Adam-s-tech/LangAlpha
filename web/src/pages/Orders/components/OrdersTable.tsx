@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { useLocale } from '@/hooks/useLocale';
 import { instrumentLabel } from '@/components/orders/instrument';
 import { OrderStatusPill } from '@/components/orders/OrderStatusPill';
 import { OrderModeBadge } from '@/components/orders/OrderModeBadge';
@@ -52,8 +53,8 @@ function OrderRow({
   valuesHidden: boolean;
   onOpen: (attemptId: string) => void;
 }) {
-  const { t, i18n } = useTranslation();
-  const locale = i18n.language;
+  const { t } = useTranslation();
+  const locale = useLocale();
   const summary = order.order;
   const vendorLabel = useDirectToolVendorLabel(order.vendor);
   const open = () => onOpen(order.attempt_id);
@@ -90,7 +91,7 @@ function OrderRow({
       }}
     >
       <td className="orders-cell orders-cell-time">
-        {formatOrderTime(order.created_at) || NONE}
+        {formatOrderTime(order.created_at, locale) || NONE}
       </td>
       <td className="orders-cell orders-cell-mode">
         <OrderModeBadge mode={order.mode} />

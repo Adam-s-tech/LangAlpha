@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { ArrowRight, ArrowUpRight } from 'lucide-react';
 import { HeaderButton } from '@/components/mcp/McpPrimitives';
 import { ErrorLink } from '@/components/ui/error-banner';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { relativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { Automation } from '@/types/automation';
@@ -46,6 +48,8 @@ interface FeedRailProps {
  *  the recurring kinds. */
 export function FeedRail({ automations, readings, mutations, onOpenAutomation, onManage, onNew }: FeedRailProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
 
   const upNext = useMemo(
     () =>
@@ -81,8 +85,8 @@ export function FeedRail({ automations, readings, mutations, onOpenAutomation, o
           <h2 className="automations-kicker">{t('automation.upNext')}</h2>
           {upNext.map((a) => (
             <div key={a.automation_id} className="automations-rail-row">
-              <span className="automation-mono automations-rail-when" title={relativeTime(a.next_run_at)}>
-                {formatUpcoming(a.next_run_at)}
+              <span className="automation-mono automations-rail-when" title={relativeTime(a.next_run_at, locale, now)}>
+                {formatUpcoming(a.next_run_at, locale, now)}
               </span>
               <button type="button" className="automation-name automations-rail-name" onClick={() => onOpenAutomation(a.automation_id)}>
                 {a.name}
@@ -123,7 +127,7 @@ export function FeedRail({ automations, readings, mutations, onOpenAutomation, o
                     {a.name}
                   </button>
                   <span className="automation-mono automations-rail-sub shrink-0">
-                    {w?.reading ? distanceLabel(w.reading, t) : !w?.settled ? <span aria-hidden="true">…</span> : null}
+                    {w?.reading ? distanceLabel(w.reading, t, locale) : !w?.settled ? <span aria-hidden="true">…</span> : null}
                   </span>
                 </div>
                 {w?.reading && <PriceMeter reading={w.reading} symbol={w.symbol} />}
@@ -164,6 +168,8 @@ function AttentionRow({
   onOpen: () => void;
 }) {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   const openThread = useOpenThread();
   const kind = attentionKind(a);
   const ui = automationStatusUi(a);
@@ -188,7 +194,7 @@ function AttentionRow({
       reason = last?.error_message || t('automation.stateUsageLimit');
       break;
     default:
-      reason = t('automation.lastRunFailedAgo', { when: relativeTime(last?.completed_at) });
+      reason = t('automation.lastRunFailedAgo', { when: relativeTime(last?.completed_at, locale, now) });
   }
 
   return (

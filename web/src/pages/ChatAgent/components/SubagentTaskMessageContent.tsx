@@ -2,6 +2,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowRight, PauseCircle } from 'lucide-react';
 import { compactNumber } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import { ErrorLink } from '@/components/ui/error-banner';
 import { CREDIT_STOP_ERROR_TYPE } from '@/types/sse';
 import { buildRateLimitError } from '@/utils/rateLimitError';
@@ -175,6 +176,7 @@ function SubagentTaskMessageContent({
   // card says it is finishing rather than promising more.
   const pausing = useCreditPausePending();
   const { t } = useTranslation();
+  const locale = useLocale();
 
   if (!subagentId && !description) {
     return null;
@@ -269,7 +271,7 @@ function SubagentTaskMessageContent({
           {(tokenUsage?.total ?? 0) > 0 && (
             <span title={`${tokenUsage!.input} in · ${tokenUsage!.output} out`}>
               {toolCalls > 0 ? '· ' : ''}
-              <strong style={{ color: 'var(--color-text-secondary)', fontWeight: 600 }}>{compactNumber(tokenUsage!.total)}</strong>
+              <strong style={{ color: 'var(--color-text-secondary)', fontWeight: 600 }}>{compactNumber(tokenUsage!.total, locale)}</strong>
               {' '}
               {t('chat.subagentCard.tokenUnit')}
             </span>

@@ -6,7 +6,7 @@ import {
   Plus,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import i18n from '@/i18n';
+import type { TFunction } from 'i18next';
 import { US_MARKET_TZ } from '@/lib/bars/exchanges';
 import { INITIAL_FORM, type FormState } from './form';
 
@@ -92,11 +92,11 @@ export function templatesById(ids: TemplateId[]): AutomationTemplate[] {
 
 /** `timezone` is the user's own zone. A template tied to the US session
  *  (the pre-market briefing) keeps New York, since its hour is a market's. */
-export function applyTemplate(templateId: TemplateId, timezone = INITIAL_FORM.timezone): FormState {
-  const template = AUTOMATION_TEMPLATES.find((t) => t.id === templateId);
+export function applyTemplate(templateId: TemplateId, t: TFunction, timezone = INITIAL_FORM.timezone): FormState {
+  const template = AUTOMATION_TEMPLATES.find((tpl) => tpl.id === templateId);
   if (!template || template.id === 'custom') return { ...INITIAL_FORM, timezone };
   // The field starts as the name the menu showed, so it reads in the
   // reader's language. The blank start's label names a choice, not an
   // automation, so it starts empty.
-  return { ...INITIAL_FORM, timezone, ...template.defaults, name: i18n.t(template.nameKey) };
+  return { ...INITIAL_FORM, timezone, ...template.defaults, name: t(template.nameKey) };
 }

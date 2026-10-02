@@ -39,6 +39,8 @@ import { useWorkspaces } from '../../../hooks/useWorkspaces';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { formatBytes } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import {
   deleteUserMemo,
   triggerUserMemoDownload,
@@ -75,13 +77,13 @@ const ACCEPT_ATTR = '.md,.txt,.csv,.json,.pdf,text/markdown,text/plain,text/csv,
 
 // --- Helpers ---------------------------------------------------------------
 
-function formatDate(iso: string | null): string {
+function formatDate(iso: string | null, now: number): string {
   if (!iso) return '';
   try {
     const d = new Date(iso);
-    const now = new Date();
-    const sameYear = d.getFullYear() === now.getFullYear();
-    const sameDay = d.toDateString() === now.toDateString();
+    const today = new Date(now);
+    const sameYear = d.getFullYear() === today.getFullYear();
+    const sameDay = d.toDateString() === today.toDateString();
     if (sameDay) {
       return d.toLocaleTimeString([], {
         hour: '2-digit',
@@ -297,6 +299,8 @@ interface MemoPanelProps {
 
 export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: MemoPanelProps = {}) {
   const { t } = useTranslation();
+  const locale = useLocale();
+  const now = useNow();
   const [notFoundKey, setNotFoundKey] = useState<string | null>(null);
 
   // Mirror MemoryPanel: bare sibling refs in a memo body resolve against the
@@ -1341,7 +1345,7 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
                       className="hidden @min-[420px]:table-cell px-2 py-2 whitespace-nowrap"
                       style={{ color: 'var(--color-text-tertiary)' }}
                     >
-                      {formatBytes(entry.size_bytes)}
+                      {formatBytes(entry.size_bytes, locale)}
                     </td>
                     <td className="px-2 py-2 whitespace-nowrap">
                       <StatusBadge status={entry.metadata_status} />
@@ -1358,7 +1362,7 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
                       className="hidden @min-[420px]:table-cell px-2 py-2 whitespace-nowrap"
                       style={{ color: 'var(--color-text-tertiary)' }}
                     >
-                      {formatDate(entry.created_at)}
+                      {formatDate(entry.created_at, now)}
                     </td>
                   </tr>
                 );

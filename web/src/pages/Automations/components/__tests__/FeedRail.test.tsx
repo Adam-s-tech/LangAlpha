@@ -168,7 +168,7 @@ describe('FeedRail attention row', () => {
     const { row, buttons, links } = renderRow(failing({ message: 'Tool call failed' }));
 
     expect(
-      within(row).getByText(label('automation.lastRunFailedAgo', { when: relativeTime(COMPLETED_AT) })),
+      within(row).getByText(label('automation.lastRunFailedAgo', { when: relativeTime(COMPLETED_AT, 'en-US', Date.now()) })),
     ).toBeInTheDocument();
     expect(buttons).toEqual([label('common.retry'), label('automation.pause'), label('automation.dismiss'), label('automation.openThread')]);
     expect(links).toHaveLength(0);

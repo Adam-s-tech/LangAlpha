@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { getExtendedHoursInfo } from '@/lib/marketUtils';
 import { createFormatter } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -44,10 +45,11 @@ interface WatchlistRowItemProps {
 
 export function WatchlistRowItem({ item, index, marketStatus, onDelete }: WatchlistRowItemProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const navigate = useNavigate();
   const hasQuote = item.quoteAvailable !== false;
   const pos = hasQuote ? item.isPositive ?? true : true;
-  const pctStr = hasQuote ? (pos ? '+' : '') + fmt2(Number(item.changePercent)) + '%' : 'N/A';
+  const pctStr = hasQuote ? (pos ? '+' : '') + fmt2(Number(item.changePercent), locale) + '%' : 'N/A';
   const hasId = !!item.watchlist_item_id;
 
   const { extPct, extType } = getExtendedHoursInfo(marketStatus, item, { shortLabels: true });
@@ -84,7 +86,7 @@ export function WatchlistRowItem({ item, index, marketStatus, onDelete }: Watchl
             style={{ color: 'var(--color-text-primary)' }}
           >
             {hasQuote
-              ? fmt2(Number(extType && item.previousClose != null ? item.previousClose : item.price))
+              ? fmt2(Number(extType && item.previousClose != null ? item.previousClose : item.price), locale)
               : 'N/A'}
           </div>
           <div
@@ -95,7 +97,7 @@ export function WatchlistRowItem({ item, index, marketStatus, onDelete }: Watchl
                 : 'var(--color-text-secondary)',
             }}
           >
-            {hasQuote ? (pos ? '+' : '') + fmt2(Number(item.change)) : 'N/A'}
+            {hasQuote ? (pos ? '+' : '') + fmt2(Number(item.change), locale) : 'N/A'}
           </div>
         </div>
         <div className="text-right">
@@ -118,8 +120,8 @@ export function WatchlistRowItem({ item, index, marketStatus, onDelete }: Watchl
               style={{ color: extColor }}
             >
               {extType === 'pre' ? <Sunrise size={10} /> : <Sunset size={10} />}
-              {fmt2(Number(item.price))} {extPct >= 0 ? '+' : ''}
-              {fmt2(extPct)}%
+              {fmt2(Number(item.price), locale)} {extPct >= 0 ? '+' : ''}
+              {fmt2(extPct, locale)}%
             </div>
           )}
         </div>
@@ -160,14 +162,15 @@ export function PortfolioRowItem({
   onEdit,
   onDelete,
 }: PortfolioRowItemProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
+  const locale = useLocale();
   const navigate = useNavigate();
   const hasQuote = item.quoteAvailable !== false;
   const pos = hasQuote ? item.isPositive ?? true : true;
   const currency = normalizePortfolioCurrency(item.currency);
   const plStr =
     hasQuote && item.unrealizedPlPercent != null
-      ? (pos ? '+' : '') + fmt2(Number(item.unrealizedPlPercent)) + '%'
+      ? (pos ? '+' : '') + fmt2(Number(item.unrealizedPlPercent), locale) + '%'
       : 'N/A';
   const hasId = !!item.user_portfolio_id;
 
@@ -175,14 +178,14 @@ export function PortfolioRowItem({
   const extColor = extType === 'pre' ? '#fbbf24' : '#3b82f6';
   const displayMarketValue =
     hasQuote && item.marketValue != null
-      ? formatPortfolioMoney(item.marketValue, currency, i18n.language)
+      ? formatPortfolioMoney(item.marketValue, currency, locale)
       : 'N/A';
   const displayPrice =
     hasQuote
       ? formatPortfolioMoney(
           Number(extType && item.previousClose != null ? item.previousClose : item.price),
           currency,
-          i18n.language,
+          locale,
         )
       : 'N/A';
 
@@ -210,7 +213,7 @@ export function PortfolioRowItem({
           {valuesHidden
             ? t('dashboard.widgets.holdings.sharesHidden')
             : item.quantity != null
-              ? t('dashboard.widgets.holdings.shares', { n: fmtInt(Number(item.quantity)) })
+              ? t('dashboard.widgets.holdings.shares', { n: fmtInt(Number(item.quantity), locale) })
               : ''}
         </div>
       </div>
@@ -250,8 +253,8 @@ export function PortfolioRowItem({
               style={{ color: extColor }}
             >
               {extType === 'pre' ? <Sunrise size={10} /> : <Sunset size={10} />}
-              {formatPortfolioMoney(item.price, currency, i18n.language)} {extPct >= 0 ? '+' : ''}
-              {fmt2(extPct)}%
+              {formatPortfolioMoney(item.price, currency, locale)} {extPct >= 0 ? '+' : ''}
+              {fmt2(extPct, locale)}%
             </div>
           )}
         </div>
@@ -317,7 +320,8 @@ interface PortfolioNavSummaryProps {
 }
 
 export function PortfolioNavSummary({ rows, valuesHidden, onToggleHidden }: PortfolioNavSummaryProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
+  const locale = useLocale();
   const summaries = useMemo(() => portfolioSummary(rows), [rows]);
   const visibleSummaries = useMemo(
     () => summaries.filter((summary) => summary.totalValue !== 0),
@@ -365,7 +369,7 @@ export function PortfolioNavSummary({ rows, valuesHidden, onToggleHidden }: Port
           : visibleSummaries.length > 0
             ? visibleSummaries.map((summary) => (
                 <div key={summary.currency}>
-                  {formatPortfolioMoney(summary.totalValue, summary.currency, i18n.language)}
+                  {formatPortfolioMoney(summary.totalValue, summary.currency, locale)}
                 </div>
               ))
             : '--'}
@@ -383,7 +387,7 @@ export function PortfolioNavSummary({ rows, valuesHidden, onToggleHidden }: Port
             >
               {summary.isPlPositive ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
               {summary.isPlPositive ? '+' : '-'}
-              {formatPortfolioMoney(Math.abs(summary.totalPl), summary.currency, i18n.language)} ({fmt1(Math.abs(summary.totalPlPct))}%)
+              {formatPortfolioMoney(Math.abs(summary.totalPl), summary.currency, locale)} ({fmt1(Math.abs(summary.totalPlPct), locale)}%)
             </div>
           ))}
         </div>

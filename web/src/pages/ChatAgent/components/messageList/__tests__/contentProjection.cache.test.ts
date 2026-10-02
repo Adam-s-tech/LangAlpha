@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { projectMessageContent } from '../contentProjection';
 import type { MessageRecord } from '../types';
+import type { ActivityRenderBlock, TextRenderBlock } from '../buildRenderBlocks';
 
 const textOnly = (): MessageRecord => ({
   id: 'a0',
@@ -53,9 +54,49 @@ describe('projectMessageContent cache', () => {
   });
 
   it('re-projects when the record stops streaming', () => {
-    const message = textOnly();
-    const streaming = projectMessageContent(message, true);
+    // A call that just finished keeps its live exposure while the turn streams,
+    // and settles the moment the stream stops.
+    const message: MessageRecord = {
+      ...textOnly(),
+      id: 'a-stop',
+      contentSegments: [{ type: 'tool_call', toolCallId: 'tc1', order: 0 }],
+      toolCallProcesses: {
+        tc1: { toolName: 'bash', toolCall: { args: {} }, isInProgress: false, isComplete: true, order: 0, _createdAt: Date.now() },
+      },
+    };
+    const liveState = (p: ReturnType<typeof projectMessageContent>) => (p.blocks[0] as ActivityRenderBlock).items[0]._liveState;
+    expect(liveState(projectMessageContent(message, true))).toBe('completing');
     message.isStreaming = false;
-    expect(projectMessageContent(message, true)).not.toBe(streaming);
+    expect(liveState(projectMessageContent(message, true))).toBe('completed');
+  });
+});
+
+describe('projectMessageContent across streamed chunks', () => {
+  // Every chunk arrives as a new record, so this is the path a stream takes.
+  const tool = { toolName: 'bash', toolCall: { args: {} }, toolCallResult: { output: 'ok' }, isInProgress: false, isComplete: true, order: 0 };
+  const chunk = (text: string, tc1: Record<string, unknown> = tool): MessageRecord => ({
+    id: 'a-chunks',
+    role: 'assistant',
+    isStreaming: true,
+    contentSegments: [{ type: 'tool_call', toolCallId: 'tc1', order: 0 }, { type: 'text', content: text, order: 1 }],
+    reasoningProcesses: {},
+    toolCallProcesses: { tc1 },
+  });
+
+  it('reuses the blocks a chunk did not change, so their memoized rows skip it', () => {
+    const first = projectMessageContent(chunk('Hel'));
+    const second = projectMessageContent(chunk('Hello'));
+    expect(second.blocks[0]).toBe(first.blocks[0]);
+    expect(second.blocks[1]).not.toBe(first.blocks[1]);
+    expect((second.blocks[1] as TextRenderBlock).segment.content).toBe('Hello');
+  });
+
+  it('never reuses a tool call whose record changed', () => {
+    const first = projectMessageContent(chunk('Hello'));
+    const second = projectMessageContent(chunk('Hello', { ...tool, toolCallResult: { output: 'changed' } }));
+    const item = (p: ReturnType<typeof projectMessageContent>) => (p.blocks[0] as ActivityRenderBlock).items[0];
+    expect(item(second)).not.toBe(item(first));
+    const changed = item(second);
+    expect(changed.type === 'tool_call' && changed.toolCallResult).toEqual({ output: 'changed' });
   });
 });

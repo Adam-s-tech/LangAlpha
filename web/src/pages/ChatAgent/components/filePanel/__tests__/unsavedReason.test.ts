@@ -12,20 +12,20 @@ beforeAll(async () => {
 
 describe('unsavedReasonLabel', () => {
   it('sizes a too-large file when the size is known', () => {
-    expect(unsavedReasonLabel(t, { reason: 'too_large', size: 6_549_825_126 })).toBe(
+    expect(unsavedReasonLabel(t, { reason: 'too_large', size: 6_549_825_126 }, 'en-US')).toBe(
       'Too large to back up here (6.1 GB). Move or split it.',
     );
   });
 
   it('uses the plain reason when there is no size to show', () => {
-    expect(unsavedReasonLabel(t, { reason: 'too_large', size: null })).toBe(i18n.t('filePanel.unsavedReason.too_large'));
-    expect(unsavedReasonLabel(t, { reason: 'changed' })).toBe('Changed while saving. The next backup retries.');
+    expect(unsavedReasonLabel(t, { reason: 'too_large', size: null }, 'en-US')).toBe(i18n.t('filePanel.unsavedReason.too_large'));
+    expect(unsavedReasonLabel(t, { reason: 'changed' }, 'en-US')).toBe('Changed while saving. The next backup retries.');
   });
 });
 
 describe('path_too_long', () => {
   it('names the reason with a fix the user can make', () => {
-    expect(unsavedReasonLabel(t, { reason: 'path_too_long', size: 3 })).toBe(
+    expect(unsavedReasonLabel(t, { reason: 'path_too_long', size: 3 }, 'en-US')).toBe(
       'Its path is too long to back up. Shorten its folder names.',
     );
   });

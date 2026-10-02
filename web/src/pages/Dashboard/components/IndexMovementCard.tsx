@@ -1,9 +1,10 @@
 import React, { useState, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { LineChart, Line, YAxis, Tooltip } from 'recharts';
 import { motion, AnimatePresence, type PanInfo } from '@/lib/framer';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { createFormatter } from '@/lib/format';
 import { utcMsToETDate } from '@/lib/utils';
 import type { IndexData } from '@/types/market';
@@ -35,13 +36,13 @@ interface IndexMovementCardProps {
 /* ── Shared card content (no animation wrapper) ── */
 
 function IndexCardContent({ index }: { index: IndexData }) {
-  useTranslation();
+  const locale = useLocale();
   const hasQuote = index.quoteAvailable !== false;
   const pos = index.isPositive;
   const ch = Number(index.change);
   const pct = Number(index.changePercent);
-  const changeStr = fmt2(ch);
-  const pctStr = '(' + (pos ? '+' : '') + fmt2(pct) + '%)';
+  const changeStr = fmt2(ch, locale);
+  const pctStr = '(' + (pos ? '+' : '') + fmt2(pct, locale) + '%)';
   const chartData: SparklineDataPoint[] = (index.sparklineData || []).map((pt, i) =>
     typeof pt === 'object' ? { ...pt, i } : { val: pt as unknown as number, i },
   );
@@ -49,11 +50,14 @@ function IndexCardContent({ index }: { index: IndexData }) {
   // Show the date of the session the data belongs to (e.g. the last trading day
   // when the market is closed/pre-open), falling back to today (ET) if unknown
   // or malformed. ET — not browser-local — so the fallback matches the
-  // ET-derived asOfDate on sibling cards for users outside US timezones.
+  // ET-derived asOfDate on sibling cards for users outside US timezones. Only
+  // a card on the fallback reads the clock, so only it ticks.
+  const hasAsOfDate = /^\d{4}-\d{2}-\d{2}$/.test(index.asOfDate ?? '');
+  const now = useNow(60_000, !hasAsOfDate);
   const dateStr = (() => {
-    const iso = /^\d{4}-\d{2}-\d{2}$/.test(index.asOfDate ?? '')
+    const iso = hasAsOfDate
       ? (index.asOfDate as string)
-      : utcMsToETDate(Date.now());
+      : utcMsToETDate(now);
     const [, mo, d] = iso.split('-');
     return `${Number(mo)}/${Number(d)}`;
   })();
@@ -84,7 +88,7 @@ function IndexCardContent({ index }: { index: IndexData }) {
               className="text-lg font-bold tracking-tight dashboard-mono"
               style={{ color: 'var(--color-text-primary)' }}
             >
-              {hasQuote ? fmt2(Number(index.price)) : 'N/A'}
+              {hasQuote ? fmt2(Number(index.price), locale) : 'N/A'}
             </div>
             <div
               className="text-xs dashboard-mono"
@@ -133,7 +137,7 @@ function IndexCardContent({ index }: { index: IndexData }) {
                       <div style={{ color: 'var(--color-text-secondary)' }}>{d.time}</div>
                     )}
                     <div className="font-semibold dashboard-mono">
-                      {fmt2(Number(d.val))}
+                      {fmt2(Number(d.val), locale)}
                     </div>
                   </div>
                 );

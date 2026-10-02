@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from '@/components/ui/use-toast';
 import { createDateFormatter } from '@/lib/format';
 import { useCopyShareLink } from '@/hooks/useCopyShareLink';
+import { useLocale } from '@/hooks/useLocale';
 import { useSharedLinks, useShareLinkMutations } from '@/hooks/useShareLink';
 import { getThreadShareStatus, updateThreadSharing } from '../utils/api';
 import { shareConflictIn } from '../utils/api/shareLinks';
@@ -25,6 +26,7 @@ function sharedLinkName(link: ShareLink): string {
 /** Every file link the workspace has made public, each with Copy and Stop. */
 function SharedInWorkspace({ workspaceId }: { workspaceId: string }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const { data: links } = useSharedLinks(workspaceId);
   const { patch } = useShareLinkMutations(workspaceId);
   const { copy, copiedCode } = useCopyShareLink();
@@ -62,7 +64,7 @@ function SharedInWorkspace({ workspaceId }: { workspaceId: string }) {
               </p>
               {link.shared_at && (
                 <p className="text-[0.6875rem]" style={{ color: 'var(--color-text-tertiary)' }}>
-                  {t('share.sharedOn', { date: sharedOn(new Date(link.shared_at)) })}
+                  {t('share.sharedOn', { date: sharedOn(new Date(link.shared_at), locale) })}
                 </p>
               )}
             </div>

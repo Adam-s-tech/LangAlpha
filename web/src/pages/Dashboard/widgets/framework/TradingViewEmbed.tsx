@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useLocale } from '@/hooks/useLocale';
 import { getTVCommonConfig, mapLocaleForTV, resolveScriptSrc } from './tvConfig';
 import { EmbedFallback } from './EmbedFallback';
 import './tvEmbed.css';
@@ -8,7 +8,7 @@ import './tvEmbed.css';
 interface Props {
   /** Either a known short key (`ticker-tape`) or a full embed-widget URL. */
   scriptKey: string;
-  /** Per-widget config merged on top of getTVCommonConfig() output + theme. */
+  /** Per-widget config merged on top of getTVCommonConfig(locale) output + theme. */
   config: Record<string, unknown>;
   /** Class applied to the outer container. */
   className?: string;
@@ -55,11 +55,11 @@ const REBUILD_DEBOUNCE_MS = 200;
 
 export function TradingViewEmbed({ scriptKey, config, className, card = false, contentHeight }: Props) {
   const { theme } = useTheme();
-  const { i18n } = useTranslation();
+  const locale = useLocale();
   // Named local mirrors the WC component pattern (TradingViewWebComponent.tsx)
   // and makes the dep array below self-explanatory: rebuild when the TV-mapped
   // locale changes, not just any i18n internal.
-  const tvLocale = mapLocaleForTV(i18n.language);
+  const tvLocale = mapLocaleForTV(locale);
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [retryToken, setRetryToken] = useState(0);
@@ -122,7 +122,7 @@ export function TradingViewEmbed({ scriptKey, config, className, card = false, c
       // JSON.stringify allows raw `<` because it's valid JSON, but the browser
       // parses script bodies with HTML rules and would close the script tag.
       script.text = JSON.stringify({
-        ...getTVCommonConfig(),
+        ...getTVCommonConfig(locale),
         ...config,
         colorTheme: theme,
         theme: theme,

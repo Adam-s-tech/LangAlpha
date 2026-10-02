@@ -1,5 +1,5 @@
 import { defineConfig, loadEnv } from 'vite'
-import react from '@vitejs/plugin-react'
+import { reactPlugins } from './scripts/react-plugins.ts'
 import fs from 'fs'
 import path from 'path'
 import { localePreload } from './scripts/locale-preload.ts'
@@ -128,7 +128,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: env.VITE_CDN_BASE || '/',
-    plugins: [react(), emitVersionManifest(), pdfjsWasm(), localePreload(path.resolve(import.meta.dirname, 'src/locales'))],
+    plugins: [...reactPlugins(), emitVersionManifest(), pdfjsWasm(), localePreload(path.resolve(import.meta.dirname, 'src/locales'))],
     resolve: {
       // `@/` and the tests' `@e2e/` come from the tsconfig projects' `paths`,
       // each file resolving through the project that owns it.

@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import type { TFunction } from 'i18next';
 import i18n from '@/i18n';
 import { toast } from '@/components/ui/use-toast';
 import { registerAuthReset } from '@/lib/authResets';
@@ -107,9 +108,9 @@ export function useDownloadState(key: string | null): DownloadState {
 }
 
 /** The label a Download control shows for ``state``. */
-export function downloadLabel(state: DownloadState, idle: string): string {
-  if (state === 'preparing') return i18n.t('filePanel.preparing');
-  if (state === 'started') return i18n.t('filePanel.downloadStarted');
+export function downloadLabel(state: DownloadState, idle: string, t: TFunction): string {
+  if (state === 'preparing') return t('filePanel.preparing');
+  if (state === 'started') return t('filePanel.downloadStarted');
   return idle;
 }
 

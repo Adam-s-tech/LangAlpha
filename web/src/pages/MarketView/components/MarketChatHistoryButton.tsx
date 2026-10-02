@@ -19,6 +19,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Loader } from '@/components/ui/loader';
 import { queryKeys } from '@/lib/queryKeys';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { getWorkspaceThreads } from '../../ChatAgent/utils/api';
 
 interface ThreadRecord {
@@ -60,8 +62,11 @@ export default function MarketChatHistoryButton({
   onStartNewChat,
 }: MarketChatHistoryButtonProps): React.ReactElement {
   const { t } = useTranslation();
+  const locale = useLocale();
   const [open, setOpen] = React.useState(false);
   const [page, setPage] = React.useState(0);
+  // The row times only render while the menu is open.
+  const now = useNow(60_000, open);
 
   const PLATFORM_PREFIX = 'market_view';
   const PAGE_SIZE = 5;
@@ -311,7 +316,7 @@ export default function MarketChatHistoryButton({
                       letterSpacing: '0.02em',
                     }}
                   >
-                    {relativeTime(thread.updated_at)}
+                    {relativeTime(thread.updated_at, locale, now)}
                   </span>
                 )}
               </DropdownMenuItem>

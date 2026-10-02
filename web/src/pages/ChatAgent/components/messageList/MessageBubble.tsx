@@ -19,6 +19,7 @@ import { MessageContentSegments } from './MessageContentSegments';
 import { OverflowCollapse } from './OverflowCollapse';
 import { useMessageActions } from './MessageActionsContext';
 import { useArrivalQuiet, useLiveToolRunning } from './useArrivalQuiet';
+import { useStableHandler } from '@/hooks/useStableHandler';
 import { isSteeringUserMessage } from './messagePredicates';
 import { assistantText } from './messageText';
 import { TurnFileCards } from './TurnFileCards';
@@ -174,23 +175,40 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
     && !(message.stopped as boolean)
     && sourceCount === 0
     && !projection.hasRetained;
-  if (foldedAway) return null;
-
+  // The footer row reads the message only through these, so a streaming
+  // bubble can reuse its row across chunks: the message is a new object on
+  // every chunk, and a row that read it would rebuild its buttons, icons and
+  // labels each time while hidden. The two handlers read it when clicked.
+  const messageId = message.id as string;
+  const hasError = !!message.error;
+  const isSteering = isSteeringUserMessage(message);
   const resizeTextarea = () => {
     const el = editTextareaRef.current;
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = el.scrollHeight + 'px';
   };
-
-  const handleStartEdit = () => {
+  const handleStartEdit = useStableHandler(() => {
     setEditContent((message.content as string) || '');
     setIsEditing(true);
     setTimeout(() => {
       editTextareaRef.current?.focus();
       resizeTextarea();
     }, 0);
-  };
+  });
+  const handleCopy = useStableHandler(() => {
+    const text = assistantText(message);
+    // Confirm only after the write lands (it can reject when the document
+    // loses focus); rapid re-copies reset the shared timer instead of
+    // stacking timers that would cut the newer indicator short.
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  });
+
+  if (foldedAway) return null;
 
   const handleCancelEdit = () => {
     setIsEditing(false);
@@ -213,18 +231,6 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
     } else if (e.key === 'Escape') {
       handleCancelEdit();
     }
-  };
-
-  const handleCopy = () => {
-    const text = assistantText(message);
-    // Confirm only after the write lands (it can reject when the document
-    // loses focus); rapid re-copies reset the shared timer instead of
-    // stacking timers that would cut the newer indicator short.
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
-    }).catch(() => {});
   };
 
   // Whether this bubble ends in a deck. The bubble above reads it too: its own
@@ -262,7 +268,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
         they're injected mid-turn and have no turn checkpoint of their
         own, so an edit fork would target the NEXT turn and leave the
         original steering text in the agent's context. */}
-    {isUser && onEditMessage && !isSteeringUserMessage(message) && (
+    {isUser && onEditMessage && !isSteering && (
       <button
         onClick={handleStartEdit}
         className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-(--color-bg-elevated)"
@@ -284,7 +290,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
         : <Copy className="h-3.5 w-3.5" style={{ color: 'var(--color-text-tertiary)' }} />
       }
     </button>
-    {isAssistant && !(message.error as boolean) && onThumbUp && (
+    {isAssistant && !hasError && onThumbUp && (
       <button
         onClick={handleThumbUpClick}
         className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-(--color-bg-elevated)"
@@ -297,7 +303,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
         />
       </button>
     )}
-    {isAssistant && !(message.error as boolean) && onThumbDown && (
+    {isAssistant && !hasError && onThumbDown && (
       <button
         onClick={() => setShowThumbDownModal(true)}
         className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-(--color-bg-elevated)"
@@ -314,16 +320,16 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
         regenerating re-runs the whole turn from its input checkpoint
         (mid-run steering can't be replayed), so the affordance sits
         at the end of the full response. */}
-    {isAssistant && !(message.error as boolean) && onRegenerate && isTurnTail && (
+    {isAssistant && !hasError && onRegenerate && isTurnTail && (
       <button
-        onClick={() => onRegenerate(message.id as string)}
+        onClick={() => onRegenerate(messageId)}
         className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-(--color-bg-elevated)"
         title={t('chat.actions.regenerate')}
       >
         <RefreshCw className="h-3.5 w-3.5" style={{ color: 'var(--color-text-tertiary)' }} />
       </button>
     )}
-    {isAssistant && (message.error as boolean) && onRetry && (
+    {isAssistant && hasError && onRetry && (
       <button
         onClick={onRetry}
         className="p-1 min-h-7 min-w-7 inline-flex items-center justify-center rounded transition-colors hover:bg-(--color-bg-elevated)"
@@ -515,14 +521,20 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
               });
             const quiet = (arrivalQuiet || waitingForParagraph) && !preparingTool;
             const size = isMobile ? 20 : 24;
-            // The row leaves in px, never from `auto`: an auto exit inside the
-            // chat scroller forces a layout a row short and clamps the scroll.
+            // The gap above the glyph is padding inside the row, not a margin:
+            // content that renders zero-height (text still held back, a block
+            // with nothing to show yet) lets a margin collapse out through the
+            // bubble's top, and the bubble then jumps up as the first visible
+            // content lands. The row leaves in px, never from `auto`: an auto
+            // exit inside the chat scroller forces a layout a row short and
+            // clamps the scroll.
+            const gap = hasContent ? 12 : 0;
             return (
               <motion.div
                 key="streaming-indicator"
                 className="transition-opacity duration-200"
-                style={{ opacity: quiet ? 1 : 0, height: size, marginTop: hasContent ? 12 : 0, overflow: 'hidden' }}
-                exit={{ height: 0, marginTop: 0, opacity: 0, transition: EXIT_TWEEN }}
+                style={{ opacity: quiet ? 1 : 0, height: size + gap, paddingTop: gap, overflow: 'hidden' }}
+                exit={{ height: 0, paddingTop: 0, opacity: 0, transition: EXIT_TWEEN }}
                 aria-hidden={!quiet}
                 data-testid="streaming-indicator"
                 data-quiet={quiet ? 'true' : 'false'}

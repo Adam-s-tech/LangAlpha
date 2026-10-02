@@ -13,6 +13,7 @@ import {
   CalendarHeading,
 } from '@/components/ui/aria-calendar';
 import { Popover, PopoverDialog, PopoverTrigger } from '@/components/ui/aria-popover';
+import { useLocale } from '@/hooks/useLocale';
 import { formatTimezoneName } from '@/lib/format';
 import { dayIn, instantAt, nextOnDay, nextSlot, quickPicks, timeIn, type QuickPickId } from '../utils/moments';
 import { MORNING, type TimeOfDay } from '../utils/timeOfDay';
@@ -50,6 +51,7 @@ interface DateTimePickerProps {
  */
 export default function DateTimePicker({ value, onChange, timeZone, labelledBy }: DateTimePickerProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const valueId = useId();
   const at = toDate(value);
   const [open, setOpen] = useState(false);
@@ -101,7 +103,7 @@ export default function DateTimePicker({ value, onChange, timeZone, labelledBy }
         aria-labelledby={labelledBy ? `${labelledBy} ${valueId}` : undefined}
       >
         <CalendarDays aria-hidden="true" />
-        <span id={valueId}>{at ? formatMoment(at, timeZone) : t('automation.pickMoment')}</span>
+        <span id={valueId}>{at ? formatMoment(at, locale, timeZone) : t('automation.pickMoment')}</span>
       </Button>
       <Popover placement="bottom start" offset={6} containerPadding={16} className="automation-moment-popover">
         <PopoverDialog aria-label={t('automation.pickMoment')} className="p-0">
@@ -115,7 +117,7 @@ export default function DateTimePicker({ value, onChange, timeZone, labelledBy }
                 onClick={() => commit(p.at)}
               >
                 <span className="automation-moment-pick-name">{t(PICK_LABEL_KEY[p.id])}</span>
-                <span className="automation-mono automation-moment-pick-when">{formatUpcoming(p.at, timeZone)}</span>
+                <span className="automation-mono automation-moment-pick-when">{formatUpcoming(p.at, locale, now.getTime(), timeZone)}</span>
               </button>
             ))}
           </div>
@@ -151,7 +153,7 @@ export default function DateTimePicker({ value, onChange, timeZone, labelledBy }
             </div>
           </div>
           <div className="automation-moment-foot">
-            <span className="automation-mono automation-moment-zone">{formatTimezoneName(timeZone)}</span>
+            <span className="automation-mono automation-moment-zone">{formatTimezoneName(timeZone, locale)}</span>
             <button type="button" className="automation-moment-done" onClick={() => setOpen(false)}>
               {t('common.done')}
             </button>

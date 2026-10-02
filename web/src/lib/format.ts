@@ -1,24 +1,20 @@
 /**
- * Locale-aware number/date formatter factories.
+ * Locale-aware number/date formatters.
  *
- * Each factory returns a function that memoizes its `Intl.*Format` instance
- * by `i18n.language`, so a per-row formatter on a hot render path costs one
- * Intl construction per locale switch (not per call).
- *
- * Consumers MUST call `useTranslation()` in the component that uses the
- * formatter — without it, the component never re-renders on locale switch
- * and the cell shows stale-locale output until something else triggers a
- * re-render. The formatter itself only re-creates Intl when `i18n.language`
- * changes; React's render cycle is what forces it to actually re-run.
+ * Every formatter takes the locale as an argument (`useLocale()` in a
+ * component), and `relativeTime` takes the time (`useNow()`), instead of
+ * reading `i18n.language` or the clock itself. The React Compiler caches a call
+ * on its arguments, so an input read behind its back pins the output at the
+ * first value it saw: the old language after a switch, or a clock that never
+ * moves. Intl instances are cached per locale, so a hot render path pays for
+ * one construction per locale, not per call.
  */
-import i18n from '@/i18n';
 
-// Defensive: if `i18n.language` is briefly empty/null/invalid (transient
-// changeLanguage state, broken localStorage), the Intl constructor throws.
-// Without the catch, the closure would re-throw on every subsequent call —
+// Defensive: if the locale is briefly empty or invalid (transient
+// changeLanguage state, a broken cookie), the Intl constructor throws, and
 // every formatted widget on the dashboard would crash at once. The fallback
-// uses the host default locale and we still update `lastLocale` so we don't
-// retry the bad construction every call.
+// uses the host default locale, cached under the bad key so the construction
+// is not retried on every call.
 function safeNumberFormat(lang: string, opts: Intl.NumberFormatOptions): Intl.NumberFormat {
   try {
     return new Intl.NumberFormat(lang, opts);
@@ -35,40 +31,38 @@ function safeDateFormat(lang: string, opts: Intl.DateTimeFormatOptions): Intl.Da
   }
 }
 
-export function createFormatter(opts: Intl.NumberFormatOptions): (n: number) => string {
-  let lastLocale: string | null = null;
-  let fmt: Intl.NumberFormat | null = null;
-  return (n: number): string => {
-    const lang = i18n.language;
-    if (lang !== lastLocale || !fmt) {
-      fmt = safeNumberFormat(lang, opts);
-      lastLocale = lang;
+function perLocale<T>(make: (locale: string) => T): (locale: string) => T {
+  const made = new Map<string, T>();
+  return (locale) => {
+    let value = made.get(locale);
+    if (value === undefined) {
+      value = make(locale);
+      made.set(locale, value);
     }
-    return fmt.format(n);
+    return value;
   };
 }
 
-export function createDateFormatter(opts: Intl.DateTimeFormatOptions): (d: Date | number) => string {
-  let lastLocale: string | null = null;
-  let fmt: Intl.DateTimeFormat | null = null;
-  return (d: Date | number): string => {
-    const lang = i18n.language;
-    if (lang !== lastLocale || !fmt) {
-      fmt = safeDateFormat(lang, opts);
-      lastLocale = lang;
-    }
-    return fmt.format(d);
-  };
+export function createFormatter(opts: Intl.NumberFormatOptions): (n: number, locale: string) => string {
+  const format = perLocale((locale) => safeNumberFormat(locale, opts));
+  return (n, locale) => format(locale).format(n);
+}
+
+export function createDateFormatter(
+  opts: Intl.DateTimeFormatOptions,
+): (d: Date | number, locale: string) => string {
+  const format = perLocale((locale) => safeDateFormat(locale, opts));
+  return (d, locale) => format(locale).format(d);
 }
 
 const zoneNames = new Map<string, string>();
 
-/** A zone's name in the reader's language ("Eastern Time", "中国标准时间"),
- *  or in `locale`. UTC stays "UTC", which Intl would call "GMT". The short
- *  style names the country where a zone is a whole one ("Germany Time"). */
+/** A zone's name in `locale` ("Eastern Time", "中国标准时间"). UTC stays
+ *  "UTC", which Intl would call "GMT". The short style names the country where
+ *  a zone is a whole one ("Germany Time"). */
 export function formatTimezoneName(
   tz: string,
-  locale: string = i18n.language,
+  locale: string,
   style: 'longGeneric' | 'shortGeneric' = 'longGeneric',
 ): string {
   if (tz === 'UTC' || tz === 'Etc/UTC') return 'UTC';
@@ -107,8 +101,8 @@ const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
 // A byte count in the largest binary unit it reaches, one decimal under ten
 // (`40960 → "40 KB"`, `1536 → "1.5 KB"`). The number follows the locale; the
 // unit symbols are the same everywhere, spaced so zh-CN reads `256 MB` too.
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return `${byteAmount(0)} B`;
+export function formatBytes(bytes: number, locale: string): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return `${byteAmount(0, locale)} B`;
   let value = bytes;
   let unit = 0;
   while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
@@ -121,7 +115,7 @@ export function formatBytes(bytes: number): string {
     unit += 1;
   }
   const shown = unit === 0 || value >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
-  return `${byteAmount(shown)} ${BYTE_UNITS[unit]}`;
+  return `${byteAmount(shown, locale)} ${BYTE_UNITS[unit]}`;
 }
 
 function safeRelativeFormat(lang: string, style: Intl.RelativeTimeFormatStyle): Intl.RelativeTimeFormat {
@@ -141,12 +135,15 @@ const _RELATIVE_STEPS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
   ['minute', 60],
 ];
 
+const relativeFormats = perLocale((locale) => ({
+  counts: safeRelativeFormat(locale, 'narrow'),
+  phrases: safeRelativeFormat(locale, 'long'),
+}));
+
 /**
- * Locale-aware relative time — `"5m ago"`, `"yesterday"`, `"in 3d"`,
- * `"next month"`, `"昨天"`.
- * Same memoization + `useTranslation()` contract as the factories above.
- * Signed, so future timestamps read as future; sub-minute deltas collapse to
- * the locale's "now" phrasing.
+ * Locale-aware relative time from `now` — `"5m ago"`, `"yesterday"`,
+ * `"in 3d"`, `"next month"`, `"昨天"`. Signed, so future timestamps read as
+ * future; sub-minute deltas collapse to the locale's "now" phrasing.
  *
  * A count is compact (`"in 3mo"`), but a phrase is spelled out: `numeric:
  * 'auto'` words a step of one as a phrase, and the narrow style would clip
@@ -156,28 +153,22 @@ const _RELATIVE_STEPS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
  * "now" — every call site renders this straight into the DOM, so a bad
  * timestamp has to read as absent, not as fresh.
  */
-export const relativeTime = (() => {
-  let lastLocale: string | null = null;
-  let counts: Intl.RelativeTimeFormat | null = null;
-  let phrases: Intl.RelativeTimeFormat | null = null;
-  return (d: Date | number | string | null | undefined): string => {
-    if (d === null || d === undefined || d === '') return '';
-    const ms = new Date(d).getTime();
-    if (Number.isNaN(ms)) return '';
-    const lang = i18n.language;
-    if (lang !== lastLocale || !counts || !phrases) {
-      counts = safeRelativeFormat(lang, 'narrow');
-      phrases = safeRelativeFormat(lang, 'long');
-      lastLocale = lang;
-    }
-    const seconds = (ms - Date.now()) / 1000;
-    const abs = Math.abs(seconds);
-    for (const [unit, unitSeconds] of _RELATIVE_STEPS) {
-      if (abs < unitSeconds) continue;
-      const n = Math.round(seconds / unitSeconds);
-      const isCount = counts.formatToParts(n, unit).some((p) => p.type === 'integer');
-      return (isCount ? counts : phrases).format(n, unit);
-    }
-    return counts.format(0, 'second');
-  };
-})();
+export function relativeTime(
+  d: Date | number | string | null | undefined,
+  locale: string,
+  now: number,
+): string {
+  if (d === null || d === undefined || d === '') return '';
+  const ms = new Date(d).getTime();
+  if (Number.isNaN(ms)) return '';
+  const { counts, phrases } = relativeFormats(locale);
+  const seconds = (ms - now) / 1000;
+  const abs = Math.abs(seconds);
+  for (const [unit, unitSeconds] of _RELATIVE_STEPS) {
+    if (abs < unitSeconds) continue;
+    const n = Math.round(seconds / unitSeconds);
+    const isCount = counts.formatToParts(n, unit).some((p) => p.type === 'integer');
+    return (isCount ? counts : phrases).format(n, unit);
+  }
+  return counts.format(0, 'second');
+}

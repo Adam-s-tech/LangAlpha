@@ -131,7 +131,7 @@ function tokenizeDate(fmt: string): DateToken[] {
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
-function renderDate(date: Date, tokens: DateToken[]): string {
+function renderDate(date: Date, tokens: DateToken[], locale: string): string {
   const twelveHour = tokens.some((tk) => tk.kind === 'ampm');
   const hours = date.getUTCHours();
   let out = '';
@@ -156,17 +156,17 @@ function renderDate(date: Date, tokens: DateToken[]): string {
         const month = date.getUTCMonth() + 1;
         if (tk.len === 1) out += String(month);
         else if (tk.len === 2) out += pad2(month);
-        else if (tk.len === 3) out += monthName.short(date);
-        else if (tk.len === 4) out += monthName.long(date);
-        else out += monthName.long(date).charAt(0);
+        else if (tk.len === 3) out += monthName.short(date, locale);
+        else if (tk.len === 4) out += monthName.long(date, locale);
+        else out += monthName.long(date, locale).charAt(0);
         break;
       }
       case 'd': {
         const day = date.getUTCDate();
         if (tk.len === 1) out += String(day);
         else if (tk.len === 2) out += pad2(day);
-        else if (tk.len === 3) out += weekdayName.short(date);
-        else out += weekdayName.long(date);
+        else if (tk.len === 3) out += weekdayName.short(date, locale);
+        else out += weekdayName.long(date, locale);
         break;
       }
       case 'h': {
@@ -187,11 +187,12 @@ function renderDate(date: Date, tokens: DateToken[]): string {
   return out;
 }
 
-// One memoised formatter per distinct shape. `createFormatter` already tracks
-// the locale inside each closure, so the cache never needs clearing.
-const numberCache = new Map<string, (n: number) => string>();
+// One memoised formatter per distinct shape. `createFormatter` already keeps
+// one Intl instance per locale inside each closure, so the cache never needs
+// clearing.
+const numberCache = new Map<string, (n: number, locale: string) => string>();
 
-function numberFormatter(opts: Intl.NumberFormatOptions): (n: number) => string {
+function numberFormatter(opts: Intl.NumberFormatOptions): (n: number, locale: string) => string {
   const key = JSON.stringify(opts);
   let fmt = numberCache.get(key);
   if (!fmt) {
@@ -211,10 +212,10 @@ const generalInt = createFormatter({ maximumFractionDigits: 0, useGrouping: fals
  * number. This text reaches the agent in a snippet, where `0` for 1e-12 is a
  * wrong number, not a short one.
  */
-function general(value: number): string {
+function general(value: number, locale: string): string {
   const abs = Math.abs(value);
   if (abs !== 0 && (abs < 1e-4 || abs >= 1e15)) return Number(value.toExponential(10)).toExponential();
-  return Number.isInteger(value) ? generalInt(value) : generalPlain(value);
+  return Number.isInteger(value) ? generalInt(value, locale) : generalPlain(value, locale);
 }
 
 interface NumberSection {
@@ -339,7 +340,7 @@ const CONDITIONAL = /^(?:\[[^\]]*\])*\[[<>=]/;
  *  the date renderer has no tokens for and would print as zeros. */
 const UNSUPPORTED_TIME = /\[[hms]+\]|ss\.0/i;
 
-function renderSection(value: number, section: NumberSection): string {
+function renderSection(value: number, section: NumberSection, locale: string): string {
   const opts: Intl.NumberFormatOptions = {
     style: section.percent ? 'percent' : 'decimal',
     useGrouping: section.grouping,
@@ -348,7 +349,7 @@ function renderSection(value: number, section: NumberSection): string {
     minimumIntegerDigits: section.minInt,
   };
   if (section.scientific) opts.notation = 'scientific';
-  return section.prefix + numberFormatter(opts)(value * section.scale) + section.suffix;
+  return section.prefix + numberFormatter(opts)(value * section.scale, locale) + section.suffix;
 }
 
 /**
@@ -356,12 +357,12 @@ function renderSection(value: number, section: NumberSection): string {
  * picked the negative one, formats the magnitude, which is why `#,##0;(#,##0)`
  * shows `(1,240)` and not `(-1,240)`.
  */
-export function formatNumber(value: number, fmt: string | undefined | null): string {
+export function formatNumber(value: number, fmt: string | undefined | null, locale: string): string {
   if (!Number.isFinite(value)) return String(value);
-  if (!fmt || fmt === 'General' || fmt === '@') return general(value);
+  if (!fmt || fmt === 'General' || fmt === '@') return general(value, locale);
   try {
     const sections = splitSections(fmt);
-    if (sections.some((s) => CONDITIONAL.test(s))) return general(value);
+    if (sections.some((s) => CONDITIONAL.test(s))) return general(value, locale);
     let src = sections[0];
     let picked = 0;
     let n = value;
@@ -376,22 +377,22 @@ export function formatNumber(value: number, fmt: string | undefined | null): str
     // A fraction code (`# ?/?`) reads its digits as a numerator and a
     // denominator, which is a different number entirely. Not supported, so the
     // raw value is the honest answer.
-    if (/[#0?]\s*\/\s*[#0?]/.test(src)) return general(value);
+    if (/[#0?]\s*\/\s*[#0?]/.test(src)) return general(value, locale);
     const section = parseSection(src);
-    if (section.hasDigits) return renderSection(n, section);
+    if (section.hasDigits) return renderSection(n, section, locale);
     // A negative or zero section written as a bare literal is Excel's idiom for
     // "print this instead": `#,##0;(#,##0);"-"` puts a dash on zero, and an
     // empty one prints nothing. A *first* section with no digits is far more
     // likely to be a code this reader misread, so that one falls back to raw.
-    return picked > 0 ? section.prefix + section.suffix : general(value);
+    return picked > 0 ? section.prefix + section.suffix : general(value, locale);
   } catch {
-    return general(value);
+    return general(value, locale);
   }
 }
 
 const tokenCache = new Map<string, DateToken[]>();
 
-export function formatDate(date: Date, fmt: string | undefined | null): string {
+export function formatDate(date: Date, fmt: string | undefined | null, locale: string): string {
   if (Number.isNaN(date.getTime())) return '';
   const code = fmt && !UNSUPPORTED_TIME.test(fmt) ? fmt : 'yyyy-mm-dd';
   let tokens = tokenCache.get(code);
@@ -399,19 +400,24 @@ export function formatDate(date: Date, fmt: string | undefined | null): string {
     tokens = tokenizeDate(code);
     tokenCache.set(code, tokens);
   }
-  return renderDate(date, tokens);
+  return renderDate(date, tokens, locale);
 }
 
 /** What a cell shows, given its value and its number format. */
-export function formatCellValue(value: ExcelScalar, fmt?: string | null, system?: DateSystem): string {
+export function formatCellValue(
+  value: ExcelScalar,
+  fmt: string | null | undefined,
+  system: DateSystem | undefined,
+  locale: string,
+): string {
   if (value === null || value === undefined) return '';
-  if (value instanceof Date) return formatDate(value, fmt);
+  if (value instanceof Date) return formatDate(value, fmt, locale);
   if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
   if (typeof value === 'number') {
     // A serial under an elapsed-time code is a duration; a date for it is a
     // fabrication, so the raw serial stands.
-    if (isDateFormat(fmt) && UNSUPPORTED_TIME.test(fmt!)) return general(value);
-    return isDateFormat(fmt) ? formatDate(excelSerialToDate(value, system), fmt) : formatNumber(value, fmt);
+    if (isDateFormat(fmt) && UNSUPPORTED_TIME.test(fmt!)) return general(value, locale);
+    return isDateFormat(fmt) ? formatDate(excelSerialToDate(value, system), fmt, locale) : formatNumber(value, fmt, locale);
   }
   return String(value);
 }

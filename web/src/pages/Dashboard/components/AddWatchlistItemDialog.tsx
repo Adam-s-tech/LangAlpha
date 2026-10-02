@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import i18n from '@/i18n';
 import { ArrowLeft, Search } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { Input } from '../../../components/ui/input';
@@ -8,6 +7,7 @@ import { ScrollArea } from '../../../components/ui/scroll-area';
 import { getStockPrices } from '../utils/api';
 import type { StockSearchHit } from '@/lib/marketUtils';
 import { useSymbolSearch } from '@/hooks/useSymbolSearch';
+import { useLocale } from '@/hooks/useLocale';
 
 interface WatchlistItemData {
   symbol: string;
@@ -40,6 +40,7 @@ function AddWatchlistItemDialog({
   watchlistId,
 }: AddWatchlistItemDialogProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const [page, setPage] = useState<1 | 2>(1); // 1 = search, 2 = details
   const [searchQuery, setSearchQuery] = useState('');
   const { hits: searchResults, loading: searchLoading } = useSymbolSearch(searchQuery, 50, { enabled: open && page === 1 });
@@ -246,7 +247,7 @@ function AddWatchlistItemDialog({
                         <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>...</div>
                       ) : currentPrice !== null ? (
                         <div className="text-lg font-bold tabular-nums" style={{ color: 'var(--color-text-primary)' }}>
-                          ${currentPrice.toLocaleString(i18n.language, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ${currentPrice.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       ) : (
                         <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>{t('dashboard.addWatchlistDialog.priceNA')}</div>

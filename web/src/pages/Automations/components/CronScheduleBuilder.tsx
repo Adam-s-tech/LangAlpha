@@ -1,6 +1,7 @@
 import React, { useId, useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Input } from '@/components/ui/input';
+import { useLocale } from '@/hooks/useLocale';
 import {
   Select,
   SelectItem,
@@ -41,7 +42,8 @@ const DAY_NAME_KEYS = [
  *  schedule with no days would never run. */
 function DayPicker({ days, onChange }: { days: boolean[]; onChange: (days: boolean[]) => void }) {
   const { t } = useTranslation();
-  const initials = weekdayInitials();
+  const locale = useLocale();
+  const initials = weekdayInitials(locale);
   const count = days.filter(Boolean).length;
   return (
     <div className="automation-day-picker" role="group" aria-label={t('automation.freqDays')}>

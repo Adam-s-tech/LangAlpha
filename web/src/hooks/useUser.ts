@@ -9,7 +9,8 @@ import type { User } from '../types/api';
  * All consumers share a single cached entry — updates propagate automatically.
  */
 export function useUser() {
-  const { data, ...rest } = useQuery({
+  // Named fields, not a spread: see usePreferences.
+  const { data, isLoading, isError } = useQuery({
     queryKey: queryKeys.user.me(),
     queryFn: async (): Promise<User> => {
       const res = await getCurrentUser() as Record<string, unknown> & { user?: User };
@@ -18,5 +19,5 @@ export function useUser() {
     staleTime: 5 * 60_000,
     retry: false,
   });
-  return { user: data ?? null, ...rest };
+  return { user: data ?? null, isLoading, isError };
 }

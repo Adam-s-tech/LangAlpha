@@ -1,3 +1,4 @@
+import { registerAuthReset } from '@/lib/authResets';
 import type { Attachment } from '@/types/sse';
 import type { MessageRecord } from './messageList/types';
 import { assistantText } from './messageList/messageText';
@@ -41,11 +42,26 @@ function flatten(markdown: string): string {
     .trim();
 }
 
+// The last flattening, keyed by its input. A streaming reply is a new object
+// on every chunk, so the per-message cache below cannot hold it; but the
+// preview reads only its head, which stops changing once it is longer than
+// the preview, so the same input arrives chunk after chunk. It is a reply's
+// text, so a sign-out or account switch empties it.
+let lastMarkdown: string | null = null;
+let lastPlain = '';
+registerAuthReset(() => {
+  lastMarkdown = null;
+  lastPlain = '';
+});
+
 /** One line of prose for the hover card. Fenced code is dropped in favour of the prose around it, unless the message is nothing but code, in which case the code text is the preview. */
 export function plainText(markdown: unknown): string {
   if (typeof markdown !== 'string') return '';
+  if (markdown === lastMarkdown) return lastPlain;
   const prose = flatten(markdown.replace(/```[\s\S]*?(```|$)/g, ' '));
-  return prose || flatten(markdown.replace(/```[^\n]*/g, ' '));
+  lastPlain = prose || flatten(markdown.replace(/```[^\n]*/g, ' '));
+  lastMarkdown = markdown;
+  return lastPlain;
 }
 
 export function clip(text: string, max: number): string {
@@ -54,14 +70,15 @@ export function clip(text: string, max: number): string {
 
 // `raw` is a producer, not a string: a settled message must cost nothing on a
 // cache hit, and building the raw text at the call site would sort and join
-// every prior message's segments once per streamed chunk.
-function flatOf(message: MessageRecord, raw: () => string, max: number): string {
+// every prior message's segments once per streamed chunk. It takes the length
+// the preview reads, so a streaming reply is read to its head, not in full.
+function flatOf(message: MessageRecord, raw: (limit: number) => string, max: number): string {
   const settled = !message.isStreaming;
   if (settled) {
     const hit = flatCache.get(message);
     if (hit !== undefined) return hit;
   }
-  const flat = plainText(raw().slice(0, max * RAW_SLACK));
+  const flat = plainText(raw(max * RAW_SLACK).slice(0, max * RAW_SLACK));
   if (settled) flatCache.set(message, flat);
   return flat;
 }
@@ -125,7 +142,7 @@ export function buildEntries(messages: MessageRecord[], turnInFlight: boolean): 
       drafts.push(open);
     } else if (m.role === 'assistant' && open) {
       open.answered = true;
-      open.reply += flatOf(m, () => assistantText(m), REPLY_MAX) + ' ';
+      open.reply += flatOf(m, (limit) => assistantText(m, limit), REPLY_MAX) + ' ';
     }
   }
 

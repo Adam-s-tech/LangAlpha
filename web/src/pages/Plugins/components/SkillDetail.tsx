@@ -7,6 +7,7 @@ import {
 } from '@/components/mcp/McpPrimitives';
 import { useSkillContent } from '@/hooks/useSkills';
 import { createDateFormatter, formatBytes } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import type { SkillInfo } from '@/pages/ChatAgent/utils/api';
 import {
   DetailField,
@@ -37,6 +38,7 @@ export function SkillDetail({
   toggling?: boolean;
 }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const labelId = useId();
   const contentQuery = useSkillContent(skill.name, skill.workspace_id ?? null);
   const lockedByUserTier = skill.disabled_scope === 'user';
@@ -138,12 +140,12 @@ export function SkillDetail({
           <DetailField label={t('plugins.detail.origin')}>{originLabel}</DetailField>
           {skill.size_bytes > 0 && (
             <DetailField label={t('plugins.detail.size')}>
-              {formatBytes(skill.size_bytes)}
+              {formatBytes(skill.size_bytes, locale)}
             </DetailField>
           )}
           {skill.updated_at && (
             <DetailField label={t('plugins.detail.updated')}>
-              {formatDate(new Date(skill.updated_at))}
+              {formatDate(new Date(skill.updated_at), locale)}
             </DetailField>
           )}
         </div>

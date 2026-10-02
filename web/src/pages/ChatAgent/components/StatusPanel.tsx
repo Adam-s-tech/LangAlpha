@@ -1,5 +1,6 @@
 import type { ReactElement, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useLocale } from '@/hooks/useLocale';
 import { createDateFormatter } from '@/lib/format';
 import PulseDot from '@/components/ui/pulse-dot';
 import type { MarketWatchState } from '../hooks/utils/streamEventHandlers';
@@ -7,7 +8,6 @@ import type { MarketWatchState } from '../hooks/utils/streamEventHandlers';
 const TERTIARY = { color: 'var(--color-text-tertiary)' as const };
 
 // Locale-aware clock (matches the prior `toLocaleTimeString()` shape: h:m:s).
-// StatusPanel calls useTranslation() so it re-renders on a locale switch.
 const formatWatchTime = createDateFormatter({ timeStyle: 'medium' });
 
 /** A titled panel section. Phase 1 renders only the market-watch section; later
@@ -74,6 +74,7 @@ export interface StatusPanelProps {
  */
 export default function StatusPanel({ marketWatch }: StatusPanelProps): ReactElement {
   const { t } = useTranslation();
+  const locale = useLocale();
   const symbols = marketWatch?.symbols ?? [];
   const content = marketWatch?.content;
   const timestamp = marketWatch?.timestamp;
@@ -81,7 +82,7 @@ export default function StatusPanel({ marketWatch }: StatusPanelProps): ReactEle
   const updatedCaption =
     timestamp != null
       ? t('chat.marketWatch.panelUpdated', {
-          time: formatWatchTime(timestamp * 1000),
+          time: formatWatchTime(timestamp * 1000, locale),
           defaultValue: 'Updated {{time}}',
         })
       : undefined;

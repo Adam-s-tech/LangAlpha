@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import i18n from '@/i18n';
 import { useQuery } from '@tanstack/react-query';
+import { useLocale } from '@/hooks/useLocale';
+import { useNow } from '@/hooks/useNow';
 import { CalendarDays } from 'lucide-react';
 import { getEarningsCalendar } from '../../utils/api';
 import { registerWidget } from '../framework/WidgetRegistry';
@@ -14,7 +15,7 @@ import type { WidgetRenderProps } from '../types';
 /** Local-date YYYY-MM-DD. We can't use toISOString() because that emits UTC,
  * which crosses the day boundary for users in non-UTC zones — earnings fetched
  * for "today" then get filtered out by `e.date >= todayStr` or bucketed wrong. */
-function localDateStr(d: Date = new Date()): string {
+function localDateStr(d: Date): string {
   return d.toLocaleDateString('en-CA'); // en-CA → YYYY-MM-DD in local time
 }
 
@@ -47,9 +48,9 @@ function toDate(dateStr: string): Date {
   return new Date(dateStr + 'T00:00:00');
 }
 
-function bucketFor(dateStr: string): BucketKey {
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+function bucketFor(dateStr: string, now: number): BucketKey {
+  const today = new Date(now);
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
   const d = toDate(dateStr).getTime();
   const dayMs = 86_400_000;
   if (d >= startOfToday && d < startOfToday + dayMs) return 'today';
@@ -59,14 +60,14 @@ function bucketFor(dateStr: string): BucketKey {
   return 'later';
 }
 
-function formatDateRight(dateStr: string, bucket: BucketKey): string {
+function formatDateRight(dateStr: string, bucket: BucketKey, locale: string): string {
   const d = toDate(dateStr);
   if (bucket === 'today') return 'Today';
   if (bucket === 'tomorrow') return 'Tomorrow';
   if (bucket === 'week') {
-    return d.toLocaleDateString(i18n.language, { weekday: 'short' });
+    return d.toLocaleDateString(locale, { weekday: 'short' });
   }
-  return d.toLocaleDateString(i18n.language, { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
 }
 
 function serializeEarningsToMarkdown(items: EarningsEntry[]): string {
@@ -88,10 +89,11 @@ function EarningsRow({
   instanceId: string;
 }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   // formatDateRight returns 'Today'/'Tomorrow' fallthrough or the locale's
   // weekday/short-month string. Translate the today/tomorrow shortcuts so
   // they swap with locale; the others come from native Intl.DateTimeFormat.
-  const raw = formatDateRight(item.date, bucket);
+  const raw = formatDateRight(item.date, bucket, locale);
   const label = raw === 'Today'
     ? t('dashboard.widgets.earningsCalendar.bucket_today')
     : raw === 'Tomorrow'
@@ -204,8 +206,11 @@ function EarningsCalendarWidget({ instance }: WidgetRenderProps<EarningsConfig>)
   // Use local dates end-to-end: the `from`/`to` we send must match the same
   // day the user's clock is on, or the >= todayStr filter below will drop
   // "today's" earnings for anyone east of UTC.
-  const todayStr = localDateStr();
-  const toStr = localDateStr(new Date(Date.now() + windowDays * 86_400_000));
+  // Both ends come from one clock reading; the query key changes only when a
+  // date string does.
+  const now = useNow();
+  const todayStr = localDateStr(new Date(now));
+  const toStr = localDateStr(new Date(now + windowDays * 86_400_000));
 
   const { data: earnings = [], isLoading: loading } = useQuery<EarningsEntry[]>({
     queryKey: ['earnings-calendar', todayStr, toStr],
@@ -235,10 +240,10 @@ function EarningsCalendarWidget({ instance }: WidgetRenderProps<EarningsConfig>)
       later: [],
     };
     for (const e of upcoming) {
-      buckets[bucketFor(e.date)].push(e);
+      buckets[bucketFor(e.date, now)].push(e);
     }
     return buckets;
-  }, [upcoming]);
+  }, [upcoming, now]);
 
   useWidgetContextExport(instance.id, {
     full: () => {

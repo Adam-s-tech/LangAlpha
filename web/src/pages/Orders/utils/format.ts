@@ -24,7 +24,7 @@ function moneyFormat(
       minimumFractionDigits: digits,
       maximumFractionDigits: digits,
     };
-    // `i18n.language` can be briefly invalid, and a row must not throw on it.
+    // The locale can be briefly invalid, and a row must not throw on it.
     try {
       format = new Intl.NumberFormat(locale || undefined, opts);
     } catch {
@@ -64,7 +64,7 @@ function money(
  */
 export function orderSize(
   order: OrderSummary | null | undefined,
-  opts: { hidden: boolean; locale?: string },
+  opts: { hidden: boolean; locale: string },
 ): string {
   if (!order) return '';
   if (opts.hidden && (order.qty != null || order.notional != null)) return HIDDEN;
@@ -83,7 +83,7 @@ export function orderSize(
 export function orderAmount(
   amount: string | null | undefined,
   currency: string | null | undefined,
-  opts: { hidden: boolean; locale?: string },
+  opts: { hidden: boolean; locale: string },
 ): string {
   if (amount == null || amount === '') return '';
   if (opts.hidden) return HIDDEN;
@@ -102,7 +102,7 @@ function orderCurrency(order: OrderSummary): string | null | undefined {
  */
 export function orderLimitPrice(
   order: OrderSummary | null | undefined,
-  opts: { hidden: boolean; locale?: string },
+  opts: { hidden: boolean; locale: string },
 ): string {
   if (!order) return '';
   return orderAmount(order.limit_price, orderCurrency(order), opts);
@@ -110,7 +110,7 @@ export function orderLimitPrice(
 
 export function orderStopPrice(
   order: OrderSummary | null | undefined,
-  opts: { hidden: boolean; locale?: string },
+  opts: { hidden: boolean; locale: string },
 ): string {
   if (!order) return '';
   return orderAmount(order.stop_price, orderCurrency(order), opts);
@@ -124,9 +124,9 @@ const orderDate = createDateFormatter({
 });
 
 /** The moment in the viewer's locale, or the empty string when there is none. */
-export function formatOrderTime(value: string | null | undefined): string {
+export function formatOrderTime(value: string | null | undefined, locale: string): string {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-  return orderDate(date);
+  return orderDate(date, locale);
 }

@@ -163,7 +163,7 @@ function scalarOf(v: ExcelJS.CellValue): Scalar {
   return undefined;
 }
 
-function readCell(cell: ExcelJS.Cell, system: DateSystem): GridCell {
+function readCell(cell: ExcelJS.Cell, system: DateSystem, locale: string): GridCell {
   const value = cell.value;
   if (value === null || value === undefined || value === '') {
     const style = getCellStyle(cell);
@@ -180,7 +180,7 @@ function readCell(cell: ExcelJS.Cell, system: DateSystem): GridCell {
     const result = value.result;
     const calculated = result !== undefined;
     const error = isError(result) ? result.error : undefined;
-    const text = error ?? (calculated ? formatCellValue(scalarOf(result), numFmt, system) : withEquals(formula));
+    const text = error ?? (calculated ? formatCellValue(scalarOf(result), numFmt, system, locale) : withEquals(formula));
     return {
       text,
       formula,
@@ -199,7 +199,7 @@ function readCell(cell: ExcelJS.Cell, system: DateSystem): GridCell {
 
   const scalar = scalarOf(value);
   return {
-    text: formatCellValue(scalar, numFmt, system),
+    text: formatCellValue(scalar, numFmt, system, locale),
     calculated: true,
     numFmt,
     kind: 'value',
@@ -218,7 +218,7 @@ function mergeRanges(ws: ExcelJS.Worksheet): string[] {
   return Object.values(own).map((m) => m?.range).filter((r): r is string => !!r);
 }
 
-function readSheet(ws: ExcelJS.Worksheet, system: DateSystem): SheetData {
+function readSheet(ws: ExcelJS.Worksheet, system: DateSystem, locale: string): SheetData {
   const totalCols = ws.columnCount;
   const totalRows = ws.rowCount;
   const colCount = Math.min(totalCols, MAX_PREVIEW_COLS);
@@ -242,7 +242,7 @@ function readSheet(ws: ExcelJS.Worksheet, system: DateSystem): SheetData {
         cells.push({ ...EMPTY_CELL, master: { row: box.top, col: box.left } });
         continue;
       }
-      const cell = readCell(row.getCell(c), system);
+      const cell = readCell(row.getCell(c), system, locale);
       if (cell.kind === 'formula' && !cell.calculated) uncalculated++;
       if (box) {
         // A merge reaching past the preview window is drawn only as far as the
@@ -264,9 +264,9 @@ function readSheet(ws: ExcelJS.Worksheet, system: DateSystem): SheetData {
   return { name: ws.name, rows, colCount, totalRows, totalCols, uncalculated };
 }
 
-export async function parseWorkbook(buffer: ArrayBuffer): Promise<SheetData[]> {
+export async function parseWorkbook(buffer: ArrayBuffer, locale: string): Promise<SheetData[]> {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer);
   const system: DateSystem = { date1904: wb.properties?.date1904 === true };
-  return wb.worksheets.map((ws) => readSheet(ws, system));
+  return wb.worksheets.map((ws) => readSheet(ws, system, locale));
 }

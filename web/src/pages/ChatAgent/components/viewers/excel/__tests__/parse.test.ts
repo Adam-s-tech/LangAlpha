@@ -1,6 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import ExcelJS from 'exceljs';
-import i18n from '@/i18n';
 import { parseWorkbook, type SheetData } from '../parse';
 
 /**
@@ -42,8 +41,7 @@ describe('parseWorkbook', () => {
   let model: SheetData;
 
   beforeAll(async () => {
-    await i18n.changeLanguage('en-US');
-    const sheets = await parseWorkbook(await buildWorkbook());
+    const sheets = await parseWorkbook(await buildWorkbook(), 'en-US');
     model = sheets[0];
     expect(sheets.map((s) => s.name)).toEqual(['Model', 'Inputs']);
   });

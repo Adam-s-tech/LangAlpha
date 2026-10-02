@@ -130,6 +130,10 @@ export interface StreamRuntime {
   onOnboardingRelatedToolComplete: (() => void) | null;
   // stable (setters)
   setMessages: SetMessages;
+  /** Per-token writes, applied on the next frame (`frameQueue.ts`). */
+  queueMessages: (update: (prev: MessageRecord[]) => MessageRecord[]) => void;
+  /** Apply the queued per-token writes now. */
+  flushMessages: () => void;
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;
   setPendingInterrupt: React.Dispatch<React.SetStateAction<PendingInterrupt | null>>;
   setTokenUsage: React.Dispatch<React.SetStateAction<TokenUsage | null>>;

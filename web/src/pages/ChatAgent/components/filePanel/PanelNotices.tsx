@@ -1,6 +1,7 @@
 import React from 'react';
 import { Pencil, RefreshCw, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useLocale } from '@/hooks/useLocale';
 import type { BackupResult, UnsavedFile } from './types';
 import { unsavedReasonLabel } from './unsavedReason';
 
@@ -9,7 +10,8 @@ const UNSAVED_NAMED = 5;
 
 function UnsavedReasonText({ file }: { file: UnsavedFile }): React.ReactElement {
   const { t } = useTranslation();
-  return <span className="file-panel-unsaved-reason">{unsavedReasonLabel(t, file)}</span>;
+  const locale = useLocale();
+  return <span className="file-panel-unsaved-reason">{unsavedReasonLabel(t, file, locale)}</span>;
 }
 
 interface PanelNoticesProps {

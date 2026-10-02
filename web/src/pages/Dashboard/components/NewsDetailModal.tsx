@@ -4,8 +4,8 @@ import {
   Paperclip,
 } from 'lucide-react';
 import { motion, AnimatePresence } from '@/lib/framer';
-import i18n from '@/i18n';
 import { useTranslation } from 'react-i18next';
+import { useLocale } from '@/hooks/useLocale';
 import { getNewsArticle } from '../utils/api';
 import { useBackdropDismiss } from '@/hooks/useDialogA11y';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -125,11 +125,11 @@ function sentimentStyle(sentiment: string): React.CSSProperties {
   }
 }
 
-function formatDate(dateString: string | undefined): string {
+function formatDate(dateString: string | undefined, locale: string): string {
   if (!dateString) return '';
   try {
     const d = new Date(dateString);
-    return d.toLocaleDateString(i18n.language, {
+    return d.toLocaleDateString(locale, {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -176,6 +176,7 @@ function NewsBody({
   onAttach?: () => void;
 }) {
   const { t: trans } = useTranslation();
+  const locale = useLocale();
   const sentimentBackdrop = useBackdropDismiss<HTMLDivElement>(() => setExpandedSentiment(null));
   const safeFallbackUrl = safeHttpUrl(fallbackUrl);
   const safeArticleUrl = safeHttpUrl(article?.article_url);
@@ -310,7 +311,7 @@ function NewsBody({
           )}
           {article.published_at && (
             <span className="flex items-center gap-1.5 sm:gap-2">
-              <Calendar size={isMobile ? 12 : 14} /> {formatDate(article.published_at)}
+              <Calendar size={isMobile ? 12 : 14} /> {formatDate(article.published_at, locale)}
             </span>
           )}
           <div className="ml-auto flex items-center gap-3">

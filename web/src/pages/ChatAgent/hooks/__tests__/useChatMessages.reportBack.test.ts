@@ -349,7 +349,7 @@ describe('useChatMessages — report-back watch (PTC → flash report-back)', ()
       sendPromise = result.current.handleSendMessage('stopped question', false);
       await new Promise((r) => setTimeout(r, 0));
     });
-    expect(JSON.stringify(result.current.messages)).toContain('partial answer');
+    await waitFor(() => expect(JSON.stringify(result.current.messages)).toContain('partial answer'));
     await act(async () => {
       await result.current.stopWorkflow();
       await sendPromise;

@@ -24,7 +24,6 @@ describe('useUser', () => {
     const { result } = renderHookWithProviders(() => useUser());
 
     await waitFor(() => expect(result.current.user).toEqual(mockUser));
-    expect(result.current.isSuccess).toBe(true);
   });
 
   it('falls back to raw response when .user field is absent', async () => {

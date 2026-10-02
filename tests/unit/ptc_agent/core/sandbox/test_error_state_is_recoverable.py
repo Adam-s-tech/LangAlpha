@@ -1,10 +1,11 @@
-"""An error-state sandbox is transient, because ``reconnect`` still revives it.
+"""An error-state sandbox is transient, because ``reconnect`` decides its fate.
 
-``reconnect`` answers state ``error`` with a recovery ``start`` rather than
-giving up. If this module called that state absence instead, the caller would
-act on ``SandboxGoneError`` by building a replacement and restoring from the
-last backup, destroying a sandbox a ``start`` would have brought back and losing
-every write since that backup. The two paths have to agree on what is fatal.
+``reconnect`` answers state ``error`` by asking the runtime to recover it, and
+only the provider can say a sandbox will not come back. If this module called
+that state absence instead, the caller would act on ``SandboxGoneError`` by
+building a replacement and restoring from the last backup, abandoning a sandbox
+a recovery would have brought back and losing every write since that backup.
+The two paths have to agree on what is fatal.
 
 ``reconnect`` used to disagree: it gave a sandbox about 20s to leave ``starting``
 (10s for ``stopping``) and then raised ``SandboxGoneError``, so a slow but live

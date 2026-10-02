@@ -150,6 +150,14 @@ class SandboxRuntime(ABC):
         """Start the runtime."""
         ...
 
+    async def recover_from_error(self, timeout: int = 120) -> None:
+        """Bring an errored runtime back.
+
+        Providers without a recovery verb restart it. One that can tell a
+        runtime will never come back raises SandboxGoneError instead.
+        """
+        await self.start(timeout=timeout)
+
     @abstractmethod
     async def stop(self, timeout: int = 60, *, force: bool = False) -> None:
         """Stop the runtime, forcefully when the provider supports it."""

@@ -117,6 +117,10 @@ class PTCSandbox:
         self._ready_event: asyncio.Event | None = None
         self._init_task: asyncio.Task[None] | None = None
         self._init_error: Exception | None = None
+        # Every failed open evicts its session through cleanup, so cleanup keeps
+        # a sandbox no reconnect has completed on: an errored one may hold the
+        # only copy of files its backup lacks.
+        self._reconnect_incomplete = False
 
         # Cached skills manifest (populated after sync_sandbox_assets)
         self._skills_manifest: dict[str, Any] | None = None
@@ -699,6 +703,8 @@ class PTCSandbox:
             _rc_phases[name] = (now - _t0) * 1000
             _t0 = now
 
+        self._reconnect_incomplete = True
+
         # Clear stale state — sessions and preview links don't survive stop/start
         self._bg_sessions.clear()
         self._bg_trace_paths.clear()
@@ -851,14 +857,17 @@ class PTCSandbox:
             )
             _mark_rc("start_archived")
         elif state_value == "error":
-            # Sandbox hit an internal error — attempt recovery via start().
+            # Restarting an errored sandbox the provider will not recover fails
+            # the same way on every open, so the runtime answers Gone and the
+            # caller rebuilds from the backup. A recovery can restore from the
+            # provider's own backup, so it gets the archive restore's budget.
             logger.warning(
-                "Sandbox in error state, attempting recovery start",
+                "Sandbox in error state, attempting recovery",
                 sandbox_id=sandbox_id,
             )
             await self._runtime_call(
-                self.runtime.start,
-                timeout=120,
+                self.runtime.recover_from_error,
+                timeout=300,
                 retry_policy=RetryPolicy.SAFE,
             )
             _mark_rc("start_error_recovery")
@@ -888,6 +897,7 @@ class PTCSandbox:
         # Initialize MCP server sessions (needed for tool execution)
         self.mcp_server_sessions: dict[str, Any] = {}
         await self._start_internal_mcp_servers()
+        self._reconnect_incomplete = False
 
         logger.debug(
             "Sandbox started from stopped state",
@@ -1246,14 +1256,20 @@ class PTCSandbox:
                 self._bg_sessions.clear()
                 self._bg_trace_paths.clear()
 
-                try:
-                    await self._runtime_call(
-                        self.runtime.delete,
-                        retry_policy=RetryPolicy.SAFE,
+                if self._reconnect_incomplete:
+                    logger.info(
+                        "Keeping sandbox no reconnect completed on",
+                        sandbox_id=self.sandbox_id,
                     )
-                    logger.info("Sandbox deleted", sandbox_id=self.sandbox_id)
-                except Exception as e:
-                    logger.error(f"Error deleting sandbox: {e}")
+                else:
+                    try:
+                        await self._runtime_call(
+                            self.runtime.delete,
+                            retry_policy=RetryPolicy.SAFE,
+                        )
+                        logger.info("Sandbox deleted", sandbox_id=self.sandbox_id)
+                    except Exception as e:
+                        logger.error(f"Error deleting sandbox: {e}")
         finally:
             self.runtime = None
             self.sandbox_id = None

@@ -39,6 +39,7 @@ from ptc_agent.core.sandbox.runtime import (
     PreviewInfo,
     RuntimeState,
     SandboxFailureKind,
+    SandboxGoneError,
     SandboxProvider,
     SandboxRuntime,
     SessionCommandResult,
@@ -70,6 +71,14 @@ _STATE_MAP: dict[str, RuntimeState] = {
     "archived": RuntimeState.ARCHIVED,
     "error": RuntimeState.ERROR,
 }
+
+
+def _raw_state(sandbox: Any) -> str | None:
+    state = getattr(sandbox, "state", None)
+    if state is None:
+        return None
+    return state.value if hasattr(state, "value") else str(state)
+
 
 # Override the SDK's 30-min default so a hung toolbox connection surfaces
 # as a transient error within the _runtime_call retry envelope.
@@ -134,6 +143,28 @@ class DaytonaRuntime(SandboxRuntime):
     async def start(self, timeout: int = 120) -> None:
         await self._sandbox.start(timeout=timeout)
 
+    async def recover_from_error(self, timeout: int = 120) -> None:
+        # Every state the map does not list reads as error, and ``recoverable``
+        # is False on any healthy sandbox, including one an earlier attempt of
+        # this call already recovered. Only a raw ``error`` carries a verdict,
+        # and Daytona refuses both start and recover on one it will not recover.
+        state = _raw_state(self._sandbox)
+        if state == "started":
+            return
+        recoverable = getattr(self._sandbox, "recoverable", None)
+        if state != "error" or recoverable is None:
+            await self.start(timeout=timeout)
+        elif recoverable:
+            await self._sandbox.recover(timeout=timeout)
+        else:
+            # The reason stays out of the message, which classifiers scan for words.
+            logger.warning(
+                "Daytona will not recover errored sandbox",
+                sandbox_id=self.id,
+                reason=getattr(self._sandbox, "error_reason", None),
+            )
+            raise SandboxGoneError(self.id, "errored and not recoverable")
+
     async def stop(self, timeout: int = 120, *, force: bool = False) -> None:
         await self._sandbox.stop(timeout=timeout, force=force)
 
@@ -151,11 +182,7 @@ class DaytonaRuntime(SandboxRuntime):
         await self._sandbox.update_secrets(secrets)
 
     async def get_state(self) -> RuntimeState:
-        state = getattr(self._sandbox, "state", None)
-        if state is None:
-            return RuntimeState.ERROR
-        state_value = state.value if hasattr(state, "value") else str(state)
-        return _STATE_MAP.get(state_value, RuntimeState.ERROR)
+        return _STATE_MAP.get(_raw_state(self._sandbox), RuntimeState.ERROR)
 
     async def refresh_state(self) -> RuntimeState:
         await self._sandbox.refresh_data()

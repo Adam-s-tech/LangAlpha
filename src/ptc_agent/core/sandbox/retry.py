@@ -53,9 +53,9 @@ async def async_retry_with_backoff(
         The return value of *func* on success.
 
     Raises:
-        SandboxGoneError: When the reconnect callback determines the sandbox no
-            longer exists — propagated so the caller can recover rather than
-            burning every remaining attempt against a sandbox that is not there.
+        SandboxGoneError: When *func* or the reconnect callback determines the
+            sandbox no longer exists — propagated so the caller can recover rather
+            than burning every remaining attempt against a sandbox that is not there.
         SandboxTransientError: When retries or timeout are exhausted, or when
             an UNSAFE policy encounters a transient error.
     """
@@ -72,7 +72,9 @@ async def async_retry_with_backoff(
         try:
             return await func(*args, **kwargs)
         except Exception as e:
-            if not is_transient(e):
+            # Gone is a verdict, whatever words its reason carries; the
+            # transient check scans messages for "timed out" and the like.
+            if isinstance(e, SandboxGoneError) or not is_transient(e):
                 raise
 
             # Fire the on_transient callback at most once.

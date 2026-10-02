@@ -32,6 +32,7 @@ from ptc_agent.core.sandbox.runtime import (
     CodeRunResult,
     ExecResult,
     RuntimeState,
+    SandboxGoneError,
     SandboxProvider,
     SandboxRuntime,
 )
@@ -224,6 +225,49 @@ class TestPTCSandboxDelegation:
         await sandbox.reconnect("archived-sandbox")
 
         mock_runtime.start.assert_awaited_once()
+
+    @patch("ptc_agent.core.sandbox.ptc_sandbox.create_provider")
+    @pytest.mark.asyncio
+    async def test_errored_sandbox_the_provider_cannot_recover_is_gone(
+        self, mock_create_provider, mock_provider, mock_runtime
+    ):
+        """Gone survives a transient-looking reason, and cleanup keeps the sandbox."""
+        from ptc_agent.core.sandbox.ptc_sandbox import PTCSandbox
+
+        mock_create_provider.return_value = mock_provider
+        mock_provider.is_transient_error = MagicMock(
+            side_effect=lambda e: "timed out" in str(e)
+        )
+        mock_runtime.get_state.return_value = RuntimeState.ERROR
+        mock_runtime.recover_from_error = AsyncMock(
+            side_effect=SandboxGoneError("errored-sandbox", "container start timed out")
+        )
+        sandbox = PTCSandbox(config=_make_config())
+
+        with pytest.raises(SandboxGoneError):
+            await sandbox.reconnect("errored-sandbox")
+
+        mock_runtime.recover_from_error.assert_awaited_once()
+        mock_runtime.start.assert_not_awaited()
+        assert sandbox.runtime is mock_runtime
+        await sandbox.cleanup()
+        mock_runtime.delete.assert_not_awaited()
+
+    @patch("ptc_agent.core.sandbox.ptc_sandbox.create_provider")
+    @pytest.mark.asyncio
+    async def test_cleanup_deletes_once_a_reconnect_completes(
+        self, mock_create_provider, mock_provider, mock_runtime
+    ):
+        from ptc_agent.core.sandbox.ptc_sandbox import PTCSandbox
+
+        mock_create_provider.return_value = mock_provider
+        mock_runtime.fetch_working_dir = AsyncMock(return_value="/home/workspace")
+        sandbox = PTCSandbox(config=_make_config())
+
+        await sandbox.reconnect("running-sandbox")
+        await sandbox.cleanup()
+
+        mock_runtime.delete.assert_awaited_once()
 
 
 class TestBackgroundBashTrace:

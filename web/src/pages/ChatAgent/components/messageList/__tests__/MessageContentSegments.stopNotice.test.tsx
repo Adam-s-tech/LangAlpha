@@ -16,11 +16,19 @@ import type { SubagentTaskRecord } from '@/types/chat';
 import { MessageContentSegments } from '../MessageContentSegments';
 import { SubagentTelemetryContext } from '../../SubagentTelemetryContext';
 import type { SubagentTelemetry } from '../../../session/subagents/resolveSubagentTelemetry';
-import { buildRateLimitError } from '@/utils/rateLimitError';
 
-vi.mock('@/utils/rateLimitError', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/utils/rateLimitError')>();
-  return { ...actual, buildRateLimitError: vi.fn(actual.buildRateLimitError) };
+// Every telemetry read, in order. A notice reads once per render, so with no
+// task cards on screen this is a render count of the notices.
+const telemetryReads: string[] = [];
+vi.mock('../../SubagentTelemetryContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../SubagentTelemetryContext')>();
+  return {
+    ...actual,
+    useSubagentTelemetry: (id: string | undefined) => {
+      telemetryReads.push(String(id));
+      return actual.useSubagentTelemetry(id);
+    },
+  };
 });
 
 type SegmentsProps = React.ComponentProps<typeof MessageContentSegments>;
@@ -95,25 +103,38 @@ describe('MessageContentSegments — credit-stop notice placement', () => {
 });
 
 describe('MessageContentSegments — credit-stop notice while prose streams', () => {
-  it('does not redraw the notice for a chunk of prose', () => {
+  // Renders, not the work inside one: compiled, the notice caches its links on
+  // the reason, so a count of that work stays flat with the memo removed.
+  it('does not re-render the notices for a chunk of prose', () => {
     const telemetry = { toolCalls: 13, tokenUsage: { input: 0, output: 0, total: 0 }, ...CREDIT_STOP };
-    const resolve = (id: string): SubagentTelemetry | undefined => (id === 'tc-1' ? telemetry : undefined);
+    const resolve = (): SubagentTelemetry => telemetry;
     const at = (text: string) => (
       <MemoryRouter>
         <SubagentTelemetryContext.Provider value={resolve}>
           <MessageContentSegments
             {...props}
             isStreaming
-            segments={[props.segments[0], { type: 'text', order: 1, content: text }] as SegmentsProps['segments']}
+            // No task records, so the cards render nothing and read nothing.
+            subagentTasks={{}}
+            segments={[
+              { type: 'subagent_task', order: 0, subagentId: 'tc-1' },
+              { type: 'subagent_task', order: 1, subagentId: 'tc-2' },
+              { type: 'text', order: 2, content: text },
+            ] as SegmentsProps['segments']}
           />
         </SubagentTelemetryContext.Provider>
       </MemoryRouter>
     );
-    const { rerender } = render(at(PROSE));
-    const draws = vi.mocked(buildRateLimitError).mock.calls.length;
-    rerender(at(`${PROSE} More`));
-    rerender(at(`${PROSE} More prose`));
-    expect(vi.mocked(buildRateLimitError).mock.calls.length).toBe(draws);
-    expect(screen.getByTestId('subagent-credit-stop-notice')).toBeInTheDocument();
+    let text = PROSE;
+    telemetryReads.length = 0;
+    const { rerender } = render(at(text));
+    expect(new Set(telemetryReads)).toEqual(new Set(['tc-1', 'tc-2']));
+    telemetryReads.length = 0;
+    for (let i = 0; i < 20; i++) {
+      text += ' More';
+      rerender(at(text));
+    }
+    expect(telemetryReads).toHaveLength(0);
+    expect(screen.getAllByTestId('subagent-credit-stop-notice')).toHaveLength(2);
   });
 });

@@ -21,10 +21,10 @@ Interactive command-line interface for PTC Agent.
 
 ## Installation
 
-From the repository root:
+From the repository root. The TUI is an optional extra, so ask for it by name:
 
 ```bash
-uv sync
+uv sync --extra cli
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 

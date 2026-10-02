@@ -39,7 +39,7 @@ cd web && pnpm test                   # Vitest;  pnpm test:e2e = Playwright;  pn
 | `src/llms/` | LLM wrappers, token counting, pricing, model manifest (`manifest/models.json`) |
 | `src/data_client/` | Financial data protocol abstraction |
 | `src/utils/` | Redis cache, shared utilities |
-| `libs/ptc-cli/` | Standalone interactive CLI for the PTC agent (pkg `langalpha-cli`, cmd `ptc-agent`) |
+| `libs/ptc-cli/` | Standalone interactive CLI for the PTC agent (pkg `langalpha-cli`, cmd `ptc-agent`). The `cli` extra, not a server dependency: `uv sync --extra cli`. The server imports nothing from it, and the backend images never install it. |
 
 ### Frontend (`web/src/`)
 

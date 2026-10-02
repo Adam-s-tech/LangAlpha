@@ -25,6 +25,10 @@ WORKDIR /app
 
 # Copy dependency files first for layer caching
 COPY pyproject.toml uv.lock README.md ./
+# Copied but not installed: the CLI is the `cli` extra. uv.lock still lists it
+# as a path source, and every unfrozen `uv run` reads it to check the lock, MCP
+# servers included; they start with a filtered environment, so setting
+# UV_FROZEN here would not reach them.
 COPY libs/ptc-cli/ libs/ptc-cli/
 
 # Install dependencies (frozen = use lockfile exactly).

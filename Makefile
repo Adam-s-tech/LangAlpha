@@ -29,13 +29,13 @@ endif
 # ---------------------------------------------------------------------------
 # Manual development (without Docker for backend/frontend)
 # ---------------------------------------------------------------------------
-install: ## Install all dependencies (backend + frontend; observability extra if .env enables OTel)
+install: ## Install all dependencies (backend + CLI + frontend; observability extra if .env enables OTel)
 	@if [ -f .env ] && grep -qE "^OTEL_EXPORTER_OTLP_ENDPOINT=." .env; then \
 		echo "→ OTEL_EXPORTER_OTLP_ENDPOINT set in .env — installing observability extra"; \
-		uv sync --group dev --extra test --extra observability; \
+		uv sync --group dev --extra test --extra cli --extra observability; \
 	else \
 		echo "→ OTel endpoint unset — skipping observability extra (set OTEL_EXPORTER_OTLP_ENDPOINT in .env to enable)"; \
-		uv sync --group dev --extra test; \
+		uv sync --group dev --extra test --extra cli; \
 	fi
 	cd web && pnpm install
 

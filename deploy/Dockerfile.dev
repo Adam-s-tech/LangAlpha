@@ -18,6 +18,7 @@ WORKDIR /app
 
 # Copy dependency files first for layer caching
 COPY pyproject.toml uv.lock README.md ./
+# Copied but not installed; see the note in Dockerfile.backend.
 COPY libs/ptc-cli/ libs/ptc-cli/
 
 # Install dependencies (frozen = use lockfile exactly).

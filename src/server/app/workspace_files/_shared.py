@@ -493,13 +493,17 @@ def _is_serve_blocked_path(client_path: str) -> bool:
     endpoints apply, so the grant-gated wsfiles route and the public share
     serve route never expose agent-infrastructure dirs (``.agents``, ``tools``,
     ``mcp_servers``, ``_internal``, ...) that those endpoints deliberately hide.
-    The virtual-file carve-out (user profile, automations) lives inside
-    ``_is_system_path``.
+
+    Stricter than the panel: it skips ``_is_system_path``'s carve-out for the
+    user's profile and automation files. Their owner reads them through the
+    file routes, never this core, and the file mount links them into every
+    workspace folder, so only containment would stand between a share link and
+    the user's holdings.
     """
     return (
         _is_always_hidden_path(client_path)
         or _is_hidden_path(client_path)
-        or _is_system_path(client_path)
+        or client_path.startswith(_SYSTEM_DIR_PREFIXES)
     )
 
 

@@ -560,6 +560,17 @@ def test_share_gate_hides_the_notes_file_at_the_folder_root_only() -> None:
     assert not shared_path_visible(ShareScope(WS_ID, "agent.md"), "agent.md")
 
 
+def test_share_gate_hides_the_users_profile_and_automation_files() -> None:
+    # The file panel lists these for their owner; a share never serves them,
+    # even when the mount's links put them inside the shared folder.
+    whole = ShareScope(WS_ID, "")
+    assert not shared_path_visible(whole, ".agents/user/profile/portfolio.json")
+    assert not shared_path_visible(whole, ".agents/user/profile")
+    assert not shared_path_visible(whole, ".agents/user/automations/daily-brief.json")
+    agents = ShareScope(WS_ID, ".agents")
+    assert not shared_path_visible(agents, ".agents/user/profile/watchlist.json")
+
+
 @pytest.mark.asyncio
 async def test_shared_listing_leaves_out_the_notes_file(tree) -> None:
     rows = [{"path": p} for p in ("agent.md", "docs/agent.md", "work/report.html")]

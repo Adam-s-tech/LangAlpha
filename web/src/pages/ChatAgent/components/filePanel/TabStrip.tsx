@@ -201,10 +201,10 @@ export function TabStrip({
               onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeFrom(tab.id, false); } }}
               onKeyDown={(e) => onKeyDown(e, tab)}
             >
-              <Glyph className="h-3.5 w-3.5 flex-shrink-0" />
+              <Glyph className="h-3.5 w-3.5 shrink-0" />
               <span className="file-panel-tab-name">{name}</span>
               {failed && (
-                <XCircle className="h-3.5 w-3.5 flex-shrink-0 file-panel-tab-failed" role="img" aria-label={t('toolArtifact.a11y.toolCallFailed')} />
+                <XCircle className="h-3.5 w-3.5 shrink-0 file-panel-tab-failed" role="img" aria-label={t('toolArtifact.a11y.toolCallFailed')} />
               )}
               {tab.kind === 'file' && hasChanged(tab.path) && (
                 <span className="file-panel-tab-dot" title={t('filePanel.changedSinceRead')} aria-hidden="true" />

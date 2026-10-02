@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Loader } from '@/components/ui/loader';
@@ -109,7 +109,7 @@ export default function ProviderStep() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader size={20} className="text-[color:var(--color-text-tertiary)]" />
+        <Loader size={20} className="text-(--color-text-tertiary)" />
       </div>
     );
   }

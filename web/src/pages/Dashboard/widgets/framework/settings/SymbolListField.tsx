@@ -137,7 +137,7 @@ export function SymbolListField({
                 ? placeholder ?? t('dashboard.widgets.settings.symbolListPlaceholder')
                 : ''
           }
-          className="flex-1 min-w-[100px] border-0 !p-0 !h-6 text-xs bg-transparent shadow-none disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex-1 min-w-[100px] border-0 p-0! h-6! text-xs bg-transparent shadow-none disabled:opacity-50 disabled:cursor-not-allowed"
           style={{
             color: 'var(--color-text-primary)',
             textTransform: 'uppercase',

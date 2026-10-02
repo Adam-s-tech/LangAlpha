@@ -109,7 +109,7 @@ export function SkillDetail({
           </p>
         ) : (
           <pre
-            className="text-xs leading-relaxed whitespace-pre-wrap break-words rounded-md p-3.5 max-h-96 overflow-y-auto"
+            className="text-xs leading-relaxed whitespace-pre-wrap wrap-break-word rounded-md p-3.5 max-h-96 overflow-y-auto"
             style={{
               color: 'var(--color-text-secondary)',
               backgroundColor: 'var(--color-bg-card)',

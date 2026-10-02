@@ -18,7 +18,10 @@ import { readFileSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 
-const EXPECTED = ['index', 'vendor-dnd', 'vendor-motion', 'vendor-react']
+// `rolldown-runtime` is the bundler's shared module runtime (under 1 kB gz).
+// Rolldown emits it whenever the build has more than one chunk, and no config
+// removes it, so it is eager by construction rather than by an import.
+const EXPECTED = ['index', 'rolldown-runtime', 'vendor-dnd', 'vendor-motion', 'vendor-react']
 
 // Measured against platform mode, which is what ships (oss builds land ~60 kB
 // lower). Headroom is deliberately thin — routine growth should be visible here,
@@ -73,7 +76,15 @@ const EXPECTED = ['index', 'vendor-dnd', 'vendor-motion', 'vendor-react']
 // in useWorkspaces.ts, which the entry imports, moved to useAllWorkspaces.ts
 // for 0.1 kB back; the strings alone still clear 485. Nothing moved chunks;
 // the eager set is unchanged.
-const MAX_EAGER_KB = 490
+//
+// Raised 490 -> 500 for the dependency majors. No feature moved onto the
+// critical path; the libraries already on it grew. react-dom 19.3 adds 7.2 kB
+// gz, and react-router 8, one package where react-router-dom 6 was three, adds
+// 5.3 kB. Tailwind CSS 4 adds 2 kB to the entry stylesheet and motion-dom 1.8
+// kB. In the entry, axios 1.20's 5.4 kB is mostly paid back by zod/mini on the
+// two eager schemas. A local build read +11.9 kB against main, 496.0 kB. The eager set
+// gains only rolldown-runtime; nothing else moved chunks.
+const MAX_EAGER_KB = 500
 
 const outDir = process.argv[2] || 'dist'
 const indexPath = join(outDir, 'index.html')
@@ -185,14 +196,14 @@ if (added.length || removed.length || overBudget) {
   if (added.length) {
     console.error(`\n  NEW on the critical path: ${added.join(', ')}`)
     console.error('  Every visitor now downloads these before first paint.')
-    console.error('  Usually an eager import reaching a lazy module, or a manualChunks')
-    console.error('  entry for a vendor that is not actually eager. Trace it with:')
+    console.error('  Usually an eager import reaching a lazy module, or a chunk group')
+    console.error('  claiming a vendor that is not actually eager. Trace it with:')
     console.error(`    grep -o 'from"\\./vendor-[^"]*"' ${outDir}/assets/index-*.js`)
   }
   if (removed.length) {
     console.error(`\n  no longer eager: ${removed.join(', ')}`)
     console.error('  Check the payload above before calling this a win — deleting a')
-    console.error('  manualChunks entry inlines that vendor into index instead, losing')
+    console.error('  chunk group inlines that vendor into index instead, losing')
     console.error('  the chunk name and its cross-deploy cache key at no byte saving.')
   }
   if (overBudget) {

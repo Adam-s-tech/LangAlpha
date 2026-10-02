@@ -91,7 +91,7 @@ function NewsRow({ item, idx, onNewsClick, skipAnimation }: NewsRowProps) {
     >
       {/* Thumbnail — hidden on mobile */}
       {item.image && (
-        <div className="relative h-16 w-24 flex-shrink-0 overflow-hidden rounded-lg hidden sm:block">
+        <div className="relative h-16 w-24 shrink-0 overflow-hidden rounded-lg hidden sm:block">
           <img
             src={item.image}
             alt=""
@@ -105,14 +105,14 @@ function NewsRow({ item, idx, onNewsClick, skipAnimation }: NewsRowProps) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
           <span
-            className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+            className="w-1.5 h-1.5 rounded-full shrink-0"
             style={{ backgroundColor: sentimentColor }}
           />
           {item.favicon && (
             <img
               src={item.favicon}
               alt=""
-              className="w-4 h-4 rounded flex-shrink-0"
+              className="w-4 h-4 rounded shrink-0"
               onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
             />
           )}
@@ -168,7 +168,7 @@ function SkeletonRows({ count = 6 }: { count?: number }) {
   return Array.from({ length: count }).map((_, idx) => (
     <div key={idx} className="flex items-center gap-4 p-3 animate-pulse">
       <div
-        className="h-16 w-24 flex-shrink-0 rounded-lg hidden sm:block"
+        className="h-16 w-24 shrink-0 rounded-lg hidden sm:block"
         style={{ backgroundColor: 'var(--color-border-default)' }}
       />
       <div className="flex-1 min-w-0">
@@ -351,7 +351,7 @@ function NewsFeedCard({
             {tickerFilter && (
               <button
                 onClick={() => setTickerFilter('')}
-                className="flex-shrink-0"
+                className="shrink-0"
                 style={{ color: 'var(--color-text-secondary)' }}
               >
                 <X size={11} />

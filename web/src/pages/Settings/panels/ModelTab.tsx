@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutationState } from '@tanstack/react-query';
 import { Search, Pin, Settings2 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Select } from '@/components/ui/select';
 import { useUser } from '@/hooks/useUser';
 import { usePreferences } from '@/hooks/usePreferences';
@@ -296,7 +296,7 @@ export function ModelTab() {
                             onMouseLeave={(e) => { if (!isStarred) e.currentTarget.style.backgroundColor = 'transparent'; }}
                           >
                             <span>{modelLabel(m, modelMetadata)}</span>
-                            {isStarred && <Pin className="h-3 w-3 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />}
+                            {isStarred && <Pin className="h-3 w-3 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />}
                           </button>
                         );
                       })}

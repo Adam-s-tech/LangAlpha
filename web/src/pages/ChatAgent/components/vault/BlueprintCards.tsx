@@ -44,12 +44,12 @@ export function BlueprintCards({ blueprints, atCap, maxSecrets, onSelect }: Blue
               <span className="text-sm font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
                 {bp.label}
               </span>
-              <span className="text-xs font-mono px-1.5 py-0.5 rounded flex-shrink-0" style={{ color: 'var(--color-text-tertiary)', backgroundColor: 'var(--color-bg-tag)' }}>
+              <span className="text-xs font-mono px-1.5 py-0.5 rounded shrink-0" style={{ color: 'var(--color-text-tertiary)', backgroundColor: 'var(--color-bg-tag)' }}>
                 {bp.name}
               </span>
               <PluginOriginBadge plugin={bp.plugin_name} />
             </div>
-            <span className="text-xs flex items-center gap-1 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }}>
+            <span className="text-xs flex items-center gap-1 shrink-0" style={{ color: 'var(--color-accent-primary)' }}>
               <Plus className="h-3 w-3" />
               {t('vault.setUp')}
             </span>

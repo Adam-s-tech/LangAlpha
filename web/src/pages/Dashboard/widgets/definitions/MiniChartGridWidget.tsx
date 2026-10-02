@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { Grid2x2 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useDashboardContext } from '../framework/DashboardDataContext';
 import { registerWidget } from '../framework/WidgetRegistry';
 import { useWidgetContextExport } from '../framework/contextSnapshot';

@@ -64,7 +64,7 @@ export function IdentityTile({
     <span
       aria-hidden
       className={cn(
-        'inline-flex flex-shrink-0 items-center justify-center font-semibold select-none',
+        'inline-flex shrink-0 items-center justify-center font-semibold select-none',
         TILE_SIZES[size],
         TEXT_SIZES[size],
         className,

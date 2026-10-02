@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router';
 import type { LocationState } from './connectStep/shared';
 import { ExistingCustomConnect } from './connectStep/ExistingCustomConnect';
 import { CustomProviderConnect } from './connectStep/CustomProviderConnect';

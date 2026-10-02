@@ -3,7 +3,7 @@ import { ModalShell } from '@/components/ui/ModalShell';
 
 /**
  * The dialog the install flow renders into: the house ModalShell, pinned one
- * layer above the z-[1010] modal layer because an update's outcome opens over
+ * layer above the z-1010 modal layer because an update's outcome opens over
  * the plugin detail overlay that launched it, which is already there. Its own
  * component so the two entry points (the wizard, and an update that opens
  * straight onto its outcome) share one shape.

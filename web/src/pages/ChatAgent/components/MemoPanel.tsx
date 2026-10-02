@@ -213,7 +213,7 @@ function StatusBadge({ status }: { status: MemoMetadataStatus | null | undefined
         color: 'var(--color-text-tertiary)',
       }}
     >
-      <span aria-hidden="true" className="flex-shrink-0">
+      <span aria-hidden="true" className="shrink-0">
         <Loader size={12} className="text-current" />
       </span>
       {t('memoPanel.status.pending')}
@@ -259,7 +259,7 @@ function ConfirmDialog({
       >
         <div className="flex items-center gap-3">
           <div
-            className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+            className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
             style={{ backgroundColor: 'rgba(255, 56, 60, 0.2)' }}
           >
             <AlertTriangle
@@ -807,7 +807,7 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
               <ArrowLeft className="h-4 w-4" />
             </button>
             <FileText
-              className="h-4 w-4 flex-shrink-0"
+              className="h-4 w-4 shrink-0"
               style={{ color: 'var(--color-text-tertiary)' }}
             />
             <span
@@ -819,7 +819,7 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
             </span>
             <StatusBadge status={status} />
           </div>
-          <div className="flex items-center gap-1 flex-shrink-0">
+          <div className="flex items-center gap-1 shrink-0">
             {status === 'failed' && (
               <button
                 onClick={() => handleRegenerate(selectedEntry.key)}
@@ -999,7 +999,7 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
             </div>
           ) : (
             <pre
-              className="whitespace-pre-wrap break-words text-xs font-mono"
+              className="whitespace-pre-wrap wrap-break-word text-xs font-mono"
               style={{ color: 'var(--color-text-primary)' }}
             >
               {content}
@@ -1054,7 +1054,7 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
             <HoverCardTrigger asChild>
               <button
                 type="button"
-                className="inline-flex flex-shrink-0 cursor-help"
+                className="inline-flex shrink-0 cursor-help"
                 aria-label={t('memoPanel.uploadHint')}
               >
                 <Info
@@ -1077,7 +1077,7 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
             </HoverCardContent>
           </HoverCard>
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
+        <div className="flex items-center gap-1 shrink-0">
           {selectMode ? (
             <>
               <span
@@ -1138,7 +1138,7 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
                 disabled={uploadMutation.isPending}
               >
                 {uploadMutation.isPending ? (
-                  <span aria-hidden="true" className="flex-shrink-0">
+                  <span aria-hidden="true" className="shrink-0">
                     <Loader size={14} className="text-current" />
                   </span>
                 ) : (
@@ -1171,7 +1171,7 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
           <span className="min-w-0">{uploadError}</span>
           <button
             onClick={() => setUploadError(null)}
-            className="flex-shrink-0"
+            className="shrink-0"
             title={t('memoPanel.actions.cancel')}
           >
             <X className="h-3.5 w-3.5" />
@@ -1205,7 +1205,7 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
           <button
             type="button"
             onClick={() => setNotFoundKey(null)}
-            className="flex-shrink-0"
+            className="shrink-0"
             title={t('memoPanel.dismissNotFound')}
           >
             <X className="h-3.5 w-3.5" />
@@ -1350,19 +1350,19 @@ export default function MemoPanel({ targetKey, onTargetHandled, onOpenFile }: Me
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2 min-w-0">
                         <FileText
-                          className="h-4 w-4 flex-shrink-0"
+                          className="h-4 w-4 shrink-0"
                           style={{ color: 'var(--color-text-tertiary)' }}
                         />
                         <div className="min-w-0">
                           <div
-                            className="truncate max-w-[14rem]"
+                            className="truncate max-w-56"
                             title={sourceTitle}
                           >
                             {displayName}
                           </div>
                           {isSandboxSourced && showProvenance && (
                             <div
-                              className="truncate max-w-[14rem] text-[0.625rem]"
+                              className="truncate max-w-56 text-[0.625rem]"
                               style={{ color: 'var(--color-text-tertiary)' }}
                               title={sourceTitle}
                             >

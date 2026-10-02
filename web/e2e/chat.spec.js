@@ -88,8 +88,8 @@ test.describe('Workspace Gallery', () => {
     await page.goto('/chat');
 
     // Both workspace names should appear
-    await expect(page.getByText('Research', { exact: true })).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('Alpha Research', { exact: true })).toBeVisible();
+    await expect(workspaceCard(page, 'Research')).toBeVisible({ timeout: 10000 });
+    await expect(workspaceCard(page, 'Alpha Research')).toBeVisible();
   });
 
   test('empty state shows create prompt', async ({ page }) => {

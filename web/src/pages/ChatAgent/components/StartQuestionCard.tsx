@@ -46,14 +46,14 @@ function StartQuestionCard({ proposalData, onApprove, onReject }: StartQuestionC
             transition={{ duration: 0.2 }}
           >
             <ChevronRight
-              className="h-3.5 w-3.5 flex-shrink-0"
+              className="h-3.5 w-3.5 shrink-0"
               style={{ color: 'var(--color-icon-muted)' }}
             />
           </motion.div>
           {isApproved ? (
-            <Check className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-light)' }} />
+            <Check className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-light)' }} />
           ) : (
-            <X className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+            <X className="h-4 w-4 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
           )}
           <span
             className="text-sm"
@@ -101,7 +101,7 @@ function StartQuestionCard({ proposalData, onApprove, onReject }: StartQuestionC
     >
       {/* Header */}
       <div className="flex items-center gap-2 pb-3">
-        <MessageSquareText className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-light)' }} />
+        <MessageSquareText className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-light)' }} />
         <span className="text-[0.9375rem] font-medium" style={{ color: 'var(--color-text-primary)' }}>
           {t('chat.startQuestion')}
         </span>
@@ -109,7 +109,7 @@ function StartQuestionCard({ proposalData, onApprove, onReject }: StartQuestionC
          
           size={14}
          
-          className="ml-auto flex-shrink-0 text-[color:var(--color-icon-muted)]"
+          className="ml-auto shrink-0 text-(--color-icon-muted)"
         />
       </div>
 

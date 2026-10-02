@@ -96,12 +96,12 @@ export function SubagentStopNotice({ subagentId }: { subagentId: string | undefi
       style={{ border: '1px solid var(--color-border-muted)' }}
     >
       <div className="flex items-center gap-2">
-        <PauseCircle className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-light)' }} />
+        <PauseCircle className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-light)' }} />
         <span className="text-[0.9375rem] font-medium" style={{ color: 'var(--color-text-primary)' }}>
           {t('chat.creditStop.title')}
         </span>
       </div>
-      <div className="text-sm break-words" style={{ color: 'var(--color-text-secondary)' }}>
+      <div className="text-sm wrap-break-word" style={{ color: 'var(--color-text-secondary)' }}>
         {clampReason(reason)}
       </div>
       {links && links.length > 0 && (

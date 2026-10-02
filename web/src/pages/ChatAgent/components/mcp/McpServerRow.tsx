@@ -139,7 +139,7 @@ function McpServerRowImpl({
           {/* Error text — silenced when the OAuth pill already names the real
               problem (any cached error predates the disconnect). */}
           {showsDetail && server.status === 'error' && server.error && (
-            <p className="text-[0.6875rem] break-words" style={{ color: 'var(--color-loss)' }}>
+            <p className="text-[0.6875rem] wrap-break-word" style={{ color: 'var(--color-loss)' }}>
               {server.error}
             </p>
           )}

@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { LineChart, Line, ResponsiveContainer, YAxis, Tooltip } from 'recharts';
 import { motion, AnimatePresence, type PanInfo } from 'framer-motion';
 import { useIsMobile } from '@/hooks/useIsMobile';

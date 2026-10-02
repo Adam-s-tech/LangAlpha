@@ -94,13 +94,13 @@ export default function ToolCallDetailView({
           href={toolCallProcess.toolCall!.args!.url as string}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-2 px-4 py-2 text-xs truncate flex-shrink-0 transition-colors hover:bg-foreground/5"
+          className="flex items-center gap-2 px-4 py-2 text-xs truncate shrink-0 transition-colors hover:bg-foreground/5"
           style={{
             color: 'var(--color-accent-primary)',
             borderBottom: '1px solid var(--color-border-muted)',
           }}
         >
-          <ExternalLink className="h-3 w-3 flex-shrink-0" />
+          <ExternalLink className="h-3 w-3 shrink-0" />
           <span className="truncate">{toolCallProcess.toolCall!.args!.url as string}</span>
         </a>
       )}
@@ -172,7 +172,9 @@ function TaskToolContent({ description, type, subagentId, subagentStatus, onOpen
   const isRunning = taskCardStatusKind(subagentStatus) === 'running';
 
   return (
-    <div className="space-y-4">
+    // sibling-space-y, not space-y: the chip is inline, so space-y's margin
+    // would sit inside its line box instead of below it.
+    <div className="sibling-space-y-4">
       <TaskStatusChip
         kind={taskCardStatusKind(subagentStatus)}
         rawStatus={subagentStatus ?? undefined}
@@ -205,7 +207,7 @@ function TaskToolContent({ description, type, subagentId, subagentStatus, onOpen
             border: '1px solid var(--color-border-elevated)',
           }}
         >
-          <img src={isRunning ? iconRoboSing : iconRobo} alt="Subagent" className="w-5 h-5 flex-shrink-0" />
+          <img src={isRunning ? iconRoboSing : iconRobo} alt="Subagent" className="w-5 h-5 shrink-0" />
           <div className="flex flex-col gap-0.5 min-w-0 flex-1 text-left">
             <span className="text-xs font-medium" style={{ color: 'var(--color-text-primary)' }}>
               {t('toolArtifact.goToSubagentTab')}
@@ -216,7 +218,7 @@ function TaskToolContent({ description, type, subagentId, subagentStatus, onOpen
               </span>
             )}
           </div>
-          <ArrowRight className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+          <ArrowRight className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
         </button>
       )}
     </div>
@@ -287,7 +289,7 @@ function CodeToolDisplay({ toolName, toolCallProcess, rawContent }: CodeToolDisp
             className="flex items-center gap-1.5 mb-2 px-1 group"
           >
             <ChevronRight
-              className="h-3 w-3 flex-shrink-0 transition-transform duration-200"
+              className="h-3 w-3 shrink-0 transition-transform duration-200"
               style={{
                 color: 'var(--color-text-tertiary)',
                 transform: inputExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
@@ -548,7 +550,7 @@ function WebSearchCards({ data }: WebSearchCardsProps): React.ReactElement {
               </span>
             </div>
             <ExternalLink
-              className="h-3 w-3 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+              className="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
               style={{ color: 'var(--color-text-tertiary)' }}
             />
           </div>
@@ -603,7 +605,7 @@ function TruncatedResultMessage({ filePath, preview, onOpenFile }: TruncatedResu
         }}
       >
         <div className="flex items-start gap-3">
-          <FileText className="h-5 w-5 flex-shrink-0 mt-0.5" style={{ color: 'var(--color-accent-primary)' }} />
+          <FileText className="h-5 w-5 shrink-0 mt-0.5" style={{ color: 'var(--color-accent-primary)' }} />
           <div className="space-y-2 min-w-0">
             <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
               {t('toolArtifact.resultTooLarge')}

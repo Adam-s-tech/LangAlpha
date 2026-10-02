@@ -53,7 +53,7 @@ function QuoteBlock({ content }: { content: string }): ReactElement {
       </div>
       {rows && (
         <div
-          className="mt-1.5 whitespace-pre-wrap break-words tabular-nums text-xs leading-relaxed"
+          className="mt-1.5 whitespace-pre-wrap wrap-break-word tabular-nums text-xs leading-relaxed"
           style={{ color: 'var(--color-text-secondary)' }}
         >
           {rows}

@@ -84,7 +84,7 @@ function InsightBody({
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
-        <Loader size={32} className="text-[color:var(--color-accent-primary)]" />
+        <Loader size={32} className="text-(--color-accent-primary)" />
       </div>
     );
   }
@@ -264,7 +264,7 @@ function InsightBody({
                         key={i}
                         src={s.favicon}
                         alt=""
-                        className="w-4 h-4 rounded-full ring-1 ring-[var(--color-bg-elevated)]"
+                        className="w-4 h-4 rounded-full ring-1 ring-(--color-bg-elevated)"
                       />
                     ))}
                 </span>
@@ -394,7 +394,7 @@ function InsightDetailModal({ marketInsightId, onClose }: InsightDetailModalProp
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           {...backdrop}
-          className="fixed inset-0 z-[1010] flex items-center justify-center p-8"
+          className="fixed inset-0 z-1010 flex items-center justify-center p-8"
           style={{ backgroundColor: 'var(--color-bg-overlay, rgba(0,0,0,0.6))', backdropFilter: 'blur(4px)' }}
         >
           <motion.div

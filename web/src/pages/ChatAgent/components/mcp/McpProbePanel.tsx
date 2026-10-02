@@ -133,16 +133,16 @@ export function McpProbePanel({ result, probing, canCheck, onCheck }: McpProbePa
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-start gap-2 min-w-0" style={{ color: TONE_COLOR[tone] }}>
-          <Icon className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
-          <span className="whitespace-pre-wrap break-words">
+          <Icon className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+          <span className="whitespace-pre-wrap wrap-break-word">
             {t(messageKey, { names: (result.missing_secrets ?? []).join(', ') })}
           </span>
         </div>
-        <div className="flex-shrink-0">{checkButton}</div>
+        <div className="shrink-0">{checkButton}</div>
       </div>
 
       {detailLine && (
-        <span className="text-[0.6875rem] pl-5 break-words" style={{ color: 'var(--color-text-tertiary)' }}>
+        <span className="text-[0.6875rem] pl-5 wrap-break-word" style={{ color: 'var(--color-text-tertiary)' }}>
           {detailLine}
         </span>
       )}
@@ -166,7 +166,7 @@ export function McpProbePanel({ result, probing, canCheck, onCheck }: McpProbePa
               className="flex items-start gap-2 py-1 px-1.5 rounded"
               style={{ backgroundColor: 'var(--color-bg-elevated)' }}
             >
-              <Wrench className="h-3 w-3 flex-shrink-0 mt-0.5" style={{ color: 'var(--color-accent-primary)' }} />
+              <Wrench className="h-3 w-3 shrink-0 mt-0.5" style={{ color: 'var(--color-accent-primary)' }} />
               <div className="min-w-0">
                 <span className="font-mono" style={{ color: 'var(--color-text-primary)' }}>{tool.name}</span>
                 {tool.description && (

@@ -231,7 +231,7 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
                   }
                   aria-label={t('mcp.modal.headerChoiceLabel')}
                   data-testid={`mcp-header-choice-${i}`}
-                  className={`${fieldClass} w-[12.75rem] shrink-0`}
+                  className={`${fieldClass} w-51 shrink-0`}
                   style={fieldStyle}
                 >
                   {HEADER_CHOICES.map((c) => (
@@ -248,7 +248,7 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
                     placeholder={keyPlaceholder}
                     aria-label={t('mcp.modal.headerCustomPlaceholder')}
                     data-testid={`mcp-header-name-${i}`}
-                    className={`${fieldClass} w-[8rem] shrink-0`}
+                    className={`${fieldClass} w-32 shrink-0`}
                     style={fieldStyle}
                   />
                 )}
@@ -298,7 +298,7 @@ export function KeyValueEditor(props: KeyValueEditorProps) {
             value={row.key}
             onChange={(e) => update(i, { key: e.target.value })}
             placeholder={keyPlaceholder}
-            className={`${fieldClass} w-[12.75rem] shrink-0`}
+            className={`${fieldClass} w-51 shrink-0`}
             style={fieldStyle}
           />
           <VaultSecretPicker

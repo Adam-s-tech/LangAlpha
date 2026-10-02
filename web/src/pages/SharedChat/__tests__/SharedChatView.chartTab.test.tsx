@@ -17,7 +17,7 @@ import type { MessageActions } from '../../ChatAgent/components/messageList/Mess
 let captured: MessageActions | null = null;
 let panelProps: Record<string, unknown> | null = null;
 
-vi.mock('react-router-dom', () => ({
+vi.mock('react-router', () => ({
   Link: ({ children }: { children?: React.ReactNode }) => <span>{children}</span>,
 }));
 

@@ -42,9 +42,9 @@ function StatusGlyph({ health }: { health: Health }): React.ReactElement {
     return <Loader size={12} style={{ color: 'var(--color-accent-primary)' }} />;
   }
   if (health === 'live') {
-    return <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: 'var(--color-success)' }} />;
+    return <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-success)' }} />;
   }
-  return <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ border: '1px solid currentColor' }} />;
+  return <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ border: '1px solid currentColor' }} />;
 }
 
 /**
@@ -113,7 +113,7 @@ export function InlinePreviewCard({ artifact, onClick }: InlinePreviewCardProps)
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="turn-file-name">{title}</span>
           <span className="turn-file-meta flex items-center gap-1.5">
-            <Lock className="h-3 w-3 flex-shrink-0" />
+            <Lock className="h-3 w-3 shrink-0" />
             <span className="truncate">{t('chat.previewCard.private')}</span>
           </span>
         </span>

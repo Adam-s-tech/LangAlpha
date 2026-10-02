@@ -16,11 +16,11 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     // near-white/near-charcoal pair; hovers are the neutral tint.
     const variants: Record<ButtonVariant, string> = {
       default:
-        "bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] hover:opacity-90",
+        "bg-(--color-btn-primary-bg) text-(--color-btn-primary-text) hover:opacity-90",
       destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-      outline: "border border-input bg-background hover:bg-[var(--color-bg-hover)]",
+      outline: "border border-input bg-background hover:bg-(--color-bg-hover)",
       secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-      ghost: "hover:bg-[var(--color-bg-hover)]",
+      ghost: "hover:bg-(--color-bg-hover)",
       link: "underline-offset-4 hover:underline",
     }
 

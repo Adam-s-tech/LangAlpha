@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 
 vi.mock('@/lib/bars', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bars')>();
@@ -41,7 +41,7 @@ function renderMiniChartGrid(config: { symbols: string[] }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <Component
           instance={{ id: 'mcg-1', type: 'markets.miniChartGrid', config }}
           updateConfig={vi.fn()}
@@ -55,7 +55,7 @@ describe('MiniChartGridWidget', () => {
   beforeEach(() => {
     mockFetch.mockClear();
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.resetAllMocks(); vi.restoreAllMocks(); });
 
   it('caps symbols at 18 even when prefs hold more (regression)', async () => {
     // 25 symbols stored. Render path must clamp to 18 to protect the OHLC

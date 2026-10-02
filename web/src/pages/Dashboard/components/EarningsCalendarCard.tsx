@@ -173,7 +173,7 @@ function EarningsModal({ earnings, onClose }: EarningsModalProps) {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       {...backdrop}
-      className="fixed inset-0 z-[1030] flex items-center justify-center p-4 md:p-8"
+      className="fixed inset-0 z-1030 flex items-center justify-center p-4 md:p-8"
       style={{ backgroundColor: 'var(--color-bg-overlay, rgba(0,0,0,0.6))', backdropFilter: 'blur(4px)' }}
     >
       <motion.div
@@ -187,7 +187,7 @@ function EarningsModal({ earnings, onClose }: EarningsModalProps) {
         }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 pt-6 pb-4 flex-shrink-0">
+        <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
           <h2 className="text-xl font-bold flex items-center gap-2" style={{ color: 'var(--color-text-primary)' }}>
             <Calendar size={20} style={{ color: 'var(--color-accent-light)' }} />
             {t('dashboard.widgets.earningsCalendar.title')}
@@ -206,7 +206,7 @@ function EarningsModal({ earnings, onClose }: EarningsModalProps) {
 
         {/* Date tabs */}
         <div
-          className="flex gap-1 px-6 pb-4 overflow-x-auto flex-shrink-0"
+          className="flex gap-1 px-6 pb-4 overflow-x-auto shrink-0"
           style={{ scrollbarWidth: 'none' }}
         >
           {dateGroups.map((group) => {
@@ -218,7 +218,7 @@ function EarningsModal({ earnings, onClose }: EarningsModalProps) {
               <button
                 key={group.date}
                 onClick={() => setActiveDate(group.date)}
-                className="flex flex-col items-center px-4 py-2 rounded-xl text-xs font-medium transition-all flex-shrink-0 min-w-[72px] border"
+                className="flex flex-col items-center px-4 py-2 rounded-xl text-xs font-medium transition-all shrink-0 min-w-[72px] border"
                 style={{
                   backgroundColor: isActive
                     ? 'var(--color-accent-primary)'
@@ -249,7 +249,7 @@ function EarningsModal({ earnings, onClose }: EarningsModalProps) {
         </div>
 
         {/* Divider */}
-        <div className="mx-6 border-b flex-shrink-0" style={{ borderColor: 'var(--color-border-muted)' }} />
+        <div className="mx-6 border-b shrink-0" style={{ borderColor: 'var(--color-border-muted)' }} />
 
         {/* Items grid */}
         <div className="overflow-y-auto flex-1 p-6">
@@ -291,7 +291,7 @@ function EarningsModal({ earnings, onClose }: EarningsModalProps) {
                     }}
                   >
                     <div
-                      className="w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden border flex-shrink-0"
+                      className="w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden border shrink-0"
                       style={{
                         backgroundColor: 'var(--color-bg-tag)',
                         borderColor: 'var(--color-border-muted)',

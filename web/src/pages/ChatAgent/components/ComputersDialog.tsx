@@ -185,7 +185,7 @@ function ComputerRow({
             <EditableName name={computer.name} onCommit={onRename} />
             {computer.is_primary && (
               <span
-                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.625rem] font-medium flex-shrink-0"
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.625rem] font-medium shrink-0"
                 style={{ backgroundColor: 'var(--color-border-muted)', color: 'var(--color-text-secondary)' }}
                 title={t('computer.primaryBadgeTitle', 'New workspaces are created on this computer')}
               >
@@ -329,7 +329,7 @@ function EditableName({ name, onCommit }: { name: string; onCommit: (name: strin
       </span>
       <button
         type="button"
-        className="-m-1 flex-shrink-0 rounded p-2 opacity-60 hover:opacity-100 focus-visible:opacity-100"
+        className="-m-1 shrink-0 rounded p-2 opacity-60 hover:opacity-100 focus-visible:opacity-100"
         style={{ color: 'var(--color-text-tertiary)' }}
         aria-label={t('computer.rename', 'Rename computer')}
         onClick={() => {
@@ -350,7 +350,7 @@ function StorageBreakdown({ computer, enabled }: { computer: Computer; enabled: 
   if (isLoading) {
     return (
       <div className="flex items-center gap-2 py-2 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-        <Loader size={12} className="text-[color:var(--color-accent-primary)]" />
+        <Loader size={12} className="text-(--color-accent-primary)" />
         {t('computer.disk.measuring', 'Measuring')}
       </div>
     );
@@ -382,7 +382,7 @@ function StorageBreakdown({ computer, enabled }: { computer: Computer; enabled: 
       {rows.map((w) => (
         <li key={w.workspace_id} className="flex items-center justify-between gap-3">
           <span className="truncate">{w.name}</span>
-          <span className="flex-shrink-0 tabular-nums" style={{ color: 'var(--color-text-tertiary)' }}>{formatBytes(w.bytes)}</span>
+          <span className="shrink-0 tabular-nums" style={{ color: 'var(--color-text-tertiary)' }}>{formatBytes(w.bytes)}</span>
         </li>
       ))}
       {data.other_bytes > 0 && (
@@ -390,7 +390,7 @@ function StorageBreakdown({ computer, enabled }: { computer: Computer; enabled: 
           <span className="truncate" style={{ color: 'var(--color-text-tertiary)' }}>
             {t('computer.disk.other', 'System, caches and shared files')}
           </span>
-          <span className="flex-shrink-0 tabular-nums" style={{ color: 'var(--color-text-tertiary)' }}>{formatBytes(data.other_bytes)}</span>
+          <span className="shrink-0 tabular-nums" style={{ color: 'var(--color-text-tertiary)' }}>{formatBytes(data.other_bytes)}</span>
         </li>
       )}
     </ul>

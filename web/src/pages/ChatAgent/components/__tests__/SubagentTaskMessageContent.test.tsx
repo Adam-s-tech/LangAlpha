@@ -11,7 +11,7 @@ import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import SubagentTaskMessageContent, { SubagentStopNotice } from '../SubagentTaskMessageContent';
 import { SubagentTelemetryContext } from '../SubagentTelemetryContext';
 import type { SubagentTelemetry } from '../../session/subagents/resolveSubagentTelemetry';

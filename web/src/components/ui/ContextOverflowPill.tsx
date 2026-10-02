@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Sparkles, ArrowUp } from 'lucide-react';
 import { ChatInputRegistry, ContextBus } from '@/lib/contextBus';
 import type { WidgetContextSnapshot } from '@/pages/Dashboard/widgets/framework/contextSnapshot';

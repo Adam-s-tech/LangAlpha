@@ -63,7 +63,7 @@ export function TurnFold({ state, startedAt, completedAt, onToggle }: TurnFoldPr
           <motion.span
             animate={{ rotate: state === 'collapsed' ? 0 : 90 }}
             transition={SPRING_FOLD}
-            className="inline-flex flex-shrink-0"
+            className="inline-flex shrink-0"
             style={{ opacity: 0.6 }}
           >
             <ChevronDown className="h-3.5 w-3.5 -rotate-90" />

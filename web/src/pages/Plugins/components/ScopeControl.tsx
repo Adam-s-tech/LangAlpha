@@ -235,7 +235,7 @@ export function ScopeControl({
           disabled={busy}
           aria-label={t('plugins.scope.triggerAria', { scope: label })}
           title={labelTitle}
-          className="inline-flex items-center gap-1 px-2 py-1 text-[0.6875rem] rounded-md transition-colors hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:hover:bg-transparent whitespace-nowrap max-w-[12rem]"
+          className="inline-flex items-center gap-1 px-2 py-1 text-[0.6875rem] rounded-md transition-colors hover:bg-(--color-bg-hover) disabled:opacity-50 disabled:hover:bg-transparent whitespace-nowrap max-w-[12rem]"
           style={{ color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-muted)' }}
         >
           <Icon className="h-3 w-3 shrink-0" />

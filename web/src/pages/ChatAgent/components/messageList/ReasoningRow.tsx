@@ -151,7 +151,7 @@ export const ReasoningRow = memo(function ReasoningRow({ item, defaultExpanded =
             <motion.div
               animate={{ rotate: expanded ? 90 : 0 }}
               transition={SPRING_FOLD}
-              className="flex-shrink-0 inline-flex items-center"
+              className="shrink-0 inline-flex items-center"
               style={{ opacity: 0.6, alignSelf: 'center' }}
             >
               <ChevronDown className="h-3 w-3 -rotate-90" />

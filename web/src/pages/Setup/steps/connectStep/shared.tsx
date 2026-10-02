@@ -84,7 +84,7 @@ export function ProcessStep({ number, title, description }: { number: number; ti
   return (
     <div className="flex gap-3 items-start">
       <div
-        className="flex-shrink-0 h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold"
+        className="shrink-0 h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold"
         style={{ backgroundColor: 'var(--color-accent-soft)', color: 'var(--color-accent-primary)' }}
       >
         {number}
@@ -109,7 +109,7 @@ export function DisclaimerBox({ provider }: { provider: string }) {
       }}
     >
       <div className="flex gap-2 items-start">
-        <Shield className="h-4 w-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--color-text-tertiary)' }} />
+        <Shield className="h-4 w-4 shrink-0 mt-0.5" style={{ color: 'var(--color-text-tertiary)' }} />
         <div>
           <p className="text-xs font-medium mb-1" style={{ color: 'var(--color-text-secondary)' }}>
             {t('setup.securityPrivacy')}

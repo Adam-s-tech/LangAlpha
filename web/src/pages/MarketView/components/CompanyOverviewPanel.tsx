@@ -138,7 +138,7 @@ export default function CompanyOverviewPanel({ symbol: _symbol, visible, onClose
 
       {loading && (
         <div className="company-overview-loading">
-          <span aria-hidden="true" className="flex-shrink-0">
+          <span aria-hidden="true" className="shrink-0">
             <Loader size={16} className="text-current" />
           </span>
           Loading...

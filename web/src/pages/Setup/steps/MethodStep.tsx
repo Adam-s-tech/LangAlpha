@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Ticket, Link2, Code2, Key, Monitor, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -461,7 +461,7 @@ export default function MethodStep() {
                 >
                   {redeemingInvitation ? (
                     <>
-                      <span aria-hidden="true" className="mr-1.5 flex-shrink-0">
+                      <span aria-hidden="true" className="mr-1.5 shrink-0">
                         <Loader size={16} className="text-current" />
                       </span>
                       {t('setup.redeeming')}

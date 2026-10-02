@@ -157,7 +157,7 @@ export function ConnectButton({
     ? ''
     : emphasis === 'loud'
       ? 'transition-opacity enabled:hover:opacity-90'
-      : 'transition-colors enabled:hover:bg-[var(--color-bg-hover)]';
+      : 'transition-colors enabled:hover:bg-(--color-bg-hover)';
   return (
     <button
       type="button"

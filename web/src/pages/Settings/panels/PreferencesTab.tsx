@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Trash2, MessageSquareText, FileText, Code2 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { clearPreferences } from '@/pages/Dashboard/utils/api';
 import { useUser } from '@/hooks/useUser';
 import { usePreferences } from '@/hooks/usePreferences';
@@ -281,7 +281,7 @@ export function PreferencesTab() {
             onClick={() => {
               if (replayGuides()) toast({ description: t('onboarding.settings.replayDone') });
             }}
-            className="px-2.5 py-1 rounded-md text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+            className="px-2.5 py-1 rounded-md text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-(--color-focus-ring)"
             style={{ border: '1px solid var(--color-border-muted)', color: 'var(--color-text-secondary)' }}
           >
             {t('onboarding.settings.replayGuides')}
@@ -291,7 +291,7 @@ export function PreferencesTab() {
             onClick={() => {
               if (resetOnboarding()) toast({ description: t('onboarding.settings.resetDone') });
             }}
-            className="px-2.5 py-1 rounded-md text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+            className="px-2.5 py-1 rounded-md text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-(--color-focus-ring)"
             style={{ border: '1px solid var(--color-border-muted)', color: 'var(--color-text-tertiary)' }}
           >
             {t('onboarding.settings.reset')}

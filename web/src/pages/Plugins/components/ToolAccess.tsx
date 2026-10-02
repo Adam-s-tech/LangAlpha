@@ -127,7 +127,7 @@ function SwitchRow({
           {desc}
         </p>
       </div>
-      <div className="flex-shrink-0 pt-0.5">
+      <div className="shrink-0 pt-0.5">
         <EnabledToggle enabled={enabled} name={label} disabled={disabled} onToggle={onToggle} />
       </div>
     </li>
@@ -172,7 +172,7 @@ export function ToolBindingControl({
   }
 
   return (
-    <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+    <div className="flex flex-col items-end gap-0.5 shrink-0">
       <div className="flex items-center gap-1.5">
         {pinned && (
           <span

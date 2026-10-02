@@ -40,7 +40,7 @@ export function FallbackSuggestionPill({
         color: 'var(--color-text-secondary)',
         border: '1px solid var(--color-border-muted)',
       }}>
-      <AlertTriangle aria-hidden="true" className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-warning)' }} />
+      <AlertTriangle aria-hidden="true" className="h-4 w-4 shrink-0" style={{ color: 'var(--color-warning)' }} />
       <span className="flex-1 min-w-0">
         {t('chat.modelTroubleSuggestion', {
           from: fallbackSuggestion.fromModel,
@@ -50,7 +50,7 @@ export function FallbackSuggestionPill({
       <button
         type="button"
         onClick={() => onSwitchModel(fallbackSuggestion.toModel)}
-        className="text-xs font-medium whitespace-nowrap rounded-md px-2.5 py-1 flex-shrink-0 hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+        className="text-xs font-medium whitespace-nowrap rounded-md px-2.5 py-1 shrink-0 hover:opacity-90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
         style={{
           backgroundColor: 'var(--color-btn-primary-bg)',
           color: 'var(--color-btn-primary-text)',
@@ -62,7 +62,7 @@ export function FallbackSuggestionPill({
         type="button"
         onClick={onDismiss}
         aria-label={t('common.close')}
-        className="p-1 rounded flex-shrink-0 hover:opacity-70"
+        className="p-1 rounded shrink-0 hover:opacity-70"
         style={{ color: 'var(--color-text-tertiary)' }}
       >
         <X className="h-3.5 w-3.5" />

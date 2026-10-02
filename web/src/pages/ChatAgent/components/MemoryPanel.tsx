@@ -285,7 +285,7 @@ export default function MemoryPanel({
           <button
             type="button"
             onClick={() => setNotFoundKey(null)}
-            className="flex-shrink-0"
+            className="shrink-0"
             title={t('memoryPanel.dismissNotFound')}
           >
             <X className="h-3.5 w-3.5" />
@@ -336,7 +336,7 @@ export default function MemoryPanel({
             }}
           >
             <FileText
-              className="h-4 w-4 flex-shrink-0"
+              className="h-4 w-4 shrink-0"
               style={{ color: 'var(--color-text-tertiary)' }}
             />
             <div className="flex-1 min-w-0">

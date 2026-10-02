@@ -920,7 +920,7 @@ function DashboardCustomize() {
           </Region>
           {/* widget mid-drag — rotation sits on a static wrapper because
               intro-rv animates `transform` and would override it */}
-          <div className="rotate-[-2deg]">
+          <div className="-rotate-2">
             <Region hot delay={0.32} className="flex h-full flex-col gap-1.5 p-1.5">
               <div className="flex items-center justify-between">
                 <Ln w="44%" h={4} c="var(--iv-line-2)" />

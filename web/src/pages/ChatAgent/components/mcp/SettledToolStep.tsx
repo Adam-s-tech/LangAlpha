@@ -41,12 +41,12 @@ export function SettledToolStep({
         className="flex items-center gap-2 py-1 cursor-pointer w-full text-left"
       >
         <motion.div animate={{ rotate: collapsed ? 0 : 90 }} transition={{ duration: 0.2 }}>
-          <ChevronRight className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-icon-muted)' }} />
+          <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-icon-muted)' }} />
         </motion.div>
         {approved ? (
-          <Check className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-light)' }} />
+          <Check className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-light)' }} />
         ) : (
-          <X className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+          <X className="h-4 w-4 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
         )}
         <span
           className="text-sm truncate"

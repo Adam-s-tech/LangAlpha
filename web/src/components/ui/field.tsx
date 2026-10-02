@@ -18,9 +18,9 @@ import { cn } from "@/lib/utils"
 const labelVariants = cva([
   "text-sm font-medium leading-none",
   /* Disabled */
-  "data-[disabled]:cursor-not-allowed data-[disabled]:opacity-70",
+  "data-disabled:cursor-not-allowed data-disabled:opacity-70",
   /* Invalid */
-  "group-data-[invalid]:text-destructive",
+  "group-data-invalid:text-destructive",
 ])
 
 const Label = ({ className, ...props }: AriaLabelProps) => (
@@ -52,9 +52,9 @@ const fieldGroupVariants = cva("", {
       default: [
         "relative flex h-10 w-full items-center overflow-hidden rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background",
         /* Keyboard focus within: data-focus-within also fires on a click, and the group has no pointer exemption of its own */
-        "data-[focus-visible]:outline-none data-[focus-visible]:ring-2 data-[focus-visible]:ring-ring data-[focus-visible]:ring-offset-2",
+        "data-focus-visible:outline-hidden data-focus-visible:ring-2 data-focus-visible:ring-ring data-focus-visible:ring-offset-2",
         /* Disabled */
-        "data-[disabled]:opacity-50",
+        "data-disabled:opacity-50",
       ],
       ghost: "",
     },

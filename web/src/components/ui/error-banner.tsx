@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle } from 'lucide-react';
 import { UPSTREAM_HINT_I18N_KEY, type ErrorLinkSpec, type StructuredError } from '@/utils/rateLimitError';
@@ -71,10 +71,10 @@ export function ErrorBanner({ error, className, style }: ErrorBannerProps): Reac
     const hasHints = isUpstream && err.hints && err.hints.length > 0;
     return (
       <div className={baseClass} style={baseStyle}>
-        <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--color-loss)' }} />
+        <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" style={{ color: 'var(--color-loss)' }} />
         <div className="flex flex-col gap-1 min-w-0">
           {headline && <span className="font-medium">{headline}</span>}
-          <span className="break-words">
+          <span className="wrap-break-word">
             {err.message}
             {err.links?.map((l, i) => (
               <React.Fragment key={`${l.url}|${l.label}`}>
@@ -98,8 +98,8 @@ export function ErrorBanner({ error, className, style }: ErrorBannerProps): Reac
   const parsed = parseErrorMessage(error as string);
   return (
     <div className={baseClass} style={baseStyle}>
-      <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--color-loss)' }} />
-      <span className="break-words">
+      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" style={{ color: 'var(--color-loss)' }} />
+      <span className="wrap-break-word">
         {parsed.detail ? `${parsed.title}: ${parsed.detail}` : parsed.title}
       </span>
     </div>

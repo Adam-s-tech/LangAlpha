@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -232,7 +232,7 @@ export function OAuthConnect({ state }: { state: LocationState }) {
                 type="checkbox"
                 checked={agreed}
                 onChange={(e) => setAgreed(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border accent-[var(--color-accent-primary)]"
+                className="mt-0.5 h-4 w-4 rounded border accent-(--color-accent-primary)"
               />
               <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
                 {t(isClaude ? 'setup.oauthAgreeAnthropic' : 'setup.oauthAgreeOpenai')}
@@ -255,8 +255,8 @@ export function OAuthConnect({ state }: { state: LocationState }) {
         {/* Phase 2: Connecting spinner */}
         {oauthPhase === 'connecting' && (
           <div className="flex items-center justify-center py-12">
-            <span aria-hidden="true" className="flex-shrink-0">
-              <Loader size={24} className="text-[color:var(--color-accent-primary)]" />
+            <span aria-hidden="true" className="shrink-0">
+              <Loader size={24} className="text-(--color-accent-primary)" />
             </span>
             <span className="ml-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
               {t('setup.connecting')}
@@ -299,7 +299,7 @@ export function OAuthConnect({ state }: { state: LocationState }) {
                 className="text-xs flex items-center gap-1.5"
                 style={{ color: 'var(--color-text-tertiary)' }}
               >
-                <span aria-hidden="true" className="flex-shrink-0">
+                <span aria-hidden="true" className="shrink-0">
                   <Loader size={12} className="text-current" />
                 </span>
                 {t('setup.waitingApproval')}
@@ -357,7 +357,7 @@ export function OAuthConnect({ state }: { state: LocationState }) {
               >
                 {claudeSubmitting ? (
                   <>
-                    <span aria-hidden="true" className="mr-1.5 flex-shrink-0">
+                    <span aria-hidden="true" className="mr-1.5 shrink-0">
                       <Loader size={16} className="text-current" />
                     </span>
                     {t('setup.submitting')}

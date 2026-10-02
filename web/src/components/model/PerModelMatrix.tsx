@@ -55,7 +55,7 @@ function CellSelect({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       aria-label={ariaLabel}
-      className="min-w-[7.5rem]"
+      className="min-w-30"
       // className lands on the wrapper, so the compact type has to come through
       // style — the select itself hardcodes text-sm.
       style={{ fontSize: '0.75rem', paddingTop: '0.25rem', paddingBottom: '0.25rem' }}
@@ -152,15 +152,16 @@ export function PerModelMatrix({
         <div className="overflow-x-auto">
           {/* Below this width the cells squeeze their labels into ellipses
               instead of the container scrolling, which is the whole point of
-              the overflow wrapper. */}
+              the overflow wrapper. The cells' 1px sides are the browser's
+              default cell padding, which the columns were laid out on. */}
           <table className="w-full text-xs" style={{ borderCollapse: 'collapse', minWidth: '660px' }}>
             <thead>
               <tr style={{ color: 'var(--color-text-tertiary)' }}>
-                <th className="text-left font-medium py-1 pr-3">{t('settings.modelTuning.colModel')}</th>
-                <th className="text-left font-medium py-1 pr-3">{t('settings.modelTuning.colEffort')}</th>
-                <th className="text-left font-medium py-1 pr-3">{t('settings.modelTuning.colContext')}</th>
-                <th className="text-left font-medium py-1 pr-3">{t('settings.modelTuning.colGuidance')}</th>
-                <th className="text-left font-medium py-1 pr-3">{t('settings.modelTuning.colSpeed')}</th>
+                <th className="text-left font-medium py-1 pl-px pr-3">{t('settings.modelTuning.colModel')}</th>
+                <th className="text-left font-medium py-1 pl-px pr-3">{t('settings.modelTuning.colEffort')}</th>
+                <th className="text-left font-medium py-1 pl-px pr-3">{t('settings.modelTuning.colContext')}</th>
+                <th className="text-left font-medium py-1 pl-px pr-3">{t('settings.modelTuning.colGuidance')}</th>
+                <th className="text-left font-medium py-1 pl-px pr-3">{t('settings.modelTuning.colSpeed')}</th>
                 <th />
               </tr>
             </thead>
@@ -169,13 +170,13 @@ export function PerModelMatrix({
                 if (unreachable.has(model)) {
                   return (
                     <tr key={model} style={{ borderTop: '1px solid var(--color-border-muted)' }}>
-                      <td className="py-2 pr-3 align-middle" style={{ color: 'var(--color-text-tertiary)' }}>
+                      <td className="py-2 pl-px pr-3 align-middle" style={{ color: 'var(--color-text-tertiary)' }}>
                         {modelLabel(model, metadata)}
                       </td>
-                      <td className="py-2 pr-3 align-middle" colSpan={4}>
+                      <td className="py-2 pl-px pr-3 align-middle" colSpan={4}>
                         <NotSupported label={t('settings.modelTuning.modelUnavailable')} />
                       </td>
-                      <td className="py-2 align-middle">
+                      <td className="py-2 px-px align-middle">
                         <button
                           type="button"
                           onClick={() => drop(model)}
@@ -207,10 +208,10 @@ export function PerModelMatrix({
                 const supportsSpeed = meta?.sdk === 'codex' || storedSpeed !== null;
                 return (
                   <tr key={model} style={{ borderTop: '1px solid var(--color-border-muted)' }}>
-                    <td className="py-2 pr-3 align-middle" style={{ color: 'var(--color-text-primary)' }}>
+                    <td className="py-2 pl-px pr-3 align-middle" style={{ color: 'var(--color-text-primary)' }}>
                       {modelLabel(model, metadata)}
                     </td>
-                    <td className="py-2 pr-3 align-middle">
+                    <td className="py-2 pl-px pr-3 align-middle">
                       {orderedEfforts.length > 0 ? (
                         <CellSelect
                           value={storedEffort}
@@ -227,7 +228,7 @@ export function PerModelMatrix({
                         <NotSupported label={t('settings.modelTuning.notSupported')} />
                       )}
                     </td>
-                    <td className="py-2 pr-3 align-middle">
+                    <td className="py-2 pl-px pr-3 align-middle">
                       <CellSelect
                         value={profile.compaction_profile ?? ''}
                         onChange={(v) =>
@@ -242,7 +243,7 @@ export function PerModelMatrix({
                         options={profileOptions}
                       />
                     </td>
-                    <td className="py-2 pr-3 align-middle">
+                    <td className="py-2 pl-px pr-3 align-middle">
                       <CellSelect
                         value={profile.prompt_guidance ?? ''}
                         onChange={(v) => writeProfile(model, { prompt_guidance: (v as GuidanceLevel) || null })}
@@ -251,7 +252,7 @@ export function PerModelMatrix({
                         options={guidanceOptions}
                       />
                     </td>
-                    <td className="py-2 pr-3 align-middle">
+                    <td className="py-2 pl-px pr-3 align-middle">
                       {supportsSpeed ? (
                         <CellSelect
                           value={storedSpeed === true ? 'fast' : storedSpeed === false ? 'standard' : ''}
@@ -269,7 +270,7 @@ export function PerModelMatrix({
                         <NotSupported label={t('settings.modelTuning.notSupported')} />
                       )}
                     </td>
-                    <td className="py-2 align-middle">
+                    <td className="py-2 px-px align-middle">
                       <button
                         type="button"
                         onClick={() => drop(model)}

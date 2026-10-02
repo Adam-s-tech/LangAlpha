@@ -209,7 +209,7 @@ export function UserInfoTab() {
     <div className="space-y-4">
       <div className="flex items-center gap-4 mb-5 pb-5" style={{ borderBottom: '1px solid var(--color-border-muted)' }}>
         <div
-          className="h-12 w-12 rounded-full flex items-center justify-center cursor-pointer overflow-hidden flex-shrink-0"
+          className="h-12 w-12 rounded-full flex items-center justify-center cursor-pointer overflow-hidden shrink-0"
           style={{ backgroundColor: 'var(--color-accent-soft)' }}
           onClick={() => fileInputRef.current?.click()}
         >
@@ -283,7 +283,7 @@ export function UserInfoTab() {
           placeholder={t('settings.selectTimezone')}
           className="w-full"
           // The card fill the name and language fields beside it take.
-          triggerClassName="bg-[color:var(--color-bg-card)]"
+          triggerClassName="bg-(--color-bg-card)"
         />
       </div>
 
@@ -332,9 +332,9 @@ export function UserInfoTab() {
 
       {/* Voice Input Toggle */}
       <div className="settings-row">
-        <div className="space-y-0.5">
+        <div>
           <label className="text-[0.8125rem] font-medium" style={{ color: 'var(--color-text-primary)' }}>{t('settings.voiceInput')}</label>
-          <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{t('settings.voiceInputDesc')}</p>
+          <p className="mt-0.5 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{t('settings.voiceInputDesc')}</p>
         </div>
         <ToggleSwitch
           checked={(prefsData as Preferences | null)?.other_preference?.voice_input_enabled === true}
@@ -345,9 +345,9 @@ export function UserInfoTab() {
 
       {/* Where the transcript lands when a reply finishes */}
       <div className="settings-row">
-        <div className="space-y-0.5">
+        <div>
           <label id={turnEndLabelId} className="text-[0.8125rem] font-medium" style={{ color: 'var(--color-text-primary)' }}>{t('settings.turnEndScroll')}</label>
-          <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{t('settings.turnEndScrollDesc')}</p>
+          <p className="mt-0.5 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{t('settings.turnEndScrollDesc')}</p>
         </div>
         <SegmentedControl
           labelledBy={turnEndLabelId}
@@ -362,9 +362,9 @@ export function UserInfoTab() {
 
       {/* Whether reasoning is shown as it streams */}
       <div className="settings-row flex-wrap">
-        <div className="flex-1 basis-64 space-y-0.5">
+        <div className="flex-1 basis-64">
           <label id={turnDisplayLabelId} className="text-[0.8125rem] font-medium" style={{ color: 'var(--color-text-primary)' }}>{t('settings.turnDisplay')}</label>
-          <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{t('settings.turnDisplayDesc')}</p>
+          <p className="mt-0.5 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{t('settings.turnDisplayDesc')}</p>
         </div>
         <div className="flex shrink-0">
           <SegmentedControl
@@ -381,9 +381,9 @@ export function UserInfoTab() {
 
       {/* How response text appears while it streams */}
       <div className="settings-row flex-wrap">
-        <div className="flex-1 basis-64 space-y-0.5">
+        <div className="flex-1 basis-64">
           <label id={streamingModeLabelId} className="text-[0.8125rem] font-medium" style={{ color: 'var(--color-text-primary)' }}>{t('settings.streamingMode')}</label>
-          <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{t('settings.streamingModeDesc')}</p>
+          <p className="mt-0.5 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{t('settings.streamingModeDesc')}</p>
         </div>
         <div className="flex shrink-0">
           <SegmentedControl

@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, fireEvent, act } from '@testing-library/react';
-import { Route, Routes } from 'react-router-dom';
+import { Route, Routes } from 'react-router';
 import { renderWithProviders } from '@/test/utils';
 
 vi.mock('@/pages/ChatAgent/utils/api', async (importOriginal) => {
@@ -99,7 +99,7 @@ async function dirtyThenOpenToolTab() {
 }
 
 beforeEach(() => { localStorage.clear(); });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.resetAllMocks(); vi.restoreAllMocks(); });
 
 describe('FilePanel tool-tab links under an unsaved edit', () => {
   it('stays on the route when the edit is not discarded', async () => {

@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { X, ChevronLeft, ChevronRight, BarChart3, Sunrise, Sunset } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useWatchlistData } from '../../Dashboard/hooks/useWatchlistData';
 import { usePortfolioData } from '../../Dashboard/hooks/usePortfolioData';
 import { useMarketDataWSContext } from '../contexts/MarketDataWSContext';

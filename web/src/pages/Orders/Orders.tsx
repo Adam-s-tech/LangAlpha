@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence } from 'framer-motion';
 import { Blocks, Eye, EyeOff } from 'lucide-react';

@@ -138,7 +138,7 @@ export function AddWidgetDialog({ open, onOpenChange, onAdd, existingWidgets }: 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="!max-w-[1080px] w-[96vw] h-[86vh] !max-h-[86vh] !p-0 !gap-0 grid grid-cols-[280px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] !overflow-hidden [&>button.absolute]:hidden"
+        className="max-w-[1080px]! w-[96vw] h-[86vh] max-h-[86vh]! p-0! gap-0! grid grid-cols-[280px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] overflow-hidden! [&>button.absolute]:hidden"
         style={{
           backgroundColor: 'var(--color-bg-card)',
           borderColor: 'var(--color-border-muted)',
@@ -216,13 +216,13 @@ export function AddWidgetDialog({ open, onOpenChange, onAdd, existingWidgets }: 
                 >
                   <span className="flex items-center gap-2.5 min-w-0">
                     <span
-                      className="inline-block rounded-full flex-shrink-0"
+                      className="inline-block rounded-full shrink-0"
                       style={{ width: 8, height: 8, backgroundColor: meta?.dot ?? '#999' }}
                     />
                     <span className="font-medium truncate">{meta?.labelKey ? t(meta.labelKey) : cat}</span>
                   </span>
                   <span
-                    className="text-xs tabular-nums flex-shrink-0"
+                    className="text-xs tabular-nums shrink-0"
                     style={{
                       color: active ? 'var(--color-bg-card)' : 'var(--color-text-tertiary)',
                       opacity: active ? 0.7 : 1,
@@ -305,7 +305,7 @@ export function AddWidgetDialog({ open, onOpenChange, onAdd, existingWidgets }: 
                 </>
               )}
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-2 shrink-0">
               <span
                 className="text-[0.6875rem] px-2.5 py-1 rounded-full whitespace-nowrap"
                 style={{
@@ -500,7 +500,7 @@ function WidgetCard({ def, disabled, selected, onSelect, onAdd }: WidgetCardProp
     >
       <div className="flex items-start gap-4">
         <div
-          className="flex-shrink-0 w-20 h-14 rounded-lg flex items-center justify-center"
+          className="shrink-0 w-20 h-14 rounded-lg flex items-center justify-center"
           style={{
             backgroundColor: 'var(--color-bg-subtle)',
             color: 'var(--color-text-tertiary)',

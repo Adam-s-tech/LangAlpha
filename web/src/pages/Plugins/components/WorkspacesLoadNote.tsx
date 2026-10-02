@@ -19,7 +19,7 @@ export function WorkspacesLoadNote() {
         <button
           type="button"
           onClick={retry}
-          className="underline underline-offset-2 hover:text-[var(--color-text-secondary)]"
+          className="underline underline-offset-2 hover:text-(--color-text-secondary)"
         >
           {t('common.retry')}
         </button>

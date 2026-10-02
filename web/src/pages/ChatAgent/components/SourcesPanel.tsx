@@ -65,16 +65,16 @@ const GEOMETRY: DeckGeometry = {
  *  card is filled with `--color-bg-card` so a leaf card and the front of a
  *  stack read alike. */
 const CARD_CHROME =
-  'flex items-center gap-2.5 rounded-lg border px-2.5 text-left outline-none cursor-pointer ' +
-  'border-[var(--color-border-muted)] bg-[var(--color-bg-card)] ' +
-  'hover:border-[var(--color-border-default)] hover:bg-[var(--color-bg-elevated)] ' +
+  'flex items-center gap-2.5 rounded-lg border px-2.5 text-left outline-hidden cursor-pointer ' +
+  'border-(--color-border-muted) bg-(--color-bg-card) ' +
+  'hover:border-(--color-border-default) hover:bg-(--color-bg-elevated) ' +
   'focus-visible:ring-2 focus-visible:ring-ring';
 
 const TERTIARY = { color: 'var(--color-text-tertiary)' as const };
 
 /** Lucide icon for non-URL source types. */
 function NonUrlIcon({ type, size = 14 }: { type: ProvenanceSourceType; size?: number }): React.ReactElement {
-  const cls = 'flex-shrink-0';
+  const cls = 'shrink-0';
   const props = { width: size, height: size, className: cls, style: TERTIARY };
   switch (type) {
     case 'file_read':
@@ -107,7 +107,7 @@ function SourceThumb({
   const inner = size <= 28 ? 14 : Math.round(size * 0.5);
   return (
     <span
-      className="flex flex-shrink-0 items-center justify-center rounded-md"
+      className="flex shrink-0 items-center justify-center rounded-md"
       style={{ width: size, height: size, background: 'var(--color-bg-subtle)' }}
     >
       {isUrl ? (
@@ -399,7 +399,7 @@ export default function SourcesPanel({
   const groups = useMemo<SourceGroup[]>(() => buildGroups(activeRecords), [activeRecords]);
 
   const scopeSwitch = showScopeSwitch ? (
-    <div className="flex-shrink-0 px-3 pt-3">
+    <div className="shrink-0 px-3 pt-3">
       <AnimatedTabs
         tabs={[
           { id: 'turn', label: `${t('chat.sources.scope.turn')} (${turnCount})` },
@@ -443,12 +443,12 @@ export default function SourcesPanel({
                 onClick={() => toggleGroup(group.type)}
                 aria-expanded={!collapsed}
                 aria-label={`${groupLabel} — ${t(collapsed ? 'chat.sources.expand' : 'chat.sources.collapse')}`}
-                className="mb-1.5 flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left outline-none transition-colors hover:bg-[var(--color-bg-subtle)] focus-visible:ring-2 focus-visible:ring-ring"
+                className="mb-1.5 flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left outline-hidden transition-colors hover:bg-(--color-bg-subtle) focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {collapsed ? (
-                  <ChevronRight className="h-3.5 w-3.5 flex-shrink-0" style={TERTIARY} />
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0" style={TERTIARY} />
                 ) : (
-                  <ChevronDown className="h-3.5 w-3.5 flex-shrink-0" style={TERTIARY} />
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0" style={TERTIARY} />
                 )}
                 <span
                   className="text-xs font-semibold uppercase tracking-wide"
@@ -522,7 +522,7 @@ function SourceCardBody({
       </span>
       {subagent && (
         <span
-          className="inline-flex flex-shrink-0 items-center rounded-full px-1.5 py-0.5 text-[0.625rem] font-medium"
+          className="inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[0.625rem] font-medium"
           style={{ backgroundColor: 'var(--color-accent-soft)', color: 'var(--color-accent-primary)' }}
         >
           {t('chat.sources.subagent')}
@@ -537,7 +537,7 @@ function SourceCardBody({
 function ViewChevron(): React.ReactElement {
   return (
     <ChevronRight
-      className="h-4 w-4 flex-shrink-0 opacity-0 transition-opacity group-hover:opacity-50"
+      className="h-4 w-4 shrink-0 opacity-0 transition-opacity group-hover:opacity-50"
       style={TERTIARY}
     />
   );
@@ -729,7 +729,7 @@ function SourceDeck({
             : `${frontLabel}${kind ? ` · ${kind}` : ''} — ${t('chat.sources.viewDetails')}`;
         const trailing =
           !fanned && isTop ? (
-            <span className="inline-flex flex-shrink-0 items-center gap-1">
+            <span className="inline-flex shrink-0 items-center gap-1">
               <span
                 className="inline-flex items-center justify-center rounded-full px-1 text-[0.625rem] font-medium"
                 style={{
@@ -855,7 +855,7 @@ function SourceDetailDialog({
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent
-        className="max-w-lg [&>*]:min-w-0"
+        className="max-w-lg *:min-w-0"
         style={{
           backgroundColor: 'var(--color-bg-elevated)',
           borderColor: 'var(--color-border-default)',
@@ -874,7 +874,7 @@ function SourceDetailDialog({
                 </span>
                 {record && isTaskAgentId(record.agent) && (
                   <span
-                    className="inline-flex flex-shrink-0 items-center rounded-full px-1.5 py-0.5 text-[0.625rem] font-medium"
+                    className="inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[0.625rem] font-medium"
                     style={{ backgroundColor: 'var(--color-accent-soft)', color: 'var(--color-accent-primary)' }}
                   >
                     {t('chat.sources.subagent')}
@@ -900,7 +900,7 @@ function SourceDetailDialog({
           <button
             type="button"
             onClick={handleOpen}
-            className="group inline-flex w-fit items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium outline-none transition-all hover:gap-2 focus-visible:ring-2 focus-visible:ring-ring"
+            className="group inline-flex w-fit items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium outline-hidden transition-all hover:gap-2 focus-visible:ring-2 focus-visible:ring-ring"
             style={{
               backgroundColor: 'var(--color-bg-elevated)',
               borderColor: 'var(--color-border-elevated)',
@@ -934,7 +934,7 @@ function FingerprintRows({ record }: { record: ProvenanceRecord }): React.ReactE
       label: t('chat.sources.fingerprint.checksum'),
       value: shortSha(record.result_sha256),
       mono: true,
-      icon: <Fingerprint className="h-3 w-3 flex-shrink-0" style={TERTIARY} />,
+      icon: <Fingerprint className="h-3 w-3 shrink-0" style={TERTIARY} />,
     });
   if (record.result_size != null) meta.push({ label: t('chat.sources.fingerprint.size'), value: formatBytes(record.result_size), mono: true });
 
@@ -953,7 +953,7 @@ function FingerprintRows({ record }: { record: ProvenanceRecord }): React.ReactE
               className="flex items-center justify-between gap-3 px-3 py-2 text-xs"
               style={i > 0 ? { borderTop: '1px solid var(--color-border-muted)' } : undefined}
             >
-              <span className="flex-shrink-0" style={TERTIARY}>
+              <span className="shrink-0" style={TERTIARY}>
                 {r.label}
               </span>
               <span
@@ -976,14 +976,14 @@ function FingerprintRows({ record }: { record: ProvenanceRecord }): React.ReactE
               const isRedacted = value === REDACTED;
               return (
                 <div key={key} className="flex items-baseline justify-between gap-3 text-xs">
-                  <dt className="flex-shrink-0 font-mono" style={TERTIARY}>
+                  <dt className="shrink-0 font-mono" style={TERTIARY}>
                     {key}
                   </dt>
                   <dd
-                    className="flex min-w-0 items-center gap-1 break-words text-right font-mono"
+                    className="flex min-w-0 items-center gap-1 wrap-break-word text-right font-mono"
                     style={{ color: isRedacted ? 'var(--color-text-tertiary)' : 'var(--color-text-secondary)' }}
                   >
-                    {isRedacted && <Lock className="h-2.5 w-2.5 flex-shrink-0" aria-hidden />}
+                    {isRedacted && <Lock className="h-2.5 w-2.5 shrink-0" aria-hidden />}
                     {argValueText(value)}
                   </dd>
                 </div>
@@ -996,7 +996,7 @@ function FingerprintRows({ record }: { record: ProvenanceRecord }): React.ReactE
         <section>
           <SectionLabel>{t('chat.sources.fingerprint.snippet')}</SectionLabel>
           <div
-            className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-lg px-3 py-2.5 font-mono text-xs leading-relaxed"
+            className="max-h-64 overflow-y-auto whitespace-pre-wrap wrap-break-word rounded-lg px-3 py-2.5 font-mono text-xs leading-relaxed"
             style={{
               color: 'var(--color-text-secondary)',
               background: 'var(--color-bg-code)',

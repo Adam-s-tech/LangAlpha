@@ -107,7 +107,6 @@
   justify-content: center;
   background: color-mix(in srgb, var(--color-bg-page) 75%, transparent);
   backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
 }
 
 .preview-viewer-resize-card {

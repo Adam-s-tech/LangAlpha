@@ -130,7 +130,7 @@ function ChangeSpecDialog({ target, onClose, onSubmit, busy, quota, error }: Cha
             data-testid="spec-change-progress"
             style={{ backgroundColor: 'var(--color-bg-card)', color: 'var(--color-text-primary)' }}
           >
-            <Loader size={14} className="mt-0.5 text-[color:var(--color-accent-primary)]" />
+            <Loader size={14} className="mt-0.5 text-(--color-accent-primary)" />
             <div className="flex flex-col gap-0.5">
               <span className="font-medium">{specChangeLabel(t, change)}</span>
               <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>

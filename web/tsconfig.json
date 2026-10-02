@@ -12,6 +12,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    "types": ["node", "dom-speech-recognition", "react-syntax-highlighter"],
     "paths": { "@/*": ["./src/*"], "@e2e/*": ["./e2e/*"] }
   },
   "include": ["src"],

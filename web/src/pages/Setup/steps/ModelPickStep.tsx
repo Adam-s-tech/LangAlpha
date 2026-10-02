@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router';
 import { Check, Plus, X, KeyRound, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Loader } from '@/components/ui/loader';
@@ -355,7 +355,7 @@ export default function ModelPickStep() {
   if (modelsLoading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader size={20} className="text-[color:var(--color-text-tertiary)]" />
+        <Loader size={20} className="text-(--color-text-tertiary)" />
       </div>
     );
   }
@@ -688,7 +688,7 @@ export default function ModelPickStep() {
         >
           {saving ? (
             <>
-              <span aria-hidden="true" className="mr-1.5 flex-shrink-0">
+              <span aria-hidden="true" className="mr-1.5 shrink-0">
                 <Loader size={16} className="text-current" />
               </span>
               {t('setup.saving')}

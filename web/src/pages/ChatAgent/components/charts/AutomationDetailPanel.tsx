@@ -1,6 +1,6 @@
 import React from 'react';
 import { relativeTime } from '@/lib/format';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useRouteLeaveGuard } from '../../contexts/RouteLeaveGuardContext';
 import { Clock, Timer, TrendingUp, ExternalLink } from 'lucide-react';
 import { useTranslation } from 'react-i18next';

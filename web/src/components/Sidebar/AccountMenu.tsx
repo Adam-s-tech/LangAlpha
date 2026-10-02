@@ -1,6 +1,6 @@
 import { User, Settings, LogOut, CreditCard, ChevronRight } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../contexts/AuthContext';
 import { useUser } from '@/hooks/useUser';
@@ -150,7 +150,7 @@ const AccountMenu: React.FC<AccountMenuProps> = ({ variant = 'rail' }) => {
           // inset 10px inside the sidebar, so any fixed width lines up on the
           // left (align="start") and misses on the right. Collapsed, the
           // trigger is a 32px avatar and has no width worth inheriting.
-          className={variant === 'row' ? 'w-[var(--radix-dropdown-menu-trigger-width)]' : 'w-64'}
+          className={variant === 'row' ? 'w-(--radix-dropdown-menu-trigger-width)' : 'w-64'}
         >
           {/* The expanded trigger is a full row already carrying this avatar and
               this name, so repeating them here stacks the same identity twice.
@@ -161,7 +161,7 @@ const AccountMenu: React.FC<AccountMenuProps> = ({ variant = 'rail' }) => {
             <>
               <div className="flex items-center gap-2.5 px-2.5 py-1.5">
                 <div
-                  className="h-9 w-9 rounded-full flex items-center justify-center overflow-hidden flex-shrink-0"
+                  className="h-9 w-9 rounded-full flex items-center justify-center overflow-hidden shrink-0"
                   style={{ backgroundColor: 'var(--color-accent-soft)' }}
                 >
                   {avatarUrl && !avatarError ? (
@@ -188,7 +188,7 @@ const AccountMenu: React.FC<AccountMenuProps> = ({ variant = 'rail' }) => {
                       </span>
                       {planDisplayName && (
                         <span
-                          className="text-[0.625rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full flex-shrink-0"
+                          className="text-[0.625rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full shrink-0"
                           style={{
                             backgroundColor: 'var(--color-accent-soft)',
                             color: 'var(--color-accent-light)',

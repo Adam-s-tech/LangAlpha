@@ -182,7 +182,7 @@ function NewsBody({
   if (loading && !article) {
     return (
       <div className="flex items-center justify-center py-24">
-        <Loader size={32} className="text-[color:var(--color-accent-primary)]" />
+        <Loader size={32} className="text-(--color-accent-primary)" />
       </div>
     );
   }
@@ -473,7 +473,7 @@ function NewsBody({
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
                       {...sentimentBackdrop}
-                      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+                      className="fixed inset-0 z-60 flex items-center justify-center p-4"
                       style={{ backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}
                     >
                       <motion.div
@@ -659,7 +659,7 @@ function NewsDetailModal({ newsId, onClose, fallbackUrl, fallback }: NewsDetailM
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           {...backdrop}
-          className="fixed inset-0 z-[1010] flex items-center justify-center p-8"
+          className="fixed inset-0 z-1010 flex items-center justify-center p-8"
           style={{ backgroundColor: 'var(--color-bg-overlay, rgba(0,0,0,0.6))', backdropFilter: 'blur(4px)' }}
         >
           <motion.div

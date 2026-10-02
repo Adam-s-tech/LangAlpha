@@ -30,7 +30,7 @@ const PopoverContent = React.forwardRef<
         if (!event.defaultPrevented && lastInputWasPointer()) event.preventDefault()
       }}
       className={cn(
-        "z-[1030] w-72 rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-none pop-in",
+        "z-1030 w-72 rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-hidden pop-in",
         className
       )}
       {...props}

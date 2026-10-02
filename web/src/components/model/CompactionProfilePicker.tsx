@@ -66,7 +66,7 @@ export function CompactionProfilePicker({
               onClick={() => onChange(selected ? "" : name)}
               className={cn(
                 "flex flex-col items-start rounded-md p-3 text-left transition-colors",
-                "hover:border-[var(--color-border-elevated)]",
+                "hover:border-(--color-border-elevated)",
               )}
               style={{
                 background: selected

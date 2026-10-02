@@ -87,7 +87,7 @@ function WatchlistWidget({ instance }: WidgetRenderProps<WatchlistConfig>) {
       >
         <div className="flex items-baseline gap-2.5 min-w-0">
           <Eye
-            className="h-3.5 w-3.5 flex-shrink-0 self-center"
+            className="h-3.5 w-3.5 shrink-0 self-center"
             style={{ color: 'var(--color-text-tertiary)' }}
           />
           <span

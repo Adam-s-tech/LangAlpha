@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import ResetPassword from '@/pages/Login/ResetPassword';
 
 // The canvas pane needs a real 2d context and is irrelevant here.

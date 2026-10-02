@@ -51,9 +51,9 @@ export function ExperimentsTab() {
                   style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border-muted)' }}
                 >
                   <div className="flex items-start justify-between gap-4">
-                    <div className="space-y-1 min-w-0">
+                    <div className="min-w-0">
                       <label className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{feature.label}</label>
-                      <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>{feature.description}</p>
+                      <p className="mt-1 text-sm leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>{feature.description}</p>
                     </div>
                     <ToggleSwitch
                       checked={feature.enabled}
@@ -67,7 +67,7 @@ export function ExperimentsTab() {
                       className="mt-3 flex items-start gap-2 rounded-md px-3 py-2"
                       style={{ backgroundColor: 'var(--color-warning-soft)' }}
                     >
-                      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" style={{ color: 'var(--color-warning)' }} />
+                      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} />
                       <p className="text-xs leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
                         <span className="font-medium" style={{ color: 'var(--color-warning)' }}>
                           {t('settings.experimentTradeoff', 'Trade-off')}

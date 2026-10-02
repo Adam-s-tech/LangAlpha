@@ -27,7 +27,7 @@ function Select({
 }) {
   const id = useId();
   return (
-    <div className="flex flex-col gap-1 min-w-[8rem]">
+    <div className="flex flex-col gap-1 min-w-32">
       <label
         htmlFor={id}
         className="text-[0.625rem] font-medium uppercase tracking-[0.14em]"

@@ -64,7 +64,7 @@ export function KindTile({
     <div
       aria-hidden
       className={cn(
-        'flex-shrink-0 flex items-center justify-center border',
+        'shrink-0 flex items-center justify-center border',
         TILE_SIZES[size],
         className,
       )}

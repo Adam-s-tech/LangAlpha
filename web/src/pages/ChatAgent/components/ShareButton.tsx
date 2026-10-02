@@ -55,7 +55,7 @@ function SharedInWorkspace({ workspaceId }: { workspaceId: string }) {
       <ul className="max-h-48 overflow-y-auto space-y-1">
         {links.map((link) => (
           <li key={link.code} className="flex items-center gap-2 min-w-0">
-            <FileText className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-icon-muted)' }} />
+            <FileText className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-icon-muted)' }} />
             <div className="flex-1 min-w-0">
               <p className="text-xs truncate" style={{ color: 'var(--color-text-primary)' }} title={link.path ?? undefined}>
                 {sharedLinkName(link)}
@@ -69,7 +69,7 @@ function SharedInWorkspace({ workspaceId }: { workspaceId: string }) {
             <button
               type="button"
               onClick={() => void copy(link.code)}
-              className="p-1 rounded-md flex-shrink-0"
+              className="p-1 rounded-md shrink-0"
               style={{ color: copiedCode === link.code ? 'var(--color-success)' : 'var(--color-text-secondary)' }}
               title={t('share.copyLink')}
               aria-label={t('share.copyLink')}
@@ -80,7 +80,7 @@ function SharedInWorkspace({ workspaceId }: { workspaceId: string }) {
               type="button"
               onClick={() => stopSharing(link)}
               disabled={patch.isPending}
-              className="text-xs px-1.5 py-0.5 rounded-md flex-shrink-0 disabled:opacity-50 hover:underline"
+              className="text-xs px-1.5 py-0.5 rounded-md shrink-0 disabled:opacity-50 hover:underline"
               style={{ color: 'var(--color-text-secondary)' }}
             >
               {t('share.stop')}
@@ -228,14 +228,14 @@ export default function ShareButton({ threadId, initialIsShared = false, workspa
                 <button
                   onClick={() => handleToggleShare(!isShared)}
                   disabled={updating}
-                  className="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200"
+                  className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200"
                   style={{
                     backgroundColor: isShared ? 'var(--color-accent-primary)' : 'var(--color-border-muted)',
                     opacity: updating ? 0.6 : 1,
                   }}
                 >
                   <span
-                    className="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200"
+                    className="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200"
                     style={{ transform: isShared ? 'translateX(16px)' : 'translateX(0)' }}
                   />
                 </button>
@@ -258,7 +258,7 @@ export default function ShareButton({ threadId, initialIsShared = false, workspa
                     </div>
                     <button
                       onClick={handleCopy}
-                      className="p-1.5 rounded-md transition-colors flex-shrink-0"
+                      className="p-1.5 rounded-md transition-colors shrink-0"
                       style={{ color: copied ? 'var(--color-success)' : 'var(--color-text-secondary)' }}
                       onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-border-muted)'; }}
                       onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = ''; }}

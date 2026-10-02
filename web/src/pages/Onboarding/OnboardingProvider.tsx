@@ -9,7 +9,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useUser } from '@/hooks/useUser';
 import { usePreferences } from '@/hooks/usePreferences';

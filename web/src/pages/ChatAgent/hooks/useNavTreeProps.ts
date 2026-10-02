@@ -5,7 +5,7 @@
  * existing on the other; only the genuinely per-surface pieces stay arguments.
  */
 import { useCallback, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useNavigationData } from './useNavigationData';
 import type { NavWorkspace } from './useNavigationData';
 import type { SidebarAgentRow } from '../session/subagents/subagentStatus';

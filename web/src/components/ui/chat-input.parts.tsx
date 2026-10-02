@@ -24,7 +24,7 @@ export const FilePreviewCard = ({ file, onRemove }: { file: FileAttachment; onRe
   const isImage = file.type.startsWith('image/') && file.preview;
 
   return (
-    <div className="relative group flex-shrink-0 w-24 h-24 rounded-xl overflow-hidden border border-[var(--color-border-muted)] bg-[var(--color-bg-elevated)] animate-fade-in transition-all hover:border-[var(--color-border-default)]">
+    <div className="relative group shrink-0 w-24 h-24 rounded-xl overflow-hidden border border-(--color-border-muted) bg-(--color-bg-elevated) animate-fade-in transition-all hover:border-(--color-border-default)">
       {isImage ? (
         <div className="w-full h-full relative">
           <img src={file.preview!} alt={file.file.name} className="w-full h-full object-cover" />
@@ -210,7 +210,7 @@ export function MentionAutocompleteList({
               onMouseDown={(e) => { e.preventDefault(); onSelect(filePath); }}
               onMouseEnter={() => onHover(idx)}
             >
-              <FileText className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+              <FileText className="h-4 w-4 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
               <span className="file-name">{name}</span>
               {dir && <span className="file-path">{dir}/</span>}
             </div>
@@ -247,7 +247,7 @@ export function SlashCommandList({
             onMouseDown={(e) => { e.preventDefault(); onSelect(cmd); }}
             onMouseEnter={() => onHover(idx)}
           >
-            {getSlashCommandIcon(cmd, 'h-4 w-4 flex-shrink-0 slash-cmd-icon')}
+            {getSlashCommandIcon(cmd, 'h-4 w-4 shrink-0 slash-cmd-icon')}
             <span className="slash-cmd-name">/{cmd.name}</span>
             <span className="slash-cmd-desc">{cmd.description}</span>
           </div>

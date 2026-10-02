@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence, type MotionProps } from 'framer-motion';
 import { Check, X, ChevronRight, ArrowRight, AlertTriangle, Square } from 'lucide-react';
@@ -77,7 +77,7 @@ const STATUS_UI: Record<
   needs_input: {
     labelKey: 'chat.ptcCard.statusNeedsInput',
     glyph: (
-      <span aria-hidden className="flex h-3 w-3 flex-shrink-0 items-center justify-center">
+      <span aria-hidden className="flex h-3 w-3 shrink-0 items-center justify-center">
         <span className="rounded-full" style={{ width: 7, height: 7, border: '1.5px solid var(--color-accent-primary)' }} />
       </span>
     ),
@@ -89,7 +89,7 @@ const STATUS_UI: Record<
   },
   completed: {
     labelKey: 'chat.ptcCard.statusCompleted',
-    glyph: <Check aria-hidden className="h-3 w-3 flex-shrink-0 stroke-[2.5]" style={{ color: 'var(--color-success)' }} />,
+    glyph: <Check aria-hidden className="h-3 w-3 shrink-0 stroke-[2.5]" style={{ color: 'var(--color-success)' }} />,
     labelColor: 'var(--color-text-tertiary)',
     live: false,
     hintKey: null,
@@ -97,7 +97,7 @@ const STATUS_UI: Record<
   },
   failed: {
     labelKey: 'chat.ptcCard.statusFailed',
-    glyph: <AlertTriangle aria-hidden className="h-3 w-3 flex-shrink-0" style={{ color: 'var(--color-loss)' }} />,
+    glyph: <AlertTriangle aria-hidden className="h-3 w-3 shrink-0" style={{ color: 'var(--color-loss)' }} />,
     labelColor: 'var(--color-loss)',
     live: false,
     hintKey: 'chat.ptcCard.hintFailed',
@@ -105,7 +105,7 @@ const STATUS_UI: Record<
   },
   stopped: {
     labelKey: 'chat.ptcCard.statusStopped',
-    glyph: <Square aria-hidden className="h-2.5 w-2.5 flex-shrink-0" style={{ color: 'var(--color-icon-muted)' }} />,
+    glyph: <Square aria-hidden className="h-2.5 w-2.5 shrink-0" style={{ color: 'var(--color-icon-muted)' }} />,
     labelColor: 'var(--color-text-tertiary)',
     live: false,
     hintKey: 'chat.ptcCard.hintStopped',
@@ -119,8 +119,8 @@ const STATUS_UI: Record<
  *  tree — the card's persistent live region already announces the label. */
 function LiveSpinner() {
   return (
-    <span aria-hidden className="flex-shrink-0">
-      <Loader size={12} className="text-[color:var(--color-accent-primary)]" />
+    <span aria-hidden className="shrink-0">
+      <Loader size={12} className="text-(--color-accent-primary)" />
     </span>
   );
 }
@@ -160,7 +160,7 @@ function StatusIndicator({ status, elapsed }: { status: PTCDispatchStatus; elaps
     <span
       role="status"
       aria-live="polite"
-      className="inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap text-[0.75rem] font-medium"
+      className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[0.75rem] font-medium"
       style={{ color: ui.labelColor }}
     >
       {ui.glyph}
@@ -284,9 +284,9 @@ function PTCAgentCard({ proposalData, onApprove, onReject, flashContext }: PTCAg
       <div>
         <button onClick={() => setCollapsed((v) => !v)} aria-expanded={!collapsed} aria-controls={detailId} className="flex w-full cursor-pointer items-center gap-2 py-1 text-left">
           <motion.div animate={{ rotate: collapsed ? 0 : 90 }} transition={{ duration: 0.2 }}>
-            <ChevronRight className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-icon-muted)' }} />
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-icon-muted)' }} />
           </motion.div>
-          <X className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+          <X className="h-4 w-4 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
           <span className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>{t('chat.ptcCard.researchDeclined')}</span>
         </button>
         <AnimatePresence initial={false}>
@@ -331,7 +331,7 @@ function PTCAgentCard({ proposalData, onApprove, onReject, flashContext }: PTCAg
             <span className="text-[0.75rem]" style={{ color: 'var(--color-text-quaternary)' }}>{ui.hintKey ? t(ui.hintKey) : ''}</span>
             <button
               onClick={openThread}
-              className="group inline-flex flex-shrink-0 items-center gap-1 text-[0.7813rem] font-medium transition-opacity hover:opacity-80"
+              className="group inline-flex shrink-0 items-center gap-1 text-[0.7813rem] font-medium transition-opacity hover:opacity-80"
               style={{ color: ui.ctaAccent ? 'var(--color-accent-primary)' : 'var(--color-text-tertiary)' }}
             >
               {t(ui.ctaKey)}
@@ -352,7 +352,7 @@ function PTCAgentCard({ proposalData, onApprove, onReject, flashContext }: PTCAg
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
       statusSlot={
-        <span className="flex-shrink-0 text-[0.6875rem] font-medium" style={{ color: 'var(--color-text-quaternary)' }}>{t('chat.ptcCard.awaitingApproval')}</span>
+        <span className="shrink-0 text-[0.6875rem] font-medium" style={{ color: 'var(--color-text-quaternary)' }}>{t('chat.ptcCard.awaitingApproval')}</span>
       }
     >
       {/* Report-back toggle */}
@@ -361,7 +361,7 @@ function PTCAgentCard({ proposalData, onApprove, onReject, flashContext }: PTCAg
         role="switch"
         aria-checked={reportBack}
         aria-label={t('chat.ptcCard.reportBack')}
-        className="mt-3 flex w-full cursor-pointer items-center justify-between rounded-md pt-2.5 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="mt-3 flex w-full cursor-pointer items-center justify-between rounded-md pt-2.5 outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         style={{ borderTop: '1px solid var(--color-border-muted)' }}
         onClick={(e: React.MouseEvent) => { e.stopPropagation(); setReportBack((v) => !v); }}
       >
@@ -388,7 +388,7 @@ function PTCAgentCard({ proposalData, onApprove, onReject, flashContext }: PTCAg
         </button>
         <button
           onClick={(e: React.MouseEvent) => { e.stopPropagation(); onReject?.(); }}
-          className="rounded-md px-3.5 py-1.5 text-[0.8125rem] font-medium transition-colors hover:bg-[var(--color-bg-hover)]"
+          className="rounded-md px-3.5 py-1.5 text-[0.8125rem] font-medium transition-colors hover:bg-(--color-bg-hover)"
           style={{ border: '1px solid var(--color-border-default)', color: 'var(--color-text-tertiary)' }}
         >
           {t('chat.ptcCard.decline')}

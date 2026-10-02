@@ -1,5 +1,5 @@
 import { Suspense, useMemo } from 'react';
-import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Shield, X } from 'lucide-react';

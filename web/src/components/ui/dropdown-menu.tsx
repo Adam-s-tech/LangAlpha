@@ -36,7 +36,7 @@ const DropdownMenuContent = React.forwardRef<
         // it as --radix-…-available-height; capping there is what keeps a long
         // menu (the model list) from running off-screen with no way to reach
         // the items past the fold.
-        "z-[1030] min-w-[8rem] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto overflow-x-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md",
+        "z-1030 min-w-32 max-h-(--radix-dropdown-menu-content-available-height) overflow-y-auto overflow-x-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md",
         "pop-in",
         className
       )}
@@ -49,7 +49,7 @@ DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName
 // The only focus indication a menu item gets. Items wear no ring by design, so
 // this tint answers pointer and keyboard alike, and it is written once: a value
 // that clears contrast has to reach every shape of item at the same time.
-const ITEM_HIGHLIGHT = "data-[highlighted]:bg-accent/15"
+const ITEM_HIGHLIGHT = "data-highlighted:bg-accent/15"
 
 // "Label ... value >": the label at the left, whatever it currently reads
 // right-aligned against the chevron. A setting row exists in two shapes, an
@@ -59,11 +59,11 @@ const SETTING_ROW = "justify-between text-[0.8125rem]"
 
 // Every shape of item shares this box, so a checkbox row lines up with the
 // plain rows around it.
-const ITEM_BOX = "relative flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2.5 py-1.5 text-sm transition-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+const ITEM_BOX = "relative flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2.5 py-1.5 text-sm transition-colors data-disabled:pointer-events-none data-disabled:opacity-50"
 
 const itemVariants: Record<string, string> = {
   default: ITEM_HIGHLIGHT,
-  destructive: "text-destructive data-[highlighted]:bg-destructive/10 data-[highlighted]:text-destructive",
+  destructive: "text-destructive data-highlighted:bg-destructive/10 data-highlighted:text-destructive",
   setting: `${SETTING_ROW} ${ITEM_HIGHLIGHT}`,
 }
 
@@ -157,7 +157,7 @@ const DropdownMenuSubContent = React.forwardRef<
       sideOffset={sideOffset}
       collisionPadding={collisionPadding}
       className={cn(
-        "z-[1030] min-w-[8rem] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto overflow-x-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-lg",
+        "z-1030 min-w-32 max-h-(--radix-dropdown-menu-content-available-height) overflow-y-auto overflow-x-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-lg",
         "pop-in",
         className
       )}

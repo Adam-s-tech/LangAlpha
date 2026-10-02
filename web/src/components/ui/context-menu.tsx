@@ -17,7 +17,7 @@ const ContextMenuContent = React.forwardRef<
     <ContextMenuPrimitive.Content
       ref={ref}
       className={cn(
-        "z-[1030] min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md",
+        "z-1030 min-w-32 overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md",
         "pop-in",
         className
       )}
@@ -28,8 +28,8 @@ const ContextMenuContent = React.forwardRef<
 ContextMenuContent.displayName = ContextMenuPrimitive.Content.displayName
 
 const itemVariants: Record<string, string> = {
-  default: "data-[highlighted]:bg-accent/15",
-  destructive: "text-destructive data-[highlighted]:bg-destructive/10 data-[highlighted]:text-destructive",
+  default: "data-highlighted:bg-accent/15",
+  destructive: "text-destructive data-highlighted:bg-destructive/10 data-highlighted:text-destructive",
 }
 
 const ContextMenuItem = React.forwardRef<
@@ -42,7 +42,7 @@ const ContextMenuItem = React.forwardRef<
     ref={ref}
     className={cn(
       "relative flex w-full cursor-default select-none items-center gap-2 rounded-sm px-3 py-2 text-sm transition-colors",
-      "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "data-disabled:pointer-events-none data-disabled:opacity-50",
       itemVariants[variant],
       className
     )}

@@ -6,7 +6,7 @@ import { downloadLabel, type DownloadState } from '../../utils/downloadNotice';
 export function DocumentLoadingFallback(): React.ReactElement {
   return (
     <div className="flex items-center justify-center py-12">
-      <Loader size={20} className="text-[color:var(--color-text-tertiary)]" />
+      <Loader size={20} className="text-(--color-text-tertiary)" />
     </div>
   );
 }

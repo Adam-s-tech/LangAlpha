@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
 import { Pin, Pencil, Copy, Trash2 } from 'lucide-react';

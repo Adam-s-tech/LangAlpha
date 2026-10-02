@@ -88,7 +88,7 @@ export function DetailHeader({
           </div>
         )}
       </div>
-      {controls && <div className="flex items-center gap-2 flex-shrink-0">{controls}</div>}
+      {controls && <div className="flex items-center gap-2 shrink-0">{controls}</div>}
     </div>
   );
 }
@@ -138,7 +138,7 @@ export function DetailField({
   return (
     <div className="flex items-baseline gap-3 text-[0.8125rem]">
       <span
-        className="w-24 flex-shrink-0"
+        className="w-24 shrink-0"
         style={{ color: 'var(--color-text-tertiary)' }}
       >
         {label}

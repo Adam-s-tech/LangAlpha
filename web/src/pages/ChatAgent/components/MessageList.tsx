@@ -245,7 +245,9 @@ function MessageList({ messages, isLoading, isLoadingHistory, isSubagentView, re
   // timer instead of each card polling /status on its own.
   return (
     <DispatchStatusProvider>
-    <div className={`font-content ${isMobile ? 'space-y-4' : 'space-y-6'}`}>
+    {/* sibling-space-y, not space-y: NotificationDivider's own my-1 would
+        otherwise replace the gap below it. */}
+    <div className={`font-content ${isMobile ? 'sibling-space-y-4' : 'sibling-space-y-6'}`}>
       {visible.map(({ message, turnIndex }, i) => {
         if ((message.role as string) === 'notification') {
           return <NotificationDivider key={message.id as string} message={message} />;

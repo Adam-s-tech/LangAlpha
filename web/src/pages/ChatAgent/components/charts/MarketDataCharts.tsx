@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useMemo, useCallback, useState, memo } from 'react';
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, LabelList,

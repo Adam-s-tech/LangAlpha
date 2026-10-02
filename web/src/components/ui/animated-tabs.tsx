@@ -40,7 +40,7 @@ export function AnimatedTabs({
             onClick={() => onChange(tab.id)}
             className={`
               relative rounded-md px-3 py-1.5 text-sm font-medium
-              outline-none transition-colors cursor-pointer
+              outline-hidden transition-colors cursor-pointer
               focus-visible:ring-2 focus-visible:ring-ring
               ${isActive ? "" : "hover:opacity-60"}
             `}

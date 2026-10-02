@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter, useNavigate } from 'react-router-dom';
+import { MemoryRouter, useNavigate } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { emptyOnboardingPrefs } from '../onboardingPrefsSchema';
 import type { OnboardingPrefs } from '../types';

@@ -73,6 +73,7 @@ describe('useLiveBars', () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

@@ -241,7 +241,7 @@ export function TreeColumn(props: TreeColumnProps): React.ReactElement {
             className="rings-within owns-its-edge flex items-center gap-1.5 h-8 px-2 rounded-md border"
             style={{ backgroundColor: 'var(--color-bg-input)', borderColor: 'var(--color-border-muted)' }}
           >
-            <Search className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+            <Search className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
             <input
               type="text"
               value={filter.searchQuery}
@@ -317,7 +317,7 @@ export function TreeColumn(props: TreeColumnProps): React.ReactElement {
           <div className="file-panel-store-group">
             {props.onOpenMemory && (
               <button type="button" className="file-panel-item file-panel-store-row" onClick={props.onOpenMemory}>
-                <BookMarked className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+                <BookMarked className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
                 <span className="flex-1 min-w-0 truncate text-xs" style={{ color: 'var(--color-text-primary)' }}>
                   {t('filePanel.tabs.memory')}
                 </span>
@@ -325,7 +325,7 @@ export function TreeColumn(props: TreeColumnProps): React.ReactElement {
             )}
             {props.onOpenMemo && (
               <button type="button" className="file-panel-item file-panel-store-row" onClick={props.onOpenMemo}>
-                <ScrollText className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+                <ScrollText className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
                 <span className="flex-1 min-w-0 truncate text-xs" style={{ color: 'var(--color-text-primary)' }}>
                   {t('filePanel.tabs.memo')}
                 </span>
@@ -340,7 +340,7 @@ export function TreeColumn(props: TreeColumnProps): React.ReactElement {
         {props.previews.length > 0 && (
           <div className="file-panel-preview-group">
             <div className="file-panel-preview-group-header">
-              <LayoutDashboard className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+              <LayoutDashboard className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
               <span className="text-xs font-medium truncate" style={{ color: 'var(--color-text-tertiary)' }}>
                 {t('filePanel.runningApps')}
               </span>
@@ -354,7 +354,7 @@ export function TreeColumn(props: TreeColumnProps): React.ReactElement {
                 onClick={() => props.onOpenPreview(app.port)}
                 title={app.title ? `${app.title} :${app.port}` : `:${app.port}`}
               >
-                <LayoutDashboard className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+                <LayoutDashboard className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
                 <span className="flex-1 min-w-0 truncate text-xs" style={{ color: 'var(--color-text-primary)' }}>
                   {app.title || `:${app.port}`}
                 </span>

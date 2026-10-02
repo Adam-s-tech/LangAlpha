@@ -15,7 +15,7 @@ export function EditDiff({ oldStr, newStr }: EditDiffProps): React.ReactElement 
           {oldStr.split('\n').map((line, i) => (
             <div key={`old-${i}`} className="flex" style={{ minHeight: '20px' }}>
               <span
-                className="flex-shrink-0 select-none text-right px-2"
+                className="shrink-0 select-none text-right px-2"
                 style={{ color: 'var(--color-loss-muted)', width: '20px', userSelect: 'none' }}
               >&minus;</span>
               <pre className="flex-1 font-mono whitespace-pre-wrap break-all m-0 pr-2" style={{ color: 'var(--color-loss)' }}>
@@ -30,7 +30,7 @@ export function EditDiff({ oldStr, newStr }: EditDiffProps): React.ReactElement 
           {newStr.split('\n').map((line, i) => (
             <div key={`new-${i}`} className="flex" style={{ minHeight: '20px' }}>
               <span
-                className="flex-shrink-0 select-none text-right px-2"
+                className="shrink-0 select-none text-right px-2"
                 style={{ color: 'var(--color-profit-muted)', width: '20px', userSelect: 'none' }}
               >+</span>
               <pre className="flex-1 font-mono whitespace-pre-wrap break-all m-0 pr-2" style={{ color: 'var(--color-profit)' }}>

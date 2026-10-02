@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Loader } from '@/components/ui/loader';
@@ -295,7 +295,7 @@ export function ApiKeyConnect({ state }: { state: LocationState }) {
         >
           {saving ? (
             <>
-              <span aria-hidden="true" className="mr-1.5 flex-shrink-0">
+              <span aria-hidden="true" className="mr-1.5 shrink-0">
                 <Loader size={16} className="text-current" />
               </span>
               {t('setup.saving')}

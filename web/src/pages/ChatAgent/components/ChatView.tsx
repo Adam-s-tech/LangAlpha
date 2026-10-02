@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, FolderOpen, ScrollText, TextSelect, Minus, Menu, Info, Clock } from 'lucide-react';
 import { HoverCard, HoverCardTrigger, HoverCardContent } from '@/components/ui/hover-card';
@@ -1329,8 +1329,8 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
             It already spans the titlebar and is mostly empty, so the shell gets
             a full-width band at no layout cost; the buttons in it opt out
             through the global no-drag rule. */}
-        <div data-chrome="drag" className="flex items-center justify-between px-4 py-2 border-b min-w-0 flex-shrink-0" style={{ borderColor: 'var(--color-border-muted)', cursor: isMobile ? 'pointer' : undefined }} onClick={handleTopBarTap}>
-          <div className="flex items-center gap-4 min-w-0 flex-shrink">
+        <div data-chrome="drag" className="flex items-center justify-between px-4 py-2 border-b min-w-0 shrink-0" style={{ borderColor: 'var(--color-border-muted)', cursor: isMobile ? 'pointer' : undefined }} onClick={handleTopBarTap}>
+          <div className="flex items-center gap-4 min-w-0 shrink">
             <button
               onClick={() => {
                 if (activeAgentId !== 'main') {
@@ -1352,7 +1352,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                   onBack();
                 }
               }}
-              className="p-2 rounded-md transition-colors flex-shrink-0"
+              className="p-2 rounded-md transition-colors shrink-0"
               style={{ color: 'var(--color-text-primary)' }}
               title={
                 activeAgentId !== 'main'
@@ -1369,7 +1369,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
             {isMobile && (
               <button
                 onClick={handleNavExpand}
-                className="p-2 rounded-md transition-colors flex-shrink-0"
+                className="p-2 rounded-md transition-colors shrink-0"
                 style={{ color: 'var(--color-text-primary)' }}
                 title="Menu"
               >
@@ -1631,8 +1631,11 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
             </SubagentTelemetryContext.Provider>
 
             {/* Input Area */}
-            <div className={`flex-shrink-0 ${isMobile ? 'p-3' : 'p-4'} flex justify-center`}>
-              <div className="w-full max-w-3xl space-y-3 relative">
+            <div className={`shrink-0 ${isMobile ? 'p-3' : 'p-4'} flex justify-center`}>
+              {/* sibling-space-y, not space-y: the reconnect notice below floats,
+                  and as the last row it would otherwise hand the composer a
+                  bottom margin; SelectionChips' own margin would win too. */}
+              <div className="w-full max-w-3xl sibling-space-y-3 relative">
                 {activeAgentId === 'main' ? (
                   <>
                     <TodoDrawer todoData={cards['todo-list-card']?.todoData ?? null} />
@@ -1647,8 +1650,8 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                             still running in the backend. Independent of stop. */}
                         {showBackgroundTail && (
                           <div className="flex items-center gap-2 px-3 py-1 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                            <span aria-hidden="true" className="flex-shrink-0">
-                              <Loader size={12} className="text-[color:var(--color-accent-primary)]" />
+                            <span aria-hidden="true" className="shrink-0">
+                              <Loader size={12} className="text-(--color-accent-primary)" />
                             </span>
                             {t('chat.backgroundTasksRunning')}
                           </div>
@@ -1660,7 +1663,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                         className="flex items-center gap-2 px-3 py-2 rounded-md text-sm"
                         style={{ backgroundColor: 'var(--color-bg-elevated)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-default)' }}
                       >
-                        <ScrollText className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+                        <ScrollText className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
                         <span>{t('chat.planFeedbackHint')}</span>
                       </div>
                     )}
@@ -1688,8 +1691,8 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                       <div className="flex items-center gap-2 px-3 py-1.5 text-xs"
                         role="status" aria-live="polite"
                         style={{ color: 'var(--color-text-tertiary)' }}>
-                        <span aria-hidden="true" className="flex-shrink-0">
-                          <Loader size={12} className="text-[color:var(--color-accent-primary)]" />
+                        <span aria-hidden="true" className="shrink-0">
+                          <Loader size={12} className="text-(--color-accent-primary)" />
                         </span>
                         {t(isFlashMode ? 'chat.reportBackPending' : 'chat.taskReportBackPending')}
                       </div>
@@ -1697,8 +1700,8 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                     {displayWorkspaceStarting && (
                       <div className="flex items-center gap-2 px-3 py-1.5 text-xs"
                         style={{ color: 'var(--color-text-tertiary)' }}>
-                        <span aria-hidden="true" className="flex-shrink-0">
-                          <Loader size={12} className="text-[color:var(--color-accent-primary)]" />
+                        <span aria-hidden="true" className="shrink-0">
+                          <Loader size={12} className="text-(--color-accent-primary)" />
                         </span>
                         <span>{t(displayWorkspaceStarting === 'archived' ? 'chat.workspaceRestoring' : 'chat.workspaceStarting')}</span>
                         <HoverCard openDelay={150} closeDelay={100}>
@@ -1706,7 +1709,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                             <button
                               type="button"
                               aria-label={t('chat.workspaceStateHelp')}
-                              className="inline-flex items-center justify-center rounded-full p-0.5 hover:opacity-80 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                              className="inline-flex items-center justify-center rounded-full p-0.5 hover:opacity-80 focus:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                               style={{ color: 'var(--color-text-quaternary)' }}
                             >
                               <Info className="h-3 w-3" />
@@ -1732,8 +1735,8 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                       <div className="flex items-center gap-2 px-3 py-1.5 text-xs"
                         role="status" aria-live="polite"
                         style={{ color: 'var(--color-text-tertiary)' }}>
-                        <span aria-hidden="true" className="flex-shrink-0">
-                          <Loader size={14} className="text-[color:var(--color-accent-primary)]" />
+                        <span aria-hidden="true" className="shrink-0">
+                          <Loader size={14} className="text-(--color-accent-primary)" />
                         </span>
                         {t(isCompacting === 'offload' ? 'chat.offloading' : 'chat.compacting')}
                       </div>
@@ -1771,15 +1774,15 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                         otherwise remove this row on catch-up and drop the whole
                         input by one line, the one visible hop left on a
                         mid-stream reload. Last in the stack on purpose: the
-                        parent's space-y gives every sibling after the first a
+                        parent's sibling gap gives every row after the first a
                         top margin, so a row mounted ahead of the composer
                         would shift it by that margin and hand the hop back. */}
                     {isReconnecting && (
                       <div className="absolute bottom-full left-0 mb-1 flex items-center gap-2 px-3 py-1.5 text-xs"
                         role="status" aria-live="polite"
                         style={{ color: 'var(--color-text-tertiary)' }}>
-                        <span aria-hidden="true" className="flex-shrink-0">
-                          <Loader size={14} className="text-[color:var(--color-accent-primary)]" />
+                        <span aria-hidden="true" className="shrink-0">
+                          <Loader size={14} className="text-(--color-accent-primary)" />
                         </span>
                         {t('chat.reconnecting', 'Reconnecting…')}
                       </div>
@@ -1823,7 +1826,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
           onClose={handleClosePreview}
           sizing="fixed"
           height="75vh"
-          className="!px-0 !overflow-hidden"
+          className="px-0! overflow-hidden!"
         >
           <Suspense fallback={null}>
             <PreviewViewer
@@ -1866,7 +1869,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
             className="flex overflow-hidden mobile-panel-overlay"
             style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 30, backgroundColor: 'var(--color-bg-page)' }}
           >
-            <div className="flex-shrink-0 h-full" style={{ width: '100%' }}>
+            <div className="shrink-0 h-full" style={{ width: '100%' }}>
               <Suspense fallback={null}>
                 <WorkspaceProvider workspaceId={effectiveFileWorkspaceId || workspaceId} downloadFile={null}>
                 <FilePanel
@@ -1930,9 +1933,9 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                 ? { duration: 0 }
                 : { duration: 0.25, ease: [0.22, 1, 0.36, 1] }
               }
-              className="flex flex-shrink-0 overflow-hidden"
+              className="flex shrink-0 overflow-hidden"
             >
-              <div data-panel-inner className="flex-shrink-0 h-full" style={{ width: rightPanelWidth }}>
+              <div data-panel-inner className="shrink-0 h-full" style={{ width: rightPanelWidth }}>
                 <Suspense fallback={null}>
                   {rightPanelType === 'file' ? (
                     <WorkspaceProvider workspaceId={effectiveFileWorkspaceId || workspaceId} downloadFile={null}>

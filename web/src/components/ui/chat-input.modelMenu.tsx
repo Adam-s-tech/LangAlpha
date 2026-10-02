@@ -1,7 +1,7 @@
 import { useState, type ReactNode, type RefObject } from 'react';
 import { Check, ChevronDown, ChevronRight, Rocket } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent,
@@ -162,7 +162,7 @@ function ModelOption({ model, metadata, selected, onPick }: {
   return (
     <DropdownMenuItem variant="setting" onSelect={onPick} style={{ color: 'var(--color-text-primary)' }}>
       <span>{getModelDisplayName(model, metadata)}</span>
-      {selected && <Check className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />}
+      {selected && <Check className="h-4 w-4 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />}
     </DropdownMenuItem>
   );
 }

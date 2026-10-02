@@ -36,7 +36,7 @@ export function RowNote({
           tone === 'warning' ? 'var(--color-warning)' : 'var(--color-text-tertiary)',
       }}
     >
-      <Icon className="h-3 w-3 flex-shrink-0" />
+      <Icon className="h-3 w-3 shrink-0" />
       {children}
     </span>
   );

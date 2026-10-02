@@ -26,8 +26,8 @@ export function McpDiscoverResult({ result }: McpDiscoverResultProps) {
         style={{ backgroundColor: 'var(--color-bg-card)', color: 'var(--color-loss)' }}
         data-testid="mcp-discover-error"
       >
-        <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
-        <span className="whitespace-pre-wrap break-words">
+        <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+        <span className="whitespace-pre-wrap wrap-break-word">
           {result.error || t('mcp.discover.failed')}
         </span>
       </div>
@@ -41,7 +41,7 @@ export function McpDiscoverResult({ result }: McpDiscoverResultProps) {
         style={{ backgroundColor: 'var(--color-bg-card)', color: 'var(--color-text-tertiary)' }}
         data-testid="mcp-discover-pending"
       >
-        <Clock className="h-3.5 w-3.5 flex-shrink-0" />
+        <Clock className="h-3.5 w-3.5 shrink-0" />
         {t('mcp.status.pendingHint')}
       </div>
     );
@@ -77,7 +77,7 @@ export function McpDiscoverResult({ result }: McpDiscoverResultProps) {
               className="flex items-start gap-2 py-1.5 px-2 rounded text-xs"
               style={{ backgroundColor: 'var(--color-bg-card)' }}
             >
-              <Wrench className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" style={{ color: 'var(--color-accent-primary)' }} />
+              <Wrench className="h-3.5 w-3.5 shrink-0 mt-0.5" style={{ color: 'var(--color-accent-primary)' }} />
               <div className="min-w-0">
                 <span className="font-mono" style={{ color: 'var(--color-text-primary)' }}>{t.name}</span>
                 {t.description && (

@@ -25,7 +25,7 @@ function SearchField({ className, placeholder, ...props }: SearchFieldProps) {
     <AriaSearchField
       className={composeRenderProps(className, (className) =>
         cn(
-          "flex shrink-0 items-center gap-2 border-b border-[color:var(--color-border-muted)] px-3",
+          "flex shrink-0 items-center gap-2 border-b border-(--color-border-muted) px-3",
           className
         )
       )}
@@ -33,13 +33,13 @@ function SearchField({ className, placeholder, ...props }: SearchFieldProps) {
     >
       <Search
         aria-hidden="true"
-        className="size-[15px] shrink-0 text-[color:var(--color-text-tertiary)]"
+        className="size-[15px] shrink-0 text-(--color-text-tertiary)"
       />
       <AriaInput
         placeholder={placeholder}
         className={cn(
-          "owns-its-edge h-10 min-w-0 flex-1 border-0 bg-transparent text-sm text-[color:var(--color-text-primary)] outline-none",
-          "placeholder:text-[color:var(--color-text-tertiary)] [&::-webkit-search-cancel-button]:hidden"
+          "owns-its-edge h-10 min-w-0 flex-1 border-0 bg-transparent text-sm text-(--color-text-primary) outline-hidden",
+          "placeholder:text-(--color-text-tertiary) [&::-webkit-search-cancel-button]:hidden"
         )}
       />
     </AriaSearchField>

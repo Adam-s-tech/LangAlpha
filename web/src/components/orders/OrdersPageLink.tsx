@@ -1,6 +1,6 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, useInRouterContext, useNavigate } from 'react-router-dom';
+import { Link, useInRouterContext, useNavigate } from 'react-router';
 import { ArrowUpRight } from 'lucide-react';
 import { useRouteLeaveGuard } from '@/pages/ChatAgent/contexts/RouteLeaveGuardContext';
 

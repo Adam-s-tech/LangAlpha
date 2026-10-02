@@ -18,7 +18,7 @@ function InfoRow({ icon: Icon, label, value }: InfoRowProps): React.ReactElement
   if (value == null) return null;
   return (
     <div className="flex items-center gap-2 py-1">
-      <Icon className="h-3.5 w-3.5 flex-shrink-0" style={{ color: TEXT_COLOR }} />
+      <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: TEXT_COLOR }} />
       <span className="text-xs" style={{ color: TEXT_COLOR }}>{label}</span>
       <span className="text-xs ml-auto" style={{ color: 'var(--color-text-primary)' }}>{value}</span>
     </div>
@@ -62,7 +62,7 @@ function AnnualQuarterlyView({ data }: FilingDataProps): React.ReactElement {
   return (
     <div className="flex flex-col h-full" style={{ gap: 16 }}>
       {/* Header */}
-      <div className="flex-shrink-0">
+      <div className="shrink-0">
         <div className="flex items-baseline gap-3 mb-2">
           <span
             className="text-xs font-bold px-2 py-0.5 rounded"
@@ -96,7 +96,7 @@ function AnnualQuarterlyView({ data }: FilingDataProps): React.ReactElement {
       {/* Embedded document — fills remaining height */}
       {proxyUrl && (
         <div className="flex flex-col flex-1 min-h-0">
-          <div className="flex items-center justify-between mb-2 flex-shrink-0">
+          <div className="flex items-center justify-between mb-2 shrink-0">
             <span className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--color-text-tertiary)' }}>
               {t('toolArtifact.secFilingDocument')}
             </span>
@@ -121,8 +121,8 @@ function AnnualQuarterlyView({ data }: FilingDataProps): React.ReactElement {
                 style={{ backgroundColor: 'var(--color-bg-overlay-strong)' }}
               >
                 <div className="flex items-center gap-2">
-                  <span aria-hidden="true" className="flex-shrink-0">
-                    <Loader size={16} className="text-[color:var(--color-accent-primary)]" />
+                  <span aria-hidden="true" className="shrink-0">
+                    <Loader size={16} className="text-(--color-accent-primary)" />
                   </span>
                   <span className="text-xs" style={{ color: TEXT_COLOR }}>{t('toolArtifact.loadingSecDocument')}</span>
                 </div>

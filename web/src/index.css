@@ -1,16 +1,93 @@
 /* ============================================
-   Entry Point - Tailwind Directives + Global Styles
+   Entry Point - Tailwind + Global Styles
    ============================================ */
 
-/* Tokens + global base/utilities - must be before @tailwind */
+/* Tokens + global styles first, then Tailwind's pieces in v3's order: theme
+   (with the v3 defaults v4 changed laid over it), preflight, the app's base
+   rules on top of preflight, utilities last.
+
+   Tailwind is imported piece by piece rather than as `@import 'tailwindcss'`
+   because that form puts preflight and every utility in a cascade layer, and
+   an unlayered rule beats a layered one whatever its specificity. The
+   component stylesheets are unlayered, so layered utilities would lose every
+   tie they win today, and the focus-defaults layer in tokens.css is built on
+   Tailwind's rules sitting outside any layer (see the note there). Only the
+   theme variables go in a layer; tokens.css declares the values that matter. */
 @import './styles/tokens.css';
 @import './styles/animations.css';
 @import './styles/chrome.css';
 @import './styles/dotGrid.css';
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import './styles/tailwind-v3-theme.css';
+@import 'tailwindcss/preflight.css';
+@import './styles/base.css';
+@import 'tailwindcss/utilities.css' source(none);
+
+/* The app's own files, as v3's `content` listed them. Automatic detection would
+   also read e2e/, scripts/ and the docs, and v4 reads more words as classes
+   than v3 did (a test's `row-1` test id became a grid-row rule), so the unit
+   tests are left out too: nothing they render ships. */
+@source '../index.html';
+@source './**/*.{js,ts,jsx,tsx}';
+@source not './**/__tests__/**';
+@source not './**/*.test.{js,ts,jsx,tsx}';
+
+/* v3 `darkMode: ['class']`. The theme switch stamps `data-theme` on <html> and
+   never adds a `.dark` class, so these variants match nothing today; kept as
+   they were rather than silently switched on. */
+@custom-variant dark (&:is(.dark *));
+
+/* `inline` so a utility compiles to `hsl(var(--primary))` at the point of use,
+   as v3 did, instead of reading a variable resolved once on :root. */
+@theme inline {
+  /* No --font-mono: the default theme's `font-mono` already reads
+     var(--font-mono), and tokens.css holds the one stack (DESIGN.md). */
+
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --animate-fade-in: fade-in 0.2s ease-out;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
 
 /* Morph loading animation keyframes (compact — 3-5px travel for inline use) */
 @keyframes morph-0 {

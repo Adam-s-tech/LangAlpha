@@ -5,9 +5,16 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 import './PdfViewer.css';
 
-// Vite-native ?url import resolves correctly in both dev and build
-import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+// Vite-native ?url import resolves correctly in both dev and build. Legacy, to
+// match the main-thread build vite.config.js aliases react-pdf to.
+import pdfjsWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
+
+// Image decoders the build emits beside the worker (vite.config.js `pdfjsWasm`).
+// Module-level so react-pdf sees one options object and never reloads over it.
+const DOCUMENT_OPTIONS = {
+  wasmUrl: `${import.meta.env.BASE_URL}assets/pdfjs-wasm/${pdfjs.version}/`,
+};
 
 const ZOOM_STEPS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 const DEFAULT_ZOOM_INDEX = 2; // 1.0
@@ -43,8 +50,8 @@ export default function PdfViewer({ data, focusPage = null, focusSeq = null, onP
   const zoomIn = () => setZoomIndex((i) => Math.min(ZOOM_STEPS.length - 1, i + 1));
   const zoomOut = () => setZoomIndex((i) => Math.max(0, i - 1));
 
-  // Memoize once — pdf.js transfers the buffer to its web worker which detaches it,
-  // so re-creating Uint8Array on subsequent renders would fail.
+  // A new `file` object is a new document to react-pdf, so a render that rebuilt
+  // it would reload the PDF and reset the page.
   const fileData = useMemo(() => {
     if (!data) return null;
     const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
@@ -82,8 +89,13 @@ export default function PdfViewer({ data, focusPage = null, focusSeq = null, onP
 
       {/* Document */}
       <div className="pdf-document-wrapper">
+        {/* react-pdf defaults to Suspense, which would discard `fileData` with this
+            never-committed component on every retry and reload forever. Effect
+            mode keeps the loading props and the error throw above; Page inherits it. */}
         <Document
+          suspense={false}
           file={fileData}
+          options={DOCUMENT_OPTIONS}
           onLoadSuccess={onDocumentLoadSuccess}
           onLoadError={(err: Error) => setError(err)}
           loading={

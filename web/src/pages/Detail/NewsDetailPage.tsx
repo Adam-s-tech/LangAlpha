@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { useScrollMemory } from '@/lib/scrollMemory';
@@ -83,7 +83,7 @@ function NewsArticleView() {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 p-8" style={{ color: 'var(--color-text-secondary)' }}>
-        <span aria-hidden="true" className="flex-shrink-0">
+        <span aria-hidden="true" className="shrink-0">
           <Loader size={24} className="text-current" />
         </span>
         <p>Loading article...</p>
@@ -199,14 +199,14 @@ function NewsArticleView() {
             {article.sentiments.map((s, i) => (
               <div key={i} className="flex items-start gap-3 text-xs rounded-md p-2.5" style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border-muted)' }}>
                 <span
-                  className="flex-shrink-0 font-mono font-medium px-1.5 py-0.5 rounded"
+                  className="shrink-0 font-mono font-medium px-1.5 py-0.5 rounded"
                   style={{ color: 'var(--color-accent-primary)', backgroundColor: 'var(--color-bg-tag)' }}
                 >
                   {s.ticker}
                 </span>
                 {s.sentiment && (
                   <span
-                    className="flex-shrink-0 font-medium px-1.5 py-0.5 rounded"
+                    className="shrink-0 font-medium px-1.5 py-0.5 rounded"
                     style={{
                       color: s.sentiment === 'positive' ? 'var(--color-profit)' : s.sentiment === 'negative' ? 'var(--color-loss)' : 'var(--color-text-secondary)',
                       backgroundColor: 'var(--color-bg-tag)',

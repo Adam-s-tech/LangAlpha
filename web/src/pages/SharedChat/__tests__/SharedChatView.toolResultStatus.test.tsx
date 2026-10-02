@@ -11,7 +11,7 @@ import { render, waitFor } from '@testing-library/react';
 
 const capturedMessages: Record<string, unknown>[][] = [];
 
-vi.mock('react-router-dom', () => ({
+vi.mock('react-router', () => ({
   Link: ({ children }: { children?: React.ReactNode }) => <span>{children}</span>,
 }));
 

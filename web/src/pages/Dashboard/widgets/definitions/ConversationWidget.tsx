@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { relativeTime } from '@/lib/format';
 import { MessageSquareText, MessagesSquare } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import ChatInput from '@/components/ui/chat-input';

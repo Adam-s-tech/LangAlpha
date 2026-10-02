@@ -25,11 +25,11 @@ vi.mock('@/api/client', () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Mock react-router-dom navigate
+// Mock react-router navigate
 // ---------------------------------------------------------------------------
 
 const mockNavigate = vi.fn();
-vi.mock('react-router-dom', () => ({
+vi.mock('react-router', () => ({
   useNavigate: () => mockNavigate,
 }));
 

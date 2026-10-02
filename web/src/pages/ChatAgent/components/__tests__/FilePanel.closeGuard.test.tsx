@@ -54,7 +54,7 @@ async function dirtyTheDraft(): Promise<void> {
 }
 
 beforeEach(() => { localStorage.clear(); });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.resetAllMocks(); vi.restoreAllMocks(); });
 
 describe('FilePanel close under an unsaved edit', () => {
   it('still offers the close, and keeps the panel when the edit is not discarded', async () => {

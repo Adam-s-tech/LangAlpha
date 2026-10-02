@@ -21,7 +21,7 @@ export function DirectToolRowMark({ server, className, style }: { server: string
       src={art.src}
       alt=""
       aria-hidden
-      className={cn('h-4 w-4 flex-shrink-0 rounded-sm object-contain', className)}
+      className={cn('h-4 w-4 shrink-0 rounded-sm object-contain', className)}
       onError={() => setFailed(art.src)}
     />
   );

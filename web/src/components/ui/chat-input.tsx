@@ -692,7 +692,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
       {/* Main Container */}
       <div
         ref={chatContainerRef}
-        className={`chat-input-container owns-its-edge flex flex-col items-stretch transition-all duration-200 relative z-10 rounded-2xl cursor-text border border-[var(--color-border-input)] bg-[var(--color-bg-card)] ${isListening ? 'recording' : ''}`}
+        className={`chat-input-container owns-its-edge flex flex-col items-stretch transition-all duration-200 relative z-10 rounded-2xl cursor-text border border-(--color-border-input) bg-(--color-bg-card) ${isListening ? 'recording' : ''}`}
         onClick={() => textareaRef.current?.focus()}
       >
         {isListening && (
@@ -745,7 +745,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                   className="mention-pill mention-pill-slash"
                   title={cmd.description}
                 >
-                  {getSlashCommandIcon(cmd, "h-3 w-3 flex-shrink-0 mention-pill-icon")}
+                  {getSlashCommandIcon(cmd, "h-3 w-3 shrink-0 mention-pill-icon")}
                   <span>/{cmd.name}</span>
                   <button
                     className="mention-pill-remove"
@@ -774,12 +774,12 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                     title={tooltip}
                   >
                     {isPaste
-                      ? <ClipboardList className="h-3 w-3 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+                      ? <ClipboardList className="h-3 w-3 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
                       : isChart
-                        ? <ChartCandlestick className="h-3 w-3 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+                        ? <ChartCandlestick className="h-3 w-3 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
                       : isSnippet
-                        ? <TextSelect className="h-3 w-3 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
-                        : <FileText className="h-3 w-3 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+                        ? <TextSelect className="h-3 w-3 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
+                        : <FileText className="h-3 w-3 shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
                     }
                     <span>{name}</span>
                     <button
@@ -799,7 +799,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
           {(chartImage || attachedFiles.length > 0) && (
             <div className="flex gap-3 overflow-x-auto pb-2 px-1">
               {chartImage && (
-                <div className="relative group flex-shrink-0 w-24 h-24 rounded-xl overflow-hidden border border-[var(--color-border-muted)] bg-[var(--color-bg-elevated)] animate-fade-in transition-all hover:border-[var(--color-border-default)]">
+                <div className="relative group shrink-0 w-24 h-24 rounded-xl overflow-hidden border border-(--color-border-muted) bg-(--color-bg-elevated) animate-fade-in transition-all hover:border-(--color-border-default)">
                   <img src={chartImage} alt="Chart" className="w-full h-full object-cover" />
                   <button
                     onClick={(e) => { e.stopPropagation(); onRemoveChartImage?.(); }}
@@ -856,7 +856,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                 }
               }}
               placeholder={isListening ? "" : placeholder}
-              className={`font-content w-full bg-transparent border-0 text-[var(--color-text-primary)] ${isMobile ? 'text-base' : 'text-sm'} placeholder:text-[var(--color-text-tertiary)] resize-none overflow-y-auto leading-relaxed block transition-opacity duration-300 ${isListening ? 'opacity-20' : 'opacity-100'}`}
+              className={`font-content w-full bg-transparent border-0 text-(--color-text-primary) ${isMobile ? 'text-base' : 'text-sm'} placeholder:text-(--color-text-tertiary) resize-none overflow-y-auto leading-relaxed block transition-opacity duration-300 ${isListening ? 'opacity-20' : 'opacity-100'}`}
               rows={minRows}
               disabled={disabled}
               style={{ minHeight: `${minRows * 1.5}em` }}
@@ -872,7 +872,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
               {/* Attach Button */}
               <button
                 onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
-                className="inline-flex flex-none items-center justify-center h-8 w-8 rounded-lg transition-colors text-[var(--color-icon-muted)] hover:text-[var(--color-text-muted)] hover:bg-foreground/5 active:scale-95"
+                className="inline-flex flex-none items-center justify-center h-8 w-8 rounded-lg transition-colors text-(--color-icon-muted) hover:text-(--color-text-muted) hover:bg-foreground/5 active:scale-95"
                 type="button"
                 aria-label="Attach file"
               >
@@ -888,7 +888,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
               {onCaptureChart && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onCaptureChart(); }}
-                  className="inline-flex flex-none items-center justify-center h-8 w-8 rounded-lg transition-colors text-[var(--color-icon-muted)] hover:text-[var(--color-text-muted)] hover:bg-foreground/5 active:scale-95"
+                  className="inline-flex flex-none items-center justify-center h-8 w-8 rounded-lg transition-colors text-(--color-icon-muted) hover:text-(--color-text-muted) hover:bg-foreground/5 active:scale-95"
                   type="button"
                   title="Attach chart screenshot"
                   aria-label="Capture chart"
@@ -908,7 +908,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                 <DropdownMenu modal={false}>
                   <DropdownMenuTrigger asChild>
                     <button
-                      className="relative inline-flex flex-none items-center justify-center h-8 w-8 rounded-lg transition-colors text-[var(--color-icon-muted)] hover:text-[var(--color-text-muted)] hover:bg-foreground/5 data-[state=open]:bg-foreground/5 data-[state=open]:text-[var(--color-text-muted)]"
+                      className="relative inline-flex flex-none items-center justify-center h-8 w-8 rounded-lg transition-colors text-(--color-icon-muted) hover:text-(--color-text-muted) hover:bg-foreground/5 data-[state=open]:bg-foreground/5 data-[state=open]:text-(--color-text-muted)"
                       onClick={(e) => e.stopPropagation()}
                       type="button"
                       title={t('chat.moreTools', { defaultValue: 'More tools' })}
@@ -945,7 +945,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
               <div
                 ref={measureRowRef}
                 aria-hidden
-                className="invisible pointer-events-none absolute top-0 -left-[9999px] flex items-center gap-1 whitespace-nowrap"
+                className="invisible pointer-events-none absolute top-0 left-[-9999px] flex items-center gap-1 whitespace-nowrap"
               >
                 {toolbarItems.filter((i) => i.visible).map((item) => (
                   <span key={item.id} data-measure={item.id}>{item.inline({ measureOnly: true })}</span>
@@ -983,7 +983,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                   <button
                     onClick={(e) => { e.stopPropagation(); toggleListening(); }}
                     disabled={disabled}
-                    className={`inline-flex flex-none items-center justify-center h-8 w-8 rounded-xl transition-all active:scale-95 mic-button ${isListening ? 'recording' : 'text-[var(--color-icon-muted)] hover:text-[var(--color-text-muted)] hover:bg-foreground/5'}`}
+                    className={`inline-flex flex-none items-center justify-center h-8 w-8 rounded-xl transition-all active:scale-95 mic-button ${isListening ? 'recording' : 'text-(--color-icon-muted) hover:text-(--color-text-muted) hover:bg-foreground/5'}`}
                     type="button"
                     title={isListening ? t('chat.voice.stop') : t('chat.voice.start')}
                     aria-label={isListening ? t('chat.voice.stop') : t('chat.voice.start')}
@@ -1037,7 +1037,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
       {/* Drag Overlay */}
       {
         isDragging && (
-          <div className="absolute inset-0 bg-[var(--color-accent-soft)] border-2 border-dashed border-[hsl(var(--primary))] rounded-2xl z-50 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-none">
+          <div className="absolute inset-0 bg-(--color-accent-soft) border-2 border-dashed border-[hsl(var(--primary))] rounded-2xl z-50 flex flex-col items-center justify-center backdrop-blur-xs pointer-events-none">
             <Archive className="w-10 h-10 text-[hsl(var(--primary))] mb-2 animate-bounce" />
             <p className="text-[hsl(var(--primary))] font-medium">Drop files to upload</p>
           </div>

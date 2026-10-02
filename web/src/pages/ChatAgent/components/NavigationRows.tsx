@@ -47,7 +47,7 @@ export interface ThreadsData {
  *  section keeps the icon it had in the tree. */
 function workspaceGlyph(ws: NavWorkspace, expanded: boolean) {
   const style = { color: 'var(--color-text-tertiary)' };
-  const className = 'h-4 w-4 flex-shrink-0';
+  const className = 'h-4 w-4 shrink-0';
   if (ws.status === 'flash') return <Zap className={className} style={style} />;
   if (ws.is_pinned) return <Pin className={className} style={style} />;
   return expanded ? <FolderOpen className={className} style={style} /> : <Folder className={className} style={style} />;
@@ -121,7 +121,7 @@ function ThreadRowGlyph({ tid, isCurrentThread }: { tid: string; isCurrentThread
         <Loader
           size={13}
           label={t('chat.taskCard.statusRunning')}
-          className="text-[color:var(--color-accent-primary)]"
+          className="text-(--color-accent-primary)"
         />
       ) : needsInput ? (
         <span
@@ -226,7 +226,7 @@ export function AgentRow({ agent, isSelected, isMobile, onSelectAgent, onRemoveA
           liveness glyph (amber = live agent work), a silent one an idle circle.
           Completed renders nothing — no glyph IS the done state. */}
       {!isMainAgent && (
-        <span className="flex-shrink-0 ml-auto flex items-center">
+        <span className="shrink-0 ml-auto flex items-center">
           <SubagentStatusIcon status={status} className="h-3 w-3" />
         </span>
       )}
@@ -234,7 +234,7 @@ export function AgentRow({ agent, isSelected, isMobile, onSelectAgent, onRemoveA
       {!isMainAgent && (
         <button
           onClick={(e) => { e.stopPropagation(); onRemoveAgent?.(agent.id); }}
-          className={`flex-shrink-0 p-0 bg-transparent border-none cursor-pointer transition-opacity ${isMobile ? 'opacity-60' : 'opacity-0 group-hover:opacity-100'}`}
+          className={`shrink-0 p-0 bg-transparent border-none cursor-pointer transition-opacity ${isMobile ? 'opacity-60' : 'opacity-0 group-hover:opacity-100'}`}
           title={t('nav.removeAgent')}
         >
           <X className="h-3 w-3" style={{ color: 'var(--color-text-tertiary)' }} />
@@ -312,7 +312,7 @@ function ThreadTreeRowImpl({
               <motion.button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onToggleThread(tid); }}
-                className={`flex-shrink-0 flex items-center p-0 bg-transparent border-none cursor-pointer ${isMobile ? '' : 'opacity-0 group-hover:opacity-100 transition-opacity'}`}
+                className={`shrink-0 flex items-center p-0 bg-transparent border-none cursor-pointer ${isMobile ? '' : 'opacity-0 group-hover:opacity-100 transition-opacity'}`}
                 initial={false}
                 animate={{ rotate: isExpanded ? 90 : 0 }}
                 transition={{ duration: 0.15, ease: 'easeOut' }}
@@ -328,19 +328,19 @@ function ThreadTreeRowImpl({
             {isPinned && !isMobile && (
               <Pin
                 aria-hidden
-                className="h-3 w-3 ml-auto flex-shrink-0 transition-opacity duration-150 group-hover:opacity-0"
+                className="h-3 w-3 ml-auto shrink-0 transition-opacity duration-150 group-hover:opacity-0"
                 fill="currentColor"
                 style={{ color: 'var(--color-text-quaternary)' }}
               />
             )}
             {(onPinThread || onArchiveThread) && (
-              <div className={isMobile ? 'flex items-center gap-0.5 ml-auto flex-shrink-0' : 'nav-panel-row-actions'}>
+              <div className={isMobile ? 'flex items-center gap-0.5 ml-auto shrink-0' : 'nav-panel-row-actions'}>
                 {onPinThread && (
                   <motion.button
                     type="button"
                     whileTap={{ scale: 0.85 }}
                     onClick={(e) => { e.stopPropagation(); onPinThread(wsId, tid, !isPinned); }}
-                    className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-[var(--color-bg-hover)]"
+                    className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-(--color-bg-hover)"
                     title={isPinned ? t('nav.unpinThread') : t('nav.pinThread')}
                     aria-label={isPinned ? t('nav.unpinThread') : t('nav.pinThread')}
                   >
@@ -366,7 +366,7 @@ function ThreadTreeRowImpl({
                     type="button"
                     whileTap={{ scale: 0.85 }}
                     onClick={(e) => { e.stopPropagation(); onArchiveThread(wsId, tid); }}
-                    className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-[var(--color-bg-hover)]"
+                    className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-(--color-bg-hover)"
                     title={t('nav.archiveThread')}
                     aria-label={t('nav.archiveThread')}
                   >
@@ -519,12 +519,12 @@ function WorkspaceTreeRowImpl({
               {/* Chevron + row actions float over the name's tail on hover
                   (as thread rows do), so the name keeps the full row width
                   instead of truncating around controls that are not showing. */}
-              <div className={isMobile ? 'flex items-center gap-0.5 ml-auto flex-shrink-0' : 'nav-panel-row-actions'}>
+              <div className={isMobile ? 'flex items-center gap-0.5 ml-auto shrink-0' : 'nav-panel-row-actions'}>
                 {/* initial={false}: thread switches remount the panel; the chevron
                     must render at its resting angle, not animate to it. Hidden
                     until the row is hovered (always visible on touch). */}
                 <motion.span
-                  className="flex-shrink-0 flex items-center"
+                  className="shrink-0 flex items-center"
                   initial={false}
                   animate={{ rotate: isExpanded ? 90 : 0 }}
                   transition={{ duration: 0.15, ease: 'easeOut' }}
@@ -534,13 +534,13 @@ function WorkspaceTreeRowImpl({
                 {/* Right-aligned row actions: new thread + options (pin / rename).
                     Hover-revealed on desktop, always shown on touch. */}
                 {(onNewThread || showWsMenu) && (
-                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                  <div className="flex items-center gap-0.5 shrink-0">
                     {onNewThread && (
                       <button
                         type="button"
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => { e.stopPropagation(); onNewThread(wsId); }}
-                        className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-[var(--color-border-muted)]"
+                        className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-(--color-border-muted)"
                         title={t('nav.newThread')}
                         aria-label={t('nav.newThread')}
                       >
@@ -554,7 +554,7 @@ function WorkspaceTreeRowImpl({
                             type="button"
                             onPointerDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
-                            className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-[var(--color-border-muted)]"
+                            className="flex items-center justify-center p-0.5 rounded bg-transparent border-none cursor-pointer hover:bg-(--color-border-muted)"
                             title={t('workspace.options')}
                             aria-label={t('workspace.options')}
                           >
@@ -584,7 +584,7 @@ function WorkspaceTreeRowImpl({
                  
                   size={14}
                  
-                  className={`flex-shrink-0 text-[color:var(--color-text-tertiary)] ${onNewThread || showWsMenu ? '' : 'ml-auto'}`}
+                  className={`shrink-0 text-(--color-text-tertiary) ${onNewThread || showWsMenu ? '' : 'ml-auto'}`}
                 />
               )}
             </>
@@ -662,7 +662,7 @@ function WorkspaceTreeRowImpl({
                   style={{ paddingLeft: 44 }}
                   onClick={(e) => { e.stopPropagation(); onLoadMoreThreads(wsId); }}
                 >
-                  <ChevronsDown className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+                  <ChevronsDown className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
                   <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
                     {t('nav.showMore')}
                   </span>

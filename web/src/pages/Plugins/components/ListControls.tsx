@@ -94,7 +94,7 @@ export function ListControls({
   ];
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <div className="relative flex-1 min-w-[12rem]">
+      <div className="relative flex-1 min-w-48">
         <Search
           className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
           style={{ color: 'var(--color-text-tertiary)' }}

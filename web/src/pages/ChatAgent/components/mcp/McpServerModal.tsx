@@ -535,7 +535,7 @@ export function McpServerModal({
                   className={cn(
                     'px-3 py-1.5 text-xs rounded-md uppercase transition-colors',
                     transport !== tr &&
-                      'bg-[var(--color-bg-card)] hover:bg-[var(--color-bg-card-hover)]',
+                      'bg-(--color-bg-card) hover:bg-(--color-bg-card-hover)',
                   )}
                   style={
                     transport === tr
@@ -588,7 +588,7 @@ export function McpServerModal({
                   className={cn(
                     'px-3 py-1.5 text-xs rounded-md transition-colors',
                     meta.exposure !== m &&
-                      'bg-[var(--color-bg-card)] hover:bg-[var(--color-bg-card-hover)]',
+                      'bg-(--color-bg-card) hover:bg-(--color-bg-card-hover)',
                   )}
                   style={
                     meta.exposure === m

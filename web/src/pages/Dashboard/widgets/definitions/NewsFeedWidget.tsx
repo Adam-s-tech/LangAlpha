@@ -95,7 +95,7 @@ function NewsRow({
       }}
     >
       {item.image ? (
-        <div className="relative h-12 w-16 flex-shrink-0 overflow-hidden rounded-md">
+        <div className="relative h-12 w-16 shrink-0 overflow-hidden rounded-md">
           <img
             src={item.image}
             alt=""
@@ -110,14 +110,14 @@ function NewsRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 mb-0.5">
           <span
-            className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+            className="w-1.5 h-1.5 rounded-full shrink-0"
             style={{ backgroundColor: sentimentColor }}
           />
           {item.favicon ? (
             <img
               src={item.favicon}
               alt=""
-              className="w-3.5 h-3.5 rounded-sm flex-shrink-0"
+              className="w-3.5 h-3.5 rounded-sm shrink-0"
               onError={(e) => {
                 (e.target as HTMLImageElement).style.display = 'none';
               }}
@@ -133,7 +133,7 @@ function NewsRow({
           ) : null}
           {item.time ? (
             <span
-              className="text-[0.625rem] flex items-center gap-0.5 flex-shrink-0"
+              className="text-[0.625rem] flex items-center gap-0.5 shrink-0"
               style={{ color: 'var(--color-text-tertiary)' }}
             >
               <Clock size={9} /> {item.time}
@@ -315,7 +315,7 @@ function NewsFeedWidget({ instance, updateConfig }: WidgetRenderProps<NewsFeedCo
       >
         <div className="flex items-baseline gap-2.5 min-w-0">
           <Newspaper
-            className="h-3.5 w-3.5 flex-shrink-0 self-center"
+            className="h-3.5 w-3.5 shrink-0 self-center"
             style={{ color: 'var(--color-text-tertiary)' }}
           />
           <span
@@ -332,7 +332,7 @@ function NewsFeedWidget({ instance, updateConfig }: WidgetRenderProps<NewsFeedCo
           </span>
         </div>
         <div
-          className="flex rounded-full p-[2px] flex-shrink-0"
+          className="flex rounded-full p-[2px] shrink-0"
           style={{ backgroundColor: 'var(--color-bg-subtle)' }}
         >
           {SOURCES.map((key) => {
@@ -379,7 +379,7 @@ function NewsFeedWidget({ instance, updateConfig }: WidgetRenderProps<NewsFeedCo
             <button
               type="button"
               onClick={() => setTickerFilter('')}
-              className="flex-shrink-0"
+              className="shrink-0"
               style={{ color: 'var(--color-text-tertiary)' }}
               aria-label={t('dashboard.widgets.newsFeed.clearTicker')}
             >
@@ -469,7 +469,7 @@ function NewsFeedWidget({ instance, updateConfig }: WidgetRenderProps<NewsFeedCo
               Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="flex items-start gap-3 p-2 animate-pulse">
                   <div
-                    className="h-12 w-16 flex-shrink-0 rounded-md"
+                    className="h-12 w-16 shrink-0 rounded-md"
                     style={{ backgroundColor: 'var(--color-bg-subtle)' }}
                   />
                   <div className="flex-1">
@@ -549,7 +549,7 @@ function NewsFeedWidget({ instance, updateConfig }: WidgetRenderProps<NewsFeedCo
         <div ref={sentinelRef} aria-hidden className="h-px w-full" />
         {isFetchingNextPage ? (
           <div className="flex justify-center py-3">
-            <Loader size={20} className="text-[color:var(--color-accent-primary)]" />
+            <Loader size={20} className="text-(--color-accent-primary)" />
           </div>
         ) : null}
       </div>

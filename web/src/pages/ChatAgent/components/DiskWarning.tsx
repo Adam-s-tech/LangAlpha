@@ -175,7 +175,7 @@ export function DiskWarning({ computer, className }: DiskWarningProps) {
       }}
     >
       <AlertTriangle
-        className="mt-0.5 h-4 w-4 flex-shrink-0"
+        className="mt-0.5 h-4 w-4 shrink-0"
         style={{ color: critical ? 'var(--color-loss)' : 'var(--color-warning)' }}
         aria-hidden="true"
       />
@@ -188,7 +188,7 @@ export function DiskWarning({ computer, className }: DiskWarningProps) {
           </p>
         </div>
         {(changeSpec || breakdown) && (
-          <div className="flex flex-shrink-0 flex-wrap items-center gap-1.5">
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
             {breakdown}
             {changeSpec}
           </div>
@@ -197,7 +197,7 @@ export function DiskWarning({ computer, className }: DiskWarningProps) {
       {!critical && (
         <button
           type="button"
-          className="-m-1 flex-shrink-0 rounded p-1.5 hover:opacity-80"
+          className="-m-1 shrink-0 rounded p-1.5 hover:opacity-80"
           style={{ color: 'var(--color-text-tertiary)' }}
           aria-label={t('computer.disk.dismiss', 'Dismiss')}
           onClick={() => dismiss(computer.computer_id, level)}

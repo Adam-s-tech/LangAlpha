@@ -322,7 +322,7 @@ test.describe('activity live zone', () => {
       const reasoning = page.locator('.titem').filter({ hasText: 'Researching AMD valuation drivers' });
       const gaps = await reasoning.evaluate(el => {
         let block = el;
-        while (block.parentElement && !block.parentElement.classList.contains('space-y-3')) block = block.parentElement;
+        while (block.parentElement && !block.parentElement.classList.contains('sibling-space-y-3')) block = block.parentElement;
         return { before: block.getBoundingClientRect().top - block.previousElementSibling.getBoundingClientRect().bottom,
           after: block.nextElementSibling.getBoundingClientRect().top - block.getBoundingClientRect().bottom };
       });

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { usePreferences } from '@/hooks/usePreferences';

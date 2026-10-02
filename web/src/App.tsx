@@ -1,7 +1,7 @@
 import React, { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MotionConfig } from 'framer-motion';
 import { I18nProvider } from 'react-aria-components';
-import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router';
 import AppSidebar from './components/Sidebar/AppSidebar';
 import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth } from './components/Sidebar/sidebarWidth';
 import { useScrollMemory } from './lib/scrollMemory';

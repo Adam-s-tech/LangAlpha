@@ -16,8 +16,8 @@ export function ModelStatusPill({ modelStatus, isLoading }: {
     <div className="flex items-center gap-2 px-3 py-1.5 text-xs"
       role="status" aria-live="polite"
       style={{ color: 'var(--color-text-tertiary)' }}>
-      <span aria-hidden="true" className="flex-shrink-0">
-        <Loader size={14} className="text-[color:var(--color-accent-primary)]" />
+      <span aria-hidden="true" className="shrink-0">
+        <Loader size={14} className="text-(--color-accent-primary)" />
       </span>
       {modelStatus.kind === 'retrying'
         ? t('chat.modelRetrying', {

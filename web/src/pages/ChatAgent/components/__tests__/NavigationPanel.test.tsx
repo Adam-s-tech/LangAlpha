@@ -9,11 +9,11 @@
  * currentThreadId so the rows mount on first render.
  */
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, type Mock } from 'vitest';
 import { render as rtlRender, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import NavigationPanel from '../NavigationPanel';
 import { resetNavPanelExpansion, forgetNavPanelExpansion, expandedWorkspaces } from '../navExpansionStore';
@@ -314,10 +314,10 @@ describe('NavigationPanel — active-thread auto-reveal', () => {
     currentThreadId: string | null;
     status?: string;
     isActive?: boolean;
-    onLoadMoreThreads?: ReturnType<typeof vi.fn>;
+    onLoadMoreThreads?: Mock<(wsId: string) => void>;
   }) {
     resetNavPanelExpansion();
-    const onLoadMoreThreads = opts.onLoadMoreThreads ?? vi.fn();
+    const onLoadMoreThreads = opts.onLoadMoreThreads ?? vi.fn<(wsId: string) => void>();
     render(
       <NavigationPanel
         isActive={opts.isActive ?? true}

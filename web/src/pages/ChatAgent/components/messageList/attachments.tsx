@@ -104,7 +104,7 @@ export function InlineSelectionCards({ selections }: { selections: SelectionPrev
             }}
           >
             <div
-              className="flex items-center justify-center flex-shrink-0"
+              className="flex items-center justify-center shrink-0"
               style={{
                 width: 34,
                 height: 34,
@@ -153,7 +153,7 @@ export function AttachmentCard({ attachment }: AttachmentCardProps): React.React
 
   if (isImage && hasPreview) {
     return (
-      <div className="relative group flex-shrink-0 w-24 h-24 rounded-xl overflow-hidden" style={{ border: '1px solid var(--color-border-muted)', background: 'var(--color-bg-input)' }}>
+      <div className="relative group shrink-0 w-24 h-24 rounded-xl overflow-hidden" style={{ border: '1px solid var(--color-border-muted)', background: 'var(--color-bg-input)' }}>
         <img src={att.dataUrl || att.url || att.preview} alt={att.name} className="w-full h-full object-cover" />
         <div className="absolute inset-0 bg-black/20" />
       </div>
@@ -163,7 +163,7 @@ export function AttachmentCard({ attachment }: AttachmentCardProps): React.React
   if (isImage && !hasPreview) {
     // History image -- no thumbnail available, show placeholder
     return (
-      <div className="relative flex-shrink-0 w-24 h-24 rounded-xl overflow-hidden" style={{ border: '1px solid var(--color-border-muted)', background: 'var(--color-bg-input)' }}>
+      <div className="relative shrink-0 w-24 h-24 rounded-xl overflow-hidden" style={{ border: '1px solid var(--color-border-muted)', background: 'var(--color-bg-input)' }}>
         <div className="w-full h-full p-3 flex flex-col items-center justify-center gap-2">
           <ImageIcon className="w-6 h-6" style={{ color: 'var(--color-icon-muted)' }} />
           <p className="text-[0.625rem] truncate w-full text-center" style={{ color: 'var(--color-text-tertiary)' }}>{att.name}</p>
@@ -174,7 +174,7 @@ export function AttachmentCard({ attachment }: AttachmentCardProps): React.React
 
   // PDF / generic file card
   return (
-    <div className="relative flex-shrink-0 w-24 h-24 rounded-xl overflow-hidden" style={{ border: '1px solid var(--color-border-muted)', background: 'var(--color-bg-input)' }}>
+    <div className="relative shrink-0 w-24 h-24 rounded-xl overflow-hidden" style={{ border: '1px solid var(--color-border-muted)', background: 'var(--color-bg-input)' }}>
       <div className="w-full h-full p-3 flex flex-col justify-between">
         <div className="flex items-center gap-2">
           <div className="p-1.5 rounded" style={{ background: 'var(--color-border-muted)' }}>

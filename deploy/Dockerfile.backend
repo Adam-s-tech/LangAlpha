@@ -50,8 +50,8 @@ COPY src/ src/
 COPY server.py .
 COPY scripts/ scripts/
 RUN chmod +x scripts/docker_entrypoint.sh
-COPY config.yaml .
-COPY agent_config.yaml .
+COPY config*.yaml ./
+COPY agent_config*.yaml ./
 COPY mcp_servers/ mcp_servers/
 COPY plugins/ plugins/
 COPY workflows/ workflows/

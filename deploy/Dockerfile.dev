@@ -39,8 +39,8 @@ RUN uv run patchright install --with-deps chromium \
 COPY src/ src/
 COPY server.py .
 COPY scripts/ scripts/
-COPY config.yaml .
-COPY agent_config.yaml .
+COPY config*.yaml ./
+COPY agent_config*.yaml ./
 COPY alembic.ini .
 COPY migrations/ migrations/
 COPY mcp_servers/ mcp_servers/

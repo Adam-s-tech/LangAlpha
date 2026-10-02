@@ -38,6 +38,10 @@ ENV/
 .env.*.retired
 .env*.bak*
 
+# Per-environment config overlays (APP_ENV)
+/agent_config.*.yaml
+/config.*.yaml
+
 # Production deploy files
 docker-compose.prod.yml
 scripts/load_env.sh

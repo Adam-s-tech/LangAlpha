@@ -23,27 +23,24 @@ Usage:
 
 import logging
 import os
-from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 
 import yaml
+
+from ptc_agent.config.file_utils import AGENT_CONFIG_FILE, load_agent_config
 
 logger = logging.getLogger(__name__)
 
 
 def _load_storage_setting(name: str, env_var: str, default: str) -> str:
     """One ``storage.<name>`` key from agent_config.yaml, else ``env_var``."""
-    config_path = Path(__file__).parent.parent.parent.parent / "agent_config.yaml"
-    if config_path.exists():
-        try:
-            with config_path.open() as f:
-                config = yaml.safe_load(f) or {}
-            value = (config.get("storage") or {}).get(name)
-            if value:
-                return str(value).lower()
-        except (OSError, yaml.YAMLError) as e:
-            logger.warning(f"Failed to load agent_config.yaml: {e}")
+    try:
+        value = (load_agent_config().get("storage") or {}).get(name)
+        if value:
+            return str(value).lower()
+    except (OSError, yaml.YAMLError) as e:
+        logger.warning(f"Failed to load {AGENT_CONFIG_FILE}: {e}")
     return os.getenv(env_var, default).lower()
 
 

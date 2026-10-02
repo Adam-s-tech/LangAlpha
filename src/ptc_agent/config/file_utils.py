@@ -6,7 +6,7 @@ configuration files, with no dependencies on the server package (src.*).
 Functions:
 - Config file search: find_config_file, get_config_search_paths, find_project_root
 - Config directory: get_default_config_dir, ensure_config_dir
-- YAML loading: load_yaml_config, clear_config_cache
+- YAML loading: load_yaml_config, load_agent_config, clear_config_cache
 - Env var substitution: substitute_env_vars
 """
 
@@ -206,6 +206,13 @@ def load_yaml_config(file_path: str, use_cache: bool = True) -> dict[str, Any]:
     if use_cache:
         _config_cache[file_path] = processed_config
     return processed_config
+
+
+def load_agent_config() -> dict[str, Any]:
+    """agent_config.yaml as a raw dict, from the same file the agent's own
+    loader picks: PTC_CONFIG_FILE first, then the search paths."""
+    path = find_config_file(AGENT_CONFIG_FILE, env_var="PTC_CONFIG_FILE")
+    return load_yaml_config(str(path)) if path else {}
 
 
 def clear_config_cache() -> None:

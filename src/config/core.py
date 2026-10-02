@@ -26,6 +26,7 @@ from ptc_agent.config.file_utils import (  # noqa: F401
     find_project_root,
     get_config_search_paths,
     get_default_config_dir,
+    load_agent_config,
     load_yaml_config,
     substitute_env_vars,
 )

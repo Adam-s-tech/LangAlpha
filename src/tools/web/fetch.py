@@ -19,7 +19,6 @@ from typing import Annotated, Any, List, Optional
 
 from langchain_core.tools import StructuredTool
 
-from src.config.core import find_config_file, load_yaml_config
 from src.llms import LLM, format_llm_content, make_api_call, maybe_disable_streaming
 from src.tools.web.inhouse.sitemap import get_sitemap_summary
 from src.tools.decorators import log_io
@@ -197,9 +196,9 @@ def _get_extraction_model() -> str:
     override = fetch_model_override.get()
     if override:
         return override
-    path = find_config_file("agent_config.yaml")
-    config = load_yaml_config(str(path)) if path else {}
-    llm = config.get("llm", {})
+    from src.config.tool_settings import _get_agent_config_dict
+
+    llm = _get_agent_config_dict().get("llm", {})
     return llm.get("fetch") or llm.get("flash") or llm.get("name", "")
 
 

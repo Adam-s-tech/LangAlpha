@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useLocale } from '@/hooks/useLocale';
+import { createDateFormatter } from '@/lib/format';
 import type { Computer } from '@/types/api';
 
 import { ComputerStatusIndicator } from '../computerStatusUi';
@@ -13,6 +14,13 @@ import { effectiveTier } from '../specChangeUi';
 import { WorkspaceMenuItems } from '../workspaceActions';
 import { WORKSPACE_CARD_HEIGHT } from './cardMetrics';
 import type { WorkspaceRecord } from './types';
+
+const shortDay = createDateFormatter({ month: 'short', day: 'numeric' });
+// A formatter throws on an Invalid Date, so an unreadable timestamp reads as no timestamp.
+const updatedDay = (iso: string | null | undefined, locale: string) => {
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime()) ? shortDay(d, locale) : null;
+};
 
 interface CardMenuProps {
   workspace: WorkspaceRecord;
@@ -163,7 +171,7 @@ export function WorkspaceCard({ workspace, computer, onSelect, onTogglePin, onRe
             )}
             <div className="text-xs mt-auto pt-3 flex items-center justify-between gap-2" style={{ color: 'var(--color-text-tertiary)' }}>
               <span className="truncate">
-                {t('workspace.updated', { time: workspace.updated_at ? new Date(workspace.updated_at).toLocaleDateString(locale, { month: 'short', day: 'numeric' }) : t('workspace.recently') })}
+                {t('workspace.updated', { time: updatedDay(workspace.updated_at, locale) ?? t('workspace.recently') })}
               </span>
               {(showTierBadge || showAlwaysOn) && (
                 <div className="flex items-center gap-1.5 shrink-0">

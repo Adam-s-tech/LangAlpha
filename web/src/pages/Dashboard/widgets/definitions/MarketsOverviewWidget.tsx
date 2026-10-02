@@ -14,9 +14,10 @@ import type { WidgetRenderProps } from '../types';
 
 type MarketsOverviewConfig = { indices?: string[] };
 
-// Below this cell width the 5-tile desktop grid wraps to ≥3 rows and looks
-// worse than the mobile swipe stack, so switch to the compact variant.
-const COMPACT_WIDTH_PX = 640;
+// The cell is one row tall, so the tiles share it five across. Below this width
+// a tile is too narrow to keep its price and change on one line each, grows past
+// the cell, and the swipe stack reads better.
+const COMPACT_WIDTH_PX = 900;
 
 function MarketsOverviewWidget({ instance }: WidgetRenderProps<MarketsOverviewConfig>) {
   const { t } = useTranslation();
@@ -74,6 +75,7 @@ function MarketsOverviewWidget({ instance }: WidgetRenderProps<MarketsOverviewCo
         indices={dashboard.indices}
         loading={dashboard.indicesLoading}
         forceMobile={compact}
+        singleRow
       />
     </div>
   );

@@ -303,3 +303,21 @@ describe('zh-CN covers the whole en-US catalog', () => {
     }
   });
 });
+
+// ── Trans slots ───────────────────────────────────────────
+//
+// `<Trans>` fills a paired tag with the catalog's content between the tags, so
+// `<kbd></kbd>` renders its component empty and drops the children the call
+// site gave it (a keycap glyph, an icon). A slot whose component carries its
+// own content has to be self-closing, `<kbd/>`.
+describe('Trans slots', () => {
+  it('no catalog value has an empty paired tag', () => {
+    const EMPTY_PAIR = /<(\w+)><\/\1>/;
+    const offenders = ([['en-US', enUS], ['zh-CN', zhCN]] as const).flatMap(([name, catalog]) =>
+      leaves(catalog)
+        .filter((key) => EMPTY_PAIR.test(String(lookup(catalog, key))))
+        .map((key) => `${name}: ${key}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+});

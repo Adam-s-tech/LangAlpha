@@ -7,6 +7,8 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import Markdown from '@/pages/ChatAgent/components/Markdown';
+import { useLocale } from '@/hooks/useLocale';
+import { createDateFormatter } from '@/lib/format';
 import type { WidgetContextSnapshot } from './contextSnapshot';
 
 /**
@@ -47,12 +49,20 @@ function humanizeKey(k: string): string {
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})/;
+const formatTimestamp = createDateFormatter({
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  second: '2-digit',
+});
 
 /** Recursively render a JSON-ish value as a human-friendly tree. URLs become
  *  links, ISO timestamps become localized dates, scalar arrays become inline
  *  comma-joined lists, and deeply-nested branches collapse to a code dump
  *  past `maxDepth` so the modal stays bounded. */
-function renderStructuredValue(v: unknown, depth: number, maxDepth = 4): React.ReactNode {
+function renderStructuredValue(v: unknown, depth: number, locale: string, maxDepth = 4): React.ReactNode {
   if (v === null || v === undefined || v === '') {
     return <span style={{ color: 'var(--color-text-tertiary)' }}>—</span>;
   }
@@ -73,7 +83,7 @@ function renderStructuredValue(v: unknown, depth: number, maxDepth = 4): React.R
     if (ISO_DATE_RE.test(v)) {
       const d = new Date(v);
       if (!Number.isNaN(d.getTime())) {
-        return <span title={v}>{d.toLocaleString()}</span>;
+        return <span title={v}>{formatTimestamp(d, locale)}</span>;
       }
     }
     return <span className="wrap-break-word whitespace-pre-wrap">{v}</span>;
@@ -89,7 +99,7 @@ function renderStructuredValue(v: unknown, depth: number, maxDepth = 4): React.R
     return (
       <ol className="list-decimal pl-5 space-y-3">
         {v.map((x, i) => (
-          <li key={i}>{renderStructuredValue(x, depth + 1, maxDepth)}</li>
+          <li key={i}>{renderStructuredValue(x, depth + 1, locale, maxDepth)}</li>
         ))}
       </ol>
     );
@@ -109,7 +119,7 @@ function renderStructuredValue(v: unknown, depth: number, maxDepth = 4): React.R
               {humanizeKey(k)}
             </dt>
             <dd className="wrap-break-word text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-              {renderStructuredValue(val, depth + 1, maxDepth)}
+              {renderStructuredValue(val, depth + 1, locale, maxDepth)}
             </dd>
           </div>
         ))}
@@ -124,7 +134,8 @@ function renderStructuredValue(v: unknown, depth: number, maxDepth = 4): React.R
  *  objects and arrays render as nested fields/lists rather than a JSON
  *  dump. New snapshots emit `text` and use the Markdown path instead. */
 function StructuredDataFallback({ data }: { data: unknown }) {
-  return <div className="text-sm">{renderStructuredValue(data, 0)}</div>;
+  const locale = useLocale();
+  return <div className="text-sm">{renderStructuredValue(data, 0, locale)}</div>;
 }
 
 /**

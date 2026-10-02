@@ -1,8 +1,13 @@
 import React from 'react';
-import Editor, { DiffEditor } from '@monaco-editor/react';
+import Editor, { DiffEditor, loader } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { useTheme } from '@/contexts/ThemeContext';
 import { rememberMonaco, saveViewState } from './editorModels';
+
+// @monaco-editor/loader fetches Monaco from the CDN at a release it picks, which
+// the monaco-editor package, installed only for its types, never moved. Pinned
+// to the installed release, the editor that runs is the one the types describe.
+loader.config({ paths: { vs: `https://cdn.jsdelivr.net/npm/monaco-editor@${__MONACO_VERSION__}/min/vs` } });
 
 const EXT_TO_MONACO_LANG: Record<string, string> = {
   py: 'python', js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',

@@ -8,6 +8,8 @@ import AddWatchlistItemDialog from '../../Dashboard/components/AddWatchlistItemD
 import AddPortfolioHoldingDialog from '../../Dashboard/components/AddPortfolioHoldingDialog';
 import ConfirmDialog from '../../Dashboard/components/ConfirmDialog';
 import { getExtendedHoursInfo } from '@/lib/marketUtils';
+import { grouped2 } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import { EXT_COLOR_PRE, EXT_COLOR_POST } from '../utils/chartConstants';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import './MarketSidebarPanel.css';
@@ -35,6 +37,7 @@ interface DeleteConfirmState {
   onConfirm: (() => Promise<void>) | null;
 }
 
+
 interface MarketSidebarPanelProps {
   activeSymbol: string | null;
   onSymbolClick?: (symbol: string) => void;
@@ -44,6 +47,7 @@ interface MarketSidebarPanelProps {
 function MarketSidebarPanel({ activeSymbol, onSymbolClick, marketStatus }: MarketSidebarPanelProps) {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
+  const locale = useLocale();
   const [expanded, setExpanded] = useState(false);
   const effectiveExpanded = isMobile || expanded;
   const [activeTab, setActiveTab] = useState('watchlist');
@@ -89,7 +93,7 @@ function MarketSidebarPanel({ activeSymbol, onSymbolClick, marketStatus }: Marke
 
   const formatPrice = (price: number | null | undefined): string => {
     if (price == null || price === 0) return '--';
-    return Number(price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return grouped2(Number(price), locale);
   };
 
   const formatChange = (val: number | null | undefined): string => {

@@ -440,7 +440,6 @@ describe('FilePanel reference opens', () => {
     (api.writeWorkspaceFile as ReturnType<typeof vi.fn>).mockImplementation(
       () => new Promise((_resolve, reject) => { rejectWrite = reject; }),
     );
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     const { rerender } = renderWithProviders(
       <FilePanel workspaceId="ws" onClose={() => {}} files={EDIT_FILES} target={{ kind: 'file', path: 'notes.md' }} />,
@@ -449,6 +448,7 @@ describe('FilePanel reference opens', () => {
     fireEvent.click(screen.getByTitle('Edit file'));
     fireEvent.change(await screen.findByTestId('editor'), { target: { value: '# Notes\n\nEdited body.' } });
     fireEvent.click(screen.getByTitle('Save (Cmd+S)'));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(api.writeWorkspaceFile).toHaveBeenCalledWith('ws', 'notes.md', '# Notes\n\nEdited body.'));
 
     rerender(<FilePanel workspaceId="ws" onClose={() => {}} files={EDIT_FILES} target={{ kind: 'file', path: 'report.py' }} />);
@@ -530,13 +530,12 @@ describe('FilePanel reference opens', () => {
   it('a folder target leaves an editor and its unsaved edits alone', async () => {
     // The folder is answered by the column beside the editor, so there is
     // nothing to discard and nothing to ask about.
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const { onTargetHandled } = await openDocThenFolder({ edit: true });
 
     expect(screen.getByTestId('editor').getAttribute('data-file')).toBe('docs/index.md');
     expect((screen.getByTestId('editor') as HTMLTextAreaElement).value).toContain('Edited.');
     expect(scopeChip()?.textContent).toContain('docs/');
-    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
     // The folder is handed back once applied, like any other target, so a
     // remount does not replay it; the scope itself stays on as the panel's own.
     expect(onTargetHandled).toHaveBeenCalled();

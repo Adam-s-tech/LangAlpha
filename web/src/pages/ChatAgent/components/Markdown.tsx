@@ -588,6 +588,26 @@ function normalizeLatexDelimiters(content: string): string {
   return content;
 }
 
+// A whole line holding one `$$...$$` equation. The body has no unescaped `$`,
+// so two equations on one line, or `$$` closing mid-line, never match.
+const ONE_LINE_DISPLAY_MATH_RE = /^( {0,3})\$\$((?:[^$\\\n]|\\.)+)\$\$[ \t]*$/gm;
+
+/**
+ * Give display math written on a single line a block of its own.
+ *
+ * remark-math only opens a display block on a `$$` line by itself, so
+ * `$$x$$` (and `\[x\]`, which normalizeLatexDelimiters has already turned into
+ * it) parses as inline math even when it is the whole line. The equation moves
+ * onto its own line between fences; `$$x$$` inside a sentence stays inline,
+ * and an equation still streaming in has no closing `$$` to match yet.
+ */
+function blockOneLineDisplayMath(content: string): string {
+  if (!content || typeof content !== 'string') return content;
+  return content.replace(ONE_LINE_DISPLAY_MATH_RE, (line, indent: string, body: string) =>
+    body.trim() ? `${indent}$$\n${indent}${body.trim()}\n${indent}$$` : line,
+  );
+}
+
 /**
  * Drop the row break LLMs leave after the last row of a numbered environment.
  *
@@ -683,9 +703,12 @@ function Markdown({ content, variant = 'panel', className = '', style, onOpenFil
     // out of the code spans that own one — fenced, or inline across a break.
     const tables = mapOutsideMultilineCode(base, fixMarkdownTables);
     // These inject characters and tags, which is corruption inside any code.
-    return mapOutsideCode(tables, (prose) =>
-      dropTrailingRowBreaks(normalizeLatexDelimiters(escapeCurrencyDollars(transformCitationBubbles(prose))))
+    const prose = mapOutsideCode(tables, (text) =>
+      dropTrailingRowBreaks(normalizeLatexDelimiters(escapeCurrencyDollars(transformCitationBubbles(text))))
     );
+    // Line-structural again, and after the delimiter pass so `\[x\]` arrives
+    // already spelled `$$x$$`.
+    return mapOutsideMultilineCode(prose, blockOneLineDisplayMath);
   }, [content]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(processed), [processed]);

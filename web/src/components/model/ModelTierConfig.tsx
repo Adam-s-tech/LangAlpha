@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { useTranslation } from "react-i18next"
 import { motion, AnimatePresence } from "@/lib/framer"
 import { ChevronRight, Lightbulb } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -41,6 +42,7 @@ export function ModelTierConfig({
   modelAccess,
   metadata,
 }: ModelTierConfigProps) {
+  const { t } = useTranslation()
   const [explainerOpen, setExplainerOpen] = useState(true)
 
   // Auto-default flash model: pick the first model from the same provider as
@@ -122,7 +124,7 @@ export function ModelTierConfig({
               style={{ color: "var(--color-accent-primary)" }}
             />
             <span className="text-sm font-medium flex-1">
-              Two agent modes
+              {t("setup.explainerTitle")}
             </span>
             <ChevronRight
               className={cn(
@@ -148,15 +150,13 @@ export function ModelTierConfig({
                       className="text-xs font-semibold"
                       style={{ color: "var(--color-text-primary)" }}
                     >
-                      PTC Mode (Primary)
+                      {t("setup.explainerDeepTitle")}
                     </span>
                     <span
                       className="text-xs leading-relaxed"
                       style={{ color: "var(--color-text-tertiary)" }}
                     >
-                      The full agent with a sandboxed environment for code
-                      execution, charts, and data analysis. Powered by your
-                      primary model.
+                      {t("setup.explainerDeepBody")}
                     </span>
                   </div>
                   <div className="flex flex-col gap-1">
@@ -164,14 +164,13 @@ export function ModelTierConfig({
                       className="text-xs font-semibold"
                       style={{ color: "var(--color-text-primary)" }}
                     >
-                      Flash Mode
+                      {t("setup.explainerFlashTitle")}
                     </span>
                     <span
                       className="text-xs leading-relaxed"
                       style={{ color: "var(--color-text-tertiary)" }}
                     >
-                      A lightweight agent for quick answers without a sandbox.
-                      Powered by your flash model for speed.
+                      {t("setup.explainerFlashBody")}
                     </span>
                   </div>
                 </div>
@@ -183,13 +182,13 @@ export function ModelTierConfig({
 
       {/* Primary Model selector */}
       <ModelSelector
-        label="Primary Model"
-        description="For deep research with code execution and data analysis"
+        label={t("setup.primaryModel")}
+        description={t("setup.primaryDescription")}
         value={primaryModel}
         onChange={handlePrimaryChange}
         models={models}
         filterProviders={filterProviders}
-        placeholder="Select primary model..."
+        placeholder={t("setup.primaryPlaceholder")}
         required
         modelAccess={modelAccess}
         metadata={metadata}
@@ -197,13 +196,13 @@ export function ModelTierConfig({
 
       {/* Flash Model selector */}
       <ModelSelector
-        label="Flash Model"
-        description="For quick answers without a sandbox"
+        label={t("setup.flashModel")}
+        description={t("setup.flashDescription")}
         value={flashModel}
         onChange={onFlashModelChange}
         models={models}
         filterProviders={filterProviders}
-        placeholder="Select flash model..."
+        placeholder={t("setup.flashPlaceholder")}
         required
         modelAccess={modelAccess}
         metadata={metadata}

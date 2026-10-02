@@ -9,7 +9,7 @@
  * different numbers than the user.
  */
 
-import { createFormatter } from '@/lib/format';
+import { grouped2 } from '@/lib/format';
 import type { PortfolioRow } from '../../hooks/usePortfolioData';
 import {
   formatPortfolioMoneyCode,
@@ -19,7 +19,6 @@ import {
 
 export type PortfolioSummary = CurrencyPortfolioSummary;
 
-const fmtPct = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export function portfolioSummary(rows: PortfolioRow[]): PortfolioSummary[] {
   return summarizePortfolioByCurrency(rows);
@@ -35,7 +34,7 @@ export function formatPortfolioNavMarkdownLine(summaries: PortfolioSummary[], lo
         return `**NAV (${summary.currency})** ${formatPortfolioMoneyCode(summary.totalValue, summary.currency)}`;
       }
       const sign = summary.totalPl >= 0 ? '+' : '-';
-      return `**NAV (${summary.currency})** ${formatPortfolioMoneyCode(summary.totalValue, summary.currency)} (cost ${formatPortfolioMoneyCode(summary.totalCost, summary.currency)}, P/L ${sign}${formatPortfolioMoneyCode(Math.abs(summary.totalPl), summary.currency)} / ${sign}${fmtPct(Math.abs(summary.totalPlPct), locale)}%)`;
+      return `**NAV (${summary.currency})** ${formatPortfolioMoneyCode(summary.totalValue, summary.currency)} (cost ${formatPortfolioMoneyCode(summary.totalCost, summary.currency)}, P/L ${sign}${formatPortfolioMoneyCode(Math.abs(summary.totalPl), summary.currency)} / ${sign}${grouped2(Math.abs(summary.totalPlPct), locale)}%)`;
     })
     .join('\n');
 }

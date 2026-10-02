@@ -189,7 +189,7 @@ export function serializeQuoteRowToMarkdown(row: QuoteRow): string {
   if (bits.length) lines.push(bits.join(' '));
   if (row.preMarket !== undefined) lines.push(`pre-market ${formatQuoteAmount(row.preMarket, row.currency)}`);
   if (row.postMarket !== undefined) lines.push(`post-market ${formatQuoteAmount(row.postMarket, row.currency)}`);
-  if (row.volume !== undefined) lines.push(`vol ${row.volume.toLocaleString()}`);
+  if (row.volume !== undefined) lines.push(`vol ${row.volume}`);
   if (row.shares !== undefined) lines.push(`shares ${row.shares}`);
   if (row.marketValue != null) {
     lines.push(`mkt val ${formatQuoteAmount(row.marketValue, row.currency)}`);

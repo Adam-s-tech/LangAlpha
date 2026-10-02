@@ -5,7 +5,7 @@
  * first, through the same guard its own close and chart action use.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { screen, fireEvent, act } from '@testing-library/react';
+import { screen, fireEvent, act, within } from '@testing-library/react';
 import { Route, Routes } from 'react-router';
 import { renderWithProviders } from '@/test/utils';
 
@@ -99,38 +99,43 @@ async function dirtyThenOpenToolTab() {
   return findAutomationsLink();
 }
 
+/** Answers the discard question the link asked. */
+async function answer(choice: 'Discard' | 'Cancel') {
+  const dialog = await screen.findByRole('dialog');
+  expect(within(dialog).getByText('You have unsaved changes. Discard them?')).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole('button', { name: choice }));
+}
+
 beforeEach(() => { localStorage.clear(); });
 afterEach(() => { vi.resetAllMocks(); vi.restoreAllMocks(); });
 
 describe('FilePanel tool-tab links under an unsaved edit', () => {
   it('stays on the route when the edit is not discarded', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const link = await dirtyThenOpenToolTab();
 
     fireEvent.click(link);
+    await answer('Cancel');
 
-    expect(confirmSpy).toHaveBeenCalledWith('You have unsaved changes. Discard them?');
     expect(screen.queryByTestId('automations-page')).toBeNull();
     expect(screen.getByRole('button', { name: 'View in Automations' })).toBeTruthy();
   });
 
   it('leaves once the edit is discarded', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const link = await dirtyThenOpenToolTab();
 
     fireEvent.click(link);
+    await answer('Discard');
 
     expect(await screen.findByTestId('automations-page')).toBeTruthy();
   });
 
   it('leaves without asking when nothing is unsaved', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     renderWithProviders(app(TOOL));
     const link = await findAutomationsLink();
 
     fireEvent.click(link);
 
-    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(await screen.findByTestId('automations-page')).toBeTruthy();
   });
 });

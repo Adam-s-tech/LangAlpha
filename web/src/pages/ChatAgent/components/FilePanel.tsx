@@ -20,6 +20,7 @@ import { linkCandidates } from '../utils/fileRefResolver';
 import type { WriteEvent } from '../utils/fileRefResolver';
 import { classifyAgentPath, parseAgentPath } from '../utils/agentPaths';
 import { useStableHandler } from '@/hooks/useStableHandler';
+import { useLatestRef } from '@/hooks/useLatestRef';
 import { parseFragment, type FileLocation, type OpenFileHandler } from '../utils/fileLocation';
 import FileHeaderActions from './FileHeaderActions';
 import { useDownloadState, workspaceDownloadKey } from '../utils/downloadNotice';
@@ -31,6 +32,7 @@ import type { ApiAdapter, ChartTabSpec, ContextPayload, PanelTarget } from './fi
 import { EDITABLE_EXTENSIONS, getFileExtension, viewerFor } from './filePanel/fileMeta';
 import { useFileUpload } from './filePanel/useFileUpload';
 import { useFileEdit } from './filePanel/useFileEdit';
+import { usePanelConfirm } from './filePanel/usePanelConfirm';
 import { useSelectionContext } from './filePanel/useSelectionContext';
 import { useFileSelection } from './filePanel/useFileSelection';
 import { useFileBackup } from './filePanel/useFileBackup';
@@ -117,9 +119,10 @@ interface FilePanelProps {
   onAddContext?: ((ctx: ContextPayload) => void) | null;
   showSystemFiles?: boolean;
   onToggleSystemFiles?: (() => void) | null;
-  /** Whether any open tab holds an unsaved edit. Whoever can unmount the
-   *  panel reads this to ask before doing so. */
-  onDirtyChange?: ((dirty: boolean) => void) | null;
+  /** The guard the panel's own close runs, for whoever else can unmount the
+   *  panel: it asks about unsaved edits, then leaves. Null once the panel is
+   *  gone. */
+  onLeaveGuardChange?: ((guard: RouteLeaveGuard | null) => void) | null;
   /** What kind of tab is in front, as it changes; null once the panel is gone.
    *  The host that sizes the panel reads this, since a chart has a floor of
    *  its own. */
@@ -158,14 +161,17 @@ function FilePanel({
   onAddContext = null,
   showSystemFiles = false,
   onToggleSystemFiles = null,
-  onDirtyChange = null,
+  onLeaveGuardChange = null,
   onActiveTabKindChange = null,
   canShare = false,
 }: FilePanelProps): React.ReactElement {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const panelRef = useRef<HTMLDivElement>(null);
-  const narrow = useNarrowContainer(panelRef, TREE_OVERLAY_WIDTH);
+  // The tree waits for the measurement: rendered docked before it, a narrow
+  // panel painted the column for a frame and then animated it shut.
+  const narrowOrUnmeasured = useNarrowContainer(panelRef, TREE_OVERLAY_WIDTH);
+  const narrow = narrowOrUnmeasured ?? false;
 
   // A share reads through its own endpoints, which take no workspace id.
   // Memoised as one object: every hook below closes over these, and rebuilding
@@ -256,17 +262,18 @@ function FilePanel({
     cache.patchBody(selectedFile, { content: value, truncated: false });
   }, [cache, selectedFile, fileContent]);
 
-  const edit = useFileEdit({
-    tabId: activeTab.id, workspaceId, selectedFile, fileContent, setFileContent, readFileFullFn, writeFileFn,
-  });
+  const { ask, dialog: confirmDialog } = usePanelConfirm();
 
-  // Every draft, parked or on screen, lives in this mount and dies with it. A
-  // wrapper that owns the close button therefore has to ask before it unmounts
-  // the panel, and can only know to when the panel says so. Reporting clean on
-  // the way out keeps it from asking about a panel that is already gone.
-  const reportDirty = useEffectEvent((dirty: boolean) => onDirtyChange?.(dirty));
-  useEffect(() => { reportDirty(edit.hasAnyUnsavedChanges); }, [edit.hasAnyUnsavedChanges]);
-  useEffect(() => () => reportDirty(false), []);
+  // A write lands in the sandbox, so the copy the panel holds and the backup
+  // verdict beside it are both a version behind until they are re-read.
+  const onSaveSettled = useCallback((path: string) => {
+    cache.invalidate(path);
+    onRefreshFiles?.();
+  }, [cache, onRefreshFiles]);
+
+  const edit = useFileEdit({
+    tabId: activeTab.id, workspaceId, selectedFile, setFileContent, readFileFullFn, writeFileFn, ask, onSaveSettled,
+  });
 
   // Reported on mount too, for a strip restored with a chart in front.
   const reportActiveKind = useEffectEvent((kind: FileTab['kind'] | null) => onActiveTabKindChange?.(kind));
@@ -466,10 +473,28 @@ function FilePanel({
   // route change fires no beforeunload, so the drafts would go with it. The
   // same guard is handed down to the tool and plan tabs, whose result views
   // carry links off the route.
+  const askDiscard = useCallback((discard: () => void) => ask(
+    { title: t('filePanel.discardTitle'), message: t('filePanel.discardUnsaved'), confirmLabel: t('filePanel.discard') },
+    discard,
+  ), [ask, t]);
+
+  const { anyUnsavedNow } = edit;
   const guardLeave = useCallback<RouteLeaveGuard>((go) => {
-    if (edit.hasAnyUnsavedChanges && !window.confirm(t('filePanel.discardUnsaved'))) return;
-    go();
-  }, [edit.hasAnyUnsavedChanges, t]);
+    if (anyUnsavedNow()) askDiscard(go);
+    else go();
+  }, [anyUnsavedNow, askDiscard]);
+
+  // Every draft, parked or on screen, lives in this mount and dies with it, so
+  // a wrapper that can unmount the panel leaves through this guard. Handed up
+  // once and read through a ref, since the guard itself changes with every
+  // keystroke; withdrawn on the way out, so nothing asks about a panel that is
+  // already gone.
+  const guardLeaveRef = useLatestRef(guardLeave);
+  const reportLeaveGuard = useEffectEvent((guard: RouteLeaveGuard | null) => onLeaveGuardChange?.(guard));
+  useEffect(() => {
+    reportLeaveGuard((go) => guardLeaveRef.current(go));
+    return () => reportLeaveGuard(null);
+  }, [guardLeaveRef]);
 
   const leaveForMarketView = useCallback((spec: ChartTabSpec) => {
     guardLeave(() => onOpenInMarketView?.(spec));
@@ -480,18 +505,21 @@ function FilePanel({
   const closePanel = useCallback(() => { guardLeave(onClose); }, [guardLeave, onClose]);
 
   const closeTab = useCallback((id: string) => {
-    if (edit.tabHasUnsavedChanges(id) && !window.confirm(t('filePanel.discardUnsaved'))) return;
-    edit.forgetTab(id);
-    const tab = tabs.tabs.find((x) => x.id === id);
-    if (tab?.kind === 'file') {
-      // The marker is what forces a re-read on reopen; the cached bytes must
-      // not outlive it, or a rewrite lands inside the body's fresh window.
-      if (changed.hasChanged(tab.path)) cache.invalidate(tab.path);
-      changed.forget(tab.path);
-    }
-    if (singleFileMode && tabs.tabs.length <= 1) return onClose();
-    tabs.closeTab(id);
-  }, [edit, tabs, changed, cache, singleFileMode, onClose, t]);
+    const close = () => {
+      edit.forgetTab(id);
+      const tab = tabs.tabs.find((x) => x.id === id);
+      if (tab?.kind === 'file') {
+        // The marker is what forces a re-read on reopen; the cached bytes must
+        // not outlive it, or a rewrite lands inside the body's fresh window.
+        if (changed.hasChanged(tab.path)) cache.invalidate(tab.path);
+        changed.forget(tab.path);
+      }
+      if (singleFileMode && tabs.tabs.length <= 1) return onClose();
+      tabs.closeTab(id);
+    };
+    if (edit.tabHasUnsavedChanges(id)) askDiscard(close);
+    else close();
+  }, [edit, tabs, changed, cache, singleFileMode, onClose, askDiscard]);
 
   const handleViewerLink = useStableHandler((path: string, linkWorkspaceId?: string, location?: FileLocation, opts?: { rooted?: boolean; pin?: boolean }) => {
     const rooted = !!opts?.rooted;
@@ -526,14 +554,6 @@ function FilePanel({
       setMemoSyncing(false);
     }
   }, [selectedFile, memoSyncing, handleAddToMemo, refreshMemoStale]);
-
-  // A write lands in the sandbox, so the copy the panel holds and the backup
-  // verdict beside it are both a version behind until they are re-read.
-  const handleSave = useCallback(async () => {
-    await edit.handleSave();
-    if (selectedFile) cache.invalidate(selectedFile);
-    onRefreshFiles?.();
-  }, [edit, cache, selectedFile, onRefreshFiles]);
 
   // Editing needs a text viewer under it: the pdf, excel and html readers are
   // not editors, and an image or a parked tool result is not text. A CSV reads
@@ -632,7 +652,7 @@ function FilePanel({
               setShowDiff={edit.setShowDiff}
               isSaving={edit.isSaving}
               saveError={edit.saveError}
-              onSave={handleSave}
+              onSave={edit.handleSave}
               onCancelEdit={edit.handleCancelEdit}
             />
           )}
@@ -756,6 +776,7 @@ function FilePanel({
             </div>
           </div>
 
+          {narrowOrUnmeasured !== null && (
           <AnimatePresence initial={false}>
           {treeShown && (
             <TreeColumn
@@ -796,6 +817,7 @@ function FilePanel({
             />
           )}
           </AnimatePresence>
+          )}
         </div>
 
       <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileInputChange} />
@@ -837,6 +859,9 @@ function FilePanel({
         />
       )}
     </div>
+    {/* Outside the panel's root: its key handler would otherwise read the
+        dialog's Escape, which React bubbles out of the portal, as its own. */}
+    {confirmDialog}
     </RouteLeaveGuardContext>
   );
 }

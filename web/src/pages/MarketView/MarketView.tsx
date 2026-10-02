@@ -22,6 +22,7 @@ import { MobileFabChat } from '../../components/ui/mobile-fab-chat';
 import { MarketDataWSProvider, useMarketDataWSContext } from './contexts/MarketDataWSContext';
 
 import { loadPref, savePref } from './utils/prefs';
+import { useRestoredWorkspace } from './hooks/useRestoredWorkspace';
 import { useIsMobile } from '@/hooks/useIsMobile';
 
 import { useStockData } from './hooks/useStockData';
@@ -151,17 +152,31 @@ function MarketViewInner() {
     const stored = loadPref<string>('mode', 'fast');
     return stored === 'ptc' ? 'ptc' : 'fast';
   });
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(
-    () => openingRoute.workspaceId || loadPref<string | null>('selectedWorkspaceId', null),
-  );
+  // Workspaces for the selector (PTC mode). The shared query, not a local
+  // fetch — a rename elsewhere invalidates this key, and a copy in local state
+  // would keep showing the old name until the page remounts. The list is
+  // already PTC-only: this key carries includeFlash=false, and the server
+  // filters flash rows out of that response.
+  // refetchOnMount 'always': the reconcile in useRestoredWorkspace only accepts
+  // a fetch that happened during this mount, and the 30s staleTime would
+  // otherwise serve a remount from cache with no request at all, so the check
+  // would never run.
+  const { data: workspacesData, isFetchedAfterMount, isSuccess } = useWorkspaces({
+    limit: 50,
+    refetchOnMount: 'always',
+  });
+  const workspaces = workspacesData?.workspaces ?? EMPTY_WORKSPACES;
+  const { selectedWorkspaceId, pending: workspacePending, select: selectWorkspace } = useRestoredWorkspace({
+    linkedId: openingRoute.workspaceId,
+    workspaces,
+    isFetchedAfterMount,
+    isSuccess,
+    onDropped: () => setMode('fast'),
+  });
 
   useEffect(() => {
     savePref('mode', mode);
   }, [mode]);
-
-  useEffect(() => {
-    savePref('selectedWorkspaceId', selectedWorkspaceId);
-  }, [selectedWorkspaceId]);
 
   const pickRandomQueries = useCallback((symbol: string): string[] => {
     const shuffled = [...QUICK_QUERIES].sort(() => Math.random() - 0.5);
@@ -289,7 +304,7 @@ function MarketViewInner() {
     // Apply workspace before mode so MarketChatPanel resolves the right
     // (ptc) workspace when it mounts the forwarded thread.
     if (route.workspaceId) {
-      setSelectedWorkspaceId(route.workspaceId);
+      selectWorkspace(route.workspaceId);
     }
     if (route.mode) {
       setMode(route.mode);
@@ -306,7 +321,7 @@ function MarketViewInner() {
         return next;
       }, { replace: true });
     }
-  }, [searchParams, selectedStock, setSearchParams]);
+  }, [searchParams, selectedStock, setSearchParams, selectWorkspace]);
 
   const handleStockSearch = useCallback((symbol: string, searchResult?: StockSearchHit | null) => {
     setSelectedStock(symbol);
@@ -356,55 +371,6 @@ function MarketViewInner() {
     return chartSelections.some((s) => isConfirmedFor(s, sym, tf));
   }, [chartSelections, selectedStock, selectedInterval]);
 
-  // Workspaces for the selector (PTC mode). The shared query, not a local
-  // fetch — a rename elsewhere invalidates this key, and a copy in local state
-  // would keep showing the old name until the page remounts. The list is
-  // already PTC-only: this key carries includeFlash=false, and the server
-  // filters flash rows out of that response.
-  // refetchOnMount 'always': the reconcile below only accepts a fetch that
-  // happened during this mount, and the 30s staleTime would otherwise serve a
-  // remount from cache with no request at all, so the check would never run.
-  const { data: workspacesData, isFetchedAfterMount, isSuccess } = useWorkspaces({
-    limit: 50,
-    refetchOnMount: 'always',
-  });
-  const workspaces = workspacesData?.workspaces ?? EMPTY_WORKSPACES;
-
-  // Reconcile the restored selection against the list, once per mount. If the
-  // selected workspace is gone (deleted between visits), drop back to a clean
-  // default state — Flash mode + new chat — instead of silently picking a
-  // different PTC workspace the user didn't ask for. Resolve both decisions
-  // before calling either setter so neither updater runs a side effect on the
-  // other piece of state.
-  //
-  // Gated on a successful fetch that happened during this mount, not merely on
-  // data being present: the query has a 30s staleTime, so a remount inside
-  // that window is served from cache synchronously and a workspace deleted
-  // elsewhere is still in that copy. `isFetchedAfterMount` also flips on an
-  // error update, hence `isSuccess` — a failed list load must not read as
-  // "your workspace is gone" and clear the selection.
-  //
-  // Once per mount, deliberately. Absence from this list does not mean
-  // deleted: it is one page of 50 ordered by recency, so an idle selection
-  // falls off it on its own as other workspaces get activity. Re-running on
-  // every refetch would clear the selection mid-session on a window focus, and
-  // MarketChatPanel reads a workspace change as a scope change the user made
-  // and discards the open thread.
-  //
-  // A workspace named by the link is trusted outright: the chart tab built
-  // that link from a workspace that was open seconds earlier, and one older
-  // than the page's fifty is exactly the case this check would misread as
-  // deleted, dropping the thread the link carried.
-  const reconciledRef = useRef(false);
-  useEffect(() => {
-    if (reconciledRef.current || !isFetchedAfterMount || !isSuccess) return;
-    reconciledRef.current = true;
-    if (selectedWorkspaceId && selectedWorkspaceId === openingRoute.workspaceId) return;
-    if (selectedWorkspaceId && workspaces.some((ws) => ws.workspace_id === selectedWorkspaceId)) return;
-    if (selectedWorkspaceId) setMode('fast');
-    setSelectedWorkspaceId(workspaces[0]?.workspace_id ?? null);
-  }, [isFetchedAfterMount, isSuccess, workspaces, selectedWorkspaceId, openingRoute.workspaceId]);
-
   const handleCaptureChart = useCallback(async () => {
     if (!chartRef.current) return;
     try {
@@ -450,7 +416,9 @@ function MarketViewInner() {
       parts.push(`RSI(${meta.rsiPeriod}): ${meta.rsiValue ?? 'N/A'}`);
 
       const c = meta.lastCandle;
-      parts.push(`Latest candle — O: ${c.open} H: ${c.high} L: ${c.low} C: ${c.close} Vol: ${c.volume?.toLocaleString()}`);
+      // Prompt text for the model, not display: pinned so it reads the same
+      // digits whatever the browser's locale.
+      parts.push(`Latest candle — O: ${c.open} H: ${c.high} L: ${c.low} C: ${c.close} Vol: ${c.volume?.toLocaleString('en-US')}`);
     }
 
     const overview = overviewData as OverviewData | null;
@@ -680,7 +648,7 @@ function MarketViewInner() {
               onModeChange={setMode as any}
               workspaces={workspaces}
               selectedWorkspaceId={selectedWorkspaceId}
-              onWorkspaceChange={setSelectedWorkspaceId}
+              onWorkspaceChange={selectWorkspace}
               onCaptureChart={handleCaptureChartForContext}
               chartImage={chartImage}
               onRemoveChartImage={() => { setChartImage(null); setChartImageDesc(null); }}
@@ -688,6 +656,10 @@ function MarketViewInner() {
               onClearPrefill={() => setPrefillMessage('')}
               hasExternalContext={hasChartSelectionForChart}
               placeholder="Ask about this stock..."
+              // The desktop panel waits out the same check: until the list
+              // confirms the restored workspace there is none to send to, and
+              // a send would clear the draft into the no-workspace toast.
+              disabled={mode === 'ptc' && workspacePending}
             />
           </MobileFabChat>
 
@@ -809,7 +781,8 @@ function MarketViewInner() {
                   onModeChange={setMode}
                   workspaces={workspaces}
                   selectedWorkspaceId={selectedWorkspaceId}
-                  onWorkspaceChange={setSelectedWorkspaceId}
+                  workspacePending={workspacePending}
+                  onWorkspaceChange={selectWorkspace}
                   chartImage={chartImage}
                   chartImageDesc={chartImageDesc}
                   onCaptureChart={handleCaptureChartForContext}

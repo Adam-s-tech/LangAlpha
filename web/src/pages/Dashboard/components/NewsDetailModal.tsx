@@ -13,6 +13,7 @@ import { MobileBottomSheet } from '@/components/ui/mobile-bottom-sheet';
 import { Loader } from '@/components/ui/loader';
 import { useToast } from '@/components/ui/use-toast';
 import { ContextBus } from '@/lib/contextBus';
+import { createDateFormatter } from '@/lib/format';
 import { buildNewsWidgetSnapshot, normalizeArticle } from '../utils/newsArticleFetch';
 
 interface ArticleSource {
@@ -125,17 +126,19 @@ function sentimentStyle(sentiment: string): React.CSSProperties {
   }
 }
 
+const dateTime = createDateFormatter({
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+});
+
 function formatDate(dateString: string | undefined, locale: string): string {
   if (!dateString) return '';
   try {
     const d = new Date(dateString);
-    return d.toLocaleDateString(locale, {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
+    return dateTime(d, locale);
   } catch {
     return dateString;
   }

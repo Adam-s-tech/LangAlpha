@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useState, type RefObject } from 'react';
 
 /**
  * Observed element BORDER-BOX width, quantized to `step` px so per-pixel
@@ -43,17 +43,20 @@ export function useContainerWidth(
 }
 
 /**
- * Returns true when the observed element's width is below `threshold`.
- * Element-based (not viewport) so embedded panels (e.g. MarketView's chat
- * column) can collapse avatars/tight layouts independent of window width.
+ * Whether the observed element's width is below `threshold`, or null until it
+ * has been measured. Element-based (not viewport) so an embedded panel can
+ * change layout independent of window width. The first read is a layout
+ * effect, so the render that knows is the first one painted: a caller that
+ * holds width-dependent content back while this is null never shows a frame
+ * laid out for the wrong width. Without ResizeObserver (jsdom) it reports false.
  */
 export function useNarrowContainer(
   ref: RefObject<HTMLElement | null>,
   threshold: number,
-): boolean {
-  const [narrow, setNarrow] = useState(false);
+): boolean | null {
+  const [narrow, setNarrow] = useState<boolean | null>(() => (typeof ResizeObserver === 'undefined' ? false : null));
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
 

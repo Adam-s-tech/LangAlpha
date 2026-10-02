@@ -3,7 +3,6 @@ import { useMemo } from 'react';
 import { getNews, getIndex, INDEX_SYMBOLS, normalizeIndexSymbol, buildIndexData } from '../utils/api';
 import { useQuotes } from '@/lib/quotes';
 import { fetchMarketStatus } from '@/lib/marketUtils';
-import { useLocale } from '@/hooks/useLocale';
 import type { IndexData, SparklinePoint } from '@/types/market';
 import {
   type DashboardNewsItem,
@@ -41,7 +40,6 @@ interface DashboardData {
  * Eliminates race conditions and reduces boilerplate of manual useEffects.
  */
 export function useDashboardData(): DashboardData {
-  const locale = useLocale();
   // 1. Market Status (Polls every 60s, cached globally)
   const { data: marketStatus = null } = useQuery<MarketStatusData | null>({
     queryKey: ['dashboard', 'marketStatus'],
@@ -104,7 +102,7 @@ export function useDashboardData(): DashboardData {
     queryKey: ['dashboard', 'news'],
     queryFn: async (): Promise<NewsItem[]> => {
       const data = await getNews({ limit: 50 });
-      return data.results?.length ? mapNewsResults(data.results, locale, Date.now()) : [];
+      return data.results?.length ? mapNewsResults(data.results) : [];
     },
     staleTime: NEWS_STALE_MS,
     refetchInterval: NEWS_POLL_INTERVAL_MS,
@@ -138,11 +136,8 @@ export function useDashboardData(): DashboardData {
       seen.add(id);
       return true;
     });
-    // Times read as of the fetch, as the polled feeds' queryFns stamp theirs,
-    // so a new page re-stamps the list rather than a clock re-rendering the
-    // whole dashboard context every minute.
-    return mapNewsResults(unique, locale, curated.dataUpdatedAt);
-  }, [curated.data, curated.dataUpdatedAt, locale]);
+    return mapNewsResults(unique);
+  }, [curated.data]);
 
   return {
     indices,

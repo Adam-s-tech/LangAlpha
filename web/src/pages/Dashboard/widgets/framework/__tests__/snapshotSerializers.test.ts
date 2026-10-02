@@ -133,7 +133,7 @@ describe('quote row serializers', () => {
     expect(out).toContain('pre-market $182.10');
     expect(out).toContain('shares 10');
     expect(out).toContain('mkt val $1234.50');
-    expect(out).toContain('vol 38,000,000');
+    expect(out).toContain('vol 38000000');
   });
 
   it('renders rows as a markdown table', () => {

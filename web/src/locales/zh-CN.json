@@ -203,7 +203,6 @@
     "logoutConfirmMsg": "确定要退出登录吗？",
     "timezone": "时区",
     "selectTimezone": "选择时区...",
-    "selectLocale": "选择语言...",
     "preferencesDesc": "偏好设置通过与 Agent 对话来管理。点击下方按钮进行更新。",
     "noPreferencesYet": "暂无偏好设置。点击下方按钮进行设置。",
     "riskTolerance": "风险偏好",
@@ -418,10 +417,7 @@
         "search": "搜索",
         "searching": "搜索中...",
         "loading": "加载中...",
-        "viewAll": "查看全部",
-        "relativeNow": "刚刚",
-        "relativeFuture": "{{when}}后",
-        "relativePast": "{{when}}前"
+        "viewAll": "查看全部"
       },
       "shell": {
         "addWidget": "添加小组件",
@@ -473,7 +469,7 @@
         "noMatches": "没有匹配的小组件。",
         "hintClickToSelect": "点击选择 · 双击或按",
         "hintToAdd": "添加",
-        "hintAddSentence": "点击选择 · 双击或按 <enter></enter> 添加",
+        "hintAddSentence": "点击选择 · 双击或按 <enter/> 添加",
         "cancel": "取消",
         "addWidget": "添加小组件",
         "addNamed": "添加 {{title}}",
@@ -1149,17 +1145,6 @@
       "emptyPortfolio": "添加股票到持仓以查看相关新闻",
       "emptyWatchlist": "添加股票到自选以查看相关新闻",
       "emptyDefault": "暂无新闻"
-    },
-    "topNews": {
-      "title": "头条新闻",
-      "sample1": "零售销售下滑拖累市场……",
-      "sample2": "科技巨头财报大涨，股价创历史新高……",
-      "sample3": "高调 IPO 表现不及预期……",
-      "sample4": "电动汽车股因需求飙升而暴涨……"
-    },
-    "topResearch": {
-      "title": "热门研究",
-      "sample1": "零售销售下滑拖累市场，股票走低"
     },
     "watchlistCard": {
       "createTitle": "创建自选股",
@@ -1877,6 +1862,9 @@
     "discardUnsaved": "您有未保存的更改，确定要丢弃吗？",
     "discardChanges": "丢弃未保存的更改？",
     "confirmSave": "保存更改？这将覆盖沙箱中的文件，且无法撤销。",
+    "saveTitle": "保存更改",
+    "discardTitle": "丢弃更改",
+    "discard": "丢弃",
     "emptyFile": "空文件",
     "fileTooLarge": "文件过大，无法在浏览器中编辑（>500KB）",
     "loadEditFailed": "加载文件编辑失败",
@@ -2041,6 +2029,7 @@
       "accessDeniedHint": "此文件位于允许的目录之外。",
       "unknown": "文件加载失败",
       "unknownHint": "加载文件时发生意外错误。",
+      "previewFailed": "无法预览此文件",
       "retry": "重试",
       "download": "改为下载"
     }
@@ -2829,12 +2818,16 @@
     "defaultsTitle": "设置您的默认模型",
     "defaultsSubtitle": "选择驱动您研究的模型",
     "primaryModel": "主模型",
-    "primaryDescription": "用于深度研究",
+    "primaryDescription": "用于深度研究，支持代码执行和数据分析",
+    "primaryPlaceholder": "选择主模型...",
     "flashModel": "快速模型",
-    "flashDescription": "用于快速问答",
+    "flashDescription": "用于无需沙箱的快速问答",
+    "flashPlaceholder": "选择快速模型...",
     "explainerTitle": "两种 Agent 模式",
-    "explainerDeep": "PTC 模式（主要）：完整 Agent，带有沙盒环境，支持代码执行、图表和数据分析。由您的主模型驱动。",
-    "explainerFlash": "Flash 模式：轻量 Agent，无需沙盒即可快速回答。由您的快速模型驱动。",
+    "explainerDeepTitle": "PTC 模式（主要）",
+    "explainerDeepBody": "完整的 Agent，带有沙箱环境，支持代码执行、图表和数据分析。由您的主模型驱动。",
+    "explainerFlashTitle": "Flash 模式",
+    "explainerFlashBody": "轻量的 Agent，无需沙箱即可快速回答。由您的快速模型驱动，响应更快。",
     "doneTitle": "准备就绪！",
     "doneSummary": "您的 AI 研究助手已配置完成，随时可用。",
     "goToDashboard": "前往控制台",
@@ -3013,6 +3006,32 @@
       "range52w": "52 周",
       "change": "涨跌",
       "changeExt": "涨跌（含盘前盘后）"
+    },
+    "header": {
+      "watchlist": "自选股",
+      "showMetrics": "显示指标",
+      "hideMetrics": "隐藏指标",
+      "prevClose": "昨收",
+      "open": "开盘",
+      "openHint": "数值由盘中数据汇总而来，可能与图表上的日线数据略有差异。",
+      "low": "最低",
+      "high": "最高",
+      "high52w": "52 周最高",
+      "low52w": "52 周最低",
+      "avgVolume3m": "3 个月均量",
+      "volume": "成交量",
+      "dayRange": "日内区间",
+      "changePct": "涨跌幅",
+      "changePctExt": "涨跌幅（含盘前盘后）",
+      "ws": {
+        "label": "WebSocket：{{status}}",
+        "connectedSecond": "已连接（秒级）",
+        "connectedMinute": "已连接（分钟级）",
+        "connectedNoData": "已连接（无数据）",
+        "unavailable": "不可用",
+        "reconnecting": "重连中",
+        "disconnected": "已断开"
+      }
     },
     "symbolSearch": {
       "switchSymbol": "切换标的，当前为 {{symbol}}",

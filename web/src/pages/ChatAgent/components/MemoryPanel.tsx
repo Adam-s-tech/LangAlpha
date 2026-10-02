@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, useMemo } from 'react';
 import { ArrowLeft, BookMarked, FileText, RefreshCw, X } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
-import { formatBytes } from '@/lib/format';
+import { createDateFormatter, formatBytes } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
 import { useTranslation } from 'react-i18next';
@@ -32,15 +32,15 @@ interface MemoryPanelProps {
   onOpenFile?: OpenFileHandler;
 }
 
-function formatTime(iso: string | null, now: number): string {
+const clockTime = createDateFormatter({ hour: '2-digit', minute: '2-digit' });
+const monthDay = createDateFormatter({ month: 'short', day: 'numeric' });
+
+function formatTime(iso: string | null, now: number, locale: string): string {
   if (!iso) return '';
   try {
     const d = new Date(iso);
     const sameDay = d.toDateString() === new Date(now).toDateString();
-    if (sameDay) {
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    }
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return sameDay ? clockTime(d, locale) : monthDay(d, locale);
   } catch {
     return '';
   }
@@ -347,7 +347,7 @@ export default function MemoryPanel({
               <div className="text-[0.625rem]"
                    style={{ color: 'var(--color-text-tertiary)' }}>
                 {formatBytes(entry.size, locale)}
-                {entry.modified_at && ` · ${formatTime(entry.modified_at, now)}`}
+                {entry.modified_at && ` · ${formatTime(entry.modified_at, now, locale)}`}
               </div>
             </div>
           </button>

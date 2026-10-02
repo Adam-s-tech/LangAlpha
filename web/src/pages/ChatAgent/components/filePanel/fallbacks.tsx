@@ -24,7 +24,7 @@ export function DocumentErrorFallback({ onDownload, downloadState = 'idle' }: Do
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-12">
       <AlertTriangle className="h-6 w-6" style={{ color: 'var(--color-text-tertiary)' }} />
-      <p className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>Unable to preview this file</p>
+      <p className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>{t('filePanel.error.previewFailed')}</p>
       {onDownload && (
         <button
           className="text-xs px-3 py-1.5 rounded disabled:opacity-60 disabled:cursor-default"
@@ -32,7 +32,7 @@ export function DocumentErrorFallback({ onDownload, downloadState = 'idle' }: Do
           onClick={onDownload}
           disabled={downloadState !== 'idle'}
         >
-          {downloadLabel(downloadState, 'Download instead', t)}
+          {downloadLabel(downloadState, t('filePanel.error.download'), t)}
         </button>
       )}
     </div>

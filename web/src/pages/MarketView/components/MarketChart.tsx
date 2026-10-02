@@ -208,7 +208,6 @@ const MarketChart = React.memo(function MarketChart({
   // Server market phase mirrored into a ref so the imperative data paths
   // (WS ticks, updateSeriesData) read the freshest phase between renders.
   const marketPhaseRef = useRef<string | null>(null);
-  const quoteDataRef = useRef(quoteData);
   const snapshotRef = useRef(snapshot);
 
   const [loading, setLoading] = useState<boolean>(true);
@@ -351,7 +350,6 @@ const MarketChart = React.memo(function MarketChart({
   useEffect(() => { rsiPeriodRef.current = rsiPeriod; }, [rsiPeriod]);
   useEffect(() => { intervalRef.current = interval; }, [interval]);
   useEffect(() => { defaultViewRef.current = defaultView; }, [defaultView]);
-  useEffect(() => { quoteDataRef.current = quoteData; }, [quoteData]);
   useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
   const symbolRef = useRef(symbol);
   useEffect(() => { symbolRef.current = symbol; }, [symbol]);

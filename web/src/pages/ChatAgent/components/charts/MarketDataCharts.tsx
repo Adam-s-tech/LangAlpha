@@ -13,6 +13,8 @@ import { Sunrise, Sunset } from 'lucide-react';
 import { useTheme } from '../../../../contexts/ThemeContext';
 import { createThemeResolver, useThemeTokens } from '@/lib/themeTokens';
 import { useTranslation } from 'react-i18next';
+import { grouped, grouped2 } from '@/lib/format';
+import { useLocale } from '@/hooks/useLocale';
 import { buildMarketViewUrl } from '@/pages/MarketView/utils/marketRoute';
 import { useRouteLeaveGuard } from '../../contexts/RouteLeaveGuardContext';
 
@@ -78,6 +80,7 @@ const ANALYST_COLORS: Record<string, string> = {
   'Sell': '#f87171',
   'Strong Sell': 'var(--color-loss)',
 };
+
 
 const formatNumber = (num: number | null | undefined): string => {
   if (num == null) return 'N/A';
@@ -591,7 +594,7 @@ export const PerformanceBarChart = memo(function PerformanceBarChart({ performan
       <h4 style={{ color: 'var(--color-text-primary)', fontSize: '0.8125rem', fontWeight: 600, marginBottom: 8 }}>
         {t('toolArtifact.pricePerformance')}
       </h4>
-      <BarChart responsive width="100%" height={180} data={chartData} margin={{ left: -20, right: 10 }}>
+      <BarChart responsive width="100%" height={180} data={chartData} margin={{ left: 0, right: 10 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
         <XAxis
           dataKey="name"
@@ -599,6 +602,7 @@ export const PerformanceBarChart = memo(function PerformanceBarChart({ performan
           axisLine={{ stroke: GRID_COLOR }}
         />
         <YAxis
+          width="auto"
           tick={{ fill: TEXT_COLOR, fontSize: 11 }}
           axisLine={{ stroke: GRID_COLOR }}
           tickFormatter={(v: number) => `${v.toFixed(0)}%`}
@@ -764,10 +768,10 @@ export const QuarterlyRevenueChart = memo(function QuarterlyRevenueChart({ data 
       <h4 style={{ color: 'var(--color-text-primary)', fontSize: '0.8125rem', fontWeight: 600, marginBottom: 8 }}>
         {t('toolArtifact.quarterlyRevenue')}
       </h4>
-      <BarChart responsive width="100%" height={220} data={data} margin={{ left: -10, right: 10 }}>
+      <BarChart responsive width="100%" height={220} data={data} margin={{ left: 0, right: 10 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
         <XAxis dataKey="period" tick={{ fill: TEXT_COLOR, fontSize: 10 }} axisLine={{ stroke: GRID_COLOR }} />
-        <YAxis tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => formatNumber(v).replace('$', '')} />
+        <YAxis width="auto" tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => formatNumber(v).replace('$', '')} />
         <Tooltip content={<DarkTooltip formatter={(v: number) => formatNumber(v)} />} />
         <Legend wrapperStyle={{ fontSize: 11, color: TEXT_COLOR }} formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>} />
         <Bar dataKey="revenue" name={t('toolArtifact.revenue')} fill="var(--color-accent-primary)" radius={[4, 4, 0, 0]} />
@@ -799,10 +803,10 @@ export const MarginsChart = memo(function MarginsChart({ data }: ChartArrayDataP
       <h4 style={{ color: 'var(--color-text-primary)', fontSize: '0.8125rem', fontWeight: 600, marginBottom: 8 }}>
         {t('toolArtifact.profitMargins')}
       </h4>
-      <LineChart responsive width="100%" height={220} data={chartData} margin={{ left: -10, right: 10 }}>
+      <LineChart responsive width="100%" height={220} data={chartData} margin={{ left: 0, right: 10 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
         <XAxis dataKey="period" tick={{ fill: TEXT_COLOR, fontSize: 10 }} axisLine={{ stroke: GRID_COLOR }} />
-        <YAxis tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => `${v.toFixed(0)}%`} />
+        <YAxis width="auto" tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => `${v.toFixed(0)}%`} />
         <Tooltip content={<DarkTooltip formatter={(v: number) => `${v?.toFixed(1)}%`} />} />
         <Legend wrapperStyle={{ fontSize: 11, color: TEXT_COLOR }} formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>} />
         <Line type="monotone" dataKey="grossMargin" name={t('toolArtifact.grossMargin')} stroke="var(--color-accent-primary)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
@@ -824,10 +828,10 @@ export const EarningsSurpriseChart = memo(function EarningsSurpriseChart({ data 
       <h4 style={{ color: 'var(--color-text-primary)', fontSize: '0.8125rem', fontWeight: 600, marginBottom: 8 }}>
         {t('toolArtifact.epsActualVsEstimate')}
       </h4>
-      <BarChart responsive width="100%" height={220} data={data} margin={{ left: -10, right: 10 }}>
+      <BarChart responsive width="100%" height={220} data={data} margin={{ left: 0, right: 10 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
         <XAxis dataKey="period" tick={{ fill: TEXT_COLOR, fontSize: 10 }} axisLine={{ stroke: GRID_COLOR }} />
-        <YAxis tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => `$${v.toFixed(2)}`} />
+        <YAxis width="auto" tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => `$${v.toFixed(2)}`} />
         <Tooltip content={<DarkTooltip formatter={(v: number) => `$${v?.toFixed(2)}`} />} />
         <Legend wrapperStyle={{ fontSize: 11, color: TEXT_COLOR }} formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>} />
         <Bar dataKey="epsActual" name={t('toolArtifact.epsActual')} fill={GREEN} radius={[4, 4, 0, 0]} />
@@ -848,10 +852,10 @@ export const CashFlowChart = memo(function CashFlowChart({ data }: ChartArrayDat
       <h4 style={{ color: 'var(--color-text-primary)', fontSize: '0.8125rem', fontWeight: 600, marginBottom: 8 }}>
         {t('toolArtifact.cashFlowQuarterly')}
       </h4>
-      <BarChart responsive width="100%" height={220} data={data} margin={{ left: -10, right: 10 }}>
+      <BarChart responsive width="100%" height={220} data={data} margin={{ left: 0, right: 10 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
         <XAxis dataKey="period" tick={{ fill: TEXT_COLOR, fontSize: 10 }} axisLine={{ stroke: GRID_COLOR }} />
-        <YAxis tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => formatNumber(v).replace('$', '')} />
+        <YAxis width="auto" tick={{ fill: TEXT_COLOR, fontSize: 11 }} axisLine={{ stroke: GRID_COLOR }} tickFormatter={(v: number) => formatNumber(v).replace('$', '')} />
         <Tooltip content={<DarkTooltip formatter={(v: number) => formatNumber(v)} />} />
         <Legend wrapperStyle={{ fontSize: 11, color: TEXT_COLOR }} formatter={(val: string) => <span style={{ color: TEXT_COLOR }}>{val}</span>} />
         <ReferenceLine y={0} stroke={GRID_COLOR} />
@@ -905,6 +909,7 @@ function LazyChart({ height, children, root }: { height: number; children: React
 
 export const CompanyOverviewCard = memo(function CompanyOverviewCard({ data, scrollContainerRef }: DataProps & { scrollContainerRef?: React.RefObject<HTMLDivElement | null> }): React.ReactElement {
   const { t } = useTranslation();
+  const locale = useLocale();
   const {
     symbol, name, quote, performance, analystRatings,
     revenueByProduct, revenueByGeo,
@@ -1038,7 +1043,7 @@ export const CompanyOverviewCard = memo(function CompanyOverviewCard({ data, scr
             {hasSI && (
               <QuoteStat
                 label={`${t('toolArtifact.shortInterest', 'Short Interest')}${(latestSI!.settlement_date as string | undefined) ? ` (${latestSI!.settlement_date as string})` : ''}`}
-                value={(latestSI!.short_interest as number).toLocaleString()}
+                value={grouped(latestSI!.short_interest as number, locale)}
               />
             )}
             {siPctOfFloat != null && (
@@ -1118,6 +1123,7 @@ function QuoteStat({ label, value }: QuoteStatProps): React.ReactElement {
 
 export function MarketIndicesChart({ data }: DataProps): React.ReactElement {
   const { t } = useTranslation();
+  const locale = useLocale();
   const indices = data?.indices as Record<string, Record<string, unknown>> | undefined;
   if (!indices || Object.keys(indices).length === 0) {
     return <div style={{ color: TEXT_COLOR, padding: 16 }}>{t('toolArtifact.noIndexData')}</div>;
@@ -1150,7 +1156,7 @@ export function MarketIndicesChart({ data }: DataProps): React.ReactElement {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem', flexShrink: 0 }}>
                 {lastClose != null && (
                   <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>
-                    {lastClose.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {grouped2(lastClose, locale)}
                   </span>
                 )}
                 {changePct != null && (

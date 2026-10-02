@@ -14,11 +14,11 @@ const { JSDOM } = createRequire(import.meta.url)('jsdom') as {
   ) => { window: unknown };
 };
 
-// The build writes an inline script into index.html that picks the locale the
-// way detectLocale() will and preloads its catalog before the bundle runs. It
-// is ES5 in a string and never reaches tsc, so it is run here, as the browser
-// gets it, against the TypeScript it mirrors. A disagreement costs a zh-CN
-// visitor a wasted download plus a waterfall on the catalog it actually needs.
+// The build serialises resolveLocale() into an inline script in index.html that
+// preloads the catalog before the bundle runs. The script is a string that never
+// reaches tsc, so it is run here, as the browser gets it, against detectLocale().
+// A disagreement costs a zh-CN visitor a wasted download plus a waterfall on the
+// catalog it actually needs.
 
 type Win = Window & typeof globalThis & { eval: (s: string) => void };
 

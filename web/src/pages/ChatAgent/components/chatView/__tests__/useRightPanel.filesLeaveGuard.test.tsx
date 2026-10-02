@@ -1,16 +1,17 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 
 import { useRightPanel } from '../useRightPanel';
 import type { PlanData } from '../types';
 import type { ToolCallProcessRecord } from '../../ToolCallDetailView';
+import type { RouteLeaveGuard } from '../../../contexts/RouteLeaveGuardContext';
 
 // The Files panel's drafts live in its mount, and closing the panel unmounts
-// it. With a draft open that exit asks first, and a declined ask leaves the
-// panel where it is. A tool result or a plan is a tab of the same panel, so
-// opening one never asks.
+// it. Those exits leave through the guard the panel hands up, and a declined
+// ask leaves the panel where it is. A tool result or a plan is a tab of the
+// same panel, so opening one never asks.
 
 const setFilePanelWorkspaceId = vi.fn();
 
@@ -26,63 +27,61 @@ function open(panel: { isFlashMode?: boolean; filePanelWorkspaceId?: string | nu
   }), { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> });
   act(() => result.current.handleToggleFilePanel());
   expect(result.current.rightPanelType).toBe('file');
-  act(() => result.current.handleFilesDirtyChange(true));
+  act(() => result.current.handleFilesLeaveGuardChange(guard));
   return result;
 }
 
 const TOOL_CALL = { toolCall: { id: 'tc1' }, toolCallResult: { artifact: null } } as unknown as ToolCallProcessRecord;
 const PLAN = { steps: [] } as unknown as PlanData;
 
-const confirm = vi.fn<(message?: string) => boolean>();
+// The panel's guard, answered the way the reader answers its dialog.
+const guard = vi.fn<RouteLeaveGuard>();
+const answer = (leave: boolean) => guard.mockImplementation((go) => { if (leave) go(); });
 beforeEach(() => {
-  confirm.mockReset();
+  guard.mockReset();
   setFilePanelWorkspaceId.mockReset();
-  vi.stubGlobal('confirm', confirm);
-});
-afterEach(() => {
-  vi.unstubAllGlobals();
 });
 
 describe('leaving the Files panel with a draft open', () => {
   it('opens a tool-call detail as a Files tab without asking', () => {
-    confirm.mockReturnValue(false);
+    answer(false);
     const result = open();
     act(() => result.current.handleToolCallDetailClick('tc1'));
-    expect(confirm).not.toHaveBeenCalled();
+    expect(guard).not.toHaveBeenCalled();
     expect(result.current.rightPanelType).toBe('file');
     expect(result.current.panelTarget).toMatchObject({ kind: 'tool', toolCallId: 'tc1' });
   });
 
   it('opens a plan detail as a Files tab without asking', () => {
-    confirm.mockReturnValue(false);
+    answer(false);
     const result = open();
     act(() => result.current.handlePlanDetailClick('p1', PLAN));
-    expect(confirm).not.toHaveBeenCalled();
+    expect(guard).not.toHaveBeenCalled();
     expect(result.current.rightPanelType).toBe('file');
     expect(result.current.panelTarget).toMatchObject({ kind: 'plan', planId: 'p1', plan: PLAN });
   });
 
   it('holds the panel on a declined Workspace toggle', () => {
-    confirm.mockReturnValue(false);
+    answer(false);
     const result = open();
     act(() => result.current.handleToggleFilePanel());
     expect(result.current.rightPanelType).toBe('file');
   });
 
   it('leaves once the ask is accepted', () => {
-    confirm.mockReturnValue(true);
+    answer(true);
     const result = open();
     act(() => result.current.handleToggleFilePanel());
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(guard).toHaveBeenCalledTimes(1);
     expect(result.current.rightPanelType).toBeNull();
   });
 
-  it('never asks once the panel reports clean', () => {
-    confirm.mockReturnValue(false);
+  it('leaves without asking once the panel is gone', () => {
+    answer(false);
     const result = open();
-    act(() => result.current.handleFilesDirtyChange(false));
+    act(() => result.current.handleFilesLeaveGuardChange(null));
     act(() => result.current.handleToggleFilePanel());
-    expect(confirm).not.toHaveBeenCalled();
+    expect(guard).not.toHaveBeenCalled();
     expect(result.current.rightPanelType).toBeNull();
   });
 });
@@ -93,34 +92,34 @@ describe('opening a chat link with a draft open', () => {
   const MEMO = '.agents/user/memo/my-report.pdf';
 
   it('opens a memo in PTC without asking', () => {
-    confirm.mockReturnValue(false);
+    answer(false);
     const result = open();
     act(() => result.current.handleOpenFileFromChat(MEMO));
-    expect(confirm).not.toHaveBeenCalled();
+    expect(guard).not.toHaveBeenCalled();
     expect(result.current.panelTarget).toMatchObject({ kind: 'memo', key: 'my-report.pdf' });
   });
 
   it('opens a memo in Flash without asking when no override is set', () => {
-    confirm.mockReturnValue(false);
+    answer(false);
     const result = open({ isFlashMode: true, filePanelWorkspaceId: null });
     act(() => result.current.handleOpenFileFromChat(MEMO));
-    expect(confirm).not.toHaveBeenCalled();
+    expect(guard).not.toHaveBeenCalled();
     expect(result.current.panelTarget).toMatchObject({ kind: 'memo' });
   });
 
   it('opens a file in the workspace Flash already shows without asking', () => {
-    confirm.mockReturnValue(false);
+    answer(false);
     const result = open({ isFlashMode: true, filePanelWorkspaceId: OTHER_WS });
     act(() => result.current.handleOpenFileFromChat('results/a.md', OTHER_WS));
-    expect(confirm).not.toHaveBeenCalled();
+    expect(guard).not.toHaveBeenCalled();
     expect(result.current.panelTarget).toMatchObject({ kind: 'file', path: 'results/a.md' });
   });
 
   it('asks before Flash switches to another workspace, and holds on a no', () => {
-    confirm.mockReturnValue(false);
+    answer(false);
     const result = open({ isFlashMode: true, filePanelWorkspaceId: null });
     act(() => result.current.handleOpenFileFromChat('results/a.md', OTHER_WS));
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(guard).toHaveBeenCalledTimes(1);
     expect(setFilePanelWorkspaceId).not.toHaveBeenCalledWith(OTHER_WS);
   });
 });

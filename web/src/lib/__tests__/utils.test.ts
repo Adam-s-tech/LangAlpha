@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chartSecToDateStr, cn, dateStrInTz, utcMsToChartSec, utcMsToETDate, utcMsToETTime } from '../utils';
+import { chartSecToDateStr, cn, dateStrInTz, localDateStr, utcMsToChartSec, utcMsToETDate, utcMsToETTime } from '../utils';
 
 describe('cn', () => {
   it('merges simple class names', () => {
@@ -89,6 +89,14 @@ describe('dateStrInTz', () => {
     const ms = Date.UTC(2025, 6, 2, 23, 0);
     expect(dateStrInTz(ms, 'Asia/Hong_Kong')).toBe('2025-07-03');
     expect(dateStrInTz(ms, 'America/New_York')).toBe('2025-07-02');
+  });
+});
+
+describe('localDateStr', () => {
+  it('stays on the local calendar day at both ends of it', () => {
+    // Whatever the host zone, one of these is a different UTC date.
+    expect(localDateStr(new Date(2026, 8, 30, 0, 30))).toBe('2026-09-30');
+    expect(localDateStr(new Date(2026, 8, 30, 23, 30).getTime())).toBe('2026-09-30');
   });
 });
 

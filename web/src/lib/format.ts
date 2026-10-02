@@ -15,28 +15,16 @@
 // every formatted widget on the dashboard would crash at once. The fallback
 // uses the host default locale, cached under the bad key so the construction
 // is not retried on every call.
-function safeNumberFormat(lang: string, opts: Intl.NumberFormatOptions): Intl.NumberFormat {
-  try {
-    return new Intl.NumberFormat(lang, opts);
-  } catch {
-    return new Intl.NumberFormat(undefined, opts);
-  }
-}
-
-function safeDateFormat(lang: string, opts: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
-  try {
-    return new Intl.DateTimeFormat(lang, opts);
-  } catch {
-    return new Intl.DateTimeFormat(undefined, opts);
-  }
-}
-
-function perLocale<T>(make: (locale: string) => T): (locale: string) => T {
+function perLocale<T>(make: (locale: string | undefined) => T): (locale: string) => T {
   const made = new Map<string, T>();
   return (locale) => {
     let value = made.get(locale);
     if (value === undefined) {
-      value = make(locale);
+      try {
+        value = make(locale);
+      } catch {
+        value = make(undefined);
+      }
       made.set(locale, value);
     }
     return value;
@@ -44,14 +32,14 @@ function perLocale<T>(make: (locale: string) => T): (locale: string) => T {
 }
 
 export function createFormatter(opts: Intl.NumberFormatOptions): (n: number, locale: string) => string {
-  const format = perLocale((locale) => safeNumberFormat(locale, opts));
+  const format = perLocale((locale) => new Intl.NumberFormat(locale, opts));
   return (n, locale) => format(locale).format(n);
 }
 
 export function createDateFormatter(
   opts: Intl.DateTimeFormatOptions,
 ): (d: Date | number, locale: string) => string {
-  const format = perLocale((locale) => safeDateFormat(locale, opts));
+  const format = perLocale((locale) => new Intl.DateTimeFormat(locale, opts));
   return (d, locale) => format(locale).format(d);
 }
 
@@ -70,9 +58,14 @@ export function formatTimezoneName(
   let name = zoneNames.get(key);
   if (name === undefined) {
     try {
-      name = safeDateFormat(locale, { timeZone: tz, timeZoneName: style })
-        .formatToParts(new Date())
-        .find((p) => p.type === 'timeZoneName')?.value ?? tz;
+      const opts: Intl.DateTimeFormatOptions = { timeZone: tz, timeZoneName: style };
+      let zone: Intl.DateTimeFormat;
+      try {
+        zone = new Intl.DateTimeFormat(locale, opts);
+      } catch {
+        zone = new Intl.DateTimeFormat(undefined, opts);
+      }
+      name = zone.formatToParts(new Date()).find((p) => p.type === 'timeZoneName')?.value ?? tz;
     } catch {
       name = tz;
     }
@@ -85,6 +78,13 @@ export function formatTimezoneName(
 // `1_500_000 → "1.5M"`. Locale-aware via Intl. Numbers under 1000 render in
 // full; suffix style follows the active locale (en `K`, zh `万`, etc).
 export const compactNumber = createFormatter({ notation: 'compact', maximumFractionDigits: 1 });
+
+// Grouped, for a figure read in the locale's own style (`1,234.50`). `grouped`
+// is `toLocaleString()`'s default digits; `integer` is a count. Not `fixed2`,
+// which turns grouping off.
+export const grouped = createFormatter({ maximumFractionDigits: 3 });
+export const grouped2 = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const integer = createFormatter({ maximumFractionDigits: 0 });
 
 // The quote-strip variants. Two fixed decimals so a column of figures keeps
 // its width from one tick to the next; grouping off because a stock price
@@ -118,14 +118,6 @@ export function formatBytes(bytes: number, locale: string): string {
   return `${byteAmount(shown, locale)} ${BYTE_UNITS[unit]}`;
 }
 
-function safeRelativeFormat(lang: string, style: Intl.RelativeTimeFormatStyle): Intl.RelativeTimeFormat {
-  try {
-    return new Intl.RelativeTimeFormat(lang, { numeric: 'auto', style });
-  } catch {
-    return new Intl.RelativeTimeFormat(undefined, { numeric: 'auto', style });
-  }
-}
-
 const _RELATIVE_STEPS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
   ['year', 31536000],
   ['month', 2592000],
@@ -136,8 +128,8 @@ const _RELATIVE_STEPS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
 ];
 
 const relativeFormats = perLocale((locale) => ({
-  counts: safeRelativeFormat(locale, 'narrow'),
-  phrases: safeRelativeFormat(locale, 'long'),
+  counts: new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'narrow' }),
+  phrases: new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'long' }),
 }));
 
 /**

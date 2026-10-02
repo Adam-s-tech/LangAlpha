@@ -25,11 +25,10 @@ import { useQuotes, quoteKey } from '@/lib/quotes';
 import { DEFAULT_BLUE_CHIPS } from '../framework/defaults';
 import { SymbolListField } from '../framework/settings/SymbolListField';
 import { SettingsDoneButton } from '../framework/settings/SettingsDoneButton';
-import { createFormatter } from '@/lib/format';
+import { grouped2 } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import type { WidgetRenderProps, WidgetSettingsProps } from '../types';
 
-const fmt2 = createFormatter({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 interface MiniChartGridConfig {
   symbols: string[];
@@ -332,7 +331,7 @@ function MiniChartGridWidget({ instance }: WidgetRenderProps<MiniChartGridConfig
                       className="text-[0.6875rem] dashboard-mono"
                       style={{ color: up ? 'var(--color-profit)' : 'var(--color-loss)' }}
                     >
-                      {up ? '+' : ''}{fmt2(pct, locale)}%
+                      {up ? '+' : ''}{grouped2(pct, locale)}%
                     </span>
                   </div>
                   <div className="flex items-end justify-between mt-1">
@@ -340,7 +339,7 @@ function MiniChartGridWidget({ instance }: WidgetRenderProps<MiniChartGridConfig
                       className="text-[0.6875rem] dashboard-mono"
                       style={{ color: 'var(--color-text-secondary)' }}
                     >
-                      {currencySymbol(cell.currency)}{fmt2(cell.last, locale)}
+                      {currencySymbol(cell.currency)}{grouped2(cell.last, locale)}
                     </span>
                     <MiniSparkline cell={cell} />
                   </div>

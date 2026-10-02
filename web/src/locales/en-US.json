@@ -203,7 +203,6 @@
     "logoutConfirmMsg": "Are you sure you want to logout?",
     "timezone": "Timezone",
     "selectTimezone": "Select timezone...",
-    "selectLocale": "Select locale...",
     "preferencesDesc": "Preferences are managed through conversation with the agent. Use the button below to update them.",
     "noPreferencesYet": "No preferences set yet. Use the button below to set up your profile.",
     "riskTolerance": "Risk Tolerance",
@@ -418,10 +417,7 @@
         "search": "Search",
         "searching": "Searching…",
         "loading": "Loading…",
-        "viewAll": "View all",
-        "relativeNow": "now",
-        "relativeFuture": "in {{when}}",
-        "relativePast": "{{when}} ago"
+        "viewAll": "View all"
       },
       "shell": {
         "addWidget": "Add widget",
@@ -473,7 +469,7 @@
         "noMatches": "No widgets match your search.",
         "hintClickToSelect": "Click to select · double-click or",
         "hintToAdd": "to add",
-        "hintAddSentence": "Click to select · double-click or <enter></enter> to add",
+        "hintAddSentence": "Click to select · double-click or <enter/> to add",
         "cancel": "Cancel",
         "addWidget": "Add widget",
         "addNamed": "Add {{title}}",
@@ -1149,17 +1145,6 @@
       "emptyPortfolio": "Add stocks to your portfolio to see relevant news here",
       "emptyWatchlist": "Add stocks to your watchlist to see relevant news here",
       "emptyDefault": "No news available"
-    },
-    "topNews": {
-      "title": "Top News",
-      "sample1": "Retail Sales Slump Takes Toll on Market,...",
-      "sample2": "Tech Giant's Earnings Soar, Stock Hits All-Ti...",
-      "sample3": "High-Profile IPO Falls Short of Expectations...",
-      "sample4": "Electric Vehicle Stocks Skyrocket as Deman..."
-    },
-    "topResearch": {
-      "title": "Top Research",
-      "sample1": "Retail Sales Slump Takes Toll on Market, Stocks Dip"
     },
     "watchlistCard": {
       "createTitle": "Create watchlist",
@@ -1880,6 +1865,9 @@
     "discardUnsaved": "You have unsaved changes. Discard them?",
     "discardChanges": "Discard unsaved changes?",
     "confirmSave": "Save changes? This will overwrite the file in the sandbox and cannot be undone.",
+    "saveTitle": "Save changes",
+    "discardTitle": "Discard changes",
+    "discard": "Discard",
     "emptyFile": "Empty file",
     "fileTooLarge": "File is too large to edit in the browser (>500KB)",
     "loadEditFailed": "Failed to load file for editing",
@@ -2050,6 +2038,7 @@
       "accessDeniedHint": "This file is outside the allowed directories.",
       "unknown": "Failed to load file",
       "unknownHint": "An unexpected error occurred while loading the file.",
+      "previewFailed": "Unable to preview this file",
       "retry": "Try again",
       "download": "Download instead"
     }
@@ -2860,12 +2849,16 @@
     "defaultsTitle": "Set your default models",
     "defaultsSubtitle": "Pick the models that power your research",
     "primaryModel": "Primary Model",
-    "primaryDescription": "For deep research",
+    "primaryDescription": "For deep research with code execution and data analysis",
+    "primaryPlaceholder": "Select primary model...",
     "flashModel": "Flash Model",
-    "flashDescription": "For quick answers",
+    "flashDescription": "For quick answers without a sandbox",
+    "flashPlaceholder": "Select flash model...",
     "explainerTitle": "Two agent modes",
-    "explainerDeep": "PTC Mode (Primary): The full agent with a sandboxed environment for code execution, charts, and data analysis. Powered by your primary model.",
-    "explainerFlash": "Flash Mode: A lightweight agent for quick answers without a sandbox. Powered by your flash model for speed.",
+    "explainerDeepTitle": "PTC Mode (Primary)",
+    "explainerDeepBody": "The full agent with a sandboxed environment for code execution, charts, and data analysis. Powered by your primary model.",
+    "explainerFlashTitle": "Flash Mode",
+    "explainerFlashBody": "A lightweight agent for quick answers without a sandbox. Powered by your flash model for speed.",
     "doneTitle": "You're all set!",
     "doneSummary": "Your AI research assistant is configured and ready to go.",
     "goToDashboard": "Go to Dashboard",
@@ -3044,6 +3037,32 @@
       "range52w": "52W",
       "change": "Chg",
       "changeExt": "Chg incl. ext"
+    },
+    "header": {
+      "watchlist": "Watchlist",
+      "showMetrics": "Show metrics",
+      "hideMetrics": "Hide metrics",
+      "prevClose": "Prev Close",
+      "open": "Open",
+      "openHint": "Values are aggregated from intraday data and may differ slightly from daily figures shown on the chart.",
+      "low": "Low",
+      "high": "High",
+      "high52w": "52 wk high",
+      "low52w": "52 wk low",
+      "avgVolume3m": "Avg Vol (3M)",
+      "volume": "Volume",
+      "dayRange": "Day Range",
+      "changePct": "Change %",
+      "changePctExt": "Change % incl. ext",
+      "ws": {
+        "label": "WebSocket: {{status}}",
+        "connectedSecond": "Connected (second-level)",
+        "connectedMinute": "Connected (minute-level)",
+        "connectedNoData": "Connected (no data)",
+        "unavailable": "Not available",
+        "reconnecting": "Reconnecting",
+        "disconnected": "Disconnected"
+      }
     },
     "symbolSearch": {
       "switchSymbol": "Change symbol, currently {{symbol}}",

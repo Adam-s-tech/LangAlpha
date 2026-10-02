@@ -26,6 +26,7 @@ import { useTranslation } from 'react-i18next';
 import { useToast } from '@/components/ui/use-toast';
 import ConfirmDialog from '@/pages/Dashboard/components/ConfirmDialog';
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
+import { useLocale } from '@/hooks/useLocale';
 import { isSupported, setLocaleCookie, switchLocale } from '@/lib/locale';
 import TimezonePicker from '@/components/TimezonePicker';
 import { deviceTimezone } from '@/lib/deviceTimezone';
@@ -48,19 +49,22 @@ export function UserInfoTab() {
   const turnDisplayLabelId = useId();
   const streamingModeLabelId = useId();
   const { t, i18n } = useTranslation();
+  const activeLocale = useLocale();
 
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [name, setName] = useState('');
   const [timezone, setTimezone] = useState('');
-  const [locale, setLocale] = useState('');
+  // What the account stores, written back with the other fields on save. The
+  // select shows the language the UI is actually in instead: a `locale` cookie
+  // outranks the stored value (useSyncUserLocale), so the two can differ.
+  const [accountLocale, setAccountLocale] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
 
   const locales = [
-    { value: '', label: t('settings.selectLocale') },
     { value: 'en-US', label: 'English (United States)' },
     { value: 'zh-CN', label: '中文（简体）' },
   ];
@@ -70,7 +74,7 @@ export function UserInfoTab() {
     if (authUser) {
       setName(authUser.name || '');
       setTimezone((authUser.timezone as string) || '');
-      setLocale((authUser.locale as string) || '');
+      setAccountLocale((authUser.locale as string) || '');
       const url = authUser.avatar_url;
       setAvatarUrl(url ? `${url}?v=${authUser.updated_at || ''}` : null);
     }
@@ -92,8 +96,8 @@ export function UserInfoTab() {
   };
 
   // Auto-save user info: use refs so the debounced callback always reads latest state
-  const userInfoRef = useRef({ name, timezone, locale });
-  userInfoRef.current = { name, timezone, locale };
+  const userInfoRef = useRef({ name, timezone, locale: accountLocale });
+  userInfoRef.current = { name, timezone, locale: accountLocale };
 
   const dirtyRef = useRef(false);
 
@@ -126,7 +130,7 @@ export function UserInfoTab() {
   };
 
   const handleLocaleChange = (newLocale: string) => {
-    setLocale(newLocale);
+    setAccountLocale(newLocale);
     if (isSupported(newLocale)) {
       void switchLocale(i18n, newLocale);
       setLocaleCookie(newLocale);
@@ -290,7 +294,7 @@ export function UserInfoTab() {
       <div>
         <label className="block text-[0.8125rem] font-medium mb-1.5" style={{ color: 'var(--color-text-primary)' }}>{t('settings.locale')}</label>
         <Select
-          value={locale}
+          value={activeLocale}
           onChange={(e) => handleLocaleChange(e.target.value)}
         >
           {locales.map((item, i) => (
@@ -344,20 +348,22 @@ export function UserInfoTab() {
       </div>
 
       {/* Where the transcript lands when a reply finishes */}
-      <div className="settings-row">
-        <div>
+      <div className="settings-row flex-wrap">
+        <div className="flex-1 basis-64">
           <label id={turnEndLabelId} className="text-[0.8125rem] font-medium" style={{ color: 'var(--color-text-primary)' }}>{t('settings.turnEndScroll')}</label>
           <p className="mt-0.5 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{t('settings.turnEndScrollDesc')}</p>
         </div>
-        <SegmentedControl
-          labelledBy={turnEndLabelId}
-          value={turnEndScroll}
-          onChange={(v) => { void handleTurnEndScrollChange(v); }}
-          options={[
-            { value: 'bottom', label: t('settings.turnEndScrollBottom') },
-            { value: 'reply_start', label: t('settings.turnEndScrollReplyStart') },
-          ]}
-        />
+        <div className="flex shrink-0">
+          <SegmentedControl
+            labelledBy={turnEndLabelId}
+            value={turnEndScroll}
+            onChange={(v) => { void handleTurnEndScrollChange(v); }}
+            options={[
+              { value: 'bottom', label: t('settings.turnEndScrollBottom') },
+              { value: 'reply_start', label: t('settings.turnEndScrollReplyStart') },
+            ]}
+          />
+        </div>
       </div>
 
       {/* Whether reasoning is shown as it streams */}

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { FunctionSquare } from 'lucide-react';
-import { createFormatter } from '@/lib/format';
+import { integer } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import {
   boxOf,
@@ -36,7 +36,6 @@ const STEP: Record<string, [number, number]> = {
   PageDown: [PAGE_ROWS, 0],
 };
 
-const integer = createFormatter({ maximumFractionDigits: 0 });
 
 /** Shared by every row no precedent reaches, so those rows keep one identity. */
 const NO_BOXES: readonly CellBox[] = [];

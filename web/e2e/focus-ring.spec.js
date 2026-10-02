@@ -27,6 +27,13 @@ const ROW = '.sidebar-account-row';
 // Somewhere in the page body with nothing interactive under it.
 const EMPTY = { x: 760, y: 300 };
 
+// A route's content mounts from its own lazily loaded chunk after the shell
+// has painted, and on a loaded machine that first paint outlasts the 5s
+// default: under CPU contention the dashboard search box, the Workspaces field
+// and the settings select each failed to appear within it. So a wait for a
+// page after navigating gets the budget the other specs give a first paint.
+const FIRST_PAINT = { timeout: 15_000 };
+
 /** Is a focus indicator actually painted on the element that holds focus? */
 async function ringed(page) {
   return page.evaluate((sel) => {
@@ -39,7 +46,7 @@ async function ringed(page) {
 test.beforeEach(async ({ page }) => {
   await mockAPI(page);
   await page.goto('/dashboard');
-  await expect(page.locator(ROW)).toBeVisible();
+  await expect(page.locator(ROW)).toBeVisible(FIRST_PAINT);
 });
 
 test.describe('a flow driven entirely by the mouse', () => {
@@ -256,7 +263,7 @@ test.describe('a text field clicked with the mouse', () => {
     test(`leaves no ring on ${field}`, async ({ page }) => {
       if (open) await open(page);
       const target = page.locator(sel);
-      await expect(target).toBeVisible();
+      await expect(target).toBeVisible(FIRST_PAINT);
 
       // The resting paint is the reference, because "no ring" is not the same
       // question as "no outline": half the app draws its ring as a Tailwind
@@ -304,7 +311,7 @@ test.describe('a borderless field inside a box that owns the edge', () => {
     test(`keeps ${field} quiet and lights its box on a click`, async ({ page }) => {
       if (open) await open(page);
       const target = page.locator(sel);
-      await expect(target).toBeVisible();
+      await expect(target).toBeVisible(FIRST_PAINT);
       const resting = await outlineOn(page, sel);
 
       await target.click();
@@ -326,7 +333,7 @@ test.describe('a text field reached by keyboard', () => {
   for (const { field, sel, rings, open } of CLICKED) {
     test(`rings ${field}`, async ({ page }) => {
       if (open) await open(page);
-      await expect(page.locator(sel)).toBeVisible();
+      await expect(page.locator(sel)).toBeVisible(FIRST_PAINT);
       await keyboardFocus(page, sel);
       expect(await outlineOn(page, sel)).toMatchObject({ focused: true });
       expect(await outlineOn(page, rings ?? sel)).toMatchObject({ style: 'solid' });
@@ -336,7 +343,7 @@ test.describe('a text field reached by keyboard', () => {
   test('wears the same ring as every other control', async ({ page }) => {
     // The tab order is only complete once the route has mounted; walking it
     // early wraps through a shorter ring and never arrives.
-    await expect(page.locator(SEARCH)).toBeVisible();
+    await expect(page.locator(SEARCH)).toBeVisible(FIRST_PAINT);
     await tabTo(page, SEARCH);
     const field = await outlineOn(page, SEARCH);
     expect(field.style).toBe('solid');
@@ -399,7 +406,7 @@ test.describe('a field whose container is the indicator', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/chat');
-    await expect(page.getByPlaceholder('Search workspaces...')).toBeVisible();
+    await expect(page.getByPlaceholder('Search workspaces...')).toBeVisible(FIRST_PAINT);
   });
 
   test('rings the Workspaces pill when the field inside it is tabbed to', async ({ page }) => {
@@ -461,7 +468,7 @@ async function leaveWindowAndReturn(page) {
 test.describe('a field left focused while the user is in another app', () => {
   for (const { field, sel } of PARKED) {
     test(`comes back unringed on ${field}`, async ({ page }) => {
-      await expect(page.locator(sel)).toBeVisible();
+      await expect(page.locator(sel)).toBeVisible(FIRST_PAINT);
       const resting = await outlineOn(page, sel);
       await page.click(sel);
       // Typing is what makes this reachable: it flips the recorded device to
@@ -480,7 +487,7 @@ test.describe('a field left focused while the user is in another app', () => {
   test('comes back still ringed for someone who tabbed to it', async ({ page }) => {
     // The over-eager fix passes every assertion above by never re-deciding at
     // all. A keyboard user has to leave and return to their own indicator.
-    await expect(page.locator(SEARCH)).toBeVisible();
+    await expect(page.locator(SEARCH)).toBeVisible(FIRST_PAINT);
     await keyboardFocus(page, SEARCH);
     expect(await outlineOn(page, SEARCH)).toMatchObject({ style: 'solid' });
 
@@ -492,7 +499,7 @@ test.describe('a field left focused while the user is in another app', () => {
     // Passing over the restore must consume exactly one focusin. If the flag
     // outlives it, the first control the user reaches after coming back
     // inherits the verdict of the one they left.
-    await expect(page.locator(SEARCH)).toBeVisible();
+    await expect(page.locator(SEARCH)).toBeVisible(FIRST_PAINT);
     await page.click(SEARCH);
     await page.keyboard.type('AAPL');
     await leaveWindowAndReturn(page);
@@ -525,7 +532,7 @@ test.describe('a native select', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/settings');
-    await expect(page.locator(SELECT)).toBeVisible();
+    await expect(page.locator(SELECT)).toBeVisible(FIRST_PAINT);
   });
 
   /**

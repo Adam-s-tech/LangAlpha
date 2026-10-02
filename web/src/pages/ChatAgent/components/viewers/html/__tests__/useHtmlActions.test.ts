@@ -111,13 +111,19 @@ describe('useHtmlActions — widget mode', () => {
     vi.useRealTimers();
   });
 
-  it('opens a blob URL in a new tab', () => {
+  it('opens a blob URL in a new tab and revokes it once the tab has had time to load', () => {
+    vi.useFakeTimers();
     const { result } = renderHook(() =>
       useHtmlActions({ mode: 'widget', srcDoc: WIDGET_SRCDOC, fileName: 'w.html' }),
     );
     result.current.openInNewTab!();
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(open).toHaveBeenCalledWith('blob:widget-url', '_blank', 'noopener,noreferrer');
+    // Revoked at once, the tab would load nothing; never revoked, each click
+    // keeps a copy of the widget alive for the life of the page.
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(60_000);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:widget-url');
   });
 
   it('downloads a blob via an anchor', () => {
@@ -134,7 +140,7 @@ describe('useHtmlActions — widget mode', () => {
     result.current.downloadHtml();
     expect(createObjectURL).toHaveBeenCalled();
     expect(click).toHaveBeenCalledTimes(1);
-    expect(revokeObjectURL).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:widget-url');
     createSpy.mockRestore();
   });
 
@@ -152,6 +158,9 @@ describe('useHtmlActions — widget mode', () => {
     expect(open).toHaveBeenCalledWith('blob:widget-url', '_blank');
     vi.advanceTimersByTime(800);
     expect(print).toHaveBeenCalled();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(60_000);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:widget-url');
   });
 
   it('opens in a new tab WITH noopener (no handle needed there)', () => {

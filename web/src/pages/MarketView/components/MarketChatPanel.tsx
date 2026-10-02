@@ -84,6 +84,9 @@ interface MarketChatPanelProps {
   onModeChange: (mode: 'fast' | 'ptc') => void;
   workspaces: Workspace[];
   selectedWorkspaceId: string | null;
+  /** A workspace was restored but not yet checked against the list, so
+   *  `selectedWorkspaceId` is held back as null until it is. */
+  workspacePending?: boolean;
   onWorkspaceChange: (id: string) => void;
   chartImage: string | null;
   chartImageDesc: string | null;
@@ -102,12 +105,29 @@ interface MarketChatPanelProps {
   onJumpToChart?: (symbol: string, timeframe: string) => void;
 }
 
+function PanelLoading(): React.ReactElement {
+  return (
+    <div className="market-panel" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: 16 }}>
+      <LogoLoading size={36} color="var(--color-accent-overlay)" />
+    </div>
+  );
+}
+
 /**
  * Desktop chat panel for MarketView. Drives the message stream via
  * ChatAgent's `useChatMessages` so the rendering (tool calls, reasoning,
  * artifacts, widgets) stays in lockstep with the main chat page.
+ *
+ * A PTC panel waits out a pending workspace rather than mounting without one:
+ * the scope resolves its stored thread once, at mount, so mounting early would
+ * start a fresh chat where the workspace's last one should have reopened.
  */
 export default function MarketChatPanel(props: MarketChatPanelProps): React.ReactElement {
+  if (props.mode === 'ptc' && props.workspacePending) return <PanelLoading />;
+  return <MarketChatScope {...props} />;
+}
+
+function MarketChatScope(props: MarketChatPanelProps): React.ReactElement {
   const {
     symbol,
     mode,
@@ -212,13 +232,7 @@ export default function MarketChatPanel(props: MarketChatPanelProps): React.Reac
     );
   }
 
-  if (!activeWorkspaceId) {
-    return (
-      <div className="market-panel" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: 16 }}>
-        <LogoLoading size={36} color="var(--color-accent-overlay)" />
-      </div>
-    );
-  }
+  if (!activeWorkspaceId) return <PanelLoading />;
 
   return (
     <WorkspaceProvider workspaceId={activeWorkspaceId} downloadFile={null}>

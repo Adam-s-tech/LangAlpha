@@ -2,7 +2,7 @@ import React from 'react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import {
   isStaleBuildError,
   checkForNewBuild,
@@ -12,8 +12,9 @@ import {
   STALE_BUILD_EVENT,
   __resetStaleBuildForTests,
 } from '../staleBuild';
-import { toast } from '@/components/ui/use-toast';
+import { toast, type ToastProps } from '@/components/ui/use-toast';
 import { StaleBuildBoundary } from '@/components/StaleBuildBoundary';
+import { Toast, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from '@/components/ui/toast';
 import i18n from '@/i18n';
 
 vi.mock('@/components/ui/use-toast', () => ({ toast: vi.fn() }));
@@ -269,6 +270,40 @@ describe('reporting is once per session', () => {
     // the time any arrive — without the exemption the only Reload control in
     // the app disappears and the latch above stops it coming back.
     expect(vi.mocked(toast).mock.calls[0][0]).toMatchObject({ pinned: true });
+  });
+
+  it('follows a language switch while it is up', async () => {
+    // Pinned with no timeout, so it can outlive the language it was raised in.
+    reportStaleBuild('preload');
+    vi.runAllTimers();
+    // Omit<> over the props' index signature widens every field to unknown.
+    const { title, description, action } = vi.mocked(toast).mock.calls[0][0] as Pick<
+      ToastProps,
+      'title' | 'description' | 'action'
+    >;
+    render(
+      <ToastProvider>
+        <Toast open>
+          <ToastTitle>{title}</ToastTitle>
+          <ToastDescription>{description}</ToastDescription>
+          {action}
+        </Toast>
+        <ToastViewport />
+      </ToastProvider>,
+    );
+    const en = i18n.getFixedT('en-US');
+    const zh = i18n.getFixedT('zh-CN');
+    expect(screen.getByText(en('common.staleBuild.title'))).toBeInTheDocument();
+
+    await act(() => i18n.changeLanguage('zh-CN'));
+    try {
+      expect(screen.getByText(zh('common.staleBuild.title'))).toBeInTheDocument();
+      expect(screen.getByText(zh('common.staleBuild.description'))).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: zh('common.staleBuild.reload') })).toBeInTheDocument();
+      expect(screen.queryByText(en('common.staleBuild.title'))).not.toBeInTheDocument();
+    } finally {
+      await act(() => i18n.changeLanguage('en-US'));
+    }
   });
 });
 

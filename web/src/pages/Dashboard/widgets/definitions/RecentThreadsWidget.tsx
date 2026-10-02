@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocale } from '@/hooks/useLocale';
+import { createDateFormatter } from '@/lib/format';
 import { useNow } from '@/hooks/useNow';
 import { MessagesSquare, ArrowUpRight, MessageSquareText, Zap } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
@@ -38,14 +39,15 @@ function bucketFor(date: Date, now: number): BucketKey {
   return 'older';
 }
 
+const clockTime = createDateFormatter({ hour: 'numeric', minute: '2-digit' });
+const shortWeekday = createDateFormatter({ weekday: 'short' });
+const shortDay = createDateFormatter({ month: 'short', day: 'numeric' });
+
 function formatThreadTime(date: Date, bucket: BucketKey, locale: string): string {
-  if (bucket === 'today') {
-    return date.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
-  }
-  if (bucket === 'week') {
-    return date.toLocaleDateString(locale, { weekday: 'short' });
-  }
-  return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
+  if (Number.isNaN(date.getTime())) return '';
+  if (bucket === 'today') return clockTime(date, locale);
+  if (bucket === 'week') return shortWeekday(date, locale);
+  return shortDay(date, locale);
 }
 
 interface GroupedThreads {

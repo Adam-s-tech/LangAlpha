@@ -5,7 +5,7 @@ import { HeaderPill } from './HeaderPill';
 import { ExtendedHoursPair } from './ExtendedHoursPair';
 import './StockHeader.css';
 import type { StockSearchHit } from '@/lib/marketUtils';
-import { compactNumberFixed2, fixed2, signedFixed2 } from '@/lib/format';
+import { compactNumberFixed2, createDateFormatter, fixed2, signedFixed2 } from '@/lib/format';
 import { DASH, fixed2OrDash as fmt, type StockQuoteModel } from '../hooks/useStockQuoteModel';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useTranslation } from 'react-i18next';
@@ -35,6 +35,8 @@ interface StockHeaderProps {
   headerActions?: React.ReactNode;
 }
 
+const tickTimeFormat = createDateFormatter({ hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
 const EXCHANGE_LABELS: Record<string, string> = { HK: 'HK', SS: 'SH', SZ: 'SZ', L: 'LON', T: 'TYO', TO: 'TSX', AX: 'ASX' };
 
 function getVenueStatusLabel(sym: string | null | undefined, status: string): string {
@@ -43,6 +45,16 @@ function getVenueStatusLabel(sym: string | null | undefined, status: string): st
   if (dotIdx === -1) return status;
   const suffix = sym.slice(dotIdx + 1).toUpperCase();
   return EXCHANGE_LABELS[suffix] ? `${EXCHANGE_LABELS[suffix]} ${status}` : status;
+}
+
+/** Which `marketView.header.ws` phrase describes the socket. */
+function wsStatusKey(status: ConnectionStatus, hasData: boolean, level: DataLevel): string {
+  if (status === 'connected') {
+    if (!hasData) return 'connectedNoData';
+    return level === 'second' ? 'connectedSecond' : 'connectedMinute';
+  }
+  if (status === 'disabled') return 'unavailable';
+  return status === 'reconnecting' ? 'reconnecting' : 'disconnected';
 }
 
 const StockHeader = ({ symbol, quote: q, chartMeta: _chartMeta, onToggleOverview, onOpenWatchlist, wsStatus, wsHasData = false, wsDataLevel = null, ginlixDataEnabled: _ginlixDataEnabled = true, onSwitchSymbol, headerActions }: StockHeaderProps) => {
@@ -65,13 +77,13 @@ const StockHeader = ({ symbol, quote: q, chartMeta: _chartMeta, onToggleOverview
 
   const formatTickTime = (date: Date | null): string | null => {
     if (!date) return null;
-    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return tickTimeFormat(date, locale);
   };
 
   const watchlistBtn = onOpenWatchlist ? (
     <button className="stock-metrics-watchlist-pill" onClick={onOpenWatchlist}>
       <List size={13} />
-      Watchlist
+      {t('marketView.header.watchlist')}
     </button>
   ) : null;
 
@@ -95,7 +107,7 @@ const StockHeader = ({ symbol, quote: q, chartMeta: _chartMeta, onToggleOverview
               {status === 'live' && tickTime && <span className="data-source-time">{formatTickTime(tickTime)}</span>}
               <span className="data-source-tooltip">
                 <span>{t('marketView.quote.source', { label: dataSourceLabel })}</span>
-                <span>WebSocket: {wsStatus === 'connected' ? (wsHasData ? `Connected (${wsDataLevel === 'second' ? 'second' : 'minute'}-level)` : 'Connected (no data)') : wsStatus === 'disabled' ? 'Not available' : wsStatus === 'reconnecting' ? 'Reconnecting' : 'Disconnected'}</span>
+                <span>{t('marketView.header.ws.label', { status: t(`marketView.header.ws.${wsStatusKey(wsStatus, wsHasData, wsDataLevel)}`) })}</span>
               </span>
             </span>
           </div>
@@ -137,7 +149,7 @@ const StockHeader = ({ symbol, quote: q, chartMeta: _chartMeta, onToggleOverview
             onClick={() => setMetricsCollapsed(c => !c)}
             aria-expanded={!metricsCollapsed}
           >
-            <span>{metricsCollapsed ? 'Show metrics' : 'Hide metrics'}</span>
+            <span>{metricsCollapsed ? t('marketView.header.showMetrics') : t('marketView.header.hideMetrics')}</span>
             <ChevronDown size={14} className={`stock-metrics-toggle-icon${metricsCollapsed ? '' : ' stock-metrics-toggle-icon--open'}`} />
           </button>
           {watchlistBtn}
@@ -148,51 +160,51 @@ const StockHeader = ({ symbol, quote: q, chartMeta: _chartMeta, onToggleOverview
       >
         <div className="stock-metrics">
           <div className="metric-item">
-            <span className="metric-label">Prev Close</span>
+            <span className="metric-label">{t('marketView.header.prevClose')}</span>
             <span className="metric-value">{fmt(previousClose, locale)}</span>
           </div>
           <div className="metric-item">
-            <span className="metric-label">Open
-              <span className="metrics-discrepancy-hint" title="Values are aggregated from intraday data and may differ slightly from daily figures shown on the chart.">!</span>
+            <span className="metric-label">{t('marketView.header.open')}
+              <span className="metrics-discrepancy-hint" title={t('marketView.header.openHint')}>!</span>
             </span>
             <span className="metric-value">{fmt(open, locale)}</span>
           </div>
           <div className="metric-item">
-            <span className="metric-label">Low</span>
+            <span className="metric-label">{t('marketView.header.low')}</span>
             <span className="metric-value">{fmt(low, locale)}</span>
           </div>
           <div className="metric-item">
-            <span className="metric-label">High</span>
+            <span className="metric-label">{t('marketView.header.high')}</span>
             <span className="metric-value">{fmt(high, locale)}</span>
           </div>
           <div className="metric-item">
-            <span className="metric-label">52 wk high</span>
+            <span className="metric-label">{t('marketView.header.high52w')}</span>
             <span className="metric-value">{fmt(fiftyTwoWeekHigh, locale)}</span>
           </div>
           <div className="metric-item">
-            <span className="metric-label">52 wk low</span>
+            <span className="metric-label">{t('marketView.header.low52w')}</span>
             <span className="metric-value">{fmt(fiftyTwoWeekLow, locale)}</span>
           </div>
           <div className="metric-item">
-            <span className="metric-label">Avg Vol (3M)</span>
+            <span className="metric-label">{t('marketView.header.avgVolume3m')}</span>
             <span className="metric-value">
               {averageVolume != null ? compactNumberFixed2(averageVolume, locale) : DASH}
             </span>
           </div>
           <div className="metric-item">
-            <span className="metric-label">{volumeIsAverage ? 'Avg Vol (3M)' : 'Volume'}</span>
+            <span className="metric-label">{volumeIsAverage ? t('marketView.header.avgVolume3m') : t('marketView.header.volume')}</span>
             <span className="metric-value">
               {shownVolume != null ? compactNumberFixed2(shownVolume, locale) : DASH}
             </span>
           </div>
           <div className="metric-item">
-            <span className="metric-label">Day Range</span>
+            <span className="metric-label">{t('marketView.header.dayRange')}</span>
             <span className="metric-value">
               {hasDayRange ? `${fixed2(low, locale)} – ${fixed2(high, locale)}` : DASH}
             </span>
           </div>
           <div className="metric-item">
-            <span className="metric-label">{ext ? 'Change % incl. ext' : 'Change %'}</span>
+            <span className="metric-label">{ext ? t('marketView.header.changePctExt') : t('marketView.header.changePct')}</span>
             <span className={`metric-value ${(changePercent ?? 0) < 0 ? 'negative' : 'positive'}`}>
               {changePercent != null ? `${signedFixed2(changePercent, locale)}%` : DASH}
             </span>

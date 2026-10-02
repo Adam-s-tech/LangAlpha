@@ -3,28 +3,24 @@
 //
 // Each locale is its own chunk (src/i18n.ts) and nothing renders until the
 // active one is in, so left to the entry the request would wait a full
-// waterfall step. The build writes the hashed names into an inline ES5 script
-// that picks the locale as detectLocale() does and appends a preload. It
-// replaces index.html's `<!-- locale-preload -->` marker: after the stale-build
-// script, whose listener must exist before this preload can fail (a 404 then
-// reloads like any dead asset), and before any stylesheet, which would hold an
-// inline script until it loaded.
+// waterfall step. The build writes the hashed names into an inline script that
+// picks the locale with the same resolveLocale() the app boots with and appends
+// a preload. It replaces index.html's `<!-- locale-preload -->` marker: after
+// the stale-build script, whose listener must exist before this preload can fail
+// (a 404 then reloads like any dead asset), and before any stylesheet, which
+// would hold an inline script until it loaded.
+//
+// Unlike the stale-build script this one may use modern syntax: the entry is an
+// ES module, so a browser that cannot parse it never runs the app either.
 
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Plugin } from 'vite';
-
-/** detectLocale()'s last resort. */
-export const DEFAULT_LOCALE = 'en-US';
+import { minifySync, type Plugin } from 'vite';
+import { DEFAULT_LOCALE, resolveLocale } from '../src/lib/resolveLocale.ts';
 
 const MARKER = /<!--\s*locale-preload\b[^>]*-->/;
 
-/**
- * The locales that have a catalog, in the order the resolver tries a
- * language-only match. detectLocale() tries SUPPORTED_LOCALES order instead;
- * the two agree while no two locales share a language, and
- * lib/__tests__/localePreload.test.ts fails the day they would not.
- */
+/** The locales that have a catalog; the order is the one the resolver sees. */
 export function catalogLocales(dir: string): string[] {
   return fs
     .readdirSync(dir)
@@ -34,28 +30,32 @@ export function catalogLocales(dir: string): string[] {
 }
 
 /**
- * The inline resolver. `urls` maps each locale to its chunk, in
- * catalogLocales() order. lib/__tests__/localePreload.test.ts runs it against
- * detectLocale().
+ * How the inline script spells a locale's chunk, one capture group each for the
+ * locale and the file. scripts/check-critical-path.mjs reads the catalogs back
+ * out of index.html with it.
  */
+export const CATALOG_URL = /"([A-Za-z]{2,3}-[A-Za-z0-9]+)":"[^"]*\/assets\/([^"]+\.js)"/g;
+
+// Stands in for the JSON map while the script is minified, so the map keeps
+// the double-quoted shape CATALOG_URL reads.
+const URLS = '__LOCALE_URLS__';
+
+/** `urls` maps each locale to its chunk, in catalogLocales() order. */
 export function localePreloadScript(urls: Record<string, string>): string {
-  const locales = Object.keys(urls);
-  return (
+  // Vite's own preload shape, fallback included: rel="preload" where
+  // modulepreload is unsupported, as="script" either way. Both are shapes the
+  // recovery listener classifies as a build asset.
+  const { code } = minifySync(
+    'locale-preload.js',
     '(function(){' +
-    `var u=${JSON.stringify(urls)},l=${JSON.stringify(locales)},p=${JSON.stringify(DEFAULT_LOCALE)},c=null,b,m,i,k;` +
-    'function has(v){for(var j=0;j<l.length;j++)if(l[j]===v)return true;return false}' +
-    'm=document.cookie.match(/(?:^|;\\s*)locale=([^;]+)/);' +
-    'if(m){try{c=decodeURIComponent(m[1])}catch(e){}}' +
-    'if(has(c))p=c;else{b=navigator.language||"";' +
-    'if(has(b))p=b;else for(i=0;i<l.length;i++)if(l[i].indexOf(b.split("-")[0]+"-")===0){p=l[i];break}}' +
-    // Vite's own preload shape, fallback included: rel="preload" where
-    // modulepreload is unsupported, as="script" either way. Both are shapes
-    // the recovery listener classifies as a build asset.
-    'k=document.createElement("link");' +
-    'try{k.rel=k.relList.supports("modulepreload")?"modulepreload":"preload"}catch(e){k.rel="preload"}' +
-    'k.as="script";k.crossOrigin="";k.href=u[p];document.head.appendChild(k)' +
-    '})();'
+      `var u=${URLS},k=document.createElement("link");` +
+      'try{k.rel=k.relList.supports("modulepreload")?"modulepreload":"preload"}catch(e){k.rel="preload"}' +
+      'k.as="script";k.crossOrigin="";' +
+      `k.href=u[(${resolveLocale})(document.cookie,navigator.language||"",Object.keys(u),${JSON.stringify(DEFAULT_LOCALE)})];` +
+      'document.head.appendChild(k)' +
+      '})();',
   );
+  return code.trim().replace(URLS, () => JSON.stringify(urls));
 }
 
 /** Build-only: the dev server has no hashed chunks to name. */

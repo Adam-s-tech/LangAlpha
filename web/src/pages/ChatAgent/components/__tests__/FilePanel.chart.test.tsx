@@ -52,6 +52,7 @@ vi.mock('@/pages/MarketView/components/MarketChartSurface', () => ({
 
 import FilePanel from '@/pages/ChatAgent/components/FilePanel';
 import { lastChartStorageKey, tabsStorageKey } from '@/pages/ChatAgent/components/filePanel/useFileTabs';
+import { userLocalStorage } from '@/lib/userStorage';
 
 const FILES = ['notes.md'];
 const GOOGL = { kind: 'chart', symbol: 'GOOGL', timeframe: '1day', seq: 1 } as const;
@@ -122,7 +123,6 @@ describe('FilePanel chart tabs', () => {
   });
 
   it('asks before leaving for MarketView with an unsaved edit parked on another tab', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
     const onOpenInMarketView = vi.fn();
     const { rerender } = renderWithProviders(panel({ target: { kind: 'file', path: 'notes.md', seq: 1 }, onOpenInMarketView }));
     fireEvent.click(await screen.findByTitle('Edit file'));
@@ -132,12 +132,13 @@ describe('FilePanel chart tabs', () => {
     await screen.findByTestId('chart-surface');
 
     fireEvent.click(screen.getByTitle('Open in MarketView'));
-    expect(window.confirm).toHaveBeenCalledTimes(1);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('You have unsaved changes. Discard them?')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(onOpenInMarketView).not.toHaveBeenCalled();
   });
 
   it('forgets a parked draft once its tab took the editor back and cancelled it', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const { rerender } = renderWithProviders(panel({ target: { kind: 'file', path: 'notes.md', seq: 1 } }));
     fireEvent.click(await screen.findByTitle('Edit file'));
     fireEvent.change(await screen.findByTestId('editor'), { target: { value: '# Notes, edited' } });
@@ -146,7 +147,9 @@ describe('FilePanel chart tabs', () => {
     await screen.findByTestId('chart-surface');
     fireEvent.click(within(screen.getByRole('tablist')).getByText('notes.md'));
     fireEvent.click(await screen.findByTitle('Cancel editing'));
-    expect(confirm).toHaveBeenCalledTimes(1);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Discard unsaved changes?')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
 
     // Still on the tab that cancelled: a copy left parked under its id would
     // keep the page guarding an edit that no longer exists.
@@ -174,7 +177,7 @@ describe('FilePanel chart tabs', () => {
   });
 
   it('turns an empty tab into a chart at once, on the last symbol looked at', async () => {
-    localStorage.setItem(lastChartStorageKey('ws'), 'MSFT');
+    userLocalStorage.setItem(lastChartStorageKey('ws'), 'MSFT');
     renderWithProviders(panel());
 
     fireEvent.click(screen.getByText('Open a chart'));
@@ -192,13 +195,13 @@ describe('FilePanel chart tabs', () => {
   });
 
   it('remembers the last symbol per workspace, not across them', async () => {
-    localStorage.setItem(lastChartStorageKey('other'), 'MSFT');
+    userLocalStorage.setItem(lastChartStorageKey('other'), 'MSFT');
     renderWithProviders(panel({ target: GOOGL }));
     await screen.findByTestId('chart-surface');
 
-    expect(localStorage.getItem(lastChartStorageKey('ws'))).toBe('GOOGL');
-    expect(localStorage.getItem(lastChartStorageKey('other'))).toBe('MSFT');
-    expect(localStorage.getItem('filePanel.lastChart')).toBeNull();
+    expect(userLocalStorage.getItem(lastChartStorageKey('ws'))).toBe('GOOGL');
+    expect(userLocalStorage.getItem(lastChartStorageKey('other'))).toBe('MSFT');
+    expect(userLocalStorage.getItem('filePanel.lastChart')).toBeNull();
   });
 
   it('changes symbol from the chart header, in the same tab', async () => {
@@ -226,15 +229,15 @@ describe('FilePanel chart tabs', () => {
   });
 
   it('keeps a non-persisting strip out of the workspace seed', async () => {
-    localStorage.setItem(tabsStorageKey('ws'), JSON.stringify({ tabs: [{ kind: 'file', path: 'notes.md', preview: false }], active: 0 }));
+    userLocalStorage.setItem(tabsStorageKey('ws'), JSON.stringify({ tabs: [{ kind: 'file', path: 'notes.md', preview: false }], active: 0 }));
     renderWithProviders(panel({ target: GOOGL, persistTabs: false }));
     await screen.findByTestId('chart-surface');
 
     // A gallery browsing beside the threads opened a chart; the seed the
     // threads start from still names the file, not the chart.
-    const seed = JSON.parse(localStorage.getItem(tabsStorageKey('ws'))!);
+    const seed = JSON.parse(userLocalStorage.getItem(tabsStorageKey('ws'))!);
     expect(seed.tabs).toEqual([{ kind: 'file', path: 'notes.md', preview: false }]);
-    expect(localStorage.getItem(lastChartStorageKey('ws'))).toBeNull();
+    expect(userLocalStorage.getItem(lastChartStorageKey('ws'))).toBeNull();
   });
 
   it('puts its actions in the chart header rather than a crumb row of its own', async () => {

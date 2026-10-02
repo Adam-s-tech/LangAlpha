@@ -3,7 +3,12 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Loader } from '@/components/ui/loader';
+import { useLocale } from '@/hooks/useLocale';
+import { createDateFormatter } from '@/lib/format';
 import type { SandboxStats } from './sandboxTypes';
+
+// The fields Date#toLocaleDateString() prints by default.
+const createdDate = createDateFormatter({ year: 'numeric', month: 'numeric', day: 'numeric' });
 
 // States where the sandbox has settled. Deliberately an allowlist of *terminal*
 // values rather than of in-progress ones: the provider has ~23 states and keeps
@@ -68,6 +73,7 @@ interface OverviewTabProps {
 
 export function OverviewTab({ stats, isRunning, actionLoading, refreshing, onStartStop, onRefresh, computerName, dirName, recoverableCreating = false }: OverviewTabProps) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const isTransitioning =
     actionLoading || (!!stats.state && !TERMINAL_STATES.has(stats.state) &&
       !(stats.state === 'creating' && recoverableCreating));
@@ -149,7 +155,7 @@ export function OverviewTab({ stats, isRunning, actionLoading, refreshing, onSta
             </div>
             {stats.created_at && (
               <div className="text-xs mt-0.5" style={{ color: 'var(--color-text-tertiary)' }}>
-                Created {new Date(stats.created_at).toLocaleDateString()}
+                Created {createdDate(new Date(stats.created_at), locale)}
               </div>
             )}
           </div>

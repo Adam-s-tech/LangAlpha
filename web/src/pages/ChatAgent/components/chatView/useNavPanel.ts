@@ -20,9 +20,6 @@ export function useNavPanel({ isMobile, isActiveRef }: {
   const navLockedRef = useRef(_sharedNav.locked);
   const contentAreaRef = useRef<HTMLDivElement>(null);
   const contentAreaWidthRef = useRef<number>(0);
-  // True when the content area is too narrow for the docked push layout; a
-  // pinned panel then stays visible but overlays without pushing content.
-  const [contentNarrow, setContentNarrow] = useState(false);
   // Whether the drawer slides in when it next appears: only when the user
   // opens it. Open on arrival (inherited from the previous thread, or pinned),
   // it appears in place. State set beside the visibility it describes, so the
@@ -41,7 +38,6 @@ export function useNavPanel({ isMobile, isActiveRef }: {
       // Skip when view is hidden (display:none reports width 0) to avoid
       // corrupting _sharedNav for the incoming active view.
       if (!isActiveRef.current) return;
-      setContentNarrow(width < 1100);
       // Pinned panels never auto-collapse — they fall back to overlay-without-push instead.
       if (width < 1100 && navPanelVisibleRef.current && !navPinnedRef.current) {
         if (navHideTimerRef.current) clearTimeout(navHideTimerRef.current);
@@ -148,7 +144,6 @@ export function useNavPanel({ isMobile, isActiveRef }: {
   return {
     navPanelVisible,
     navPinned,
-    contentNarrow,
     contentAreaRef,
     navPanelVisibleRef,
     navSlideIn,

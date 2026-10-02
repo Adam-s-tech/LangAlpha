@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { relativeTime } from '@/lib/format';
+import { createDateFormatter, relativeTime } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
 import { MessageSquareText, MessagesSquare } from 'lucide-react';
@@ -31,18 +31,11 @@ function greetingKey(now: number): string {
   return 'dashboard.widgets.conversation.greetingStillAtIt';
 }
 
+const stripDate = createDateFormatter({ weekday: 'long', month: 'short', day: 'numeric' });
+const stripTime = createDateFormatter({ hour: 'numeric', minute: '2-digit' });
+
 function formatDateStrip(now: number, locale: string): string {
-  const d = new Date(now);
-  const date = d.toLocaleDateString(locale, {
-    weekday: 'long',
-    month: 'short',
-    day: 'numeric',
-  });
-  const time = d.toLocaleTimeString(locale, {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-  return `${date} · ${time}`;
+  return `${stripDate(now, locale)} · ${stripTime(now, locale)}`;
 }
 
 function ConversationWidget({ instance }: WidgetRenderProps<ConversationConfig>) {

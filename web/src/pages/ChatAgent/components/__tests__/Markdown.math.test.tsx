@@ -36,6 +36,17 @@ describe('Markdown math', () => {
     expect(tex).toEqual(['a+b', 'E = mc^2']);
   });
 
+  it('gives display math on a line of its own a block, and keeps it inline in a sentence', () => {
+    const host = render(
+      '$$E = mc^2$$\n\n\\[a^2 + b^2 = c^2\\]\n\nMomentum is\n$$p = mv$$\nfor a point mass.\n\nThe force $$F = ma$$ is inline.\n'
+    );
+
+    const display = [...host.querySelectorAll('.katex-display annotation')].map((a) => a.textContent);
+    expect(display).toEqual(['E = mc^2', 'a^2 + b^2 = c^2', 'p = mv']);
+    const inline = [...host.querySelectorAll('p .katex annotation')].map((a) => a.textContent);
+    expect(inline).toEqual(['F = ma']);
+  });
+
   it('adds no empty numbered row for a trailing \\\\ in align', () => {
     const host = render('$$\n\\begin{align}\na &= b \\\\\nc &= d \\\\\n\\end{align}\n$$\n');
 

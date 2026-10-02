@@ -6,6 +6,8 @@ import { motion, AnimatePresence } from '@/lib/framer';
 import { useBackdropDismiss } from '@/hooks/useDialogA11y';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
+import { createDateFormatter } from '@/lib/format';
+import { localDateStr } from '@/lib/utils';
 import { getEarningsCalendar } from '../utils/api';
 
 interface EarningsEntry {
@@ -56,9 +58,14 @@ function LogoFallback({ symbol }: LogoFallbackProps) {
   );
 }
 
+const shortDay = createDateFormatter({ month: 'short', day: 'numeric' });
+const shortWeekday = createDateFormatter({ weekday: 'short' });
+const shortMonth = createDateFormatter({ month: 'short' });
+
 function formatDate(dateStr: string | undefined, locale: string): string {
   if (!dateStr) return '';
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString(locale, { month: 'short', day: 'numeric' });
+  const d = new Date(dateStr + 'T00:00:00');
+  return Number.isNaN(d.getTime()) ? '' : shortDay(d, locale);
 }
 
 function EarningsItem({ item, index: _index, isPast }: EarningsItemProps) {
@@ -121,10 +128,8 @@ function SectionLabel({ label }: SectionLabelProps) {
 function formatDateTab(dateStr: string | undefined, locale: string): DateTabInfo {
   if (!dateStr) return { weekday: '', label: '' };
   const d = new Date(dateStr + 'T00:00:00');
-  const weekday = d.toLocaleDateString(locale, { weekday: 'short' });
-  const month = d.toLocaleDateString(locale, { month: 'short' });
-  const day = d.getDate();
-  return { weekday, label: `${month} ${day}` };
+  if (Number.isNaN(d.getTime())) return { weekday: '', label: '' };
+  return { weekday: shortWeekday(d, locale), label: `${shortMonth(d, locale)} ${d.getDate()}` };
 }
 
 function EarningsModal({ earnings, onClose }: EarningsModalProps) {
@@ -132,7 +137,7 @@ function EarningsModal({ earnings, onClose }: EarningsModalProps) {
   const locale = useLocale();
   const now = useNow();
   const backdrop = useBackdropDismiss<HTMLDivElement>(onClose);
-  const todayStr = new Date(now).toISOString().split('T')[0];
+  const todayStr = localDateStr(now);
 
   // Group by date, sorted chronologically
   const dateGroups = useMemo((): DateGroup[] => {
@@ -331,9 +336,9 @@ function EarningsCalendarCard() {
   const fetchEarnings = useCallback(async () => {
     setLoading(true);
     try {
-      const today = new Date();
-      const from = new Date(today.getTime() - 5 * 86400000).toISOString().split('T')[0];
-      const to = new Date(today.getTime() + 5 * 86400000).toISOString().split('T')[0];
+      const today = Date.now();
+      const from = localDateStr(today - 5 * 86400000);
+      const to = localDateStr(today + 5 * 86400000);
       const result = await getEarningsCalendar({ from, to });
       // Filter to US-market symbols only (no dot-suffix like .BK, .TW, .L, .TO, etc.)
       const usOnly = ((result?.data || []) as EarningsEntry[]).filter((e) => e.symbol && !e.symbol.includes('.'));
@@ -351,7 +356,7 @@ function EarningsCalendarCard() {
   }, [fetchEarnings]);
 
   const now = useNow();
-  const todayStr = new Date(now).toISOString().split('T')[0];
+  const todayStr = localDateStr(now);
 
   const { recent, upcoming } = useMemo(() => {
     const r = allEarnings.filter((e) => e.date < todayStr).sort((a, b) => b.date.localeCompare(a.date));

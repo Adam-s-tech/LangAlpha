@@ -1,4 +1,5 @@
 import type { i18n as I18n } from 'i18next';
+import { DEFAULT_LOCALE, resolveLocale } from './resolveLocale';
 
 // Shared locale helpers, deliberately standalone (no runtime i18next/react-i18next
 // import; switchLocale takes the instance) so hooks/components that are
@@ -59,15 +60,13 @@ export async function switchLocale(i18n: LocaleSwitcher, locale: Locale): Promis
 }
 
 // Resolution order: cookie (explicit / DB-mirrored choice) → browser language
-// (exact, then prefix) → English. scripts/locale-preload.ts mirrors this in
-// index.html to preload the catalog before the bundle runs;
-// lib/__tests__/localePreload.test.ts holds the two together.
-export function detectLocale(): string {
-  const cookie = getLocaleCookie();
-  if (cookie) return cookie;
-  const browserLang = typeof navigator !== 'undefined' ? navigator.language : '';
-  if (isSupported(browserLang)) return browserLang;
-  const prefix = browserLang.split('-')[0];
-  const prefixMatch = SUPPORTED_LOCALES.find((l) => l.startsWith(prefix + '-'));
-  return prefixMatch || 'en-US';
+// (exact, then prefix) → English. scripts/locale-preload.ts runs the same
+// resolveLocale() in index.html to preload the catalog before the bundle runs.
+export function detectLocale(): Locale {
+  return resolveLocale(
+    typeof document !== 'undefined' ? document.cookie : '',
+    typeof navigator !== 'undefined' ? navigator.language : '',
+    SUPPORTED_LOCALES,
+    DEFAULT_LOCALE,
+  );
 }

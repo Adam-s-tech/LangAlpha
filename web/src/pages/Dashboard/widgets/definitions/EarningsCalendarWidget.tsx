@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
+import { createDateFormatter } from '@/lib/format';
+import { localDateStr } from '@/lib/utils';
 import { CalendarDays } from 'lucide-react';
 import { getEarningsCalendar } from '../../utils/api';
 import { registerWidget } from '../framework/WidgetRegistry';
@@ -11,13 +13,6 @@ import { serializeRowsToMarkdown, wrapWidgetContext } from '../framework/snapsho
 import { EarningsConfigSchema } from '../framework/configSchemas';
 import { RowAttachButton } from '../../components/RowAttachButton';
 import type { WidgetRenderProps } from '../types';
-
-/** Local-date YYYY-MM-DD. We can't use toISOString() because that emits UTC,
- * which crosses the day boundary for users in non-UTC zones — earnings fetched
- * for "today" then get filtered out by `e.date >= todayStr` or bucketed wrong. */
-function localDateStr(d: Date): string {
-  return d.toLocaleDateString('en-CA'); // en-CA → YYYY-MM-DD in local time
-}
 
 type EarningsConfig = { window?: '1w' | '2w' | '1m'; tickers?: 'all' | 'portfolio' };
 
@@ -60,14 +55,16 @@ function bucketFor(dateStr: string, now: number): BucketKey {
   return 'later';
 }
 
+const shortWeekday = createDateFormatter({ weekday: 'short' });
+const shortDay = createDateFormatter({ month: 'short', day: 'numeric' });
+
 function formatDateRight(dateStr: string, bucket: BucketKey, locale: string): string {
   const d = toDate(dateStr);
   if (bucket === 'today') return 'Today';
   if (bucket === 'tomorrow') return 'Tomorrow';
-  if (bucket === 'week') {
-    return d.toLocaleDateString(locale, { weekday: 'short' });
-  }
-  return d.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
+  if (Number.isNaN(d.getTime())) return '';
+  if (bucket === 'week') return shortWeekday(d, locale);
+  return shortDay(d, locale);
 }
 
 function serializeEarningsToMarkdown(items: EarningsEntry[]): string {
@@ -209,8 +206,8 @@ function EarningsCalendarWidget({ instance }: WidgetRenderProps<EarningsConfig>)
   // Both ends come from one clock reading; the query key changes only when a
   // date string does.
   const now = useNow();
-  const todayStr = localDateStr(new Date(now));
-  const toStr = localDateStr(new Date(now + windowDays * 86_400_000));
+  const todayStr = localDateStr(now);
+  const toStr = localDateStr(now + windowDays * 86_400_000);
 
   const { data: earnings = [], isLoading: loading } = useQuery<EarningsEntry[]>({
     queryKey: ['earnings-calendar', todayStr, toStr],

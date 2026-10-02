@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
+import { userLocalStorage } from '@/lib/userStorage';
 import type { TreeNode } from './types';
 import { getAvailableTypes, getFileType, sortFiles } from './fileMeta';
 import { buildFileTree } from './fileTree';
@@ -15,7 +16,7 @@ interface TreeFilterArgs {
 
 function readExpandedDirs(key: string): Set<string> {
   try {
-    const saved = localStorage.getItem(key);
+    const saved = userLocalStorage.getItem(key);
     return saved ? new Set(JSON.parse(saved) as string[]) : new Set();
   } catch { return new Set(); }
 }
@@ -71,7 +72,7 @@ export function useTreeFilter({ workspaceId, files, scopeDir, rootRef }: TreeFil
   }, [expandKey, expanded.key]);
   useEffect(() => {
     if (expanded.key !== expandKey) return;
-    try { localStorage.setItem(expandKey, JSON.stringify([...expanded.dirs])); } catch { /* blocked store */ }
+    try { userLocalStorage.setItem(expandKey, JSON.stringify([...expanded.dirs])); } catch { /* blocked store */ }
   }, [expanded, expandKey]);
   const expandedDirs = expanded.dirs;
   const setExpandedDirs = useCallback((fn: (prev: Set<string>) => Set<string>) => {

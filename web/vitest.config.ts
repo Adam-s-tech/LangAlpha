@@ -1,5 +1,11 @@
 import { defineConfig } from 'vitest/config';
 import { reactPlugins } from './scripts/react-plugins.ts';
+import { monacoVersionDefine } from './scripts/monaco-version.ts';
+
+// Date tests pin local-day boundaries, and on a UTC host (CI) the local and the
+// UTC date agree, so a bug that mixes them up passes there. A zone west of UTC
+// splits them. An explicit TZ still wins, to try another zone.
+process.env.TZ ||= 'America/Los_Angeles';
 
 const TEST_FILES = ['src/**/*.test.{ts,tsx}'];
 const EXCLUDE = ['e2e/**', 'node_modules/**'];
@@ -163,6 +169,7 @@ const FORKS_FILES = [
 
 export default defineConfig({
   plugins: reactPlugins(),
+  define: monacoVersionDefine(import.meta.dirname),
   test: {
     globals: true,
     // A vm worker keeps every file's module graph until its heap reaches this,

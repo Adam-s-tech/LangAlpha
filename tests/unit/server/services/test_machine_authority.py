@@ -445,6 +445,34 @@ class TestStopOwnershipFence(_Base):
             manager._reconcile_provider_stop.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "state,settles",
+        [("stopped", True), ("archived", True), ("error", True), ("starting", False)],
+    )
+    async def test_an_errored_sandbox_settles_an_abandoned_stop(self, state, settles):
+        from ptc_agent.core.sandbox.runtime import RuntimeState
+
+        manager = self._manager()
+        manager._settle_machine_stop = AsyncMock()
+        runtime = SimpleNamespace(get_state=AsyncMock(return_value=RuntimeState(state)))
+
+        @asynccontextmanager
+        async def _runtime(*_args, **_kwargs):
+            yield runtime
+
+        manager._detached_runtime = _runtime
+
+        if settles:
+            await manager._reconcile_provider_stop(_binding("ws-1"))
+            manager._settle_machine_stop.assert_awaited_once_with(
+                COMPUTER_ID, "stopped"
+            )
+        else:
+            with pytest.raises(RuntimeError, match="transient state"):
+                await manager._reconcile_provider_stop(_binding("ws-1"))
+            manager._settle_machine_stop.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_lost_postgres_fence_aborts_the_provider_stop(self):
         manager = self._manager()
         session = MagicMock()

@@ -115,6 +115,27 @@ async def test_a_revoked_token_is_refused_though_the_mirror_held_it(
     assert await _refused(_bearer(minted.token))
 
 
+@pytest.mark.parametrize(
+    ("status", "serves"),
+    [("starting", True), ("error", True), ("stopping", False), ("stopped", False)],
+)
+async def test_a_token_serves_only_while_its_computer_is_in_service(
+    computer, redis, test_db_pool, status, serves
+):
+    """A stop whose revoke failed, or a start reverted to stopped, leaves the
+    row in place; the computer's status alone has to end it."""
+    minted = await mint_token(computer.computer_id, computer.user_id)
+    async with test_db_pool.connection() as conn:
+        await conn.execute(
+            "UPDATE computers SET status = %s WHERE computer_id = %s",
+            (status, computer.computer_id),
+        )
+    # What a stop's revoke drops even when its row delete fails.
+    await redis.delete(*tokens._keys(computer.computer_id))
+
+    assert (not await _refused(_bearer(minted.token))) is serves
+
+
 async def test_the_previous_token_is_admitted_from_the_mirror_after_a_rotation(
     computer, row_reads
 ):

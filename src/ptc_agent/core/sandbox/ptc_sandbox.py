@@ -89,6 +89,10 @@ class PTCSandbox:
         # Set by the host while the file mount serves this sandbox; None
         # means the store-backed paths are not on its filesystem.
         self.livefs: MountHandle | None = None
+        # A reconnect found the mount gone: it booted the sandbox, or nothing
+        # answered at the mount's path. The host records that before it next
+        # reads what was recorded of the mount, which still says it serves.
+        self.livefs_lost = False
 
         # Working directory — initialized from config, updated by fetch_working_dir()
         # after sandbox creation/reconnect.
@@ -753,6 +757,9 @@ class PTCSandbox:
                     sandbox_id=sandbox_id,
                 )
 
+        if state_value != "running":
+            self.livefs_lost = True
+            self.livefs = None
         if state_value == "running":
             logger.debug(
                 "Sandbox already started, skipping start", sandbox_id=sandbox_id
@@ -891,7 +898,9 @@ class PTCSandbox:
 
         # Initialize MCP server sessions (needed for tool execution)
         self.mcp_server_sessions: dict[str, Any] = {}
-        await self._start_internal_mcp_servers()
+        if await self._start_internal_mcp_servers() is False:
+            self.livefs_lost = True
+            self.livefs = None
         self._reconnect_incomplete = False
 
         logger.debug(
@@ -1436,7 +1445,7 @@ class PTCSandbox:
     ) -> dict[str, dict[str, Any]]:
         return await _mcp_setup.discover_user_mcp_schemas(self, servers)
 
-    async def _start_internal_mcp_servers(self) -> None:
+    async def _start_internal_mcp_servers(self) -> bool | None:
         return await _mcp_setup._start_internal_mcp_servers(self)
 
     def _detect_missing_imports(self, stderr: str) -> list[str]:

@@ -19,6 +19,7 @@ from src.server.database.computer import (
     COMPUTER_STATUSES,
     get_computer,
 )
+from src.server.database.livefs_links import drop_workspace_links
 from src.server.database.mcp_servers import start_new_workspace_selection
 from src.server.database.pool import get_db_connection
 from src.server.database.sql_fences import (
@@ -463,6 +464,14 @@ async def bind_workspace_to_computer(
                 },
             )
             row = await cur.fetchone()
+            if row is not None:
+                # A move takes the mount's links on the computer left with
+                # it: a folder made there again, should the workspace come
+                # back, holds none until a link lays them, and every worker's
+                # next turn there reads it so.
+                await drop_workspace_links(
+                    cur, workspace_id, keep_computer_id=computer_id
+                )
             if row is not None and row.get("dir_name"):
                 await release_former_folder(
                     cur, computer_id=computer_id, workspace_id=workspace_id, folder=row["dir_name"]
@@ -1374,6 +1383,9 @@ async def delete_workspace(
                     await retire_workspace_grants(
                         cur, workspace_id, result.get("computer_id")
                     )
+                    # No worker may serve the folder as linked once the
+                    # tombstone is visible: a settle clears it.
+                    await drop_workspace_links(cur, workspace_id)
 
         if result:
             logger.info(f"Deleted workspace: {workspace_id}")

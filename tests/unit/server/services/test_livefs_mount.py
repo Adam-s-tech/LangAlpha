@@ -3,11 +3,16 @@
 Serving (the token and the daemon) and the links are asked of the sandbox
 apart, each only when due, since every ask is an exec into the sandbox. A
 bring-up serves beside its asset sync and lays the links off the turn's
-path once the mount serves; a command in a workspace waits for that
-workspace's links and runs without the mount while they are not in. A
-token running low is renewed in the background, once per computer, while
-turns and commands go on with it. A mount failure never costs a turn: the
-file tools still reach these files through the store.
+path once the daemon answered, serving or not; a command in a workspace
+waits for that workspace's links and runs without the mount while they are
+not in. A token running low is renewed in the background, once per
+computer, while turns and commands go on with it. A mount failure never
+costs a turn: the file tools still reach these files through the store.
+
+These pin one worker's own decisions: the rows every worker records and
+reads at a turn's start are stood in for as unreadable, which leaves the
+worker with what it saw itself. ``test_livefs_workers`` has several workers
+share them.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ from ptc_agent.core.paths import SandboxLayout
 from ptc_agent.core.sandbox.livefs_mount import CallContext
 from ptc_agent.core.sandbox.livefs_runtime import lifecycle
 from ptc_agent.core.sandbox.livefs_runtime.protocol import MountError
+from src.server.database.livefs_tokens import Served, TokenRow
 from src.server.services import transcripts
 from src.server.services.computer_manager import ComputerManager
 from src.server.services.livefs import mount, tracker
@@ -43,6 +49,8 @@ WS_B = "ws-test-b"
 FOLDER_A = LAYOUT.for_workspace("research-a")
 FOLDER_B = LAYOUT.for_workspace("research-b")
 DEAD = "cat: .agents/user/memory/notes.md: Transport endpoint is not connected"
+#: The rows' read, which every test here but the ones on it stands in for.
+VIEW = mount.view
 
 
 def _in(minutes: float) -> datetime:
@@ -89,7 +97,15 @@ def server(monkeypatch):
         settling=False,
         #: The sandbox that took the current token, as its row says.
         held_by="sb-test-1",
+        #: The sandbox whose daemon the last start answered serving, and with
+        #: what; none until one answers.
+        served_by=None,
+        served=None,
         mark_held=AsyncMock(),
+        mark_served=AsyncMock(),
+        #: Records every folder linked; ``_Rows`` in test_livefs_workers
+        #: leaves out the ones that left the computer.
+        save_links=AsyncMock(side_effect=lambda _c, _s, linked, _layout: linked),
         #: Each folders lock taken, by its wait ("full" for the default).
         waits=[],
     )
@@ -111,17 +127,32 @@ def server(monkeypatch):
     monkeypatch.setattr(
         mount.db,
         "current_token",
-        AsyncMock(side_effect=lambda _c: (state.expires_at, state.held_by)),
+        AsyncMock(
+            side_effect=lambda _c: TokenRow(
+                state.expires_at,
+                state.held_by,
+                state.served_by,
+                state.served,
+                state.expires_at,
+            )
+        ),
     )
     monkeypatch.setattr(mount.db, "mark_held", state.mark_held)
+    monkeypatch.setattr(mount.db, "mark_served", state.mark_served)
+    monkeypatch.setattr(mount.links_db, "save_links", state.save_links)
     monkeypatch.setattr(mount.tokens, "mint_token", state.mint)
     monkeypatch.setattr(mount, "effective_relay_base_url", lambda _p: "http://relay.test")
     return state
 
 
-async def _serve(sandbox: _Sandbox) -> MountState:
+@pytest.fixture(autouse=True)
+def _rows_unread(monkeypatch):
+    monkeypatch.setattr(mount, "view", AsyncMock(return_value=None))
+
+
+async def _serve(sandbox: _Sandbox, **kwargs) -> MountState:
     return await mount.serve(
-        sandbox, computer_id=COMPUTER, user_id=USER, provider="daytona"
+        sandbox, computer_id=COMPUTER, user_id=USER, provider="daytona", **kwargs
     )
 
 
@@ -502,14 +533,26 @@ async def test_a_workspace_not_yet_linked_owes_a_link_and_no_serve(clock):
     assert seen.link_owed(sandbox, WS_B) and not seen.link_owed(sandbox, WS_A)
 
 
+@pytest.mark.parametrize(
+    ("answer", "owed"),
+    [
+        (MountState(False, error=MountError.UNREACHABLE), True),
+        (MountState(False, error=MountError.UNSUPPORTED), True),
+        (MountState(False, reason="folders are moving", error=MountError.BUSY), False),
+        (MountState(False, reason="exec lost"), False),
+    ],
+    ids=["unreachable", "unsupported", "busy", "raised"],
+)
 @pytest.mark.asyncio
-async def test_a_mount_that_does_not_serve_owes_no_link(clock):
-    """A link sets aside what sat at its path, which a mount that never
-    served would hide for nothing."""
+async def test_a_mount_that_does_not_serve_still_owes_its_links(clock, answer, owed):
+    """Unserved, a link dangles, so code that builds a served path is
+    refused rather than writing files the store never sees. A serve that
+    never reached the daemon says nothing of the sandbox."""
     manager, sandbox = _manager(), _Sandbox()
-    await _served(manager, sandbox, MountState(False, error=MountError.UNREACHABLE))
+    await _served(manager, sandbox, answer)
 
-    assert not _seen(manager).link_owed(sandbox, WS_A)
+    assert _seen(manager).link_owed(sandbox, WS_A) is owed
+    assert _seen(manager).link_owed(sandbox, None) is owed
 
 
 @pytest.mark.asyncio
@@ -537,13 +580,92 @@ async def test_a_token_as_good_as_gone_is_due(clock):
 
 
 @pytest.mark.asyncio
-async def test_a_reconnected_sandbox_object_without_the_mount_handle_is_due(clock):
+async def test_a_reconnect_the_rows_say_is_served_is_handed_the_mount(clock, monkeypatch):
+    """The daemon outlives a sandbox object, so a reconnect's new one is
+    handed the serving mount at the turn's read of the rows, without asking
+    the sandbox again. (It once served again: one exec per reconnect, on
+    every worker.)"""
     manager = _manager()
     await _served(manager, _Sandbox(), _up())
+    await _linked(manager, _Sandbox(), _links(WS_A))
+    reconnected, serve = _Sandbox(), AsyncMock()
+    rows = mount.MountView(True, _in(59), frozenset({None, WS_A}))
+    monkeypatch.setattr(mount, "view", AsyncMock(return_value=rows))
 
+    await manager._load_livefs(COMPUTER, USER, reconnected)
+
+    assert not manager._livefs_owed(COMPUTER, WS_A, reconnected)
+    with patch.object(mount, "serve", serve):
+        await manager._keep_livefs(COMPUTER, USER, reconnected, WS_A)
+    serve.assert_not_awaited()
+    assert await reconnected.livefs.ready(WS_A)
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [None, mount.MountView(False, None, frozenset({None, WS_A}))],
+    ids=["unread", "not-serving"],
+)
+@pytest.mark.asyncio
+async def test_a_reconnect_is_handed_nothing_the_rows_do_not_say_serves(
+    clock, monkeypatch, rows
+):
+    """What this worker saw before the reconnect is no answer: the reconnect
+    may have found the mount gone, which only the rows then say."""
+    manager = _manager()
+    await _served(manager, _Sandbox(), _up())
     reconnected = _Sandbox()
+    monkeypatch.setattr(mount, "view", AsyncMock(return_value=rows))
+
+    await manager._load_livefs(COMPUTER, USER, reconnected)
+
     assert reconnected.livefs is None
     assert _seen(manager).serve_due(reconnected)
+
+
+@pytest.mark.asyncio
+async def test_a_restart_a_reconnect_reported_is_recorded_before_a_serve_reads_the_row(
+    server, monkeypatch
+):
+    """No mount survives a boot, and a command meets no error there to heal
+    by, so the row saying the daemon serves is no answer once one is
+    reported: the serve asks the sandbox."""
+    server.served_by = "sb-test-1"
+    server.served = Served(mount._code(), "http://relay.test")
+
+    async def mark_down(_c, sandbox_id):
+        if server.served_by == sandbox_id:
+            server.served_by = None
+
+    monkeypatch.setattr(mount.db, "mark_down", AsyncMock(side_effect=mark_down))
+    sandbox = _Sandbox({"ok": True, "started": True})
+    sandbox.livefs_lost = True
+
+    state = await _serve(sandbox)
+
+    assert state.mounted and state.started
+    assert len(sandbox.commands) == 1 and "start" in sandbox.argv()
+    mount.db.mark_down.assert_awaited_once_with(COMPUTER, "sb-test-1")
+    assert not sandbox.livefs_lost
+
+
+@pytest.mark.asyncio
+async def test_a_reported_restart_whose_record_fails_is_read_by_nothing(monkeypatch):
+    """The report stays for the next read, and a read that cannot record it
+    answers nothing, so no worker hands out the mount the row still says
+    serves."""
+    monkeypatch.setattr(
+        mount.db, "mark_down", AsyncMock(side_effect=ConnectionError("unreachable"))
+    )
+    mount_view = AsyncMock()
+    monkeypatch.setattr(mount.links_db, "mount_view", mount_view)
+    sandbox = _Sandbox()
+    sandbox.livefs_lost = True
+
+    view = await VIEW(sandbox, computer_id=COMPUTER, provider="docker")
+
+    assert view is None and sandbox.livefs_lost
+    mount_view.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -834,17 +956,44 @@ async def test_a_serve_the_sync_stood_in_the_way_of_is_asked_once_more_after_it(
     [MountError.UNREACHABLE, MountError.UNSUPPORTED, MountError.INSTALLING],
 )
 @pytest.mark.asyncio
-async def test_a_serve_that_would_answer_the_same_is_not_asked_again_and_links_nothing(
+async def test_a_serve_that_would_answer_the_same_is_not_asked_again_and_still_links(
     clock, error
 ):
+    """The links dangle until a mount serves, as they do once one goes
+    down, and the next turn owes the sandbox nothing."""
     manager, sandbox = _manager(), _Sandbox()
-    serve, link = AsyncMock(return_value=MountState(False, error=error)), AsyncMock()
+    serve = AsyncMock(return_value=MountState(False, error=error))
+    link = AsyncMock(return_value=_links(WS_A))
 
     with patch.object(mount, "serve", serve), patch.object(mount, "link", link):
-        await _beside(manager, sandbox)
-        await asyncio.sleep(0)
+        await _beside(manager, sandbox, workspace_id=WS_A)
+        await _seen(manager).linked()
 
     serve.assert_awaited_once()
+    link.assert_awaited_once()
+    assert sandbox.livefs is None
+    assert not manager._livefs_owed(COMPUTER, WS_A, sandbox)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        MountState(False, reason="folders are moving", error=MountError.BUSY),
+        MountState(False, reason="exec lost"),
+    ],
+    ids=["busy", "raised"],
+)
+@pytest.mark.asyncio
+async def test_a_serve_that_asked_the_daemon_nothing_links_nothing(clock, answer):
+    """A settle owns the folders, or the serve never reached the sandbox."""
+    manager, sandbox = _manager(), _Sandbox()
+    serve, link = AsyncMock(return_value=answer), AsyncMock()
+
+    with patch.object(mount, "serve", serve), patch.object(mount, "link", link):
+        await _beside(manager, sandbox, workspace_id=WS_A)
+        await asyncio.sleep(0)
+
+    assert serve.await_count == 2
     link.assert_not_awaited()
     assert sandbox.livefs is None
 
@@ -1328,7 +1477,8 @@ async def test_a_command_that_met_a_dead_mount_restarts_it_and_says_so(monkeypat
 
     text = await handle.report("c0ffee00c0ffee00", DEAD)
 
-    serve.assert_awaited_once()
+    # The rows still say it serves; only the sandbox can say otherwise.
+    serve.assert_awaited_once_with(adopt=False)
     link.assert_not_awaited()
     assert seen.serves(sandbox, WS_A)
     assert "serving again; rerun the command" in text
@@ -1381,3 +1531,58 @@ async def test_a_dead_mount_already_restarted_elsewhere_adds_no_note(monkeypatch
     handle = _handle(_serving(sandbox, WS_A), sandbox, serve=serve)
 
     assert await handle.report("c0ffee00c0ffee00", DEAD) == ""
+
+
+MISSING = "ls: cannot access '.agents/user/automations': No such file or directory"
+
+
+@pytest.mark.parametrize(
+    "answers, restarted", [(False, True), (True, False), (None, False)], ids=["gone", "there", "unasked"]
+)
+@pytest.mark.asyncio
+async def test_a_missing_file_under_the_mount_asks_whether_the_mount_is_gone(
+    monkeypatch, clock, answers, restarted
+):
+    """A restart no reconnect saw leaves the links dangling, answering
+    ENOENT, so only the sandbox can tell a gone mount from a missing file."""
+    monkeypatch.setattr(mount.outcomes, "collect", AsyncMock(return_value=[]))
+    probe = AsyncMock(return_value=answers)
+    monkeypatch.setattr(mount.livefs_mount, "answers", probe)
+    sandbox = _Sandbox()
+    serve = AsyncMock(return_value=_up(started=True))
+    handle = _handle(_serving(sandbox, WS_A), sandbox, serve=serve)
+
+    text = await handle.report("c0ffee00c0ffee00", MISSING)
+
+    probe.assert_awaited_once_with(sandbox)
+    assert serve.await_count == int(restarted)
+    assert ("serving again; rerun the command" in text) is restarted
+
+
+@pytest.mark.asyncio
+async def test_missing_files_ask_the_sandbox_at_most_once_a_minute(monkeypatch, clock):
+    monkeypatch.setattr(mount.outcomes, "collect", AsyncMock(return_value=[]))
+    probe = AsyncMock(return_value=True)
+    monkeypatch.setattr(mount.livefs_mount, "answers", probe)
+    sandbox = _Sandbox()
+    handle = _handle(_serving(sandbox, WS_A), sandbox, serve=AsyncMock())
+
+    await handle.report("c0ffee00c0ffee00", MISSING)
+    clock.t += 59
+    await handle.report("c0ffee00c0ffee01", MISSING)
+    assert probe.await_count == 1
+    clock.t += 2
+    await handle.report("c0ffee00c0ffee02", MISSING)
+    assert probe.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_missing_file_outside_the_mount_asks_nothing(monkeypatch, clock):
+    monkeypatch.setattr(mount.outcomes, "collect", AsyncMock(return_value=[]))
+    probe = AsyncMock(return_value=False)
+    monkeypatch.setattr(mount.livefs_mount, "answers", probe)
+    sandbox = _Sandbox()
+    handle = _handle(_serving(sandbox, WS_A), sandbox, serve=AsyncMock())
+
+    assert await handle.report("c0ffee00c0ffee00", "cat: data/prices.csv: No such file or directory") == ""
+    probe.assert_not_awaited()

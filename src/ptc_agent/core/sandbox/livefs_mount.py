@@ -35,6 +35,16 @@ if TYPE_CHECKING:
 # Covers a cold start (the daemon waits up to 10 s for its mount) plus links.
 _EXEC_TIMEOUT_S = 30
 
+_ANSWERS = "livefs-mount-answers"
+#: Prints ``_ANSWERS`` when something answers at the mount's path. Killed at
+#: 2 s: a stat on a daemon that hangs waits until killed.
+PROBE = f"timeout -s KILL 2 test -e {shlex.quote(protocol.MOUNT + '/.')} && echo {_ANSWERS}"
+
+
+def answered(stdout: str | None) -> bool:
+    """Whether a command that ran ``PROBE`` found the mount answering."""
+    return _ANSWERS in (stdout or "")
+
 
 @dataclass(frozen=True)
 class CallContext:
@@ -140,6 +150,11 @@ def _boot() -> tuple[str, str, str, str]:
     return script, lifecycle.Paths().private, lifecycle.code_version(), manifest
 
 
+def code_version() -> str:
+    """The daemon code this host ships, which ``start`` brings a daemon to."""
+    return _boot()[2]
+
+
 def _command(layout: SandboxLayout, action: str, *args: str) -> str:
     script, private, code, manifest = _boot()
     shipped = f"{layout.internal_src}/{protocol.PACKAGE_NAME}"
@@ -217,6 +232,20 @@ async def start(
     directory only root can read and deletes the staged copy.
     """
     return await _run(sandbox, "start", ["--base-url", base_url], config)
+
+
+async def answers(sandbox: PTCSandbox) -> bool | None:
+    """Whether the mount answers at its path (None: the exec failed). After a
+    restart no reconnect saw, the links dangle and answer ENOENT, which no
+    command tells apart from a missing file."""
+    assert sandbox.runtime is not None
+    try:
+        result = await sandbox._runtime_call(
+            sandbox.runtime.exec, PROBE, retry_policy=RetryPolicy.SAFE
+        )
+    except Exception:  # noqa: BLE001 - unknown, so the caller changes nothing
+        return None
+    return answered(getattr(result, "stdout", None))
 
 
 async def link(sandbox: PTCSandbox, links: Sequence[tuple[str, str]]) -> MountOutcome:

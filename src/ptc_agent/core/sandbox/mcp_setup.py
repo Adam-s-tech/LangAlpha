@@ -20,6 +20,7 @@ from ptc_agent.core.sandbox._defaults import DEFAULT_DEPENDENCIES
 from ptc_agent.core.sandbox.retry import RetryPolicy
 
 from ..paths import SandboxLayout
+from . import livefs_mount
 from .supervisor_runtime import protocol as supervisor_protocol
 
 if TYPE_CHECKING:
@@ -239,7 +240,7 @@ async def discover_user_mcp_schemas(
     return dict(pairs)
 
 
-async def _start_internal_mcp_servers(sandbox: "PTCSandbox") -> None:
+async def _start_internal_mcp_servers(sandbox: "PTCSandbox") -> bool | None:
     """Start the computer's MCP supervisor, if it is not already listening.
 
     One daemon per computer owns every sandbox-side MCP server process, so a
@@ -251,6 +252,10 @@ async def _start_internal_mcp_servers(sandbox: "PTCSandbox") -> None:
     spawning servers in the execution's own interpreter, which is what every
     call did before this daemon existed, so a computer whose supervisor cannot
     start is slower rather than broken.
+
+    Answers whether the file mount answered at its path (None: the exec
+    failed). A reconnect runs this exec anyway, and a mount gone with a boot
+    or a dead daemon meets no command that would say so.
     """
     assert sandbox.runtime is not None
     work_dir = sandbox._work_dir
@@ -260,6 +265,7 @@ async def _start_internal_mcp_servers(sandbox: "PTCSandbox") -> None:
     src_root = layout.internal_src
     quoted_socket = shlex.quote(socket_path)
     command = (
+        f"{livefs_mount.PROBE} ; "
         f"mkdir -p {shlex.quote(posixpath.dirname(socket_path))} && "
         f"cd {shlex.quote(src_root)} && "
         f"{{ PYTHONPATH={shlex.quote(src_root)} "
@@ -281,7 +287,8 @@ async def _start_internal_mcp_servers(sandbox: "PTCSandbox") -> None:
         )
     except Exception as e:  # noqa: BLE001 - the client's fallback covers this
         logger.warning("MCP supervisor start failed", error=str(e))
-        return
+        return None
+    mount_answers = livefs_mount.answered(getattr(result, "stdout", None))
     exit_code = getattr(result, "exit_code", 0)
     if exit_code:
         logger.warning(
@@ -289,9 +296,10 @@ async def _start_internal_mcp_servers(sandbox: "PTCSandbox") -> None:
             exit_code=exit_code,
             log=log_path,
         )
-        return
+        return mount_answers
     sandbox.mcp_server_sessions["supervisor"]["started"] = True
     logger.info("MCP supervisor listening", socket=socket_path)
+    return mount_answers
 
 
 

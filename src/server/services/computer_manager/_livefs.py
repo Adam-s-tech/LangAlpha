@@ -1,7 +1,8 @@
 """Seam: each machine's file mount, brought up when due and revoked with the machine.
 
 One file of the ComputerManager split; see the package __init__. What this
-worker saw of the mount is ``MachineState.livefs``, a ``MountTracker``."""
+worker saw of the mount is ``MachineState.livefs``, a ``MountTracker``, which
+takes what every worker recorded at each turn's start (``_load_livefs``)."""
 
 from __future__ import annotations
 
@@ -27,10 +28,16 @@ class LivefsMixin:
         return getattr(provider, "provider", None) or self.config.sandbox.provider
 
     async def _serve_livefs(
-        self, computer_id: Any, user_id: str | None, sandbox: Any
+        self,
+        computer_id: Any,
+        user_id: str | None,
+        sandbox: Any,
+        *,
+        adopt: bool = True,
     ) -> MountState:
         """Make the machine's file mount serve, record it, and hand the file
-        tools the mount (``sandbox.livefs``) while it does.
+        tools the mount (``sandbox.livefs``) while it does. ``adopt`` takes a
+        start another worker recorded since this one read the rows.
 
         Never raises: without the mount the file tools still reach these files
         through the store, so a mount failure costs code access, not a turn.
@@ -42,6 +49,7 @@ class LivefsMixin:
             computer_id=str(computer_id),
             user_id=user_id,
             provider=self._livefs_provider(sandbox),
+            adopt=adopt,
         )
         self._machine(str(computer_id)).livefs.saw(sandbox, state)
         # A settle holding the folders asked nothing, so whatever the sandbox
@@ -73,9 +81,10 @@ class LivefsMixin:
         sandbox: Any,
         workspace_id: str | None = None,
     ) -> None:
-        """Link the machine's folders in off the turn's path, when the mount
-        serves and ``workspace_id``'s folder (None: any) is not seen linked.
-        A command in that workspace waits for it (``Handle.ready``)."""
+        """Link the machine's folders in off the turn's path, once the
+        daemon answered a serve, mounted or not, and ``workspace_id``'s
+        folder (None: any) is not seen linked. A command in that workspace
+        waits for it while the mount serves (``Handle.ready``)."""
         self._machine(str(computer_id)).livefs.link_soon(
             sandbox, workspace_id, self._livefs_link(computer_id, user_id, sandbox)
         )
@@ -87,13 +96,41 @@ class LivefsMixin:
             str(computer_id),
             self._machine(str(computer_id)).livefs,
             sandbox,
-            serve=lambda: self._serve_livefs(computer_id, user_id, sandbox),
+            serve=lambda adopt=True: self._serve_livefs(
+                computer_id, user_id, sandbox, adopt=adopt
+            ),
             link=self._livefs_link(computer_id, user_id, sandbox),
             renew=lambda: self._renew_livefs(computer_id, user_id, sandbox),
         )
 
+    async def _load_livefs(
+        self, computer_id: Any, user_id: str | None, sandbox: Any
+    ) -> None:
+        """Take what every worker recorded of the mount on ``sandbox``: one
+        indexed read, which a turn's start makes and its commands never do.
+        Rows saying it serves there hand a sandbox object never handed it
+        (a reconnect's) the mount without an exec, and rows saying it does
+        not take it back, since an attach can end before any serve and the
+        turn's prompt says whether the files are mounted. Unread, nothing
+        changes and the tracker goes on with what this worker saw."""
+        from src.server.services.livefs import mount as livefs
+
+        view = await livefs.view(
+            sandbox,
+            computer_id=str(computer_id),
+            provider=self._livefs_provider(sandbox),
+        )
+        if view is None:
+            return
+        serving = self._machine(str(computer_id)).livefs.load(sandbox, view)
+        if not view.serving:
+            sandbox.livefs = None
+        elif serving and user_id and getattr(sandbox, "livefs", None) is None:
+            sandbox.livefs = self._livefs_handle(computer_id, user_id, sandbox)
+
     def _livefs_owed(self, computer_id: Any, workspace_id: str, sandbox: Any) -> bool:
-        """Whether a turn in ``workspace_id`` has anything to ask of the mount."""
+        """Whether a turn in ``workspace_id`` has anything to ask of the
+        mount, by what its start read (``_load_livefs``)."""
         tracker = self._machine(str(computer_id)).livefs
         return (
             tracker.serve_due(sandbox)
@@ -126,19 +163,20 @@ class LivefsMixin:
         *,
         workspace_id: str | None = None,
     ) -> _T:
-        """Run an asset sync for code about to run on ``sandbox``, and make
-        the file mount serve beside it when due. The daemon's start makes no
-        links, so it runs beside the sync; the links wait for the layout the
-        sync may move, since a migration moving files under a link would move
-        them through the mount, and then go in off the turn's path. A start
-        the sync may have stood in the way of (its code still being replaced,
-        a settle holding the folders, no clear answer) is asked once more
-        after it: the turn's prompt says whether the files are mounted, and
-        keeps saying it for the rest of the conversation.
+        """Run an asset sync for code about to run on ``sandbox``, with the
+        file mount's start beside it unless the rows say it serves.
+
+        The links wait for the layout the sync may move, since files moved
+        under a link would move through the mount. A start the sync may have
+        stood in the way of is asked once more after it: the turn's prompt
+        says whether the files are mounted for the rest of the conversation.
         """
         if sandbox is None or not user_id:
             return await sync
-        if not self._machine(str(computer_id)).livefs.serve_due(sandbox):
+        tracker = self._machine(str(computer_id)).livefs
+        if not tracker.serving(sandbox):
+            await self._load_livefs(computer_id, user_id, sandbox)
+        if not tracker.serve_due(sandbox):
             result = await sync
             self._renew_livefs_soon(computer_id, user_id, sandbox)
             self._link_livefs_soon(computer_id, user_id, sandbox, workspace_id)

@@ -1,15 +1,22 @@
 """This worker's view of one machine's file mount.
 
-Asking the sandbox is an exec, so a warm turn asks again only when something
-is due. Serving is due on another sandbox, with the token gone, or once a
-failure's backoff is over; a token that only runs low still has half an hour
-in it, so it is renewed in the background (``renew_soon``) while turns and
-commands go on with it. The links are due for a workspace not seen linked
-on this sandbox, and go in off the turn's path once the mount serves
-(``link_soon``), which a command in that workspace waits out (``linked``).
-Execution context only: each worker keeps its own, and the token table, the
-folders lock and the daemon's own state stay the truth, so a worker that
-saw nothing just asks.
+Asking the sandbox is an exec, so a turn asks only when something is due.
+At a turn's start the view takes what every worker recorded (``load``): the
+last start's answer on the token row and the folders links were laid for,
+so a worker that saw nothing of the computer trusts another's answer rather
+than asking again. Serving is due on another sandbox, on a sandbox object
+never handed the mount (a reconnect's, until the rows say it serves), with
+the token gone, or once a failure's backoff is over; a token that only runs
+low still has half an hour in it, so it is renewed in the background
+(``renew_soon``) while turns and commands go on with it. The links are due
+for a workspace not linked on this sandbox, serving or not, and go in off
+the turn's path once the daemon answered a serve (``link_soon``), which a
+command in that workspace waits out (``linked``).
+
+Commands never read the rows: they go on with what their turn's start read.
+The daemon stays the truth, so a command that meets it dead restarts it
+whatever the rows say. Backoffs, the tasks in flight and the lock are this
+worker's own.
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ from ptc_agent.core.sandbox.livefs_runtime.protocol import MountError
 from src.server.services.livefs.tokens import lapsed, runs_low
 
 if TYPE_CHECKING:
-    from src.server.services.livefs.mount import LinkState, MountState
+    from src.server.services.livefs.mount import LinkState, MountState, MountView
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +52,15 @@ _FAILED_RETRY_S = 600
 # Seconds until links the daemon did not answer for are asked again: a settle
 # held the folders, a sync was replacing its code, or the exec lost its answer.
 _LINK_RETRY_S = 20
+# Seconds until folders whose links failed are linked again: what stood in
+# the way on disk (a path the owner cannot write) stays until code moves it.
+_LINK_FAILED_RETRY_S = 600
 # Seconds until a renewal that renewed nothing is tried again. Mostly another
 # worker was renewing, and its token is adopted on the next try.
 _RENEW_RETRY_S = 15
+# Seconds until a missing file under the mount asks the sandbox again
+# whether the mount itself is gone (``probe_due``).
+_PROBE_EVERY_S = 60
 
 
 def sandbox_id(sandbox: Any) -> str | None:
@@ -77,6 +90,9 @@ class MountTracker:
         # Workspaces ``unlinked`` since the running link read the folders,
         # which its answer does not bring back.
         self._dropped: set[str] = set()
+        # When a command's missing file under the mount last had this worker
+        # ask the sandbox whether the mount itself was gone.
+        self._probed_at = -math.inf
         # Parallel commands (subagents) share one refresh.
         self._lock = asyncio.Lock()
         self._renewing: asyncio.Task | None = None
@@ -87,13 +103,38 @@ class MountTracker:
         self._relink: tuple[Any, Callable[[], Awaitable[Any]]] | None = None
         self._relink_for: set[str | None] = set()
 
+    def _reset_view(self) -> None:
+        # The backoffs and the probe time answer for what was seen, so they
+        # go with it.
+        self._seen, self._linked, self._link_held = None, None, None
+        self._retry_at = self._link_retry_at = self._renew_at = 0.0
+        self._probed_at = -math.inf
+
     def _on(self, sandbox: Any) -> None:
         """Point the view at ``sandbox``: what was seen on another tells
         nothing about it."""
         if sandbox_id(sandbox) != self._sandbox_id:
             self._sandbox_id = sandbox_id(sandbox)
-            self._seen, self._linked = None, None
-            self._retry_at = self._link_retry_at = 0.0
+            self._reset_view()
+
+    def load(self, sandbox: Any, view: MountView) -> bool:
+        """Take what the rows say of ``sandbox`` at a turn's start over what
+        this worker saw: another may have served, linked, renewed or stopped
+        it since. This worker's backoffs stand only while the rows do not say
+        it serves. Answers whether they say it serves with a token not gone,
+        which hands a sandbox object never handed it the mount."""
+        self._on(sandbox)
+        seen = self._seen
+        if view.serving:
+            if seen is None or not seen.mounted or seen.expires_at != view.expires_at:
+                self._seen = view.state()
+            self._retry_at = 0.0
+        elif seen is not None and seen.mounted:
+            # Found down, stopped or replaced since: a serve asks the sandbox.
+            self._seen = view.state()
+            self._retry_at = 0.0
+        self._linked = view.linked
+        return view.serving and not lapsed(view.expires_at)
 
     def saw(self, sandbox: Any, state: MountState) -> None:
         """Record what ``serve`` answered on ``sandbox``."""
@@ -125,7 +166,7 @@ class MountTracker:
         # it left out has left this computer.
         self._linked = state.linked - dropped
         self._link_held = state.failed
-        self._link_retry_at = now + _FAILED_RETRY_S if state.failed else 0.0
+        self._link_retry_at = now + _LINK_FAILED_RETRY_S if state.failed else 0.0
 
     def unlinked(self, workspace_id: str) -> None:
         """Count ``workspace_id`` not linked until a link answers again: its
@@ -145,9 +186,7 @@ class MountTracker:
         self._relink, self._relink_for = None, set()
         self._dropped = set()
         self._sandbox_id = None
-        self._seen, self._linked = None, None
-        self._retry_at = self._link_retry_at = 0.0
-        self._renew_at = 0.0
+        self._reset_view()
 
     def serving(self, sandbox: Any) -> bool:
         """Whether this worker saw the mount serve on ``sandbox``, handed to
@@ -177,8 +216,9 @@ class MountTracker:
         if time.monotonic() < self._retry_at:
             return False
         seen = self._seen
-        # Down, a token gone, or up but this sandbox handle (a reconnect's
-        # new one) never handed the mount.
+        # Down, a token gone, or up but this sandbox object (a reconnect's)
+        # never handed the mount: only a read of the rows saying it serves,
+        # or a serve, hands it one.
         return (
             seen is None
             or not seen.mounted
@@ -188,8 +228,18 @@ class MountTracker:
 
     def link_owed(self, sandbox: Any, workspace_id: str | None) -> bool:
         """Whether a link for ``workspace_id`` (None: the computer's own)
-        is owed on ``sandbox``. Only a serving mount is linked."""
-        if not self.serving(sandbox) or self.serves(sandbox, workspace_id):
+        is owed on ``sandbox``: once the mount serves there, or the daemon
+        answered why not. A serve that never reached it (it raised, or a
+        stop refused the token) says nothing of the sandbox. Unserved, the
+        link dangles, so code that builds the path is refused rather than
+        writing files the store never sees, which a later link sets aside."""
+        seen, linked = self._seen, self._linked
+        if (
+            seen is None
+            or not (seen.mounted or seen.error)
+            or self._sandbox_id != sandbox_id(sandbox)
+            or (linked is not None and _folder(workspace_id) in linked)
+        ):
             return False
         held = self._link_held
         # A folder the failed link never read (one that joined since) is
@@ -326,6 +376,16 @@ class MountTracker:
                 # Whatever held the refresh off, each command does not wait
                 # on it again: they run on the current token until the retry.
                 self._retry_at = time.monotonic() + _RETRY_S[MountError.BUSY]
+
+    def probe_due(self) -> bool:
+        """Whether a command's missing file under the mount should ask the
+        sandbox whether the mount is gone. A missing file is usually just
+        missing, so at most once a minute on each worker."""
+        now = time.monotonic()
+        if now < self._probed_at + _PROBE_EVERY_S:
+            return False
+        self._probed_at = now
+        return True
 
     async def restart(self, refresh: Callable[[], Awaitable[MountState]]) -> MountState:
         """Bring a mount found dead back up, never alongside a token refresh."""

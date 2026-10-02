@@ -107,7 +107,11 @@ class ProvisioningMixin:
 
         What this worker knows of the project's folder goes with it: a folder
         made again, on a computer the project left and came back to, holds
-        neither its files nor the mount's links until they are laid again."""
+        neither its files nor the mount's links until they are laid again. For
+        the links, the delete or move that took the project off the computer
+        already dropped its rows for every worker (``drop_workspace_links``);
+        this drops this worker's copy now, which a link it has in flight does
+        not bring back."""
         self._projects_attached = {
             key for key in self._projects_attached if key[0] != workspace_id
         }
@@ -886,6 +890,9 @@ class ProvisioningMixin:
                     self._projects_attached.clear()
                 self._projects_attached.add(key)
                 recorded = True
+        # Before the overlay can end the attach, which does not end the turn:
+        # a restart the reconnect found is recorded and a serving mount handed.
+        await self._load_livefs(binding.computer_id, user_id, sandbox)
         if not await self._ensure_project_tool_overlay(
             binding, session, user_id=user_id
         ):

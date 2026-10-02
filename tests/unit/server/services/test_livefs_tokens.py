@@ -68,7 +68,9 @@ class _TokenTable:
     async def load_token(self, computer_id):
         self.lookups.append(computer_id)
         row = self.rows.get(computer_id)
-        return None if row is None else {**row, "root_dir": ROOT}
+        if row is None or computer_id in self.leaving:
+            return None
+        return {**row, "root_dir": ROOT}
 
     async def delete_token(self, computer_id) -> None:
         self.rows.pop(computer_id, None)
@@ -221,6 +223,16 @@ async def test_revocation_ends_the_current_and_the_previous_token(table):
 
     assert await _rejects(_bearer(first.token))
     assert await _rejects(_bearer(second.token))
+
+
+@pytest.mark.asyncio
+async def test_a_computer_leaving_service_authenticates_nothing_though_its_row_stays(table):
+    """A stop whose revoke failed leaves the row; the stop itself ends it."""
+    minted = await mint_token(COMPUTER, USER)
+    table.leaving.add(COMPUTER)
+
+    assert await _rejects(_bearer(minted.token))
+    assert COMPUTER in table.rows
 
 
 @pytest.mark.asyncio

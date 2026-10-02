@@ -5,15 +5,26 @@ The two are asked of the sandbox apart. ``serve`` installs the token and
 starts the daemon; it needs no folder list, so a bring-up runs it beside its
 asset sync, and a token gone or a daemon found dead asks it alone. ``link``
 lays the links, which point through the mount's own link and so hold across
-a restart: it is asked once the mount serves and whenever a folder joins.
+a restart: it is asked once a start answered, serving or not, and whenever
+a folder joins.
 A token running low is replaced by ``renew`` in the background. Failures
 are logged and reported, never raised: without the mount the file tools
 still reach these files through the store, and code that needs them is
 refused instead of writing beside them.
+
+What each answered is recorded where every server worker reads it at a
+turn's start (``view``): what a start answered on the token row, the folders
+a link laid in ``livefs_links``. A worker trusts another's answer there
+rather than asking the sandbox again. A restart leaves no mount and no error
+a command would meet, so one the server learns of is recorded down before
+anything reads the rows again; the daemon stays the truth, so a command
+that meets it dead restarts it whatever the rows say.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import posixpath
 import time
@@ -29,16 +40,35 @@ from ptc_agent.core.paths import SandboxLayout
 from ptc_agent.core.sandbox import livefs_mount
 from ptc_agent.core.sandbox.livefs_mount import CallContext, MountOutcome
 from ptc_agent.core.sandbox.livefs_runtime.protocol import GENERATIONS, MOUNT, MountError
+from src.server.database import livefs_links as links_db
 from src.server.database import livefs_tokens as db
+from src.server.database.livefs_tokens import Served, TokenRow
 from src.server.database.workspace_folders import workspace_folders_lock
 from src.server.services import transcripts
 from src.server.services.egress.reachability import effective_relay_base_url
 from src.server.services.livefs import outcomes, tokens
 from src.server.services.livefs.tokens import lapsed, runs_low
 from src.server.services.livefs.tracker import MountTracker, sandbox_id
-from src.server.services.livefs.tree import LivefsTree
+from src.server.services.livefs.tree import POINTS, LivefsTree, MountPoint
 
 logger = logging.getLogger(__name__)
+
+
+def _layout(points: Sequence[MountPoint], code: str) -> str:
+    """What decides which links ``link`` lays and where: the points, their
+    targets and tiers, and the daemon code that lays them, never the folders
+    or files a computer holds."""
+    declared = [
+        (p.name, p.target, p.per_workspace, p.in_folders, p.only, p.tiers, bool(p.history))
+        for p in points
+    ]
+    return hashlib.sha256(json.dumps([MOUNT, code, declared]).encode()).hexdigest()[:16]
+
+
+#: The link layout this host declares. The link rows carry the one they were
+#: laid under, so a release that changes it finds every running sandbox
+#: unlinked and links it again.
+LINK_LAYOUT = _layout(POINTS, livefs_mount.code_version())
 
 #: How long a turn waits on the folders lock before going on without the
 #: mount work. A settle holds it for as long as its sandbox script runs, and
@@ -103,17 +133,38 @@ class LinkState:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class MountView:
+    """What the rows say of a sandbox's mount, as every worker reads them."""
+
+    #: The last start there answered serving the code this host ships, at
+    #: the address it dials.
+    serving: bool
+    #: When the token the serving daemon holds runs out.
+    expires_at: datetime | None
+    #: The folders a link there laid (None in it: the computer's own).
+    linked: frozenset[str | None]
+
+    def state(self) -> MountState:
+        if self.serving:
+            return MountState(True, self.expires_at)
+        return MountState(False, reason="no start answered it serving")
+
+
 #: strerror(ENOTCONN), what every path through a dead FUSE mount answers.
 _DEAD_MOUNT = "Transport endpoint is not connected"
-#: A socket answers ENOTCONN too, so the error counts only beside a path the
+#: strerror(ENOENT), what the links answer once a restart took the mount
+#: away, and what a missing file answers too.
+_MISSING = "No such file or directory"
+#: A socket answers ENOTCONN too, so an error counts only beside a path the
 #: mount serves: the mount itself, a generation of it, or a link under
 #: ``.agents``.
 _MOUNTED_PATHS = (MOUNT, GENERATIONS, f"{SandboxLayout.AGENTS_DIR}/")
 
 
-def _met_dead_mount(output: str) -> bool:
+def _met(output: str, error: str) -> bool:
     return any(
-        _DEAD_MOUNT in line and any(path in line for path in _MOUNTED_PATHS)
+        error in line and any(path in line for path in _MOUNTED_PATHS)
         for line in output.splitlines()
     )
 
@@ -135,11 +186,43 @@ def _config(base_url: str, minted: tokens.MintedToken) -> dict[str, Any]:
     return {"base_url": base_url, "token": minted.token}
 
 
+def _code() -> str:
+    return livefs_mount.code_version()
+
+
+def _holds(row: TokenRow, sandbox: Any) -> bool:
+    sid = sandbox_id(sandbox)
+    return sid is not None and row.held_by == sid
+
+
+async def _heard_restart(sandbox: Any, computer_id: str) -> None:
+    """Record down the mount a reconnect found gone (``livefs_lost``: it
+    booted the sandbox, or nothing answered at the mount's path), before
+    anything reads the rows for ``sandbox``. A write that raises leaves the
+    report for the next read, so no read of the old record hands it out."""
+    if getattr(sandbox, "livefs_lost", False):
+        await db.mark_down(computer_id, sandbox_id(sandbox))
+        sandbox.livefs_lost = False
+
+
+def _served_here(row: TokenRow, sandbox: Any, base_url: str) -> bool:
+    """Whether the last start answered the daemon on ``sandbox`` serving the
+    code this host ships at ``base_url``; a worker on other code, or reaching
+    the server elsewhere, asks again."""
+    sid = sandbox_id(sandbox)
+    return (
+        sid is not None
+        and row.served_by == sid
+        and row.served == Served(_code(), base_url)
+    )
+
+
 async def _token(
     sandbox: Any,
     computer_id: str,
     user_id: str,
     base_url: str,
+    row: TokenRow,
     *,
     renewing: bool = False,
 ) -> tuple[datetime | None, dict[str, Any] | None]:
@@ -147,10 +230,9 @@ async def _token(
     is a new one: the stored token while the sandbox took it and it has time
     left, else a fresh mint. A turn's path keeps one that only runs low,
     which ``renew`` replaces off it. Called under the folders lock."""
-    expires_at, held_by = await db.current_token(computer_id)
     low = runs_low if renewing else lapsed
-    if not low(expires_at) and held_by == sandbox_id(sandbox):
-        return expires_at, None
+    if not low(row.expires_at) and _holds(row, sandbox):
+        return row.expires_at, None
     minted = await tokens.mint_token(computer_id, user_id)
     return minted.expires_at, _config(base_url, minted)
 
@@ -163,16 +245,24 @@ async def _publishing(
     run: Callable[[dict[str, Any] | None], Awaitable[MountOutcome]],
     *,
     renewing: bool = False,
+    adopt: bool = False,
 ) -> tuple[MountOutcome, datetime | None]:
-    """Run one daemon command carrying the token the sandbox is to hold.
-    A renewal runs none when the sandbox took a token with time left.
+    """Run one daemon command carrying the token the sandbox is to hold,
+    and record what it answered for every worker. A renewal runs none when
+    the sandbox took a token with time left, and with ``adopt`` a start runs
+    none when the row says one already serves there.
 
     Called under the folders lock, which makes each mint and its publish one
     turn per computer: two at once could each push the other's token out of
-    both slots.
+    both slots. It also orders each start's record after the last one's.
     """
+    await _heard_restart(sandbox, computer_id)
+    row = await db.current_token(computer_id)
+    if adopt and _served_here(row, sandbox, base_url) and not lapsed(row.served_until):
+        # Another worker's start answered while this one waited on the lock.
+        return MountOutcome(ok=True), row.served_until
     expires_at, config = await _token(
-        sandbox, computer_id, user_id, base_url, renewing=renewing
+        sandbox, computer_id, user_id, base_url, row, renewing=renewing
     )
     if renewing and config is None:
         return MountOutcome(ok=True), expires_at
@@ -182,8 +272,14 @@ async def _publishing(
         minted = await tokens.mint_token(computer_id, user_id)
         config, expires_at = _config(base_url, minted), minted.expires_at
         outcome = await run(config)
-    if config is not None and outcome.error not in _NOT_INSTALLED:
-        await db.mark_held(computer_id, sandbox_id(sandbox), expires_at)
+    served = Served(_code(), base_url) if outcome.ok else None
+    if config is not None:
+        if outcome.error not in _NOT_INSTALLED:
+            await db.mark_held(computer_id, sandbox_id(sandbox), expires_at, served)
+    elif outcome.error != MountError.STALE_CODE:
+        # Stale code is refused before the daemon is asked, so it says
+        # nothing of whether one serves.
+        await db.mark_served(computer_id, sandbox_id(sandbox), expires_at, served)
     return outcome, expires_at
 
 
@@ -205,6 +301,7 @@ async def _start(
     *,
     wait_s: float | None = TURN_LOCK_WAIT_S,
     renewing: bool = False,
+    adopt: bool = False,
 ) -> tuple[MountOutcome, datetime | None] | None:
     """Install the token and start the daemon, or None when a settle kept
     the folders past ``wait_s`` (None waits the lock's own default)."""
@@ -219,6 +316,7 @@ async def _start(
             base_url,
             lambda config: livefs_mount.start(sandbox, config=config, base_url=base_url),
             renewing=renewing,
+            adopt=adopt,
         )
 
 
@@ -228,19 +326,24 @@ async def serve(
     computer_id: str,
     user_id: str | None,
     provider: str,
+    adopt: bool = True,
 ) -> MountState:
     """Make the mount serve with a token that is not gone: install one when
     the sandbox holds none it took with time left, and start the daemon if
     it is not serving current code. The server address goes with every
-    call, so a changed one reaches a daemon whose token has time left. A
-    sync still replacing the daemon's code answers ``stale_code``.
+    call, so a changed one reaches a daemon whose token has time left; the
+    row records it, so a worker reading another address there asks again.
+    A sync still replacing the daemon's code answers ``stale_code``.
+
+    ``adopt`` false asks the sandbox whatever the row says: the row cannot
+    know of a daemon a command found dead.
     """
     computer_id = str(computer_id)
     if not _usable(sandbox, user_id):
         return _off(computer_id, "no sandbox or owner")
     base_url = effective_relay_base_url(provider)
     try:
-        started = await _start(sandbox, computer_id, user_id, base_url)
+        started = await _start(sandbox, computer_id, user_id, base_url, adopt=adopt)
     except Exception as exc:
         logger.warning(
             "livefs start failed for computer %s: %s", computer_id, exc, exc_info=True
@@ -262,6 +365,42 @@ async def serve(
     )
 
 
+async def view(sandbox: Any, *, computer_id: str, provider: str) -> MountView | None:
+    """What the rows say of the mount on ``sandbox``, in one read; None when
+    they cannot be read, for the caller to go on with what it saw itself."""
+    sid = sandbox_id(sandbox)
+    if sid is None:
+        return None
+    try:
+        await _heard_restart(sandbox, str(computer_id))
+        row, linked = await links_db.mount_view(str(computer_id), sid, LINK_LAYOUT)
+    except Exception:
+        logger.warning(
+            "livefs rows not read for computer %s", computer_id, exc_info=True
+        )
+        return None
+    serving = _served_here(row, sandbox, effective_relay_base_url(provider))
+    return MountView(serving, row.served_until, linked)
+
+
+async def _recorded(
+    computer_id: str, sandbox: Any, linked: frozenset[str | None]
+) -> frozenset[str | None]:
+    """Record ``linked`` for every worker and answer what was recorded: a
+    workspace that left the computer since the folders were read is not."""
+    try:
+        return await links_db.save_links(
+            computer_id, sandbox_id(sandbox), linked, LINK_LAYOUT
+        )
+    except Exception:
+        # The links are in, so this worker serves them; the others lay them
+        # again, which changes nothing on disk.
+        logger.warning(
+            "livefs links not recorded for computer %s", computer_id, exc_info=True
+        )
+        return linked
+
+
 def _linked(
     links: dict[str | None, list[tuple[str, str]]], failed: dict[str, str] | None
 ) -> LinkState:
@@ -280,9 +419,10 @@ def _linked(
 
 
 async def link(sandbox: Any, *, computer_id: str, user_id: str | None) -> LinkState:
-    """Link exactly the computer's live folders into the mount. Asked only
-    once the mount serves: a link sets aside what sat at its path, which on
-    a sandbox the mount never served would hide the files there for nothing.
+    """Link exactly the computer's live folders into the mount, whether or
+    not it serves. Unserved, the links dangle, as they do once a mount that
+    served goes down, so code is refused at those paths rather than writing
+    files there that the store never sees and a later link sets aside.
     """
     from src.server.app import setup
 
@@ -304,6 +444,13 @@ async def link(sandbox: Any, *, computer_id: str, user_id: str | None) -> LinkSt
             outcome = await livefs_mount.link(
                 sandbox, [link for group in links.values() for link in group]
             )
+            went = None
+            if outcome.error in (None, MountError.LINK_FAILED):
+                went = _linked(links, outcome.failed)
+                # Under the lock, so a later link's record lands after this one's.
+                went = replace(
+                    went, linked=await _recorded(computer_id, sandbox, went.linked)
+                )
     except Exception as exc:
         logger.warning(
             "livefs links failed for computer %s: %s", computer_id, exc, exc_info=True
@@ -317,9 +464,8 @@ async def link(sandbox: Any, *, computer_id: str, user_id: str | None) -> LinkSt
         )
     if not outcome.ok:
         _not_up(computer_id, outcome)
-    if outcome.error not in (None, MountError.LINK_FAILED):
+    if went is None:
         return LinkState(error=outcome.error, reason=outcome.reason)
-    went = _linked(links, outcome.failed)
     return replace(went, error=outcome.error, reason=outcome.reason)
 
 
@@ -345,9 +491,9 @@ async def renew(
     if not _usable(sandbox, user_id):
         return None
     try:
-        expires_at, held_by = await db.current_token(computer_id)
-        if not runs_low(expires_at) and held_by == sandbox_id(sandbox):
-            return MountState(True, expires_at)
+        row = await db.current_token(computer_id)
+        if not runs_low(row.expires_at) and _holds(row, sandbox):
+            return MountState(True, row.expires_at)
         base_url = effective_relay_base_url(provider)
         started = await _start(
             sandbox, computer_id, user_id, base_url, wait_s=None, renewing=True
@@ -374,8 +520,8 @@ class Handle:
     """The serving mount as the file tools see it (``MountHandle``), on the
     worker running the turn. Execution context only: ``serve``, ``link`` and
     ``renew`` go through the manager to the functions here, whose locks,
-    token table and daemon state are the truth, and each lands in
-    ``tracker``."""
+    rows and daemon state are the truth, and each lands in ``tracker``.
+    ``serve(adopt=False)`` asks the sandbox whatever the rows say."""
 
     def __init__(
         self,
@@ -383,7 +529,7 @@ class Handle:
         tracker: MountTracker,
         sandbox: Any,
         *,
-        serve: Callable[[], Awaitable[MountState]],
+        serve: Callable[..., Awaitable[MountState]],
         link: Callable[[], Awaitable[LinkState]],
         renew: Callable[[], Awaitable[MountState | None]],
     ) -> None:
@@ -431,12 +577,20 @@ class Handle:
         # replaces it, and a warm turn asks none, so the command that meets
         # it does. The links point through the mount's own link, which the
         # start swaps, so they stay.
-        if _met_dead_mount(output):
-            state = await self._tracker.restart(self._serve)
+        if _met(output, _DEAD_MOUNT) or await self._gone(output):
+            # The rows still say it serves: only the daemon knows otherwise.
+            state = await self._tracker.restart(lambda: self._serve(adopt=False))
             if state.started:
                 note = "The file mount had stopped and is serving again; rerun the command."
                 text = f"{text}\n\n{note}" if text else note
         return text
+
+    async def _gone(self, output: str) -> bool:
+        """Whether a missing file under the mount was the mount itself, gone
+        with a restart no reconnect saw (the sandbox object outlived it)."""
+        if not _met(output, _MISSING) or not self._tracker.probe_due():
+            return False
+        return await livefs_mount.answers(self._sandbox) is False
 
     async def save_transcript(
         self, target: TranscriptTarget, messages: Sequence[AnyMessage]
@@ -444,8 +598,17 @@ class Handle:
         return await transcripts.save_live(target, messages)
 
 
+async def restarted(computer_id: Any, sandbox_id: str) -> None:
+    """Record that ``sandbox_id`` restarted out of band, which no turn sees
+    happen: every worker's next turn then serves it again rather than hand
+    out the mount the rows said serves. Raises when the write fails."""
+    await db.mark_down(str(computer_id), sandbox_id)
+
+
 async def revoke(computer_id: Any) -> None:
-    """End every token the computer holds; a stopped or deleted one serves nothing."""
+    """End every token the computer holds. Logged, not raised: the computer is
+    leaving service, which ``load_token`` refuses, so a row left behind serves
+    nothing and must not hold up a stop or a delete."""
     try:
         await tokens.revoke(str(computer_id))
     except Exception:

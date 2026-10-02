@@ -114,8 +114,9 @@ test.describe('Market Indices & News', () => {
 
     await page.goto('/dashboard');
 
-    // Verify S&P 500 card renders with name, symbol, and price
-    await expect(page.locator('h3', { hasText: 'S&P 500' })).toBeVisible();
+    // Verify S&P 500 card renders with name, symbol, and price, giving the
+    // page's first paint the budget other specs give it
+    await expect(page.locator('h3', { hasText: 'S&P 500' })).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('^GSPC')).toBeVisible();
     await expect(page.getByText('5,500.25')).toBeVisible();
 
@@ -373,7 +374,11 @@ test.describe('Watchlist CRUD', () => {
     await page.getByTestId('watchlist-row-TSLA').click({ button: 'right' });
 
     // Click "Delete" in context menu (Radix renders items as role="menuitem")
-    await page.getByRole('menuitem', { name: 'Delete' }).click();
+    // and wait for the DELETE to complete
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/watchlists/') && r.request().method() === 'DELETE'),
+      page.getByRole('menuitem', { name: 'Delete' }).click(),
+    ]);
 
     // Verify the DELETE request was made
     expect(deleteCalled).toBe(true);
@@ -614,12 +619,15 @@ test.describe('Portfolio CRUD', () => {
       page.locator('text=Remove this holding from your portfolio?'),
     ).toBeVisible();
 
-    // Click the confirm "Delete" button in the ConfirmDialog
+    // Click the confirm "Delete" button in the ConfirmDialog and wait for the DELETE to complete
     // The ConfirmDialog has two buttons: Cancel and the confirm label (Delete)
     const confirmDialog = page.locator('[role="dialog"]', {
       hasText: 'Remove this holding',
     });
-    await confirmDialog.getByRole('button', { name: 'Delete' }).click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/portfolio/') && r.request().method() === 'DELETE'),
+      confirmDialog.getByRole('button', { name: 'Delete' }).click(),
+    ]);
 
     // Verify the DELETE request was sent
     expect(deleteCalled).toBe(true);

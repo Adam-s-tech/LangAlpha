@@ -32,6 +32,10 @@ def _fetch_news(
             break
         try:
             news = yf.Ticker(sym).news or []
+            if not news:
+                # Yahoo no longer serves the endpoint behind Ticker.news (it
+                # answers 404, which yfinance returns as []); search still does.
+                news = yf.Search(sym, news_count=limit, max_results=0).news or []
         except Exception:
             logger.warning("yfinance.news.failed | symbol=%s", sym, exc_info=True)
             continue
@@ -46,7 +50,7 @@ def _fetch_news(
             if not title:
                 continue
 
-            uuid = item.get("id") or content.get("id") or ""
+            uuid = item.get("id") or item.get("uuid") or content.get("id") or ""
             if not uuid or uuid in seen_uuids:
                 continue
             seen_uuids.add(uuid)

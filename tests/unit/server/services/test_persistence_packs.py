@@ -324,6 +324,32 @@ async def test_a_run_whose_push_raises_removes_its_chunks(db):
 
 
 @pytest.mark.asyncio
+async def test_a_pack_that_raises_before_releasing_removes_the_last_runs_chunks(db):
+    """Any of the first run's chunks a quiet removal missed would otherwise
+    wait for the age sweep, since no later pack releases them."""
+    files = {f"f{i}.txt": bytes([97 + i]) * 3 for i in range(3)}
+    db["scan"].return_value = _scan(*(_entry(p, d) for p, d in files.items()))
+
+    def _pack(sandbox, members, *, layout=None, release=None):
+        if release:
+            raise RuntimeError("sandbox exec failed")
+        run = [(m["path"], files[m["path"]]) for m in members]
+        return {"chunks": [_chunk(run[i : i + 2]) for i in range(0, len(run), 2)], "changed": []}
+
+    db["pack"].side_effect = _pack
+    sb = _sandbox()
+    with (
+        patch.object(blobs, "PACK_MAX_BYTES", 6),
+        patch.object(blobs, "PACK_STAGE_MAX_BYTES", 6),
+        patch.object(blobs, "unlink_direct", new=AsyncMock(return_value=0)) as unlink,
+    ):
+        with pytest.raises(RuntimeError, match="sandbox exec failed"):
+            await backup.sync_to_db(WS, sb, layout=LAYOUT)
+    first_run = [f"_internal/packs/chunk-{_sha(files['f0.txt'] + files['f1.txt'])}"]
+    unlink.assert_awaited_once_with(sb, first_run, layout=MACHINE_LAYOUT)
+
+
+@pytest.mark.asyncio
 async def test_a_run_cancelled_mid_push_removes_its_chunks(db):
     """A manual backup runs in its request, so a client dropping cancels it."""
     def push(sandbox, items, *, layout=None):

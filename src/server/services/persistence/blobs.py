@@ -675,35 +675,35 @@ async def _persist_packed(
     chunk_count = 0
     staged: list[str] = []
     for run in _pack_runs(members):
-        # Each run is staged in the room the previous one held, so its pack
-        # removes those chunks first and fails rather than pack beside one.
-        out = await pack_direct(
-            sandbox,
-            [{"path": e.path, "sha256": e.sha256, "size": e.size} for e in run],
-            layout=layout,
-            release=staged,
-        )
-        chunks = out["chunks"]
-        staged = [c["path"] for c in chunks]
-        changed.update(out["changed"])
-        chunk_count += len(chunks)
-        # A chunk is pushed exactly like a file: same presigning, same direct
-        # path with relay fallback, same registry. It just is not a file the
-        # user has, so it is removed from the sandbox once pushed.
-        chunk_entries = [
-            ScanEntry(
-                path=c["path"],
-                kind="file",
-                size=int(c["size"]),
-                mtime_ns=0,
-                mode=0,
-                sha256=c["sha256"],
-                symlink_target=None,
-                is_binary=True,
-            )
-            for c in chunks
-        ]
         try:
+            # Each run is staged in the room the previous one held, so its pack
+            # removes those chunks first and fails rather than pack beside one.
+            out = await pack_direct(
+                sandbox,
+                [{"path": e.path, "sha256": e.sha256, "size": e.size} for e in run],
+                layout=layout,
+                release=staged,
+            )
+            chunks = out["chunks"]
+            staged = [c["path"] for c in chunks]
+            changed.update(out["changed"])
+            chunk_count += len(chunks)
+            # A chunk is pushed exactly like a file: same presigning, same direct
+            # path with relay fallback, same registry. It just is not a file the
+            # user has, so it is removed from the sandbox once pushed.
+            chunk_entries = [
+                ScanEntry(
+                    path=c["path"],
+                    kind="file",
+                    size=int(c["size"]),
+                    mtime_ns=0,
+                    mode=0,
+                    sha256=c["sha256"],
+                    symlink_target=None,
+                    is_binary=True,
+                )
+                for c in chunks
+            ]
             chunk_rows, _ = await _persist_blobs(
                 user_id,
                 workspace_id,
@@ -713,8 +713,9 @@ async def _persist_packed(
                 layout=machine,
             )
         except (Exception, asyncio.CancelledError):
-            # No later pack will release a run whose push raised, or whose
-            # backup was cancelled by a client dropping or a shutdown.
+            # No later pack will release this run's chunks, or the previous
+            # run's when this pack failed before releasing them. A client
+            # dropping or a shutdown cancels a backup the same way.
             await asyncio.shield(_unlink_chunks(sandbox, staged, workspace_id, machine))
             raise
         available = {r["blob_sha256"] for r in chunk_rows}

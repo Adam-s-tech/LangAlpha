@@ -1,11 +1,13 @@
-"""What the mount does at one route: list a directory, read, save and delete a file.
+"""What the mount does at one route: list a directory, read, save, delete and rename a file.
 
 The store's routes answer the file tools under two contracts. A plain store
 route keeps the bytes it is sent and has no versions of its own, so a file's
-version is its content's hash and a save is checked against a read first. A
-``DbJsonRoute`` renders database rows, versions them itself and checks a save
-against that version under its write lock. Each kind is adapted here once,
-so the tree asks every route the same questions (``MountRoute``).
+version is its content's hash, which the store checks a save against under its
+write lock. A ``DbJsonRoute`` renders database rows, versions them itself and
+checks a save against that version under its write lock; a
+``DbJsonFolderRoute``, one file per row, also deletes and renames them. Each
+kind is adapted here once, so the tree asks every route the same questions
+(``MountRoute``).
 """
 
 from __future__ import annotations
@@ -24,10 +26,10 @@ from ptc_agent.agent.backends import (
     StoreContentTooLargeError,
     WorkflowsBackend,
 )
-from ptc_agent.agent.backends.db_json_route import DbJsonRoute
+from ptc_agent.agent.backends.db_json_folder import DbJsonFolderRoute
+from ptc_agent.agent.backends.db_json_route import DbJsonRoute, UserDataValidationError
 from ptc_agent.agent.backends.langgraph_store import StoreListingIncomplete
 from ptc_agent.core.sandbox.livefs_runtime.protocol import INLINE_MAX_BYTES, Refusal
-from ptc_agent.agent.backends.db_json_route import UserDataValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +102,14 @@ class Saved(NamedTuple):
     #: Whether the file now holds exactly the bytes sent, so the sender may
     #: keep them as its content at ``version`` rather than read it back.
     as_sent: bool
+    #: The save deleted the file, as an automation's does with ``"status":
+    #: "deleted"``, so there is no version or content to hold.
+    removed: bool = False
+
+
+class Removed(NamedTuple):
+    #: What the delete changed, for a file that reports that.
+    report: str | None
 
 
 class InlineBudget:
@@ -125,7 +135,7 @@ class MountRoute(Protocol):
 
     def is_writable(self, path: str) -> bool: ...
 
-    def movable(self, path: str) -> bool:
+    async def movable(self, path: str) -> bool:
         """Whether a rename may take the file away from here."""
 
     async def list(self, path: str) -> list[dict[str, Any]] | None:
@@ -146,8 +156,13 @@ class MountRoute(Protocol):
     async def write(self, path: str, content: str, version: str | None) -> Saved:
         """Save over ``version``, or only where no file is when it is None."""
 
-    async def delete(self, path: str) -> bool:
-        """Whether there was a file to delete."""
+    async def delete(self, path: str, version: str | None = None) -> Removed | None:
+        """Delete the file, only at ``version`` when given; None where there
+        was none."""
+
+    async def rename(self, path: str, to: str) -> str | None:
+        """Move the file to ``to`` under this route, keeping what it stands
+        for, and report it; None to move it as a copy and a delete."""
 
 
 @contextmanager
@@ -164,6 +179,15 @@ def _refusing(path: str) -> Iterator[None]:
             raise changed(path) from exc
         if exc.error_type == "server_error":
             raise LivefsError(Refusal.UNAVAILABLE, exc.hint, path) from exc
+        if exc.error_type == "exists":
+            raise LivefsError(Refusal.EXISTS, exc.message, path) from exc
+        if exc.error_type == "deleted":
+            raise LivefsError(
+                Refusal.NOT_FOUND,
+                f"{path} was deleted since it was read, so nothing was saved. Writing it "
+                "again creates it anew: do that only if the user wants it back.",
+                path,
+            ) from exc
         raise LivefsError(Refusal.INVALID, exc.message, path) from exc
     except (InvalidStoreKeyError, ValueError) as exc:
         raise LivefsError(Refusal.INVALID, str(exc), path) from exc
@@ -180,7 +204,11 @@ class _StoreRoute:
     def is_writable(self, path: str) -> bool:
         return self._route.is_writable(path)
 
-    def movable(self, path: str) -> bool:
+    async def movable(self, path: str) -> bool:
+        if isinstance(self._route, WorkflowsBackend):
+            # A shipped script is writable, as a save forks it, but one no
+            # save has forked holds nothing of the user's to delete.
+            return await self._route.ais_deletable(path)
         return self._route.is_writable(path)
 
     async def list(self, path: str) -> list[dict[str, Any]] | None:
@@ -214,32 +242,44 @@ class _StoreRoute:
         return None if content is None else (content, version_of(content))
 
     async def write(self, path: str, content: str, version: str | None) -> Saved:
-        # The check and the write are two steps: a writer landing between
-        # them in the same moment is not caught, as with the file tools.
-        current = await self.read(path)
-        if version is None:
-            if current is not None:
-                raise LivefsError(Refusal.EXISTS, f"{path} already exists", path)
-        elif current is None or current[1] != version:
-            raise changed(path)
+        def check(current: str | None) -> None:
+            # Run by the store under the lock its write holds, on what the
+            # write replaces, so a writer landing after the sender's read is
+            # caught however close behind it.
+            if version is None:
+                if current is not None:
+                    raise LivefsError(Refusal.EXISTS, f"{path} already exists", path)
+            elif current is None or version_of(current) != version:
+                raise changed(path)
+
         with _refusing(path):
-            ok = await self._route.awrite_text(path, content)
+            ok = await self._route.awrite_text(path, content, check=check)
         if not ok:
             raise LivefsError(Refusal.UNAVAILABLE, f"{path} was not saved; retry", path)
         return Saved(version_of(content), len(content.encode()), path, None, True)
 
-    async def delete(self, path: str) -> bool:
+    async def delete(self, path: str, version: str | None = None) -> Removed | None:
+        def check(current: str | None) -> None:
+            # Under the lock a save's check runs under, as that one is.
+            if version is not None and (current is None or version_of(current) != version):
+                raise changed(path)
+
         with _refusing(path):
             try:
-                return await self._route.adelete_text(path)
+                deleted = await self._route.adelete_text(path, check=check)
+                return Removed(None) if deleted else None
             except asyncio.TimeoutError as exc:
                 raise LivefsError(
                     Refusal.UNAVAILABLE, f"{path} was not deleted; retry", path
                 ) from exc
 
+    async def rename(self, path: str, to: str) -> None:
+        return None
+
 
 class _RowsRoute:
-    """Rows rendered as a file, which a save replaces and nothing deletes.
+    """Rows rendered as files, which a save replaces. Only in a folder of one
+    file per row are they made, deleted and renamed.
 
     A save goes over the version the sender names, which the route checks
     under its write lock. It stores the rows, not the bytes, so the save
@@ -254,7 +294,7 @@ class _RowsRoute:
     def is_writable(self, path: str) -> bool:
         return self._route.is_writable(path)
 
-    def movable(self, path: str) -> bool:
+    async def movable(self, path: str) -> bool:
         return False
 
     async def list(self, path: str) -> list[dict[str, Any]] | None:
@@ -267,16 +307,33 @@ class _RowsRoute:
         return await self._route.aread_versioned(path)
 
     async def write(self, path: str, content: str, version: str | None) -> Saved:
-        if version is None and self._route.exists(path):
+        if version is None and self._route.is_fixed_path(path):
             raise LivefsError(Refusal.EXISTS, f"{path} already exists", path)
         with _refusing(path):
-            stored = await self._route.awrite_versioned(path, content, version or "")
+            stored = await self._route.awrite_versioned(path, content, version)
         final = stored.content
+        if final is None:
+            # The sender drops the file, as after an unlink.
+            return Saved("", 0, path, stored.report, False, removed=True)
         return Saved(stored.version, len(final.encode()), path, stored.report, final == content)
 
-    async def delete(self, path: str) -> bool:
+    async def delete(self, path: str, version: str | None = None) -> Removed | None:
         with _refusing(path):
-            return await self._route.adelete_text(path)
+            if isinstance(self._route, DbJsonFolderRoute):
+                stored = await self._route.adelete_versioned(path, version)
+            else:
+                # Its files are fixed, so it refuses every delete.
+                stored = await self._route.adelete_versioned(path)
+        return None if stored is None else Removed(stored.report)
+
+    async def rename(self, path: str, to: str) -> str | None:
+        if not isinstance(self._route, DbJsonFolderRoute):
+            return None
+        with _refusing(path):
+            report = await self._route.arename_versioned(path, to)
+        if report is None:
+            raise not_found(path)
+        return report
 
 
 def adapt(route: Any) -> MountRoute:

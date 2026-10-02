@@ -394,6 +394,22 @@ class TestWorkspaceRoute:
         assert (result["status"], result["path"]) == ("resolved", "results/model.py")
         assert result["matches"] == ["results/model.py"]
 
+    async def test_an_automations_file_resolves_only_while_its_automation_is_there(self, mock_ws, _wd):
+        mock_ws.return_value = _workspace("stopped")
+        path = ".agents/user/automations/morning-brief.json"
+        with (
+            patch(
+                "src.server.services.automations.file.auto_db.list_automation_file_names",
+                new_callable=AsyncMock,
+                return_value=["morning-brief.json"],
+            ),
+            patch(f"{CRUD}.FilePersistenceService.get_file_tree", new_callable=AsyncMock, return_value=[]),
+        ):
+            found = await resolve_workspace_file("ws-1", "user-1", _body(path))
+            gone = await resolve_workspace_file("ws-1", "user-1", _body(".agents/user/automations/gone.json"))
+        assert found == {"status": "resolved", "path": path, "match": "exact", "matches": [path]}
+        assert gone == {"status": "missing", "matches": [], "source": "database"}
+
     async def test_a_reference_with_no_usable_path_is_rejected(self, mock_ws, _wd):
         mock_ws.return_value = _workspace("running")
         with pytest.raises(HTTPException) as exc:

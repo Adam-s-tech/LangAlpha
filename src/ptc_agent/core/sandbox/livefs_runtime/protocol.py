@@ -23,6 +23,11 @@ GENERATIONS = "/mnt/.livefs"
 #: The server's endpoint; each action is a path under it (``/list``, ``/write``).
 PREFIX = "/api/v1/livefs"
 
+#: A new token for ``start``, in the environment of the root command that
+#: runs it: the sandbox user can neither read nor replace it there, as they
+#: could a file.
+CONFIG_ENV = "LIVEFS_CONFIG"
+
 #: The tool puts its call id here, which is how a save reaches the result of
 #: the tool call whose command made it.
 CALL_ENV = "LIVEFS_CALL_ID"
@@ -83,6 +88,13 @@ class SaveAnswer(TypedDict):
     as_sent: bool
 
 
+class RemovedAnswer(TypedDict):
+    """A ``/write`` answer for a save that deleted its file, as an
+    automation's ``"status": "deleted"`` does: no version or content is left."""
+
+    removed: Literal[True]
+
+
 class Refusal(StrEnum):
     """The ``code`` of a refused request, which the daemon answers as an errno."""
 
@@ -106,6 +118,22 @@ def code_of(body: bytes) -> str | None:
     except ValueError:
         return None
     return answer.get("code") if isinstance(answer, dict) else None
+
+
+def etag(version: str) -> str:
+    """A version as ``/read`` answers it in ``ETag`` and a save names it in ``If-Match``."""
+    return f'"{version}"'
+
+
+def etag_version(tag: str | None) -> str | None:
+    """The version an ``ETag`` or ``If-Match`` names; None for no tag.
+
+    A CDN or proxy that re-encodes the body on the way, as one does
+    decompressing for a client that asked for no encoding, marks the tag weak
+    (``W/"v"``). It names the same version, which the server checks a save
+    against, so the weak form reads as the strong one.
+    """
+    return (tag or "").strip().removeprefix("W/").strip('"') or None
 
 
 class MountError(StrEnum):

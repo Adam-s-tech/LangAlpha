@@ -1,7 +1,7 @@
-"""The automations file is reachable through the file tools, and through the
+"""The automations folder is reachable through the file tools, and through the
 sandbox only while the file mount serves it.
 
-`.agents/user/automations/automations.json` is rows in Postgres served by a
+Each file in `.agents/user/automations/` is a row in Postgres served by a
 mounted route, so Read and Write must reach that route with the build's own
 defaults, while Bash and ExecuteCode on a sandbox without the file mount must
 refuse the path before they touch the sandbox. A shell that ran would find no
@@ -19,16 +19,19 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 import pytest
 
 from ptc_agent.agent.backends import db_json_route
-from ptc_agent.agent.backends.automations import AUTOMATIONS_FILE, AutomationsBackend
+from ptc_agent.agent.backends.automations import AutomationsBackend
 from ptc_agent.agent.backends.db_json_route import Plan
 from ptc_agent.agent.filesystem_routes import IdentityGates, build_filesystem_backend
 from ptc_agent.agent.tools.bash import create_execute_bash_tool
+from ptc_agent.agent.tools.bash_output import create_bash_output_tool
 from ptc_agent.agent.tools.code_execution import create_execute_code_tool
 from ptc_agent.core.sandbox.livefs_mount import CallContext
-from src.server.services.automations.file import AutomationsFile, FilePlan
+from src.server.services.automations.file import AutomationFile, FilePlan
 
 ROOT = "/home/workspace"
-FILE_PATH = f"{ROOT}/.agents/user/automations/automations.json"
+FILE_NAME = "morning-brief.json"
+FILE_PATH = f"{ROOT}/.agents/user/automations/{FILE_NAME}"
+CONTENT = '{\n  "name": "Morning brief"\n}\n'
 USER = "user-fake-1"
 WORKSPACE = "00000000-0000-4000-8000-00000000aaaa"
 THREAD = "00000000-0000-4000-8000-00000000bbbb"
@@ -57,13 +60,15 @@ def _sandbox() -> MagicMock:
 
 
 @pytest.fixture
-def automations(monkeypatch) -> MagicMock:
-    """The automations file, empty, with its steps faked."""
-    fake = MagicMock(spec=AutomationsFile())
+def automation(monkeypatch) -> MagicMock:
+    """One automation's file with its steps faked; any other name holds none."""
+    fake = MagicMock(spec=AutomationFile(FILE_NAME))
     fake.unchanged = None
-    fake.fetch = AsyncMock(return_value=[])
-    fake.render = MagicMock(return_value=('{\n  "automations": []\n}\n', "v1"))
-    monkeypatch.setitem(AutomationsBackend.files, AUTOMATIONS_FILE, fake)
+    fake.fetch = AsyncMock(return_value=["row"])
+    fake.render = MagicMock(return_value=(CONTENT, "v1"))
+    monkeypatch.setattr(
+        AutomationsBackend, "file_named", classmethod(lambda cls, name: fake if name == FILE_NAME else None)
+    )
     return fake
 
 
@@ -82,15 +87,15 @@ def filesystem():
 
 class TestMount:
     @pytest.mark.asyncio
-    async def test_a_read_is_served_from_the_users_rows(self, filesystem, automations):
+    async def test_a_read_is_served_from_the_users_rows(self, filesystem, automation):
         content = await filesystem.aread_text(FILE_PATH)
 
-        assert content == '{\n  "automations": []\n}\n'
-        automations.fetch.assert_awaited_once_with(USER)
+        assert content == CONTENT
+        automation.fetch.assert_awaited_once_with(USER)
 
     @pytest.mark.asyncio
     async def test_a_write_carries_the_builds_defaults_for_a_new_automation(
-        self, filesystem, automations, monkeypatch
+        self, filesystem, automation, monkeypatch
     ):
         conn = MagicMock()
 
@@ -100,15 +105,16 @@ class TestMount:
 
         conn.transaction = conn.cursor = _open
         monkeypatch.setattr(db_json_route, "get_db_connection", _open)
-        automations.plan.return_value = Plan(FilePlan())
-        automations.hold.return_value = None
-        automations.commit.return_value = "Saved automations.json: 1 created."
+        automation.render.side_effect = lambda rows: None if rows == [] else (CONTENT, "v1")
+        automation.fetch.return_value = []
+        automation.plan.return_value = Plan(FilePlan())
+        automation.hold.return_value = None
+        automation.commit.return_value = 'Saved morning-brief.json: created "Morning brief"'
 
-        await filesystem.aread_range(FILE_PATH)
-        await filesystem.awrite_text(FILE_PATH, '{"automations": []}')
+        await filesystem.awrite_text(FILE_PATH, '{"name": "Morning brief"}')
 
-        automations.parse.assert_awaited_once_with(USER, CONTEXT, ANY, ANY)
-        assert automations.plan.call_args.args[0] == CONTEXT
+        automation.parse.assert_awaited_once_with(USER, CONTEXT, ANY, None)
+        assert automation.plan.call_args.args[0] == CONTEXT
 
 
 class _Untouchable:
@@ -127,7 +133,7 @@ class TestShellGuards:
     @pytest.mark.parametrize(
         "command",
         [
-            "cat .agents/user/automations/automations.json",
+            f"cat .agents/user/automations/{FILE_NAME}",
             f"ls {ROOT}/.agents/user/automations/",
         ],
     )
@@ -138,18 +144,18 @@ class TestShellGuards:
         result = await tool.ainvoke({"command": command})
 
         assert result.startswith("ERROR")
-        assert ".agents/user/automations/automations.json" in result
+        assert ".agents/user/automations/** is kept on the server" in result
 
     @pytest.mark.asyncio
     async def test_execute_code_refuses_the_path(self):
         tool = create_execute_code_tool(_Untouchable(), None)
 
         result = await tool.ainvoke(
-            {"code": "import json\njson.load(open('.agents/user/automations/automations.json'))"}
+            {"code": f"import json\njson.load(open('.agents/user/automations/{FILE_NAME}'))"}
         )
 
         assert result.startswith("ERROR")
-        assert ".agents/user/automations/automations.json" in result
+        assert ".agents/user/automations/** is kept on the server" in result
 
 
 class _Mount:
@@ -186,6 +192,10 @@ class _Mounted:
         self.mount.events.append(("run", call_id))
         return SimpleNamespace(success=True, stdout="ok", stderr="", mcp_trace=[])
 
+    async def aget_background_command_status(self, command_id):
+        self.mount.events.append(("run", command_id))
+        return {"is_running": False, "exit_code": 0, "stdout": "done"}
+
 
 class TestWithTheMount:
     @pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
@@ -203,6 +213,27 @@ class TestWithTheMount:
         assert run == ("run", call_id) and report == ("report", call_id)
         # The mount is asked for the folder the command runs in.
         assert backend.asked_for == [CONTEXT.workspace_id]
+
+    @pytest.mark.asyncio
+    async def test_reading_a_background_job_reports_its_later_saves(self):
+        """The job saves after the Bash call that launched it returned, so its
+        refusals wait on the thread's late list for this read to collect."""
+        backend = _Mounted()
+
+        async def report(call_id, output, context=None):
+            backend.mount.events.append(("report", call_id, context))
+            return "NOT SAVED: - x.json: invalid JSON (from an earlier command)"
+
+        backend.mount.report = report
+        tool = create_bash_output_tool(backend, call_context=CONTEXT)
+
+        content = await tool.ainvoke({"command_id": "job-1"})
+
+        (_, call_id, context), run, report_event = backend.mount.events
+        assert call_id and context == CONTEXT
+        assert run == ("run", "job-1") and report_event == ("report", call_id, CONTEXT)
+        assert content.startswith("Status: COMPLETED (success)")
+        assert content.endswith("(from an earlier command)")
 
     @pytest.mark.asyncio
     async def test_execute_code_files_who_the_code_runs_for_before_it_runs(self):

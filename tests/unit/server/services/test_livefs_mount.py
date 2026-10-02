@@ -30,7 +30,7 @@ import pytest
 from ptc_agent.core.paths import SandboxLayout
 from ptc_agent.core.sandbox.livefs_mount import CallContext
 from ptc_agent.core.sandbox.livefs_runtime import lifecycle
-from ptc_agent.core.sandbox.livefs_runtime.protocol import MountError
+from ptc_agent.core.sandbox.livefs_runtime.protocol import CONFIG_ENV, MountError
 from src.server.database.livefs_tokens import Served, TokenRow
 from src.server.services import transcripts
 from src.server.services.computer_manager import ComputerManager
@@ -64,19 +64,19 @@ class _Sandbox:
         self.sandbox_id = sandbox_id
         self.layout = LAYOUT
         self.livefs = None
-        self.uploads: list[tuple[str, bytes]] = []
         self.commands: list[str] = []
+        #: The token each command carried in its environment, if any.
+        self.configs: list[dict | None] = []
         self._answers = list(answers) or [{"ok": True}]
-        self.runtime = SimpleNamespace(upload_file=self._upload, exec_as_root=self._exec)
+        self.runtime = SimpleNamespace(exec_as_root=self._exec)
 
     async def _runtime_call(self, func, *args, retry_policy):
         return await func(*args)
 
-    async def _upload(self, data: bytes, path: str) -> None:
-        self.uploads.append((path, data))
-
-    async def _exec(self, command: str, timeout: int):
+    async def _exec(self, command: str, timeout: int, env: dict | None = None):
         self.commands.append(command)
+        sent = (env or {}).get(CONFIG_ENV)
+        self.configs.append(json.loads(sent) if sent else None)
         answer = self._answers.pop(0) if len(self._answers) > 1 else self._answers[0]
         return SimpleNamespace(stdout=json.dumps(answer), stderr="")
 
@@ -233,8 +233,8 @@ async def test_link_lays_what_the_tree_declares_and_carries_no_token(server):
     argv = sandbox.argv()
     assert "link" in argv
     assert f"computer/threads.jsonl:{INDEX}" in argv
-    assert "--stage" not in argv and "--base-url" not in argv
-    assert sandbox.uploads == []
+    assert "--base-url" not in argv
+    assert sandbox.configs == [None]
     server.mint.assert_not_awaited()
     assert state == LinkState(frozenset({None, WS_A}))
     assert server.waits == [mount.TURN_LOCK_WAIT_S]
@@ -301,7 +301,7 @@ async def test_a_serve_keeps_a_token_with_time_left_and_the_server_address_goes_
     state = await _serve(sandbox)
 
     server.mint.assert_not_awaited()
-    assert sandbox.uploads == [] and "--stage" not in sandbox.argv()
+    assert sandbox.configs == [None]
     argv = sandbox.argv()
     assert argv[argv.index("--base-url") + 1] == "http://relay.test"
     assert state.expires_at == server.expires_at
@@ -316,7 +316,7 @@ async def test_a_turn_keeps_a_token_that_only_runs_low(server):
     state = await _serve(sandbox)
 
     server.mint.assert_not_awaited()
-    assert sandbox.uploads == [] and state.expires_at == server.expires_at
+    assert sandbox.configs == [None] and state.expires_at == server.expires_at
 
 
 @pytest.mark.asyncio
@@ -326,11 +326,9 @@ async def test_a_token_as_good_as_gone_is_replaced(server):
 
     await _serve(sandbox)
 
-    ((_, data),) = sandbox.uploads
-    assert json.loads(data) == {
-        "base_url": "http://relay.test",
-        "token": "lfs1.comp-test-1.fresh",
-    }
+    assert sandbox.configs == [
+        {"base_url": "http://relay.test", "token": "lfs1.comp-test-1.fresh"}
+    ]
 
 
 @pytest.mark.asyncio
@@ -343,7 +341,7 @@ async def test_a_fresh_token_the_sandbox_never_took_is_replaced(server):
     await _serve(sandbox)
 
     server.mint.assert_awaited_once()
-    assert "--stage" in sandbox.argv()
+    assert sandbox.configs[-1] is not None
     server.mark_held.assert_awaited_once()
 
 
@@ -355,21 +353,7 @@ async def test_a_sandbox_that_lost_its_token_is_given_a_new_one(server):
 
     assert state.mounted
     server.mint.assert_awaited_once()
-    assert "--stage" not in sandbox.argv(0) and "--stage" in sandbox.argv(1)
-
-
-@pytest.mark.asyncio
-async def test_a_staged_token_is_removed_even_when_the_command_dies(server):
-    server.expires_at = _in(0.5)
-    sandbox = _Sandbox()
-
-    await _serve(sandbox)
-
-    ((staged, _),) = sandbox.uploads
-    assert staged.startswith(f"{LAYOUT.internal}/.livefs.") and staged.endswith(".stage")
-    argv = sandbox.argv()
-    assert argv[argv.index("--stage") + 1] == staged
-    assert sandbox.commands[-1].endswith(f"; rc=$?; rm -f {staged}; exit $rc")
+    assert sandbox.configs[0] is None and sandbox.configs[1] is not None
 
 
 # -- the background renewal ----------------------------------------------------
@@ -395,7 +379,7 @@ async def test_a_renewal_publishes_a_new_token_and_leaves_the_links(server):
     assert renewed.mounted
     assert renewed.expires_at == server.mint.return_value.expires_at
     argv = sandbox.argv()
-    assert "start" in argv and "--stage" in argv and "--link" not in argv
+    assert "start" in argv and "--link" not in argv and sandbox.configs[-1] is not None
     assert server.waits == ["full"]
     server.mark_held.assert_awaited_once()
 

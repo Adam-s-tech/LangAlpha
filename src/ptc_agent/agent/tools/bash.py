@@ -10,7 +10,6 @@ from ptc_agent.agent.tools.mount_guard import run_guarded
 from ptc_agent.core.paths import (
     MEMO_USER_DIR,
     MEMORY_USER_DIR,
-    SandboxLayout,
     WorkspaceLayout,
 )
 from ptc_agent.core.sandbox import livefs_mount
@@ -33,12 +32,12 @@ _MEMORY_ROUTE_ERROR = (
 )
 
 
-# The automations file is rows in the database, which the sandbox sees only
-# while the file mount serves it.
-_AUTOMATIONS_ROUTE_ERROR = (
-    f"ERROR: {SandboxLayout.AUTOMATIONS_DIR}/** holds the user's automations in the "
-    "database, not on the sandbox filesystem. Use Read, Edit and Write on "
-    f"{SandboxLayout.AUTOMATIONS_DIR}/automations.json. Bash can't see or change it."
+# The automation files are rows in the database, which the sandbox sees only
+# while the file mount serves them.
+_FILES_ROUTE_ERROR = (
+    "ERROR: {dir}/** is kept on the server, not on the sandbox filesystem, and no "
+    "file mount serves it to Bash right now. Use Read, Edit and Write on the files in "
+    "{dir}/. Bash can't see or change them."
 )
 
 
@@ -96,7 +95,7 @@ def create_execute_bash_tool(
             call_context,
             lambda call_id: _run(command, working_dir, timeout, run_in_background, call_id),
             memory_error=_MEMORY_ROUTE_ERROR,
-            automations_error=_AUTOMATIONS_ROUTE_ERROR,
+            files_error=_FILES_ROUTE_ERROR,
             blocked_event="Blocked bash command touching a store-backed path",
             command=command[:100],
         )

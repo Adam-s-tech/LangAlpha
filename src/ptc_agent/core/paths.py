@@ -191,10 +191,6 @@ class SandboxLayout:
         return self.join(self.USER_PROFILE_DIR)
 
     @property
-    def automations(self) -> str:
-        return self.join(self.AUTOMATIONS_DIR)
-
-    @property
     def workflows(self) -> str:
         return self.join(self.WORKFLOWS_DIR)
 
@@ -463,14 +459,16 @@ MEMO_INDEX_FILENAME: str = "memo.md"
 # Writes fork shipped workflows into the user store, shadowing the shipped copy.
 WORKFLOW_DIR: str = SandboxLayout.WORKFLOWS_DIR
 
-# The files that are rows in Postgres, by the directory that serves them
-# beside a README.md: the user's portfolio, watchlists and preferences, and
-# their automations. The routes, the file panel and the browser's path
-# classifier all read this one map.
+# The directories whose files are rows in Postgres, each beside a README.md:
+# the user's portfolio, watchlists and preferences under the fixed names in
+# USER_DATA_FILES, and one file per automation under a name the agent picks,
+# which AUTOMATION_FILE_NAME matches. The routes, the file panel and the
+# browser's path classifier all read these.
 USER_DATA_FILES: dict[str, tuple[str, ...]] = {
     SandboxLayout.USER_PROFILE_DIR: ("portfolio.json", "watchlist.json", "preference.json"),
-    SandboxLayout.AUTOMATIONS_DIR: ("automations.json",),
 }
+USER_DATA_DIRS: tuple[str, ...] = (SandboxLayout.USER_PROFILE_DIR, SandboxLayout.AUTOMATIONS_DIR)
+AUTOMATION_FILE_NAME = r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.json"
 
 HIDDEN_DIR_NAMES: frozenset[str] = frozenset({SandboxLayout.INTERNAL_DIR})
 

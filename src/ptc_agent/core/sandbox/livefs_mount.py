@@ -14,7 +14,7 @@ import secrets
 import shlex
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ptc_agent.core.paths import (
     MEMO_USER_DIR,
@@ -22,7 +22,7 @@ from ptc_agent.core.paths import (
     SandboxLayout,
     WorkspaceLayout,
 )
-from ptc_agent.core.sandbox.livefs_runtime import protocol
+from ptc_agent.core.sandbox.livefs_runtime import lifecycle, protocol
 from ptc_agent.core.sandbox.livefs_runtime.protocol import MountError
 from ptc_agent.core.sandbox.retry import RetryPolicy
 
@@ -32,8 +32,8 @@ if TYPE_CHECKING:
     from ptc_agent.agent.transcript import TranscriptTarget
     from ptc_agent.core.sandbox.ptc_sandbox import PTCSandbox
 
-# Covers a cold start (the daemon waits up to 10 s for its mount) plus links.
-_EXEC_TIMEOUT_S = 30
+# Covers a cold start's wait for its mount, plus the probe and links.
+_EXEC_TIMEOUT_S = lifecycle.START_TIMEOUT_S + 20
 
 _ANSWERS = "livefs-mount-answers"
 #: Prints ``_ANSWERS`` when something answers at the mount's path. Killed at
@@ -50,7 +50,7 @@ def answered(stdout: str | None) -> bool:
 class CallContext:
     """Who a command runs for. The mount serves the whole computer, so a save
     through it names only the call, and a file whose meaning depends on the
-    conversation (the automations file's defaults and ``"current"`` thread)
+    conversation (a new automation's defaults and ``"current"`` thread)
     reads the rest from here."""
 
     workspace_id: str | None = None
@@ -97,8 +97,8 @@ async def through_mount(
     to its output what its saves through the mount reported.
 
     The id is collected once ``run`` returns, so the later saves of a command
-    it only launched reach the next command's result. A cancelled run reports
-    nothing.
+    it only launched reach the next command's result or a BashOutput read. A
+    cancelled run reports nothing.
     """
     if mount is None:
         return await run(None)
@@ -110,21 +110,23 @@ async def through_mount(
 
 
 _MEMORY_MARKERS = (f"{MEMORY_USER_DIR}/", f"{WorkspaceLayout.MEMORY_DIR}/", f"{MEMO_USER_DIR}/")
+_SERVED_DIRS = (
+    SandboxLayout.AUTOMATIONS_DIR,
+    SandboxLayout.USER_PROFILE_DIR,
+    SandboxLayout.WORKFLOWS_DIR,
+)
 
 
-def unserved_tree(
-    mount: MountHandle | None, text: str
-) -> Literal["memory", "automations"] | None:
-    """The store-backed tree a command names while no mount serves it. The
-    tool refuses such a command: it would find no files there, and a write
-    would land where nothing reads it."""
+def unserved_tree(mount: MountHandle | None, text: str) -> str | None:
+    """The store-backed tree a command names while no mount serves it:
+    "memory" for the memory and memo tiers, else the directory. The tool
+    refuses such a command: it would find no files there, and a write would
+    land where nothing reads it."""
     if mount is not None:
         return None
     if any(marker in text for marker in _MEMORY_MARKERS):
         return "memory"
-    if SandboxLayout.AUTOMATIONS_DIR in text:
-        return "automations"
-    return None
+    return next((d for d in _SERVED_DIRS if d in text), None)
 
 
 @dataclass(frozen=True)
@@ -180,24 +182,12 @@ async def _run(
 ) -> MountOutcome:
     """Run one daemon command as root, carrying ``config`` in when given."""
     assert sandbox.runtime is not None
-    staged = None
-    if config is not None:
-        staged = f"{sandbox.layout.internal}/.livefs.{secrets.token_hex(16)}.stage"
-        await sandbox._runtime_call(
-            sandbox.runtime.upload_file,
-            json.dumps(config).encode(),
-            staged,
-            retry_policy=RetryPolicy.SAFE,
-        )
-        args = ["--stage", staged, *args]
-    shell = _command(sandbox.layout, action, *args)
-    if staged:
-        # A command that dies before the move must not leave the token behind.
-        shell += f"; rc=$?; rm -f {shlex.quote(staged)}; exit $rc"
+    env = None if config is None else {protocol.CONFIG_ENV: json.dumps(config)}
     result = await sandbox._runtime_call(
         sandbox.runtime.exec_as_root,
-        shell,
+        _command(sandbox.layout, action, *args),
         _EXEC_TIMEOUT_S,
+        env,
         retry_policy=RetryPolicy.SAFE,
     )
     answer = _parse(result)
@@ -228,8 +218,8 @@ async def start(
     serving current code.
 
     ``config`` is a new token to install; None keeps the one the sandbox
-    has. It travels under a random name, and the daemon takes it into a
-    directory only root can read and deletes the staged copy.
+    has. It travels in the root command's environment, which the sandbox
+    user cannot read, and the daemon keeps it where only root can read it.
     """
     return await _run(sandbox, "start", ["--base-url", base_url], config)
 

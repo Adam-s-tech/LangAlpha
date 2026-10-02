@@ -187,15 +187,12 @@ class _Sandbox:
         self.livefs = None
         self.livefs_lost = lost
         self._box = box
-        self.runtime = SimpleNamespace(upload_file=self._upload, exec_as_root=self._exec)
+        self.runtime = SimpleNamespace(exec_as_root=self._exec)
 
     async def _runtime_call(self, func, *args, retry_policy):
         return await func(*args)
 
-    async def _upload(self, data: bytes, path: str) -> None:
-        pass
-
-    async def _exec(self, command: str, timeout: int):
+    async def _exec(self, command: str, timeout: int, env: dict | None = None):
         return SimpleNamespace(stdout=json.dumps(await self._box.exec(command)), stderr="")
 
 
@@ -600,6 +597,31 @@ async def test_an_attach_whose_tool_overlay_fails_still_reads_the_rows(
         assert rows.row().served_by is None and sandbox.livefs is None
     else:
         assert await sandbox.livefs.ready(WS_A)
+
+
+@pytest.mark.asyncio
+async def test_an_attach_ending_early_takes_back_a_mount_the_rows_say_is_down(
+    rows, monkeypatch
+):
+    """This worker's warm sandbox object was handed the mount on an earlier
+    turn, and a restart was recorded since. An attach that ends before any
+    serve must not leave the turn's prompt saying the files are mounted."""
+    box = _Box()
+    worker = _worker()
+    (sandbox,) = await _serving_everywhere(rows, box, worker)
+    box.daemon_up = False
+    await mount.restarted(COMPUTER, SANDBOX)
+    monkeypatch.setattr(worker, "_maybe_restore_files", AsyncMock(return_value=True))
+    monkeypatch.setattr(worker, "_ensure_project_tool_overlay", AsyncMock(return_value=False))
+
+    await worker._ensure_project_attached(
+        ComputerBinding(WS_A, COMPUTER), SimpleNamespace(sandbox=sandbox), user_id=USER
+    )
+
+    assert sandbox.livefs is None
+    await _turn(worker, sandbox, WS_A)
+    assert box.actions == ["start", "link", "start"]
+    assert box.daemon_up and await sandbox.livefs.ready(WS_A)
 
 
 # -- the link layout -------------------------------------------------------------

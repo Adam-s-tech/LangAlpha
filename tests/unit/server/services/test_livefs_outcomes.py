@@ -4,7 +4,7 @@ A program learns of a refused save only at close(), which most never check,
 so these lines are the agent's one report of it: failures only, short however
 many there were, named by the paths the agent used, and delivered even when
 the save came after its command returned. A save whose file reports what it
-changed (the automations file) adds that report above the failures.
+changed (an automation file) adds that report above the failures.
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ CALL_B = "call-bbbb0002"
 HEADER = "NOT SAVED (the exit status does not show this):"
 MEMORY = f"{ROOT}/.agents/user/memory"
 LATE = " (from an earlier command)"
-AUTOMATIONS = f"{ROOT}/.agents/user/automations/automations.json"
-REPORT = "Saved automations.json: 1 created.\nRead automations.json again before your next edit."
+AUTOMATIONS = f"{ROOT}/.agents/user/automations/brief.json"
+REPORT = 'Saved brief.json: created "Brief"; next run 2030-10-01T09:00:00-04:00\n- note: state is kept by the server'
 
 
 def _failed(path: str, error: str = "refused") -> dict[str, Any]:
@@ -107,9 +107,15 @@ class _FakeRedis:
     def _exists(self, *keys: str) -> int:
         return sum(k in self.data for k in keys)
 
-    def _set(self, key: str, value: Any, ex: int | None = None, nx: bool = False) -> bool:
-        if nx and key in self.data:
-            return False
+    def _set(
+        self, key: str, value: Any, *flags: Any, ex: int | None = None, nx: bool = False
+    ) -> bool:
+        # A script passes Redis's own flags: NX, EX seconds.
+        if "EX" in flags:
+            ex = flags[flags.index("EX") + 1]
+        if nx or "NX" in flags:
+            if key in self.data:
+                return False
         self.data[key] = value
         if ex:
             self._expire(key, ex)
@@ -175,6 +181,15 @@ def test_what_a_save_changed_is_shown_above_the_saves_that_failed():
     assert text == f"{REPORT}\n\n{HEADER}\n- {MEMORY}/b.md: refused"
 
 
+def test_a_long_run_of_changes_shows_the_last_ten_and_counts_the_rest():
+    reports = [_reported(AUTOMATIONS, f"Deleted job {i:02d}") for i in range(13)]
+
+    sections = outcomes.describe(reports).split("\n\n")
+
+    assert sections[0] == "3 earlier changes are not listed; these are the last 10."
+    assert sections[1:] == [f"Deleted job {i:02d}" for i in range(3, 13)]
+
+
 def test_a_report_from_a_save_after_its_command_returned_says_so():
     text = outcomes.describe([_reported(AUTOMATIONS, REPORT, late=True)])
     assert text == f"From an earlier command: {REPORT}"
@@ -185,6 +200,7 @@ def test_a_report_from_a_save_after_its_command_returned_says_so():
 
 @pytest.mark.asyncio
 async def test_a_commands_own_failures_are_reported_once(redis):
+    await outcomes.open_call(COMPUTER, CALL_A, CallContext())
     await outcomes.record(COMPUTER, CALL_A, _failed("user/memory/a.md"))
     await outcomes.record(COMPUTER, CALL_A, _saved("user/memory/b.md"))
 
@@ -198,6 +214,7 @@ async def test_a_commands_own_failures_are_reported_once(redis):
 async def test_a_throttled_command_is_told_once_to_retry_apart_from_its_failed_saves(redis):
     """A throttled command can be refused hundreds of times; the program saw
     only EAGAIN, so one line has to say what it may have missed."""
+    await outcomes.open_call(COMPUTER, CALL_A, CallContext())
     for _ in range(3):
         await outcomes.throttled(COMPUTER, CALL_A)
     await outcomes.record(COMPUTER, CALL_A, _failed(f"{MEMORY}/b.md"))
@@ -211,6 +228,44 @@ async def test_a_throttled_command_is_told_once_to_retry_apart_from_its_failed_s
         HEADER,
         f"- {MEMORY}/b.md: refused",
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_call_id_no_command_filed_keeps_no_keys_of_its_own(redis):
+    """The id comes from the sandbox, whose code can make up one per request:
+    a throttled one leaves nothing, and a save reports as no call's."""
+    for _ in range(3):
+        await outcomes.throttled(COMPUTER, CALL_A)
+    assert redis.data == {}
+
+    await outcomes.record(COMPUTER, CALL_A, _failed(f"{MEMORY}/a.md"))
+
+    assert list(redis.data) == [f"livefs:{{{COMPUTER}}}:late"]
+    collected = await outcomes.collect(COMPUTER, CALL_B)
+    assert [(o["path"], o.get("late")) for o in collected] == [(f"{MEMORY}/a.md", True)]
+
+
+@pytest.mark.asyncio
+async def test_a_calls_own_list_keeps_its_newest_two_hundred(redis):
+    await outcomes.open_call(COMPUTER, CALL_A, CallContext())
+    for i in range(205):
+        await outcomes.record(COMPUTER, CALL_A, _failed(f"f-{i}"))
+
+    collected = await outcomes.collect(COMPUTER, CALL_A)
+
+    assert [o["path"] for o in collected] == [f"f-{i}" for i in range(5, 205)]
+
+
+@pytest.mark.asyncio
+async def test_a_long_path_keeps_its_end_and_a_long_error_its_start(redis):
+    path = f"{MEMORY}/{'d' * 1000}/notes.md"
+    await outcomes.record(COMPUTER, None, _failed(path, "refused: " + "x" * 1000))
+
+    (outcome,) = await outcomes.collect(COMPUTER, CALL_B)
+
+    assert len(outcome["path"]) == len(outcome["error"]) == 512
+    assert outcome["path"].startswith("...") and outcome["path"].endswith("/notes.md")
+    assert outcome["error"].startswith("refused: ") and outcome["error"].endswith("...")
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import stat
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -28,9 +29,11 @@ import pytest
 from ptc_agent.core.sandbox.livefs_runtime import boot, daemon, lifecycle, ops, remote, views
 from ptc_agent.core.sandbox.livefs_runtime.protocol import (
     CALL_ENV,
+    CONFIG_ENV,
     MAX_FILE_BYTES,
     PROVISIONAL_HEADER,
     MountError,
+    etag_version,
 )
 
 NOTES = "user/memory/notes.md"
@@ -55,11 +58,13 @@ def _json_only(path: str, body: bytes) -> bool:
 
 class _Server:
     """The livefs endpoint over a dict of mount-relative paths to bytes.
-    ``store`` is what a save keeps of the bytes sent, ``version`` what names
+    ``store`` is what a save keeps of the bytes sent (None: the save deleted
+    the file, as an automation's ``"status": "deleted"`` does), ``version`` what names
     a file's bytes, ``structural`` the directories it makes up,
     ``inline`` whether a listing carries each file's text, ``trees`` the
-    directories whose listing carries every one below it, and ``read_only``
-    the files no save may change."""
+    directories whose listing carries every one below it, ``read_only``
+    the files no save may change, and ``etag`` the tag a read's version
+    reaches the daemon as (None: dropped on the way)."""
 
     def __init__(
         self,
@@ -73,6 +78,7 @@ class _Server:
         inline=False,
         trees=(),
         read_only=(),
+        etag=lambda version: f'"{version}"',
     ) -> None:
         self.files = dict(files)
         self.sealed = set(sealed)
@@ -83,6 +89,7 @@ class _Server:
         self.inline = inline
         self.trees = set(trees)
         self.read_only = set(read_only)
+        self.etag = etag
         self.writes: list[tuple[str, bytes, dict]] = []
         self.reads: list[str] = []
         self.lists: list[str] = []
@@ -132,15 +139,23 @@ class _Server:
 
     def _read(self, path, params, body, headers):
         self.reads.append(path)
+        if path not in self.files:
+            return 404, None, _error("not_found")
         data = self.files[path]
-        etag = f'"{self.version(data)}"'
-        return 200, SimpleNamespace(getheader=lambda name, default=None: etag), data
+        tag = self.etag(self.version(data))
+        headers = {} if tag is None else {"ETag": tag}
+        resp = SimpleNamespace(getheader=lambda name, default=None: headers.get(name, default))
+        return 200, resp, data
 
     def _write(self, path, params, body, headers):
         self.writes.append((path, body, headers))
         if not self.accept(path, body):
             return 422, None, _error("invalid")
-        stored = self.files[path] = self.store(path, body)
+        stored = self.store(path, body)
+        if stored is None:
+            self.files.pop(path, None)
+            return 200, None, json.dumps({"removed": True}).encode()
+        self.files[path] = stored
         saved = {"version": self.version(stored), "size": len(stored), "as_sent": stored == body}
         return 200, None, json.dumps(saved).encode()
 
@@ -229,9 +244,12 @@ def box(tmp_path, monkeypatch):
     return SimpleNamespace(tmp=tmp_path, private=private, mount=mount, root=root, paths=paths)
 
 
-def _start(box, *, stage=None, base_url=None) -> dict:
+_NEW_CONFIG = json.dumps({"base_url": "http://server", "token": "lfs1.new"})
+
+
+def _start(box, *, config=None, base_url=None) -> dict:
     return daemon.start_mount(
-        SimpleNamespace(root=str(box.root), stage=stage, base_url=base_url), box.paths
+        SimpleNamespace(root=str(box.root), config=config, base_url=base_url), box.paths
     )
 
 
@@ -249,18 +267,32 @@ def _installed_token(box) -> str:
     return json.loads((box.private / "config.json").read_text())["token"]
 
 
-# -- staged token --------------------------------------------------------------
+# -- new token -----------------------------------------------------------------
 
 
-def test_a_staged_token_is_taken_privately_and_the_staged_copy_deleted(box):
-    stage = box.root / ".livefs.abc.stage"
-    stage.write_text(json.dumps({"base_url": "http://server", "token": "lfs1.new"}))
+def test_a_new_token_is_kept_privately(box):
+    assert _start(box, config=_NEW_CONFIG)["ok"]
 
-    assert _start(box, stage=str(stage))["ok"]
-
-    assert not os.path.lexists(stage)
     assert _installed_token(box) == "lfs1.new"
     assert stat.S_IMODE((box.private / "config.json").stat().st_mode) == 0o600
+
+
+def test_the_token_is_taken_out_of_the_environment_the_daemon_inherits(
+    box, monkeypatch
+):
+    seen = []
+    monkeypatch.setenv(CONFIG_ENV, _NEW_CONFIG)
+    monkeypatch.setattr(sys, "argv", ["livefs", "start", "--root", str(box.root)])
+    monkeypatch.setattr(daemon, "Paths", lambda: box.paths)
+    monkeypatch.setattr(
+        daemon,
+        "start_mount",
+        lambda args, paths: seen.append((args.config, os.environ.get(CONFIG_ENV)))
+        or {"ok": True},
+    )
+
+    assert daemon.main() == 0
+    assert seen == [(_NEW_CONFIG, None)]
 
 
 def test_a_moved_server_is_written_into_the_config_and_the_token_kept(box, monkeypatch):
@@ -289,10 +321,7 @@ def test_a_server_found_unreachable_is_asked_again_until_it_answers(box, monkeyp
         return answers.pop(0)
 
     monkeypatch.setattr(daemon, "_probe", probe)
-    stage = box.root / ".livefs.abc.stage"
-    stage.write_text(json.dumps({"base_url": "http://server", "token": "lfs1.new"}))
-
-    assert _start(box, stage=str(stage))["error"] == "unreachable"
+    assert _start(box, config=_NEW_CONFIG)["error"] == "unreachable"
     assert _start(box)["error"] == "unreachable"
     assert _start(box)["ok"]
     assert _start(box)["ok"]
@@ -313,7 +342,7 @@ def test_a_start_that_waited_on_one_finding_the_server_unreachable_asks_it_too(
         return None
 
     monkeypatch.setattr(daemon, "_probe", probe)
-    args = SimpleNamespace(root=str(box.root), stage=None, base_url=None)
+    args = SimpleNamespace(root=str(box.root), config=None, base_url=None)
     refused, early = daemon._ready(args, box.paths)
     assert refused is None and early is None
     # The first start records its failure while the second waits on the lock.
@@ -326,24 +355,11 @@ def test_a_start_that_waited_on_one_finding_the_server_unreachable_asks_it_too(
     assert "unreachable" not in state
 
 
-def _link_to_a_valid_config(stage, tmp) -> None:
-    planted = tmp / "planted.json"
-    planted.write_text(json.dumps({"base_url": "http://elsewhere", "token": "lfs1.planted"}))
-    stage.symlink_to(planted)
-
-
-def _config_without_a_token(stage, tmp) -> None:
-    stage.write_text(json.dumps({"base_url": "http://server"}))
-
-
 @pytest.mark.parametrize(
-    "plant", [_link_to_a_valid_config, _config_without_a_token], ids=["symlink", "no-token"]
+    "config", [json.dumps({"base_url": "http://server"}), "not json"], ids=["no-token", "not-json"]
 )
-def test_a_staged_token_that_is_a_link_or_not_a_mount_config_answers_bad_config(box, plant):
-    stage = box.root / ".livefs.abc.stage"
-    plant(stage, box.tmp)
-
-    assert _start(box, stage=str(stage))["error"] == "bad_config"
+def test_a_config_that_is_not_a_mount_config_answers_bad_config(box, config):
+    assert _start(box, config=config)["error"] == "bad_config"
     assert _installed_token(box) == "lfs1.old"
 
 
@@ -525,6 +541,25 @@ def test_an_empty_directory_at_a_link_path_is_replaced_not_set_aside(box):
     assert not os.path.lexists(f"{memory}.local")
 
 
+def test_root_lays_the_links_as_the_folders_owner(box, monkeypatch):
+    """Root following a symlink the user planted could write anywhere."""
+    calls, made = [], []
+    monkeypatch.setattr(daemon.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(daemon.os, "getegid", lambda: 0)
+    monkeypatch.setattr(daemon.os, "getgroups", lambda: [0])
+    monkeypatch.setattr(daemon.os, "setgroups", lambda g: calls.append(("groups", g)))
+    monkeypatch.setattr(daemon.os, "setegid", lambda g: calls.append(("egid", g)))
+    monkeypatch.setattr(daemon.os, "seteuid", lambda u: calls.append(("euid", u)))
+    monkeypatch.setattr(daemon, "link", lambda value, target: made.append(list(calls)))
+    owner = box.root.stat()
+
+    _link(box, ("user", ".agents/user"))
+
+    as_owner = [("groups", []), ("egid", owner.st_gid), ("euid", owner.st_uid)]
+    assert made == [as_owner]
+    assert calls == as_owner + [("euid", 0), ("egid", 0), ("groups", [0])]
+
+
 # -- server answers ------------------------------------------------------------
 
 
@@ -546,6 +581,41 @@ def test_an_empty_directory_at_a_link_path_is_replaced_not_set_aside(box):
 )
 def test_a_server_error_reaches_the_caller_as_its_errno(status, body, expected):
     assert remote.error_for(status, body).errno == expected
+
+
+@pytest.mark.parametrize(
+    ("tag", "version"),
+    [('"v1"', "v1"), ('W/"v1"', "v1"), ("v1", "v1"), (None, None), ("", None), ('W/""', None)],
+)
+def test_a_tag_names_its_version_whether_or_not_a_proxy_marked_it_weak(tag, version):
+    assert etag_version(tag) == version
+
+
+@pytest.mark.parametrize("tag", ['"{}"', 'W/"{}"'])
+def test_an_edit_saves_over_the_version_its_read_named_even_marked_weak(kernel, tag):
+    # Regression: a CDN that decompressed the read marked its ETag weak, the
+    # save named that as the version, and every edit was refused as changed.
+    server = _Server({NOTES: b"first"}, etag=tag.format)
+    fs = _ops(server, kernel)
+    fh = fs.open(f"/{NOTES}", os.O_WRONLY | os.O_APPEND)
+    fs.write(f"/{NOTES}", b" second", 0, fh)
+    fs.release(f"/{NOTES}", fh)
+
+    assert [h.get("If-Match") for _, _, h in server.writes] == [f'"{_version(b"first")}"']
+    assert server.files[NOTES] == b"first second"
+
+
+def test_a_read_whose_version_was_dropped_fails_and_no_edit_makes_the_file_anew(kernel):
+    # Regression: read with no version, an edit was saved as a new file and
+    # refused as one that exists.
+    server = _Server({NOTES: b"first"}, etag=lambda version: None)
+    fs = _ops(server, kernel)
+
+    for flags in (os.O_RDONLY, os.O_WRONLY | os.O_APPEND):
+        with pytest.raises(OSError) as exc:
+            fs.open(f"/{NOTES}", flags)
+        assert exc.value.errno == errno.EIO
+    assert server.writes == []
 
 
 def test_renaming_a_directory_answers_exdev_so_mv_copies_it_file_by_file(kernel):
@@ -619,6 +689,24 @@ def test_a_directory_made_here_moves_with_the_ones_made_inside_it(kernel):
     with pytest.raises(OSError) as gone:
         fs.getattr("/user/memory/draft")
     assert gone.value.errno == errno.ENOENT
+
+
+def test_a_temp_file_replaced_into_place_before_its_close_lands_there(kernel):
+    # Regression: the bytes stayed on the handle, which then saved to the
+    # temp path the rename had emptied, so neither path held them.
+    tmp = "/user/memory/.notes.md.tmp"
+    server = _Server({NOTES: b"old"})
+    fs = _ops(server, kernel)
+    fh = fs.create(tmp, 0o644)
+    fs.write(tmp, b"new", 0, fh)
+
+    fs.rename(tmp, f"/{NOTES}")
+    fs.write(f"/{NOTES}", b" and more", 3, fh)
+    fs.flush(f"/{NOTES}", fh)
+    fs.release(f"/{NOTES}", fh)
+
+    assert server.files == {NOTES: b"new and more"}
+    assert _read(fs, f"/{NOTES}") == b"new and more"
 
 
 def test_a_command_keeps_the_view_its_call_id_first_saw(kernel):
@@ -708,6 +796,33 @@ def test_a_file_made_and_removed_before_its_release_stays_removed(kernel):
     assert "user/memory/lock.md" not in server.files
 
 
+def test_a_save_that_deletes_its_file_leaves_it_out_of_every_view(kernel):
+    # An automation saved with "status": "deleted" is gone once the save is.
+    # Answered as a save, it stayed listed, and reading it failed.
+    brief = "user/automations/brief.json"
+    server = _Server(
+        {brief: b'{"status": "active"}', "user/automations/README.md": b"doc"},
+        store=lambda path, body: None if b'"deleted"' in body else body,
+    )
+    fs = _ops(server, kernel)
+    kernel.run(201, "call-b")
+    assert "brief.json" in fs.readdir("/user/automations", 0)
+    kernel.run(101, "call-a")
+    assert "brief.json" in fs.readdir("/user/automations", 0)
+    fh = fs.open(f"/{brief}", os.O_WRONLY | os.O_TRUNC)
+    fs.write(f"/{brief}", b'{"status": "deleted"}', 0, fh)
+
+    fs.release(f"/{brief}", fh)
+
+    assert brief not in server.files
+    for pid, call in ((101, "call-a"), (201, "call-b")):
+        kernel.run(pid, call)
+        assert "brief.json" not in fs.readdir("/user/automations", 0)
+        with pytest.raises(OSError) as gone:
+            fs.getattr(f"/{brief}")
+        assert gone.value.errno == errno.ENOENT
+
+
 def test_a_refused_save_of_written_bytes_fails_the_close_and_is_not_retried(kernel):
     server = _Server({PREFS: b'{"theme": "dark"}'}, accept=_json_only)
     fs = _ops(server, kernel)
@@ -743,6 +858,23 @@ def test_a_file_grown_past_the_size_limit_saves_nothing_its_handle_wrote(kernel,
     assert refused.value.errno == closed.value.errno == errno.EFBIG
     assert server.writes == []
     assert server.files[NOTES] == b"old"
+
+
+def test_ftruncate_under_libfuse_3_cuts_the_open_file_not_a_second_handle(kernel):
+    # Regression: the truncate went through a handle of its own, and the open
+    # one saved its old bytes over it, so the file kept the old tail.
+    server = _Server({NOTES: b"old contents"})
+    fs = _ops(server, kernel)
+    fuse = SimpleNamespace(operations=fs, raw_fi=False, encoding="utf-8", errors="strict")
+    fh = fs.open(f"/{NOTES}", os.O_RDWR)
+
+    open_file = SimpleNamespace(contents=SimpleNamespace(fh=fh))
+    daemon._truncate_fuse_3(fuse, f"/{NOTES}".encode(), 0, open_file)
+    fs.write(f"/{NOTES}", b"new", 0, fh)
+    fs.flush(f"/{NOTES}", fh)
+    fs.release(f"/{NOTES}", fh)
+
+    assert server.files[NOTES] == b"new"
 
 
 def test_a_save_stored_as_sent_is_read_back_without_asking_the_server(kernel):
@@ -791,11 +923,12 @@ def test_a_save_whose_answer_was_lost_is_found_landed_and_not_sent_again(kernel)
     assert server.files[NOTES] == b"v2"
 
 
-def test_bytes_written_after_a_save_whose_answer_was_lost_are_saved_over_it(kernel):
+@pytest.mark.parametrize("tag", ['"{}"', 'W/"{}"'])
+def test_bytes_written_after_a_save_whose_answer_was_lost_are_saved_over_it(kernel, tag):
     # Regression: the next save compared the server's file with the bytes
     # written since, not the ones the lost save sent, and its old
     # precondition then met that landed save as a conflict.
-    server = _Server({NOTES: b"v1"})
+    server = _Server({NOTES: b"v1"}, etag=tag.format)
     answered = server._write
 
     def checked(path, params, body, headers):
@@ -820,6 +953,42 @@ def test_bytes_written_after_a_save_whose_answer_was_lost_are_saved_over_it(kern
 
     assert _sent(server) == [(b"v2", False), (b"v3", False)]
     assert server.files[NOTES] == b"v3"
+
+
+@pytest.mark.parametrize("landed", [False, True], ids=["lost-on-the-way", "answer-lost"])
+@pytest.mark.parametrize("opened", ["made", "emptied"])
+def test_a_save_at_release_that_got_no_answer_is_settled_before_its_handle_goes(
+    kernel, opened, landed
+):
+    # Regression: a file only made or emptied has its one save at release,
+    # and the handle went with that save unanswered, so one lost on the way
+    # silently left the file as it was, with nothing reported.
+    path = "/user/memory/lock.md" if opened == "made" else f"/{NOTES}"
+    server = _Server({NOTES: b"n"})
+    answered = server._write
+    sent = []
+
+    def first_unanswered(*args):
+        sent.append(args[2])
+        if len(sent) > 1:
+            return answered(*args)
+        if landed:
+            answered(*args)
+        raise OSError(errno.EIO, "no answer")
+
+    server._write = first_unanswered
+    fs = _ops(server, kernel)
+    if opened == "made":
+        fh = fs.create(path, 0o644)
+    else:
+        fh = fs.open(path, os.O_WRONLY | os.O_TRUNC)
+    fs.flush(path, fh)
+    fs.release(path, fh)
+
+    # One that landed is found there, not sent again to meet its own precondition.
+    assert sent == ([b""] if landed else [b"", b""])
+    assert server.files[path.lstrip("/")] == b""
+    assert _read(fs, path) == b""
 
 
 def test_bytes_written_while_an_earlier_save_is_out_are_saved_too(kernel):
@@ -939,7 +1108,7 @@ def test_a_command_keeps_its_bytes_of_a_file_whose_version_is_not_their_digest(k
 def test_a_save_stored_otherwise_is_read_back_as_stored_under_a_version_kept_before(
     kernel,
 ):
-    # Regression: the automations file keeps its version across a save it
+    # Regression: an automation file keeps its version across a save it
     # rewrites, and the bytes read before the save were shown again.
     server = _Server(
         {PREFS: b"{}"}, version=lambda data: "rev-1", store=lambda path, body: body + b"\n"
@@ -1151,6 +1320,11 @@ def test_a_request_that_timed_out_is_not_sent_again(endpoint, method):
         )
 
     assert exc.value.errno == errno.EIO
+    # The server records a request on its own thread, which a loaded runner
+    # may not have reached when the client gave up.
+    deadline = time.monotonic() + 5
+    while not endpoint.server.seen and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert [seen for seen, _ in endpoint.server.seen] == [method]
 
 

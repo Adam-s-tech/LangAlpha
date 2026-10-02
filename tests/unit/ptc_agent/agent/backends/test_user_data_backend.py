@@ -11,6 +11,8 @@ round-trips) lives in ``tests/integration/test_user_data_backend.py``
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -28,6 +30,7 @@ from ptc_agent.agent.backends.user_data import (
     UserDataBackend,
     _README_CONTENT,
 )
+from ptc_agent.agent.middleware.background_subagent.context import current_background_agent_id
 from ptc_agent.core.sandbox.livefs_mount import CallContext
 from src.server.services import profile_files
 
@@ -111,6 +114,14 @@ def _serve(mock_io, version: str, content: str = '{"holdings": []}\n', file: str
     }[file]
     setattr(mock_io, serializer, MagicMock(side_effect=lambda *_: {"__version__": version}))
     mock_io.serialize_json = MagicMock(return_value=content)
+
+
+def _as_subagent(agent_id: str, work):
+    """Run ``work`` as the background subagent ``agent_id``, in a context of
+    its own, as the subagent's tool calls run beside the main agent's."""
+    context = contextvars.copy_context()
+    context.run(current_background_agent_id.set, agent_id)
+    return asyncio.create_task(work, context=context)
 
 
 def _make_sandbox():
@@ -256,6 +267,26 @@ class TestWrite:
         assert conn.outcome == "rolled back"
         # Cache is invalidated on conflict so retries fetch fresh data
         assert PORTFOLIO_FILE not in backend._read_cache
+
+    @pytest.mark.asyncio
+    async def test_one_agents_read_never_vouches_for_anothers_write(self, backend, mock_io, conn):
+        """The main agent read v1, the rows moved, then a subagent sharing the
+        route read v2. The main agent's Write, made from v1, conflicts rather
+        than landing over a change it never saw, and the subagent's Read
+        still stands behind the subagent's own Write."""
+        _serve(mock_io, "v1")
+        await backend.aread_range(PORTFOLIO_PATH)
+        _serve(mock_io, "v2")
+        await _as_subagent("research:1", backend.aread_range(PORTFOLIO_PATH))
+        mock_io.diff_portfolio.return_value = MagicMock(deletes=[])
+
+        with pytest.raises(UserDataValidationError) as exc:
+            await backend.awrite_text(PORTFOLIO_PATH, '{"holdings":[]}')
+
+        assert exc.value.error_type == "version_conflict"
+        mock_io.write_portfolio_diff.assert_not_awaited()
+        assert await _as_subagent("research:1", backend.awrite_text(PORTFOLIO_PATH, '{"holdings":[]}')) is True
+        mock_io.write_portfolio_diff.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_write_happy_path_invalidates_cache(self, backend, mock_io, conn):

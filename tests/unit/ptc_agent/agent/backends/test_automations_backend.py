@@ -1,49 +1,68 @@
 """``AutomationsBackend``: the read-before-write rules of a DB-backed file.
 
 The route plumbing is ``DbJsonRoute``, shared with the profile files. What is
-pinned here is what the agent sees through the automations route: a Write is
-checked against the Read it follows and may delete only after a Read that
-showed the whole file, an Edit lands on what that Read showed, a refused write
-sends the agent back to Read, and a write answers with the report of what
-changed. A save through the file mount is checked against the route's own
-version instead. The automations file is faked at each step the route runs;
-its own tests cover what a save does to the rows.
+pinned here is what the agent sees through the automations route: a Write over
+a file is checked against the Read it follows, a Write to a name nothing has
+creates, an Edit lands on what that Read showed, a refused write sends the
+agent back to Read, and a write answers with the report of what changed. A
+save through the file mount is checked against the route's own version
+instead, and the mount deletes and renames files. The automation's file is
+faked at each step the route runs; its own tests cover what a save does to
+the rows.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
 from ptc_agent.agent.backends import ReadOnlyStoreError, db_json_route
-from ptc_agent.agent.backends.automations import AUTOMATIONS_FILE, README_FILE, AutomationsBackend
+from ptc_agent.agent.backends.automations import README_FILE, AutomationsBackend
 from ptc_agent.agent.backends.db_json_route import Plan, UserDataValidationError
+from ptc_agent.agent.middleware.background_subagent.context import current_background_agent_id
 from ptc_agent.core.sandbox.livefs_mount import CallContext
-from src.server.services.automations.file import AutomationFileError, AutomationsFile, Document, FilePlan, _Delete
+from src.server.services.automations.file import (
+    AutomationFile,
+    AutomationFileError,
+    Document,
+    FilePlan,
+    _Delete,
+    _Update,
+)
 
 PREFIX = "/home/workspace/.agents/user/automations/"
-FILE_PATH = f"{PREFIX}{AUTOMATIONS_FILE}"
+FILE_NAME = "morning-brief.json"
+FILE_PATH = f"{PREFIX}{FILE_NAME}"
 README_PATH = f"{PREFIX}{README_FILE}"
 
 USER = "user-fake-1"
 CALL = CallContext(workspace_id="00000000-0000-4000-8000-00000000aaaa", thread_id=None, timezone="UTC")
-DOCUMENT = Document(entries=[], states=None, timezone="UTC", model_pref=None)
+DOCUMENT = Document(fields={}, shown=None, timezone="UTC", model_pref=None)
 
 # The rows as a read outside a save finds them, as the save reads them, and as
 # the save leaves them.
 LIVE, ROWS, SAVED = "live rows", "the save's rows", "saved rows"
 
 # Several lines, so a Read with a limit of one shows only part of it.
-READ_CONTENT = '{\n  "automations": [\n    {"name": "Morning brief", "status": "active"}\n  ]\n}\n'
+READ_CONTENT = '{\n  "name": "Morning brief",\n  "status": "active"\n}\n'
 MOVED_CONTENT = READ_CONTENT.replace("active", "paused")
-REPORT = "Saved automations.json: 1 updated.\n- updated ...\nRead automations.json again before your next edit."
-GONE = _Delete(automation_id="00000000-0000-4000-8000-000000000002", name="Evening wrap")
+REPORT = 'Saved morning-brief.json: updated "Morning brief": paused'
+GONE = '"Evening wrap" (00000000-0000-4000-8000-000000000002)'
 
 
-def _deleting(*gone: _Delete) -> Plan[FilePlan]:
-    return Plan(FilePlan(deletes=list(gone)), [d.label for d in gone])
+def _deleting(*gone: str) -> Plan[FilePlan]:
+    return Plan(FilePlan(), list(gone))
+
+
+# A plan that changes the row, so a save through the mount reads the file
+# again as it left it.
+PAUSING = Plan(
+    FilePlan(update=_Update(automation_id="id-1", name="Morning brief", fields={}, changed=[], action="pause", row={}))
+)
 
 
 class _Conn:
@@ -96,9 +115,10 @@ def conn(monkeypatch) -> _Conn:
 @pytest.fixture
 def file(monkeypatch, conn) -> MagicMock:
     """The file's steps: every read renders ``READ_CONTENT`` at ``v1`` until a
-    test moves ``rendered``, the save's rows stand at ``v1``, and the plan
-    deletes nothing unless a test says so."""
-    fake = MagicMock(spec=AutomationsFile())
+    test moves ``rendered`` (None: no file), the save's rows stand at ``v1``,
+    and the plan deletes nothing unless a test says so. Any other name holds
+    no file."""
+    fake = MagicMock(spec=AutomationFile(FILE_NAME))
     fake.unchanged = None
     fake.rendered = {LIVE: (READ_CONTENT, "v1"), ROWS: (READ_CONTENT, "v1"), SAVED: (MOVED_CONTENT, "v2")}
     fake.fetch = AsyncMock(
@@ -109,13 +129,34 @@ def file(monkeypatch, conn) -> MagicMock:
     fake.plan = MagicMock(return_value=Plan(FilePlan()))
     fake.hold = AsyncMock(return_value=None)
     fake.commit = AsyncMock(return_value=REPORT)
-    monkeypatch.setitem(AutomationsBackend.files, AUTOMATIONS_FILE, fake)
+    absent = MagicMock(spec=AutomationFile("other.json"))
+    absent.fetch = AsyncMock(return_value=None)
+    absent.render = MagicMock(return_value=None)
+
+    def file_named(cls, name: str):
+        return fake if name == FILE_NAME else absent if name.endswith(".json") else None
+
+    async def rendered(cls, user_id: str):
+        shown = fake.render(await fake.fetch(user_id))
+        return {FILE_NAME: shown} if shown else {}
+
+    monkeypatch.setattr(AutomationsBackend, "file_named", classmethod(file_named))
+    monkeypatch.setattr(AutomationsBackend, "rendered", classmethod(rendered))
+    monkeypatch.setattr(AutomationsBackend, "names", classmethod(AsyncMock(return_value=[FILE_NAME])))
     return fake
 
 
 async def _read(backend: AutomationsBackend, offset: int = 0, limit: int = 2000) -> str | None:
     """The Read tool's path through the route."""
     return await backend.aread_range(FILE_PATH, offset, limit)
+
+
+def _as_agent(agent_id: str | None, work):
+    """Run ``work`` as the agent ``agent_id`` names (None: the main agent), in
+    a context of its own, as each agent's tool calls run beside the others'."""
+    context = contextvars.copy_context()
+    context.run(current_background_agent_id.set, agent_id)
+    return asyncio.create_task(work, context=context)
 
 
 class TestSave:
@@ -153,7 +194,7 @@ class TestSave:
     async def test_a_refused_plan_points_at_the_readme_and_commits_nothing(self, backend, file, conn):
         await _read(backend)
         file.plan.side_effect = AutomationFileError(
-            error_type="schema_error", file=AUTOMATIONS_FILE, field_path="automations[0].name", hint="required"
+            error_type="schema_error", file=FILE_NAME, field_path="name", hint="required"
         )
 
         with pytest.raises(AutomationFileError) as exc:
@@ -164,12 +205,12 @@ class TestSave:
         assert conn.outcome == "rolled back"
 
     @pytest.mark.asyncio
-    async def test_content_that_is_no_document_is_refused_before_the_save_reads_anything(
+    async def test_content_that_is_no_object_is_refused_before_the_save_reads_anything(
         self, backend, file, conn
     ):
         await _read(backend)
         file.parse.side_effect = AutomationFileError(
-            error_type="parse_error", file=AUTOMATIONS_FILE, field_path="", hint="invalid JSON"
+            error_type="parse_error", file=FILE_NAME, field_path="", hint="invalid JSON"
         )
 
         with pytest.raises(AutomationFileError) as exc:
@@ -181,18 +222,64 @@ class TestSave:
 
     @pytest.mark.asyncio
     async def test_a_refusal_while_committing_rolls_the_whole_save_back(self, backend, file, conn):
-        """The lifecycle's refusals surface as the commit raising, after some
-        rows may already have changed in the transaction."""
+        """The lifecycle's refusals surface as the commit raising, after the
+        row may already have changed in the transaction."""
         await _read(backend)
         file.commit.side_effect = AutomationFileError(
-            error_type="schema_error", file=AUTOMATIONS_FILE, field_path="", hint="x",
-            problems=[("automations[0].llm_model", "unknown model")],
+            error_type="schema_error", file=FILE_NAME, field_path="", hint="x",
+            problems=[("llm_model", "unknown model")],
         )
 
         with pytest.raises(AutomationFileError):
             await backend.awrite_text(FILE_PATH, MOVED_CONTENT)
 
         assert conn.outcome == "rolled back"
+
+
+class TestCreate:
+    """A file the agent hasn't read is written only where none is yet."""
+
+    @pytest.mark.asyncio
+    async def test_a_write_where_no_file_is_creates_without_a_read(self, backend, file, conn):
+        file.rendered[ROWS] = None
+
+        result = await backend.awrite_text(FILE_PATH, MOVED_CONTENT)
+
+        assert result == {"success": True, "message": REPORT}
+        file.parse.assert_awaited_once_with(USER, CALL, MOVED_CONTENT, None)
+        file.plan.assert_called_once_with(CALL, DOCUMENT, ROWS)
+        file.commit.assert_awaited_once()
+        assert conn.outcome == "committed"
+
+    @pytest.mark.asyncio
+    async def test_a_write_without_a_read_where_a_file_is_is_refused(self, backend, file, conn):
+        with pytest.raises(UserDataValidationError) as exc:
+            await backend.awrite_text(FILE_PATH, MOVED_CONTENT)
+
+        assert exc.value.error_type == "exists"
+        assert f"To change it, Read({FILE_PATH}) first" in exc.value.hint
+        file.plan.assert_not_called()
+        assert conn.outcome == "rolled back"
+
+    @pytest.mark.asyncio
+    async def test_a_file_read_since_is_written_over_its_read(self, backend, file):
+        """The Read found no file; one made since is not the agent's to overwrite."""
+        file.rendered[LIVE] = None
+        assert await _read(backend) is None
+
+        with pytest.raises(UserDataValidationError) as exc:
+            await backend.awrite_text(FILE_PATH, MOVED_CONTENT)
+
+        assert exc.value.error_type == "exists"
+
+    @pytest.mark.asyncio
+    async def test_a_create_through_the_mount_answers_with_the_new_file(self, backend, file, conn):
+        file.rendered[ROWS] = None
+        file.plan.return_value = PAUSING
+
+        stored = await backend.awrite_versioned(FILE_PATH, MOVED_CONTENT, None)
+
+        assert stored == (REPORT, MOVED_CONTENT, "v2")
 
 
 class TestEdit:
@@ -219,6 +306,24 @@ class TestEdit:
         result = await backend.aedit_text(FILE_PATH, '"active"', '"paused"')
 
         assert result["message"] == REPORT
+
+    @pytest.mark.asyncio
+    async def test_an_edit_of_a_missing_file_finds_nothing(self, backend, file):
+        result = await backend.aedit_text(f"{PREFIX}other.json", '"active"', '"paused"')
+
+        assert result == {"success": False, "error": f"File not found: {PREFIX}other.json"}
+
+    @pytest.mark.asyncio
+    async def test_an_edit_without_a_read_lands_on_the_live_file(self, backend, file):
+        """old_string has to match the file, which is check enough; the load
+        is not cached, so it can't stand in for a Read later."""
+        file.rendered[LIVE] = file.rendered[ROWS] = (READ_CONTENT, "v2")
+
+        result = await backend.aedit_text(FILE_PATH, '"active"', '"paused"')
+
+        assert result["success"] is True
+        assert file.parse.await_args.args[3] == READ_CONTENT
+        assert backend._read_cache == {}
 
 
 class TestWrite:
@@ -251,20 +356,136 @@ class TestWrite:
             assert (exc.value.error_type, exc.value.hint) == ("version_conflict", conflict)
         else:
             result = await backend.aedit_text(FILE_PATH, '"active"', '"paused"')
-            assert result == {"success": False, "error": f"version_conflict:{AUTOMATIONS_FILE}: {conflict}"}
+            assert result == {"success": False, "error": f"version_conflict:{FILE_NAME}: {conflict}"}
 
         file.plan.assert_not_called()
         assert conn.outcome == "rolled back"
         with pytest.raises(UserDataValidationError) as exc:
             await backend.awrite_text(FILE_PATH, MOVED_CONTENT)
-        assert exc.value.error_type == "read_required"
-        assert f"Read({FILE_PATH})" in exc.value.hint
+        assert f"Read({FILE_PATH}) first" in exc.value.hint
         file.commit.assert_not_awaited()
+
+    @pytest.mark.parametrize("reader", ["grep", "aread_text"])
+    @pytest.mark.asyncio
+    async def test_only_a_read_lets_a_write_over_the_file_through(self, backend, file, reader):
+        """A Grep, or the Edit tool reading the file back for the UI, shows the
+        agent nothing it could base a whole-file Write on."""
+        if reader == "grep":
+            await backend.agrep_rich("Morning", PREFIX)
+        else:
+            await backend.aread_text(FILE_PATH)
+
+        with pytest.raises(UserDataValidationError) as exc:
+            await backend.awrite_text(FILE_PATH, MOVED_CONTENT)
+
+        assert exc.value.error_type == "exists"
+        file.plan.assert_not_called()
+
+
+class TestEachAgentsOwnRead:
+    """The main agent and its subagents share the route and run side by side,
+    so a Read stands behind the Write of the agent that made it and no other."""
+
+    @pytest.mark.parametrize(
+        ("reader", "writer"),
+        [(None, "research:1"), ("research:1", None), ("research:1", "research:2")],
+        ids=["main-read", "subagent-read", "sibling-read"],
+    )
+    @pytest.mark.asyncio
+    async def test_another_agents_read_lets_no_write_over_the_file(self, backend, file, conn, reader, writer):
+        await _as_agent(reader, _read(backend))
+
+        with pytest.raises(UserDataValidationError) as exc:
+            await _as_agent(writer, backend.awrite_text(FILE_PATH, MOVED_CONTENT))
+
+        assert exc.value.error_type == "exists"
+        file.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_save_by_one_agent_leaves_the_others_read_stale(self, backend, file, conn):
+        """Not spent: the other agent is told the file changed since its Read."""
+        await _read(backend)
+        await _as_agent("research:1", _read(backend))
+        await _as_agent("research:1", backend.awrite_text(FILE_PATH, MOVED_CONTENT))
+
+        with pytest.raises(UserDataValidationError) as exc:
+            await backend.awrite_text(FILE_PATH, READ_CONTENT.replace("Morning brief", "Evening brief"))
+
+        assert exc.value.error_type == "version_conflict"
+        file.commit.assert_awaited_once()
+
+
+class TestDeletedSinceTheRead:
+    """A file removed after the agent's Read (by `rm`, the Automations page
+    or another turn) has no version left for a Write to go over. The Write
+    is refused as such, never as "no changes" or as a change since, and the
+    next Write of the file creates it."""
+
+    DELETED = (
+        f"{FILE_PATH} was deleted since your last Read, so nothing was saved. Writing it again "
+        "creates it anew: do that only if the user wants it back."
+    )
+
+    @pytest.mark.parametrize("content", [READ_CONTENT, MOVED_CONTENT], ids=["as-read", "changed"])
+    @pytest.mark.asyncio
+    async def test_a_write_over_a_deleted_file_is_refused_and_the_next_one_creates_it(
+        self, backend, file, conn, content
+    ):
+        await _read(backend)
+        file.rendered[LIVE] = file.rendered[ROWS] = None
+
+        with pytest.raises(UserDataValidationError) as exc:
+            await backend.awrite_text(FILE_PATH, content)
+
+        assert (exc.value.error_type, exc.value.hint) == ("deleted", self.DELETED)
+        file.plan.assert_not_called()
+        file.commit.assert_not_awaited()
+
+        result = await backend.awrite_text(FILE_PATH, content)
+
+        assert result == {"success": True, "message": REPORT}
+        # A create: no Read stands behind it.
+        assert file.parse.await_args == call(USER, CALL, content, None)
+
+    @pytest.mark.asyncio
+    async def test_a_delete_that_lands_before_the_rows_are_held_is_refused_as_deleted(
+        self, backend, file, conn
+    ):
+        await _read(backend)
+        file.hold.return_value = ""
+
+        with pytest.raises(UserDataValidationError) as exc:
+            await backend.awrite_text(FILE_PATH, MOVED_CONTENT)
+
+        assert exc.value.error_type == "deleted"
+        file.commit.assert_not_awaited()
+        assert conn.outcome == "rolled back"
+
+    @pytest.mark.asyncio
+    async def test_a_read_that_finds_no_file_drops_the_earlier_read(self, backend, file, conn):
+        await _read(backend)
+        file.rendered[LIVE] = file.rendered[ROWS] = None
+
+        assert await _read(backend) is None
+
+        assert backend._read_cache == {}
+        assert await backend.awrite_text(FILE_PATH, READ_CONTENT) == {"success": True, "message": REPORT}
+
+    @pytest.mark.asyncio
+    async def test_through_the_mount_a_save_over_a_deleted_file_is_refused_as_deleted(self, backend, file):
+        file.rendered[ROWS] = None
+
+        with pytest.raises(UserDataValidationError) as exc:
+            await backend.awrite_versioned(FILE_PATH, MOVED_CONTENT, "v1")
+
+        assert exc.value.error_type == "deleted"
 
 
 class TestWhatTheReadShowed:
-    """A Write deletes whatever it leaves out, so it may delete only after a
-    Read that showed every line."""
+    """The route refuses a Write whose plan deletes what the agent's Read
+    never showed. A save of an automation's file deletes nothing it leaves
+    out, so this is the route's own rule, driven here through the stand-in
+    file; the profile files are where it applies."""
 
     @pytest.mark.parametrize(
         ("offset", "limit", "may_delete"),
@@ -283,22 +504,13 @@ class TestWhatTheReadShowed:
         with pytest.raises(UserDataValidationError) as exc:
             await backend.awrite_text(FILE_PATH, MOVED_CONTENT)
         assert exc.value.error_type == "incomplete_read"
-        assert exc.value.hint.startswith(f"this write leaves out {GONE.label}, which would delete it,")
+        assert exc.value.hint.startswith(f"this write leaves out {GONE}, which would delete it,")
         file.commit.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_a_write_after_a_partial_read_that_deletes_nothing_goes_through(self, backend, file):
-        await _read(backend, 0, 1)
-
-        await backend.awrite_text(FILE_PATH, MOVED_CONTENT)
-
-        file.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_a_refusal_lists_ten_deletes_and_counts_the_rest(self, backend, file):
         await _read(backend, 0, 1)
-        gone = [_Delete(automation_id=f"id-{i}", name=f"Job {i}") for i in range(12)]
-        file.plan.return_value = _deleting(*gone)
+        file.plan.return_value = _deleting(*(f'"Job {i}" (id-{i})' for i in range(12)))
 
         with pytest.raises(UserDataValidationError) as exc:
             await backend.awrite_text(FILE_PATH, MOVED_CONTENT)
@@ -326,34 +538,6 @@ class TestWhatTheReadShowed:
 
         assert result["success"] is True
         file.commit.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_an_edit_without_a_read_lands_on_the_live_file(self, backend, file):
-        """old_string has to match the file, which is check enough; the load
-        is not cached, so it can't stand in for a Read later."""
-        file.rendered[LIVE] = file.rendered[ROWS] = (READ_CONTENT, "v2")
-
-        result = await backend.aedit_text(FILE_PATH, '"active"', '"paused"')
-
-        assert result["success"] is True
-        assert file.parse.await_args.args[3] == READ_CONTENT
-        assert backend._read_cache == {}
-
-    @pytest.mark.parametrize("reader", ["grep", "aread_text"])
-    @pytest.mark.asyncio
-    async def test_only_a_read_lets_a_write_through(self, backend, file, reader):
-        """A Grep, or the Edit tool reading the file back for the UI, shows the
-        agent nothing it could base a whole-document Write on."""
-        if reader == "grep":
-            await backend.agrep_rich("Morning", PREFIX)
-        else:
-            await backend.aread_text(FILE_PATH)
-
-        with pytest.raises(UserDataValidationError) as exc:
-            await backend.awrite_text(FILE_PATH, MOVED_CONTENT)
-
-        assert exc.value.error_type == "read_required"
-        file.plan.assert_not_called()
 
 
 class TestReadme:
@@ -384,22 +568,29 @@ class TestFileMount:
     @pytest.mark.asyncio
     async def test_a_mount_read_serves_the_routes_own_version(self, backend, file):
         assert await backend.aread_versioned(FILE_PATH) == (READ_CONTENT, "v1")
-        assert await backend.aread_versioned(f"{PREFIX}notes.json") is None
+        assert await backend.aread_versioned(f"{PREFIX}other.json") is None
+        assert await backend.aread_versioned(f"{PREFIX}notes.txt") is None
         # A program's read is no Read a Write tool call can stand on.
         assert backend._read_cache == {}
 
     @pytest.mark.asyncio
-    async def test_the_folder_lists_what_a_read_returns_and_only_the_data_file_as_writable(self, backend, file):
+    async def test_the_folder_lists_what_a_read_returns_with_only_the_readme_read_only(self, backend, file):
         # Non-ASCII on purpose: a size counted in characters would pass on ASCII.
-        file.rendered[LIVE] = ('{"automations": [{"name": "Résumé 市场"}]}\n', "v1")
+        file.rendered[LIVE] = ('{"name": "Résumé 市场"}\n', "v1")
 
         entries = await backend.alist(PREFIX.rstrip("/"))
 
-        assert [(e["name"], e["writable"]) for e in entries] == [(README_FILE, False), (AUTOMATIONS_FILE, True)]
+        assert [(e["name"], e["writable"]) for e in entries] == [(README_FILE, False), (FILE_NAME, True)]
         for entry in entries:
             content, version = await backend.aread_versioned(f"{PREFIX}{entry['name']}")
             assert (entry["size"], entry["version"]) == (len(content.encode()), version)
         assert await backend.alist(FILE_PATH) is None
+
+    def test_new_files_may_be_made_in_the_folder_but_not_over_the_readme(self, backend):
+        assert backend.is_writable(PREFIX.rstrip("/"))
+        assert backend.is_writable(f"{PREFIX}any-name.json")
+        assert not backend.is_writable(README_PATH)
+        assert not backend.is_writable(f"{PREFIX}notes.txt")
 
     @pytest.mark.asyncio
     async def test_a_save_over_a_stale_version_conflicts_and_applies_nothing(self, backend, file):
@@ -411,13 +602,10 @@ class TestFileMount:
         file.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_a_save_over_the_live_version_may_delete_and_answers_with_the_report(
-        self, backend, file, conn
-    ):
-        """A program writes the whole file, so what it leaves out is deleted,
-        and the report lists every deletion. It read no Read tool's content,
-        so the plan compares its state blocks with the live rows."""
-        file.plan.return_value = _deleting(GONE)
+    async def test_a_save_over_the_live_version_answers_with_the_file_it_left(self, backend, file, conn):
+        """It read no Read tool's content, so the plan compares its state
+        with the live row."""
+        file.plan.return_value = PAUSING
 
         stored = await backend.awrite_versioned(FILE_PATH, MOVED_CONTENT, "v1")
 
@@ -437,6 +625,15 @@ class TestFileMount:
         file.fetch.assert_awaited_once_with(USER, conn)
 
     @pytest.mark.asyncio
+    async def test_a_save_that_deletes_the_file_answers_with_no_file(self, backend, file, conn):
+        file.plan.return_value = Plan(FilePlan(delete=_Delete(automation_id="id-1", name="Morning brief")))
+        file.rendered[SAVED] = None
+
+        stored = await backend.awrite_versioned(FILE_PATH, MOVED_CONTENT, "v1")
+
+        assert stored == (REPORT, None, None)
+
+    @pytest.mark.asyncio
     async def test_an_unexpected_failure_while_saving_is_a_server_error(self, backend, file, conn):
         file.commit.side_effect = RuntimeError("connection reset")
 
@@ -448,19 +645,46 @@ class TestFileMount:
         assert conn.outcome == "rolled back"
 
     @pytest.mark.asyncio
-    async def test_the_file_cannot_be_deleted_only_written_back_without_entries(self, backend, file):
-        with pytest.raises(ReadOnlyStoreError) as exc:
-            await backend.adelete_text(FILE_PATH)
+    async def test_removing_the_file_commits_its_delete_and_reports_it(self, backend, file, conn):
+        deletes = Plan(FilePlan(delete=_Delete(automation_id="id-1", name="Morning brief")))
+        file.plan_delete.return_value = deletes
 
-        assert "entries removed" in str(exc.value)
-        assert await backend.adelete_text(f"{PREFIX}notes.json") is False
-        file.plan.assert_not_called()
+        stored = await backend.adelete_versioned(FILE_PATH)
+
+        assert stored.report == REPORT
+        file.lock.assert_awaited_once_with(USER, conn)
+        file.plan_delete.assert_called_once_with(ROWS)
+        file.commit.assert_awaited_once_with(USER, deletes.changes, conn)
+        file.committed.assert_awaited_once_with(USER, deletes.changes)
+        assert conn.outcome == "committed"
+
+    @pytest.mark.asyncio
+    async def test_removing_a_missing_file_or_the_readme(self, backend, file):
+        assert await backend.adelete_versioned(f"{PREFIX}other.json") is None
+        assert await backend.adelete_versioned(f"{PREFIX}notes.txt") is None
+        with pytest.raises(ReadOnlyStoreError):
+            await backend.adelete_versioned(README_PATH)
+        file.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_rename_refiles_the_rows_where_no_file_is(self, backend, file, conn):
+        file.rename = AsyncMock(return_value="Renamed morning-brief.json to other.json")
+
+        report = await backend.arename_versioned(FILE_PATH, f"{PREFIX}other.json")
+
+        assert report == "Renamed morning-brief.json to other.json"
+        file.rename.assert_awaited_once_with(USER, "other.json", conn)
+        assert conn.outcome == "committed"
 
 
 class TestFilePanel:
     @pytest.mark.asyncio
     async def test_the_panel_loads_the_file_without_a_route_instance(self, file):
-        content = await AutomationsBackend.load(f".agents/user/automations/{AUTOMATIONS_FILE}", USER)
+        content = await AutomationsBackend.load(f".agents/user/automations/{FILE_NAME}", USER)
 
         assert content == READ_CONTENT
         file.fetch.assert_awaited_once_with(USER)
+
+    @pytest.mark.asyncio
+    async def test_a_name_no_automation_has_loads_nothing(self, file):
+        assert await AutomationsBackend.load(".agents/user/automations/other.json", USER) is None

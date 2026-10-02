@@ -6,8 +6,9 @@ the daemon tags each request with the call id of the process making it, the
 server files the outcome under that id, and the tool collects the list when
 its command returns. A process still saving after that, such as a background
 job, files under its thread's late list, which the next command in that
-thread picks up. A save whose call left no thread on file goes to the
-computer's late list, which the next command anywhere on it picks up.
+thread, or the next read of a background job's output, picks up. A save whose call left no thread on file, or whose call no
+command filed, goes to the computer's late list, which the next command
+anywhere on it picks up.
 
 Redis only: an outcome is a report, not state, and losing one to a Redis
 outage costs a line in a tool result, never a save.
@@ -34,6 +35,11 @@ _LATE_TTL_S = 86400
 # save runs for no workspace and reports to the next command on the computer.
 _FILED_TTL_S = _LATE_TTL_S
 _LATE_CAP = 50
+# Code in the sandbox can save without end under one call, and the report
+# shows ten failures with a count of the rest.
+_CALL_CAP = 200
+# A path or error can carry whatever a command named.
+_TEXT_CAP = 512
 _CALL_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 
 # Filed under the call unless it was already collected, in which case the
@@ -42,6 +48,7 @@ _CALL_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 _RECORD = """
 if redis.call('EXISTS', KEYS[2]) == 0 then
   redis.call('RPUSH', KEYS[1], ARGV[1])
+  redis.call('LTRIM', KEYS[1], -tonumber(ARGV[5]), -1)
   redis.call('EXPIRE', KEYS[1], ARGV[2])
   return 1
 end
@@ -50,6 +57,18 @@ redis.call('LTRIM', KEYS[3], -tonumber(ARGV[4]), -1)
 redis.call('EXPIRE', KEYS[3], ARGV[3])
 return 0
 """
+
+# ``_RECORD``, once per call and only for a call a command filed: a
+# throttled request is refused before it costs anything else, so an id the
+# sandbox made up must leave no keys either.
+_THROTTLED = """
+if redis.call('EXISTS', KEYS[4]) == 0 then
+  return -1
+end
+if not redis.call('SET', KEYS[5], 1, 'NX', 'EX', ARGV[2]) then
+  return -1
+end
+""" + _RECORD
 
 
 def valid_call_id(call_id: str | None) -> str | None:
@@ -108,27 +127,52 @@ async def call_context(computer_id: str, call_id: str | None) -> CallContext | N
     )
 
 
-async def _thread_of(computer_id: str, call_id: str | None) -> str | None:
+def _thread_of(context: CallContext | None) -> str | None:
     """The thread whose late list a call's later saves go to. None (no
     thread, or the filing is gone) means the computer's."""
-    context = await call_context(computer_id, call_id)
     thread_id = context.thread_id if context is not None else None
     return str(thread_id) if thread_id else None
 
 
-async def record(computer_id: str, call_id: str | None, outcome: dict[str, Any]) -> None:
+def _clipped(outcome: dict[str, Any]) -> dict[str, Any]:
+    """``outcome`` with its paths kept to their ends, which name the file,
+    and its error to its start."""
+    kept = dict(outcome)
+    for key in ("path", "from", "error"):
+        text = kept.get(key)
+        if isinstance(text, str) and len(text) > _TEXT_CAP:
+            cut = _TEXT_CAP - 3
+            kept[key] = text[:cut] + "..." if key == "error" else "..." + text[-cut:]
+    return kept
+
+
+async def record(
+    computer_id: str,
+    call_id: str | None,
+    outcome: dict[str, Any],
+    context: CallContext | None = None,
+) -> None:
+    """File one outcome for its call. ``context`` is the filing the save ran
+    for, as its caller read it: a second read could find it expired and hand
+    the report to whichever conversation runs next. None reads it here.
+
+    A call id nothing filed gets no list of its own and reports as no
+    call's: the id comes from the sandbox, whose code can make up one per
+    request."""
     client = cache.client()
     if client is None:
         return
-    payload = json.dumps(outcome)
-    out_key, done_key, late_key = _keys(
-        computer_id, call_id or "-", await _thread_of(computer_id, call_id)
-    )
+    if context is None:
+        context = await call_context(computer_id, call_id)
+    if context is None:
+        call_id = None
+    payload = json.dumps(_clipped(outcome))
+    out_key, done_key, late_key = _keys(computer_id, call_id or "-", _thread_of(context))
     try:
         if call_id:
             await client.eval(
                 _RECORD, 3, out_key, done_key, late_key,
-                payload, _CALL_TTL_S, _LATE_TTL_S, _LATE_CAP,
+                payload, _CALL_TTL_S, _LATE_TTL_S, _LATE_CAP, _CALL_CAP,
             )
             return
         async with client.pipeline(transaction=True) as pipe:
@@ -147,15 +191,21 @@ async def throttled(computer_id: str, call_id: str) -> None:
     client = cache.client()
     if client is None:
         return
+    # Read for the thread a closed call's note goes to. An id nothing filed
+    # stops here, before any write.
+    context = await call_context(computer_id, call_id)
+    if context is None:
+        return
     try:
-        first = await client.set(
-            f"{cache.tag(computer_id)}:thr:{call_id}", 1, nx=True, ex=_CALL_TTL_S
+        await client.eval(
+            _THROTTLED, 5,
+            *_keys(computer_id, call_id, _thread_of(context)),
+            _context_key(computer_id, call_id), f"{cache.tag(computer_id)}:thr:{call_id}",
+            json.dumps({"op": "throttled", "ok": False}),
+            _CALL_TTL_S, _LATE_TTL_S, _LATE_CAP, _CALL_CAP,
         )
     except Exception:
         logger.warning("livefs throttle not recorded", exc_info=True)
-        return
-    if first:
-        await record(computer_id, call_id, {"op": "throttled", "ok": False})
 
 
 def _decode(raw: list[Any], *, late: bool) -> list[dict[str, Any]]:
@@ -209,14 +259,18 @@ def _late(outcome: dict[str, Any]) -> str:
 def describe(outcomes: list[dict[str, Any]]) -> str:
     """The failed saves, by the sandbox path the agent used, for the tool
     result: a program writing through the mount learns of a refusal only at
-    close(), which most never check. Also what a save changed, when its file
-    reports that (the automations file lists what it created, updated or
-    deleted), and whether requests were refused as too many."""
-    sections = [
+    close(), which most never check. Also what a change did, when its file
+    reports that (an automation's file names what it created, updated,
+    deleted or renamed), and whether requests were refused as too many."""
+    reports = [
         ("From an earlier command: " if o.get("late") else "") + str(o["report"])
         for o in outcomes
         if o.get("ok") and o.get("report")
-    ][-_REPORT_CAP:]
+    ]
+    sections = reports[-_REPORT_CAP:]
+    if len(reports) > _REPORT_CAP:
+        earlier = len(reports) - _REPORT_CAP
+        sections.insert(0, f"{earlier} earlier changes are not listed; these are the last {_REPORT_CAP}.")
     throttled = [o for o in outcomes if o.get("op") == "throttled"]
     failed = [o for o in outcomes if not o.get("ok") and o.get("op") != "throttled"]
     if throttled:

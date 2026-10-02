@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -187,7 +188,7 @@ def install_libfuse(paths: Paths) -> None:
             "sh",
             "-c",
             f"apt-get {_APT_LOCK_WAIT} update -qq && DEBIAN_FRONTEND=noninteractive"
-            f" apt-get {_APT_LOCK_WAIT} install -y -qq --no-install-recommends fuse3",
+            f" apt-get {_APT_LOCK_WAIT} install -y -qq --no-install-recommends {LIBFUSE}",
         ],
         stdin=subprocess.DEVNULL,
         stdout=log,
@@ -220,38 +221,31 @@ def read_state(paths: Paths) -> dict:
 
 
 def _write_private(path: str, data: bytes) -> None:
-    tmp = f"{path}.tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(data)
-    os.replace(tmp, path)
+    # A name of its own: two writers sharing one would replace each other's.
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=os.path.basename(path))
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def write_state(paths: Paths, state: dict) -> None:
     _write_private(paths.state, json.dumps(state).encode())
 
 
-def install_config(stage: str, paths: Paths) -> str | None:
-    """Take the token the host staged into the sandbox, leaving no copy
-    behind. Read without following a link, so a path planted in its place
-    names no other file."""
-    try:
-        fd = os.open(stage, os.O_RDONLY | os.O_NOFOLLOW)
-    except OSError as exc:
-        return f"staged config unreadable: {exc.strerror}"
-    try:
-        with os.fdopen(fd, "rb") as f:
-            data = f.read(1 << 16)
-    finally:
-        with contextlib.suppress(OSError):
-            os.unlink(stage)
+def install_config(data: str, paths: Paths) -> str | None:
+    """Keep the token the host sent where only root can read it."""
     try:
         config = json.loads(data)
         if not (isinstance(config, dict) and config.get("base_url") and config.get("token")):
             raise ValueError
     except ValueError:
-        return "staged config is not a mount config"
-    _write_private(paths.config, data)
+        return "sent config is not a mount config"
+    _write_private(paths.config, data.encode())
     return None
 
 

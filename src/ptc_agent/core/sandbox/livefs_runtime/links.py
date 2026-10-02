@@ -6,31 +6,17 @@ import contextlib
 import os
 
 
-def swap_link(value: str, path: str, owner: os.stat_result | None = None) -> None:
+def swap_link(value: str, path: str) -> None:
     """Make ``path`` a symlink to ``value`` in one step."""
     tmp = f"{path}.livefs.tmp"
     with contextlib.suppress(FileNotFoundError):
         os.unlink(tmp)
     os.symlink(value, tmp)
     try:
-        if owner is not None:
-            os.lchown(tmp, owner.st_uid, owner.st_gid)
         os.replace(tmp, path)
     except OSError:
         os.unlink(tmp)
         raise
-
-
-def _makedirs(path: str, owner: os.stat_result) -> None:
-    """Create what is missing of ``path``, owned like the root, since the
-    sandbox's own user writes beside the link."""
-    missing = []
-    while not os.path.isdir(path):
-        missing.append(path)
-        path = os.path.dirname(path)
-    for directory in reversed(missing):
-        os.mkdir(directory)
-        os.chown(directory, owner.st_uid, owner.st_gid)
 
 
 def _set_aside(target: str) -> str:
@@ -43,9 +29,9 @@ def _set_aside(target: str) -> str:
     return aside
 
 
-def link(value: str, target: str, owner: os.stat_result) -> str | None:
+def link(value: str, target: str) -> str | None:
     """Point ``target`` at ``value``; returns where anything already there
-    went."""
+    went. Made with the caller's rights, as whoever owns the folders."""
     aside = None
     if os.path.islink(target):
         if os.readlink(target) == value:
@@ -58,8 +44,8 @@ def link(value: str, target: str, owner: os.stat_result) -> str | None:
     elif os.path.lexists(target):
         aside = _set_aside(target)
     else:
-        _makedirs(os.path.dirname(target), owner)
-    swap_link(value, target, owner)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+    swap_link(value, target)
     return aside
 
 

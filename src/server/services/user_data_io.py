@@ -23,7 +23,7 @@ from uuid import UUID, uuid4
 
 from psycopg.types.json import Json
 
-from ptc_agent.agent.backends.db_json_route import UserDataValidationError
+from ptc_agent.agent.backends.db_json_route import UnreadableJsonError, UserDataValidationError, load_json
 from src.server.database import portfolio as portfolio_db
 from src.server.database import user as user_db
 from src.server.database import watchlist as watchlist_db
@@ -63,7 +63,7 @@ def serialize_json(payload: dict[str, Any]) -> str:
 def parse_json(content: str, file: str) -> dict[str, Any]:
     """Parse agent-written JSON. Raises UserDataValidationError on parse failure."""
     try:
-        return json.loads(content)
+        return load_json(content)
     except json.JSONDecodeError as e:
         raise UserDataValidationError(
             error_type="parse_error",
@@ -71,6 +71,8 @@ def parse_json(content: str, file: str) -> dict[str, Any]:
             field_path=f"line {e.lineno} col {e.colno}",
             hint=f"invalid JSON: {e.msg}. Re-read the file and write a syntactically valid JSON object.",
         ) from None
+    except UnreadableJsonError as e:
+        raise UserDataValidationError(error_type="parse_error", file=file, field_path="", hint=f"invalid JSON: {e}") from None
 
 
 def _coerce_decimal(value: Any, file: str, field_path: str) -> Decimal:

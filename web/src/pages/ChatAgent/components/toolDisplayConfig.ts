@@ -402,9 +402,10 @@ export function getCompletedSummary(toolName: string, toolCall: ToolCall | undef
       return info.key || null;
     }
     if (info.kind === 'user-data') {
-      // Row title already says "Read portfolio" / "Updated automations", so
-      // no extra pill (it would duplicate the entity name).
-      return null;
+      // A profile row's title already names its file ("Read portfolio").
+      // Automations are one file each, so the pill says which one.
+      if (info.entity !== 'automations') return null;
+      return info.rawPath.split('/').pop()?.replace(/\.json$/, '') || null;
     }
   }
   // Annotation steps: headline reads "NVDA · 1D" — the chart instance the draw
@@ -530,8 +531,8 @@ export type ToolCategory =
                   // generic "read N memos" framing.)
   | 'profileRead'   // Read on .agents/user/profile/{portfolio,watchlist,preference}.json
   | 'profileWrite'  // Write/Edit on the same paths
-  | 'automationsRead'   // Read on .agents/user/automations/automations.json
-  | 'automationsWrite'  // Write/Edit on the same path
+  | 'automationsRead'   // Read on an automation's file in .agents/user/automations/
+  | 'automationsWrite'  // Write/Edit on the same paths
   | 'code'
   | 'web'
   | 'search'      // Glob, Grep

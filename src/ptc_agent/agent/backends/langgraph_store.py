@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import fnmatch
 import re
 import weakref
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -53,11 +54,18 @@ class ReadOnlyStoreError(PermissionError):
 # Shared across backend instances targeting the same namespace so concurrent
 # turns within one process cannot lose updates. WeakValueDictionary auto-prunes
 # entries once no caller holds the lock, so the registry never leaks across
-# long-running processes. Cross-process safety still needs store-level CAS on
-# ``modified_at``.
+# long-running processes. Other processes are ordered by the database lock
+# ``namespace_write_lock`` takes after this one.
 _WRITE_LOCKS: weakref.WeakValueDictionary[tuple[str, ...], asyncio.Lock] = (
     weakref.WeakValueDictionary()
 )
+
+# Salted so these keys cannot collide with the app's other advisory locks.
+_WRITE_LOCK_KEY_PREFIX = "store-write:"
+
+# A holder keeps the lock for one read and one write of the store, each bounded
+# by _STORE_OP_TIMEOUT_S, so a wait past this means the holder is stuck.
+_WRITE_LOCK_WAIT = "5s"
 
 
 def lock_for_namespace(namespace: tuple[str, ...]) -> asyncio.Lock:
@@ -74,8 +82,40 @@ def lock_for_namespace(namespace: tuple[str, ...]) -> asyncio.Lock:
     return lock
 
 
-# Module-private alias kept so internal call sites don't need updating.
-_lock_for_namespace = lock_for_namespace
+@contextlib.asynccontextmanager
+async def namespace_write_lock(
+    store: BaseStore, namespace: tuple[str, ...]
+) -> AsyncIterator[None]:
+    """Hold ``namespace`` against every other writer of it, in any worker.
+
+    A Postgres store is shared by every server worker, so this also takes an
+    advisory lock on the app database, held until the write inside has
+    committed. A wait past the limit raises ``TimeoutError``, as a stuck store
+    does, so a writer answers the two alike.
+    """
+    from langgraph.store.postgres import AsyncPostgresStore
+
+    async with lock_for_namespace(namespace):
+        if not isinstance(store, AsyncPostgresStore):
+            yield
+            return
+        from psycopg.errors import LockNotAvailable
+
+        from src.server.database.pool import get_db_connection
+
+        # After the in-process lock, so a worker queues at most one connection
+        # per namespace here, and on the app pool: a waiter on the store's own
+        # pool would hold a connection the holder's reads and writes need.
+        async with get_db_connection() as conn, conn.transaction():
+            try:
+                await conn.execute(f"SET LOCAL lock_timeout = '{_WRITE_LOCK_WAIT}'")
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (_WRITE_LOCK_KEY_PREFIX + "/".join(namespace),),
+                )
+            except LockNotAvailable as exc:
+                raise TimeoutError(f"store namespace {namespace} stayed locked") from exc
+            yield
 
 
 def validate_store_key(key: str) -> None:
@@ -253,7 +293,21 @@ class StoreBackend:
         end = start + max(0, limit)
         return "".join(lines[start:end])
 
-    async def awrite_text(self, file_path: str, content: str) -> bool:
+    async def awrite_text(
+        self,
+        file_path: str,
+        content: str,
+        *,
+        check: Callable[[str | None], None] | None = None,
+        base_content: str | None = None,
+    ) -> bool:
+        """Store ``content``; False when the store did not answer in time.
+
+        ``check`` is given what the file holds just before this write replaces
+        it, under the namespace lock, and refuses the write by raising, so no
+        other writer lands between a caller's precondition and its write. With
+        no row the file holds ``base_content``: an overlay tier's shipped file.
+        """
         if self._read_only:
             logger.debug("write rejected on read-only tier", path=file_path)
             raise ReadOnlyStoreError(self._read_only_error)
@@ -266,39 +320,48 @@ class StoreBackend:
                 "detail files or shorten the entry."
             )
         namespace = self._namespace()
-        lock = _lock_for_namespace(namespace)
-        async with lock:
-            try:
-                existing_item = await asyncio.wait_for(
-                    self._store.aget(namespace, key),
-                    timeout=_STORE_OP_TIMEOUT_S,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "store aget timed out",
-                    path=file_path,
-                    timeout_s=_STORE_OP_TIMEOUT_S,
-                )
-                return False
-            existing_value = existing_item.value if existing_item else None
-            value = self._build_value(content=content, existing=existing_value)
-            try:
-                await asyncio.wait_for(
-                    self._store.aput(namespace, key, value),
-                    timeout=_STORE_OP_TIMEOUT_S,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "store aput timed out",
-                    path=file_path,
-                    timeout_s=_STORE_OP_TIMEOUT_S,
-                )
-                return False
-            except Exception:
-                logger.exception("store awrite_text failed", path=file_path)
-                return False
-            if self._cache is not None:
-                self._cache.invalidate(namespace, key)
+        try:
+            async with namespace_write_lock(self._store, namespace):
+                try:
+                    existing_item = await asyncio.wait_for(
+                        self._store.aget(namespace, key),
+                        timeout=_STORE_OP_TIMEOUT_S,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "store aget timed out",
+                        path=file_path,
+                        timeout_s=_STORE_OP_TIMEOUT_S,
+                    )
+                    return False
+                existing_value = existing_item.value if existing_item else None
+                if check is not None:
+                    check(
+                        self._content_from_value(existing_value)
+                        if existing_item
+                        else base_content
+                    )
+                value = self._build_value(content=content, existing=existing_value)
+                try:
+                    await asyncio.wait_for(
+                        self._store.aput(namespace, key, value),
+                        timeout=_STORE_OP_TIMEOUT_S,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "store aput timed out",
+                        path=file_path,
+                        timeout_s=_STORE_OP_TIMEOUT_S,
+                    )
+                    return False
+                except Exception:
+                    logger.exception("store awrite_text failed", path=file_path)
+                    return False
+                if self._cache is not None:
+                    self._cache.invalidate(namespace, key)
+        except TimeoutError:
+            logger.warning("store write lock timed out", path=file_path)
+            return False
         return True
 
     async def aedit_text(
@@ -332,85 +395,91 @@ class StoreBackend:
                 "error": "old_string and new_string are identical",
             }
         namespace = self._namespace()
-        lock = _lock_for_namespace(namespace)
-        async with lock:
-            try:
-                item = await asyncio.wait_for(
-                    self._store.aget(namespace, key),
-                    timeout=_STORE_OP_TIMEOUT_S,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "store aget timed out",
-                    path=file_path,
-                    timeout_s=_STORE_OP_TIMEOUT_S,
-                )
-                return {
-                    "success": False,
-                    "error": "Long-term store timed out. Retry shortly.",
-                }
-            if item is None:
-                if base_content is None:
-                    return {"success": False, "error": f"File not found: {file_path}"}
-                content: str | None = base_content
-            else:
-                content = self._content_from_value(item.value)
-            if content is None:
-                return {
-                    "success": False,
-                    "error": "Malformed store value (missing content)",
-                }
+        try:
+            async with namespace_write_lock(self._store, namespace):
+                try:
+                    item = await asyncio.wait_for(
+                        self._store.aget(namespace, key),
+                        timeout=_STORE_OP_TIMEOUT_S,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "store aget timed out",
+                        path=file_path,
+                        timeout_s=_STORE_OP_TIMEOUT_S,
+                    )
+                    return {
+                        "success": False,
+                        "error": "Long-term store timed out. Retry shortly.",
+                    }
+                if item is None:
+                    if base_content is None:
+                        return {"success": False, "error": f"File not found: {file_path}"}
+                    content: str | None = base_content
+                else:
+                    content = self._content_from_value(item.value)
+                if content is None:
+                    return {
+                        "success": False,
+                        "error": "Malformed store value (missing content)",
+                    }
 
-            occurrences = content.count(old_string)
-            if occurrences == 0:
-                return {"success": False, "error": f"String not found: {old_string!r}"}
-            if occurrences > 1 and not replace_all:
-                return {
-                    "success": False,
-                    "error": (
-                        f"String appears {occurrences} times. Provide more context or "
-                        "set replace_all=True."
-                    ),
-                }
+                occurrences = content.count(old_string)
+                if occurrences == 0:
+                    return {"success": False, "error": f"String not found: {old_string!r}"}
+                if occurrences > 1 and not replace_all:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"String appears {occurrences} times. Provide more context or "
+                            "set replace_all=True."
+                        ),
+                    }
 
-            if replace_all:
-                new_content = content.replace(old_string, new_string)
-            else:
-                new_content = content.replace(old_string, new_string, 1)
+                if replace_all:
+                    new_content = content.replace(old_string, new_string)
+                else:
+                    new_content = content.replace(old_string, new_string, 1)
 
-            cap = min(max_bytes or MAX_CONTENT_BYTES, MAX_CONTENT_BYTES)
-            if len(new_content.encode("utf-8")) > cap:
-                return {
-                    "success": False,
-                    "error": (
-                        f"Edit would grow content past {cap} bytes; "
-                        "split the file or shorten the replacement."
-                    ),
-                }
+                cap = min(max_bytes or MAX_CONTENT_BYTES, MAX_CONTENT_BYTES)
+                if len(new_content.encode("utf-8")) > cap:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Edit would grow content past {cap} bytes; "
+                            "split the file or shorten the replacement."
+                        ),
+                    }
 
-            value = self._build_value(
-                content=new_content, existing=item.value if item else None
-            )
-            try:
-                await asyncio.wait_for(
-                    self._store.aput(namespace, key, value),
-                    timeout=_STORE_OP_TIMEOUT_S,
+                value = self._build_value(
+                    content=new_content, existing=item.value if item else None
                 )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "store aput timed out",
-                    path=file_path,
-                    timeout_s=_STORE_OP_TIMEOUT_S,
-                )
-                return {
-                    "success": False,
-                    "error": "Long-term store timed out. Retry shortly.",
-                }
-            except Exception as exc:
-                logger.exception("store aedit_text failed", path=file_path)
-                return {"success": False, "error": str(exc)}
-            if self._cache is not None:
-                self._cache.invalidate(namespace, key)
+                try:
+                    await asyncio.wait_for(
+                        self._store.aput(namespace, key, value),
+                        timeout=_STORE_OP_TIMEOUT_S,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "store aput timed out",
+                        path=file_path,
+                        timeout_s=_STORE_OP_TIMEOUT_S,
+                    )
+                    return {
+                        "success": False,
+                        "error": "Long-term store timed out. Retry shortly.",
+                    }
+                except Exception as exc:
+                    logger.exception("store aedit_text failed", path=file_path)
+                    return {"success": False, "error": str(exc)}
+                if self._cache is not None:
+                    self._cache.invalidate(namespace, key)
+        except TimeoutError:
+            logger.warning("store write lock timed out", path=file_path)
+            return {
+                "success": False,
+                "error": "Long-term store timed out. Retry shortly.",
+            }
 
         return {
             "success": True,
@@ -490,16 +559,24 @@ class StoreBackend:
     def _absolute(self, key: str) -> str:
         return f"{self._root_prefix}{key}"
 
-    async def adelete_text(self, file_path: str) -> bool:
-        """Delete a stored file; False when there was none. Raises on timeout."""
+    async def adelete_text(
+        self, file_path: str, *, check: Callable[[str | None], None] | None = None
+    ) -> bool:
+        """Delete a stored file; False when there was none. Raises on timeout.
+
+        ``check`` refuses the delete as ``awrite_text``'s refuses a write, on
+        what the file holds under the namespace lock (None for no file).
+        """
         if self._read_only:
             raise ReadOnlyStoreError(self._read_only_error)
         key = self._path_to_key(file_path)
         namespace = self._namespace()
-        async with _lock_for_namespace(namespace):
+        async with namespace_write_lock(self._store, namespace):
             item = await asyncio.wait_for(
                 self._store.aget(namespace, key), timeout=_STORE_OP_TIMEOUT_S
             )
+            if check is not None:
+                check(self._content_from_value(item.value) if item else None)
             if item is None:
                 return False
             await asyncio.wait_for(

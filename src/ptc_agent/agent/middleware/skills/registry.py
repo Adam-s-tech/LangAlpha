@@ -208,7 +208,7 @@ SKILL_REGISTRY: dict[str, SkillDefinition] = {
         description="Create and manage scheduled and price-triggered automations.",
         tools=AUTOMATION_TOOLS,
         skill_md_path="skills/automation/SKILL.md",
-        # Flash-only: PTC edits .agents/user/automations/automations.json
+        # Flash-only: PTC edits the files in .agents/user/automations/
         # through the AutomationsBackend filesystem surface. Flash has no
         # filesystem, so it keeps the tools. Same split as user-profile.
         exposure="flash",

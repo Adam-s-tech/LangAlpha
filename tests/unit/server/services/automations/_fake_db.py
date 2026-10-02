@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from psycopg.errors import UniqueViolation
+
 from src.server.database import automation as automation_db
 
 # What update_automation's query builder sets: a None is written only to a
@@ -85,7 +87,7 @@ class FakeAutomationsDb:
         self.conn = FakeConn(self)
         self.depth = 0
         self.sql: list[str] = []
-        # The connection each list_all_automations ran on, None outside a save.
+        # The connection each read of rows ran on, None outside a save.
         self.reads: list[Any] = []
         self.writes: list[Write] = []
         # Runs once the save holds the lock, as a write that committed while
@@ -103,7 +105,16 @@ class FakeAutomationsDb:
             self.rows[str(stored["automation_id"])] = stored
 
     def list(self) -> list[dict[str, Any]]:
-        return [copy.deepcopy(r) for r in self.rows.values() if r["user_id"] == self.user_id]
+        mine = [r for r in self.rows.values() if r["user_id"] == self.user_id]
+        return [copy.deepcopy(r) for r in sorted(mine, key=lambda r: r["file_name"])]
+
+    def _filed(self, user_id: str, file_name: str) -> dict[str, Any] | None:
+        return next(
+            (r for r in self.rows.values() if r["user_id"] == user_id and r["file_name"] == file_name), None
+        )
+
+    def _taken(self, user_id: str, file_name: str) -> UniqueViolation:
+        return UniqueViolation(f"duplicate key value: ({user_id}, {file_name}) already exists")
 
     def _owned(self, automation_id: str, user_id: str) -> dict[str, Any] | None:
         row = self.rows.get(str(automation_id))
@@ -112,14 +123,32 @@ class FakeAutomationsDb:
     def _journal(self, op: str, automation_id: str, conn: Any) -> None:
         self.writes.append(Write(op, str(automation_id), self.depth, conn is self.conn))
 
-    async def list_all_automations(
-        self, user_id: str, *, conn: Any = None, lock: bool = False
-    ) -> list[dict[str, Any]]:
+    async def list_all_automations(self, user_id: str, *, conn: Any = None) -> list[dict[str, Any]]:
+        self.reads.append(conn)
+        return self.list()
+
+    async def list_automation_file_names(self, user_id: str) -> list[str]:
+        return [r["file_name"] for r in self.list()]
+
+    async def get_automation_file(
+        self, user_id: str, file_name: str, *, conn: Any = None, lock: bool = False
+    ) -> dict[str, Any] | None:
         self.reads.append(conn)
         if lock:
             self.sql.append("SELECT automations FOR UPDATE OF automations")
             self.on_row_lock()
-        return self.list()
+        row = self._filed(user_id, file_name)
+        return copy.deepcopy(row) if row else None
+
+    async def rename_automation_file(self, automation_id: str, user_id: str, file_name: str, *, conn: Any) -> bool:
+        self._journal("rename", automation_id, conn)
+        row = self._owned(automation_id, user_id)
+        if row is None:
+            return False
+        if self._filed(user_id, file_name) is not None:
+            raise self._taken(user_id, file_name)
+        row["file_name"] = file_name
+        return True
 
     async def get_user_timezone(self, user_id: str) -> str | None:
         return self.user_timezone
@@ -153,14 +182,25 @@ class FakeAutomationsDb:
         max_failures: int = 3,
         delivery_config: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
+        file_name: str | None = None,
         conn: Any = None,
     ) -> dict[str, Any]:
+        # Derived as the database module derives it, from the names taken.
+        if file_name is None:
+            stem = automation_db.file_name_stem(name)
+            file_name, n = f"{stem}.json", 1
+            while self._filed(user_id, file_name) is not None:
+                n += 1
+                file_name = f"{stem}-{n}.json"
+        elif self._filed(user_id, file_name) is not None:
+            raise self._taken(user_id, file_name)
         automation_id = next(self._new_ids)
         self._journal("create", automation_id, conn)
         row = {
             "automation_id": UUID(automation_id),
             "user_id": user_id,
             "name": name,
+            "file_name": file_name,
             "description": description,
             "status": "active",
             "trigger_type": trigger_type,
@@ -207,6 +247,3 @@ class FakeAutomationsDb:
             return False
         del self.rows[str(automation_id)]
         return True
-
-    async def delete_automations(self, automation_ids: list[str], user_id: str, *, conn: Any) -> int:
-        return sum([await self.delete_automation(i, user_id, conn=conn) for i in automation_ids])

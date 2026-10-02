@@ -1,15 +1,19 @@
 """
-Database utility functions for automation management.
+Database functions for automations: creating, reading, updating and
+deleting the rows, and the scheduler's claims on them.
 
-Provides functions for creating, retrieving, updating, and deleting
-automations and automation executions in PostgreSQL.
+Run history lives in ``automation_executions``. The execution columns and
+status filters stay here because every automation read carries its newest run.
 """
 
 import logging
+import re
+import unicodedata
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
@@ -25,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 AUTOMATION_COLUMNS = """
-    automation_id, user_id, name, description,
+    automation_id, user_id, name, file_name, description,
     trigger_type, cron_expression, timezone, trigger_config,
     next_run_at, last_run_at,
     agent_mode, instruction, workspace_id, llm_model, additional_context,
@@ -46,10 +50,10 @@ EXECUTION_COLUMNS = """
     e.result_excerpt AS excerpt
 """
 
-_UNSETTLED = "('pending', 'waiting', 'running')"
+UNSETTLED_STATUSES = "('pending', 'waiting', 'running')"
 
 
-def _not_a_server_skip(alias: str) -> str:
+def not_a_server_skip(alias: str) -> str:
     """A firing that stands for its automation's last run: anything but one
     the server skipped because the thread stayed busy or it stopped."""
     return (
@@ -79,13 +83,13 @@ def _last_execution_join(outer: str) -> str:
                     (SELECT u.automation_execution_id
                      FROM automation_executions u
                      WHERE u.automation_id = {outer}.automation_id
-                       AND u.status IN {_UNSETTLED}
+                       AND u.status IN {UNSETTLED_STATUSES}
                      ORDER BY u.created_at DESC, u.automation_execution_id DESC
                      LIMIT 1),
                     (SELECT c.automation_execution_id
                      FROM automation_executions c
                      WHERE c.automation_id = {outer}.automation_id
-                       AND {_not_a_server_skip("c")}
+                       AND {not_a_server_skip("c")}
                      ORDER BY c.created_at DESC, c.automation_execution_id DESC
                      LIMIT 1),
                     (SELECT n.automation_execution_id
@@ -99,12 +103,45 @@ def _last_execution_join(outer: str) -> str:
     """
 
 
+# How many times a create picks a file name again after another create took
+# the one it picked.
+_FILE_NAME_ATTEMPTS = 5
+
+
+def file_name_stem(name: str) -> str:
+    """The file name an automation called ``name`` gets when nobody picks
+    one, before ``.json`` and any ``-2`` that keeps it apart from another of
+    the user's. Migration 058 named existing rows by the same rule, in SQL."""
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    stem = re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-")
+    return stem[:48].strip("-") or "automation"
+
+
+async def _free_file_name(user_id: str, name: str, conn) -> str:
+    stem = file_name_stem(name)
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            SELECT file_name FROM automations
+            WHERE user_id = %s AND (file_name = %s OR file_name LIKE %s)
+            """,
+            (user_id, f"{stem}.json", f"{stem}-%.json"),
+        )
+        taken = {row[0] for row in await cur.fetchall()}
+    candidate, n = f"{stem}.json", 1
+    while candidate in taken:
+        n += 1
+        candidate = f"{stem}-{n}.json"
+    return candidate
+
+
 async def create_automation(
     user_id: str,
     name: str,
     trigger_type: str,
     instruction: str,
     *,
+    file_name: Optional[str] = None,
     description: Optional[str] = None,
     cron_expression: Optional[str] = None,
     timezone: str = "UTC",
@@ -121,52 +158,81 @@ async def create_automation(
     metadata: Optional[Dict[str, Any]] = None,
     conn=None,
 ) -> Dict[str, Any]:
-    """Create a new automation."""
+    """Create a new automation.
+
+    Without a ``file_name`` it gets the first free one derived from ``name``.
+    A create elsewhere can take that name between the read and the insert,
+    so a clash reads the names again; a ``file_name`` the caller picked is
+    its own, and a clash on it raises ``UniqueViolation``.
+    """
     automation_id = str(uuid4())
 
+    clashes = 0
     async with get_db_connection(conn) as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(f"""
-                INSERT INTO automations (
-                    automation_id, user_id, name, description,
-                    trigger_type, cron_expression, timezone, trigger_config,
-                    next_run_at,
-                    agent_mode, instruction, workspace_id, llm_model, additional_context,
-                    thread_strategy, conversation_thread_id,
-                    status, max_failures, failure_count,
-                    delivery_config, metadata,
-                    created_at, updated_at
-                )
-                VALUES (
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s,
-                    %s, %s, %s, %s, %s,
-                    %s, %s,
-                    'active', %s, 0,
-                    %s, %s,
-                    NOW(), NOW()
-                )
-                RETURNING {AUTOMATION_COLUMNS}
-            """, (
-                automation_id, user_id, name, description,
-                trigger_type, cron_expression, timezone,
-                Json(trigger_config or {}),
-                next_run_at,
-                agent_mode, instruction, workspace_id, llm_model,
-                Json(additional_context) if additional_context else None,
-                thread_strategy, conversation_thread_id,
-                max_failures,
-                Json(delivery_config or {}),
-                Json(metadata or {}),
-            ))
-
-            result = await cur.fetchone()
+        while True:
+            chosen = file_name or await _free_file_name(user_id, name, conn)
+            try:
+                # A savepoint inside a caller's transaction, so a clash
+                # leaves it usable for the next attempt.
+                async with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(f"""
+                        INSERT INTO automations (
+                            automation_id, user_id, name, file_name, description,
+                            trigger_type, cron_expression, timezone, trigger_config,
+                            next_run_at,
+                            agent_mode, instruction, workspace_id, llm_model, additional_context,
+                            thread_strategy, conversation_thread_id,
+                            status, max_failures, failure_count,
+                            delivery_config, metadata,
+                            created_at, updated_at
+                        )
+                        VALUES (
+                            %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s,
+                            %s,
+                            %s, %s, %s, %s, %s,
+                            %s, %s,
+                            'active', %s, 0,
+                            %s, %s,
+                            NOW(), NOW()
+                        )
+                        RETURNING {AUTOMATION_COLUMNS}
+                    """, (
+                        automation_id, user_id, name, chosen, description,
+                        trigger_type, cron_expression, timezone,
+                        Json(trigger_config or {}),
+                        next_run_at,
+                        agent_mode, instruction, workspace_id, llm_model,
+                        Json(additional_context) if additional_context else None,
+                        thread_strategy, conversation_thread_id,
+                        max_failures,
+                        Json(delivery_config or {}),
+                        Json(metadata or {}),
+                    ))
+                    result = await cur.fetchone()
+            except UniqueViolation:
+                clashes += 1
+                if file_name is not None or clashes == _FILE_NAME_ATTEMPTS:
+                    raise
+                continue
             logger.info(
                 f"[automation_db] create_automation user_id={user_id} "
                 f"name={name} trigger_type={trigger_type}"
             )
             return dict(result)
+
+
+# Whether the pinned thread is one a run of this automation created, which is
+# how a persistent thread is told from a pinned conversation once the first
+# run has pinned it (``models.automation.in_own_thread``).
+_OWNS_THREAD = """
+    EXISTS (
+        SELECT 1 FROM conversation_threads t
+        WHERE t.conversation_thread_id = automations.conversation_thread_id
+          AND t.metadata->'origin'->>'type' = 'automation'
+          AND t.metadata->'origin'->>'id' = automations.automation_id::text
+    ) AS owns_thread
+"""
 
 
 async def get_automation(
@@ -175,11 +241,12 @@ async def get_automation(
     *,
     conn=None,
 ) -> Optional[Dict[str, Any]]:
-    """Get a single automation by ID, verifying ownership."""
+    """Get a single automation by ID, verifying ownership, with its newest
+    run and ``owns_thread``."""
     async with get_db_connection(conn) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(f"""
-                SELECT {AUTOMATION_COLUMNS}, le.last_execution
+                SELECT {AUTOMATION_COLUMNS}, le.last_execution, {_OWNS_THREAD}
                 FROM automations
                 {_last_execution_join("automations")}
                 WHERE automation_id = %s AND user_id = %s
@@ -234,29 +301,9 @@ async def list_automations(
             return [dict(row) for row in results], total
 
 
-# Whether the pinned thread is one a run of this automation created, which is
-# how the automations file tells a persistent thread from a pinned
-# conversation once the first run has pinned it.
-_OWNS_THREAD = """
-    EXISTS (
-        SELECT 1 FROM conversation_threads t
-        WHERE t.conversation_thread_id = automations.conversation_thread_id
-          AND t.metadata->'origin'->>'type' = 'automation'
-          AND t.metadata->'origin'->>'id' = automations.automation_id::text
-    ) AS owns_thread
-"""
-
-
-async def list_all_automations(
-    user_id: str, *, conn=None, lock: bool = False
-) -> List[Dict[str, Any]]:
-    """Every automation of the user, oldest first, each with its newest run
-    and ``owns_thread``. ``lock`` holds the rows for the rest of ``conn``'s
-    transaction.
-
-    Unpaged and in creation order because the agent's automations file is the
-    whole set, and a new entry appended at the end should stay at the end.
-    """
+async def list_all_automations(user_id: str, *, conn=None) -> List[Dict[str, Any]]:
+    """Every automation of the user, each with its newest run and
+    ``owns_thread``: the automations folder, one file per row."""
     async with get_db_connection(conn) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(f"""
@@ -264,10 +311,54 @@ async def list_all_automations(
                 FROM automations
                 {_last_execution_join("automations")}
                 WHERE user_id = %s
-                ORDER BY created_at, automation_id
-                {"FOR UPDATE OF automations" if lock else ""}
+                ORDER BY file_name
             """, (user_id,))
             return [dict(row) for row in await cur.fetchall()]
+
+
+async def get_automation_file(
+    user_id: str, file_name: str, *, conn=None, lock: bool = False
+) -> Optional[Dict[str, Any]]:
+    """The automation filed as ``file_name``, as ``list_all_automations``
+    reads each. ``lock`` holds the row for the rest of ``conn``'s
+    transaction."""
+    async with get_db_connection(conn) as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(f"""
+                SELECT {AUTOMATION_COLUMNS}, le.last_execution, {_OWNS_THREAD}
+                FROM automations
+                {_last_execution_join("automations")}
+                WHERE user_id = %s AND file_name = %s
+                {"FOR UPDATE OF automations" if lock else ""}
+            """, (user_id, file_name))
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def list_automation_file_names(user_id: str) -> List[str]:
+    async with get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT file_name FROM automations WHERE user_id = %s ORDER BY file_name",
+                (user_id,),
+            )
+            return [row[0] for row in await cur.fetchall()]
+
+
+async def rename_automation_file(
+    automation_id: str, user_id: str, file_name: str, *, conn
+) -> bool:
+    """File the automation under another name; nothing else about it
+    changes. Raises ``UniqueViolation`` when the user has one there."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            UPDATE automations SET file_name = %s, updated_at = NOW()
+            WHERE automation_id = %s AND user_id = %s
+            """,
+            (file_name, automation_id, user_id),
+        )
+        return cur.rowcount > 0
 
 
 async def get_user_timezone(user_id: str) -> Optional[str]:
@@ -284,12 +375,13 @@ _FILE_LOCK_KEY_PREFIX = "automations:file:"
 
 
 async def lock_user_automations(user_id: str, *, conn) -> None:
-    """Serialize the writers of the user's automations file for the rest of
-    ``conn``'s transaction, even when the user has no rows to lock.
+    """Serialize the writers of the user's automation files for the rest of
+    ``conn``'s transaction, even where there is no row to lock: a create, or
+    a rename onto a free name.
 
-    The rows themselves are locked only by a save that changes them
-    (``list_all_automations(lock=True)``), which holds off REST edits
-    until it commits: a save that changes nothing leaves them alone.
+    The row itself is locked only by a save that changes it
+    (``get_automation_file(lock=True)``), which holds off REST edits
+    until it commits: a save that changes nothing leaves it alone.
     """
     async with conn.cursor() as cur:
         await cur.execute(
@@ -383,22 +475,6 @@ async def delete_automation(
             if deleted:
                 logger.info(f"[automation_db] delete_automation automation_id={automation_id}")
             return deleted
-
-
-async def delete_automations(
-    automation_ids: Sequence[str], user_id: str, *, conn
-) -> int:
-    """Delete the user's automations among ``automation_ids`` in one
-    statement (executions cascade); how many there were."""
-    async with conn.cursor() as cur:
-        await cur.execute("""
-            DELETE FROM automations
-            WHERE user_id = %s AND automation_id = ANY(%s::uuid[])
-        """, (user_id, list(automation_ids)))
-        logger.info(
-            f"[automation_db] delete_automations user_id={user_id} count={cur.rowcount}"
-        )
-        return cur.rowcount
 
 
 # =============================================================================

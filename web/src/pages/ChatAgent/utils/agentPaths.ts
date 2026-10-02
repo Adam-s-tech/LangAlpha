@@ -2,6 +2,8 @@
 // agentPaths.generated.ts. Re-exported here so callers keep one import.
 import {
   AGENT_MD_FILE,
+  AUTOMATION_FILE_NAME,
+  AUTOMATIONS_DIR,
   CASEFOLD_EXCEPTIONS,
   MEMO_INDEX_FILENAME,
   MEMO_USER_DIR,
@@ -10,6 +12,7 @@ import {
   MEMORY_WORKSPACE_DIR,
   SANDBOX_ROOT_PREFIXES,
   SKILLS_DIR,
+  USER_DATA_DIRS,
   USER_DATA_FILES,
 } from './agentPaths.generated';
 
@@ -27,8 +30,9 @@ export {
 type UserDataFileName = (typeof USER_DATA_FILES)[keyof typeof USER_DATA_FILES][number];
 type WithoutJson<F> = F extends `${infer Name}.json` ? Name : never;
 
-/** Which DB-backed user file a path names: its file name without `.json`. */
-export type UserDataEntity = WithoutJson<UserDataFileName>;
+/** Which DB-backed user file a path names: a profile file's name without
+ *  `.json`, or `automations` for any automation's file. */
+export type UserDataEntity = WithoutJson<UserDataFileName> | 'automations';
 
 const USER_DATA_ENTITY_BY_PATH: ReadonlyMap<string, UserDataEntity> = new Map(
   Object.entries(USER_DATA_FILES as Record<string, readonly UserDataFileName[]>).flatMap(
@@ -43,8 +47,15 @@ const USER_DATA_ENTITY_BY_PATH: ReadonlyMap<string, UserDataEntity> = new Map(
  *  timeline. */
 export const USER_DATA_README_FILENAME = 'README.md';
 const USER_DATA_README_PATHS = new Set(
-  Object.keys(USER_DATA_FILES).map((dir) => `${dir}/${USER_DATA_README_FILENAME}`),
+  USER_DATA_DIRS.map((dir) => `${dir}/${USER_DATA_README_FILENAME}`),
 );
+
+function userDataEntity(norm: string): UserDataEntity | undefined {
+  const fixed = USER_DATA_ENTITY_BY_PATH.get(norm);
+  if (fixed) return fixed;
+  const name = norm.startsWith(`${AUTOMATIONS_DIR}/`) ? norm.slice(AUTOMATIONS_DIR.length + 1) : '';
+  return AUTOMATION_FILE_NAME.test(name) ? 'automations' : undefined;
+}
 
 /**
  * True when `rawPath` resolves to the README beside a DB-backed user file
@@ -375,9 +386,9 @@ export function classifyAgentPath(rawPath: string): AgentPathInfo {
   }
   // Only the data files themselves: the README beside them, and any other name
   // in those directories, stays a generic file.
-  const userDataEntity = USER_DATA_ENTITY_BY_PATH.get(norm);
-  if (userDataEntity) {
-    return { kind: 'user-data', entity: userDataEntity, rawPath, crossWorkspaceId };
+  const entity = userDataEntity(norm);
+  if (entity) {
+    return { kind: 'user-data', entity, rawPath, crossWorkspaceId };
   }
   if (norm.startsWith(`${SKILLS_DIR}/`)) {
     const tail = norm.slice(SKILLS_DIR.length + 1);

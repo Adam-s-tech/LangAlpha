@@ -16,12 +16,15 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 
+from ptc_agent.core.paths import SandboxLayout
 from ptc_agent.core.sandbox.livefs_mount import CallContext
 from ptc_agent.core.sandbox.livefs_runtime.protocol import (
     CALL_HEADER,
     MAX_FILE_BYTES,
+    MOUNT,
     PREFIX,
     PROVISIONAL_HEADER,
+    etag,
 )
 from src.server.app import setup
 from src.server.services.livefs import outcomes
@@ -40,6 +43,9 @@ router = APIRouter(prefix=PREFIX, tags=["Livefs"])
 
 #: A change's outcome fields (None ones left out) and the response it answers with.
 _Change = Callable[[LivefsTree], Awaitable[tuple[dict[str, Any], Any]]]
+
+#: The tail of the automations folder in a sandbox path and a mount path alike.
+_AUTOMATIONS = SandboxLayout.AUTOMATIONS_DIR.removeprefix(SandboxLayout.AGENTS_DIR)
 
 
 async def _caller(
@@ -74,9 +80,27 @@ def _error(exc: LivefsError) -> JSONResponse:
     )
 
 
+def _logged(outcome: dict[str, Any]) -> dict[str, Any]:
+    """An outcome as the log keeps it. The report names the user's
+    automations, and so does an automation's file name, which is derived from
+    its name and which a refusal quotes, so in that folder the log keeps the
+    folder alone. The tool result carries all of it."""
+    kept = {k: v for k, v in outcome.items() if k != "report"}
+    named = False
+    for key in ("path", "from"):
+        folder, marker, _ = (kept.get(key) or "").partition(_AUTOMATIONS + "/")
+        if marker:
+            kept[key] = folder + _AUTOMATIONS
+            named = True
+    if named:
+        kept.pop("error", None)
+    return kept
+
+
 async def _report(
     identity: LivefsIdentity,
     call_id: str | None,
+    context: CallContext | None,
     outcome: dict[str, Any],
 ) -> None:
     logger.info(
@@ -86,42 +110,58 @@ async def _report(
             "computer_id": identity.computer_id,
             "user_id": identity.user_id,
             "call_id": call_id,
-            # The report is the user's automations by name; the tool result
-            # carries it, the log does not.
-            **{k: v for k, v in outcome.items() if k != "report"},
+            **_logged(outcome),
         },
     )
-    await outcomes.record(identity.computer_id, call_id, outcome)
+    # An id no command filed is no call's, so ``record`` reads nothing again.
+    filed = call_id if context is not None else None
+    await outcomes.record(identity.computer_id, filed, outcome, context)
 
 
-async def _saving_tree(identity: LivefsIdentity, call_id: str | None) -> LivefsTree:
-    """The tree a change goes through, with who its command runs for. A
-    change whose command filed nothing (Redis was down, or the filing
-    expired) runs for no conversation or workspace, on the user's own clock."""
-    context = await outcomes.call_context(identity.computer_id, call_id)
-    return LivefsTree(identity, setup.store, context or CallContext())
+async def _not_made(
+    request: Request,
+    identity: LivefsIdentity,
+    call_id: str | None,
+    context: CallContext | None,
+    outcome: dict[str, Any],
+) -> None:
+    """File a change that did not land. A provisional save's is only logged:
+    the daemon sends it again at release unless real bytes follow, and that
+    retry is the command's."""
+    if request.headers.get(PROVISIONAL_HEADER):
+        logger.info("livefs provisional %s refused", outcome["op"], extra=_logged(outcome))
+    else:
+        await _report(identity, call_id, context, outcome)
 
 
 async def _mutation(
-    request: Request, identity: LivefsIdentity, op: str, change: _Change
+    request: Request, identity: LivefsIdentity, op: str, path: str, change: _Change
 ) -> Any:
-    """Make one change and file its outcome for the command that made it.
-
-    A refused provisional save is only logged: the daemon retries it at
-    release unless real bytes follow, and that retry is the command's.
-    """
+    """Make one change and file its outcome for the command that made it."""
     call_id = outcomes.valid_call_id(request.headers.get(CALL_HEADER))
+    # Read once for the change and its report alike. A change whose command
+    # filed nothing (Redis was down, or the filing expired) runs for no
+    # conversation or workspace, on the user's own clock.
+    context = await outcomes.call_context(identity.computer_id, call_id)
     try:
-        fields, response = await change(await _saving_tree(identity, call_id))
+        fields, response = await change(LivefsTree(identity, setup.store, context))
     except LivefsError as exc:
         refused = {"op": op, "path": exc.path, "ok": False, "error": exc.message}
-        if request.headers.get(PROVISIONAL_HEADER):
-            logger.info("livefs provisional %s refused", op, extra=refused)
-        else:
-            await _report(identity, call_id, refused)
+        await _not_made(request, identity, call_id, context, refused)
         return _error(exc)
+    except Exception:
+        # Once answered, error or not, the daemon does not send the save
+        # again, so unreported it is lost unseen.
+        failed = {
+            "op": op,
+            "path": f"{MOUNT}/{path.strip('/')}",
+            "ok": False,
+            "error": "the server failed; retry",
+        }
+        await _not_made(request, identity, call_id, context, failed)
+        raise
     kept = {k: v for k, v in fields.items() if v is not None}
-    await _report(identity, call_id, {"op": op, "ok": True, **kept})
+    await _report(identity, call_id, context, {"op": op, "ok": True, **kept})
     return response
 
 
@@ -159,7 +199,10 @@ async def read_file(
     return Response(
         content.encode(),
         media_type="application/octet-stream",
-        headers={"ETag": f'"{version}"'},
+        # The next save is checked against this tag, which a CDN or proxy
+        # that re-encodes the body weakens or drops; it must not cache one
+        # user's file either.
+        headers={"ETag": etag(version), "Cache-Control": "no-store, no-transform"},
     )
 
 
@@ -176,12 +219,14 @@ async def write_file(
             if_match=request.headers.get("if-match"),
             if_none_match=request.headers.get("if-none-match"),
         )
+        if saved.removed:
+            return {"path": saved.path, "report": saved.report}, {"removed": True}
         return (
             {"path": saved.path, "size": saved.size, "report": saved.report},
             {"version": saved.version, "size": saved.size, "as_sent": saved.as_sent},
         )
 
-    return await _mutation(request, identity, "write", save)
+    return await _mutation(request, identity, "write", path, save)
 
 
 @router.post("/delete")
@@ -191,9 +236,10 @@ async def delete_file(
     identity: LivefsIdentity = Depends(_caller),
 ) -> Any:
     async def remove(tree: LivefsTree) -> tuple[dict[str, Any], Any]:
-        return {"path": await tree.delete(path)}, Response(status_code=204)
+        deleted, report = await tree.delete(path)
+        return {"path": deleted, "report": report}, Response(status_code=204)
 
-    return await _mutation(request, identity, "delete", remove)
+    return await _mutation(request, identity, "delete", path, remove)
 
 
 @router.post("/rename")
@@ -207,4 +253,4 @@ async def rename_file(
         source, target, report = await tree.rename(path, to)
         return {"path": target, "from": source, "report": report}, Response(status_code=204)
 
-    return await _mutation(request, identity, "rename", move)
+    return await _mutation(request, identity, "rename", path, move)

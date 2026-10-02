@@ -26,7 +26,7 @@ from ptc_agent.core.sandbox.livefs_runtime.protocol import Refusal
 from src.server.services import transcripts
 from src.server.services.livefs.cache import client as _cache
 from src.server.services.livefs.cache import tag
-from src.server.services.livefs.routes import InlineBudget, LivefsError, Saved, version_of
+from src.server.services.livefs.routes import InlineBudget, LivefsError, Removed, Saved, version_of
 
 logger = logging.getLogger(__name__)
 
@@ -88,14 +88,17 @@ class _ReadOnly:
     def is_writable(self, path: str) -> bool:
         return False
 
-    def movable(self, path: str) -> bool:
+    async def movable(self, path: str) -> bool:
         return False
 
     async def write(self, path: str, content: str, version: str | None) -> Saved:
         raise _read_only(path)
 
-    async def delete(self, path: str) -> bool:
+    async def delete(self, path: str, version: str | None = None) -> Removed | None:
         raise _read_only(path)
+
+    async def rename(self, path: str, to: str) -> None:
+        return None
 
     def _relative(self, path: str) -> str | None:
         base = self.root_prefix.rstrip("/")

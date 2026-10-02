@@ -7,7 +7,9 @@ same flow: check the content for everything the rows don't decide, then under
 the user's lock check the version the writer last saw, plan the write from the
 rows that check read, refuse a plan that deletes what the writer never saw,
 and commit, all in one transaction. A subclass names its directory, its README
-and a ``DbJsonFile`` for each file, which supplies those steps for its rows.
+and the ``DbJsonFile`` behind each name, which supplies those steps for its
+rows. Here that is a fixed set every user has; ``DbJsonFolderRoute`` serves
+one file per row instead, under a name the writer picks.
 
 The version (a hash of the agent-visible content) never reaches the agent. A
 Read caches it beside the content it served, so a Write is refused unless the
@@ -23,8 +25,9 @@ import contextlib
 import fnmatch
 import functools
 import hashlib
+import json
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, NamedTuple
 
@@ -44,6 +47,11 @@ README_FILE = "README.md"
 # Past this many, a refusal counts the rest rather than naming them.
 _LISTED_DELETES = 10
 
+# Deeper than any file these routes hold. How deep ``json.loads`` reads
+# depends on the interpreter's stack, so without a bound of its own a file
+# refused on one Python would save on another.
+_MAX_JSON_DEPTH = 64
+
 
 ErrorType = Literal[
     "parse_error",
@@ -53,6 +61,10 @@ ErrorType = Literal[
     "incomplete_read",
     "constraint_error",
     "server_error",
+    # A create where a file already is.
+    "exists",
+    # A save over a version of a file deleted since.
+    "deleted",
 ]
 
 
@@ -82,13 +94,44 @@ class UserDataValidationError(Exception):
         # Parse + schema failures usually mean the agent guessed at the shape,
         # so the next retry reads the documented one. Not for README.md
         # itself, where the pointer would lead back to the refused file.
-        if self.readme and self.error_type in {"parse_error", "schema_error"} and self.file != "README.md":
+        if self.readme and self.error_type in {"parse_error", "schema_error"} and self.file != README_FILE:
             separator = "\n" if "\n" in text else " "
             text += f"{separator}See {self.readme} for the fields and examples."
         return text
 
     def __str__(self) -> str:
         return self.message
+
+
+class UnreadableJsonError(Exception):
+    """JSON a writer sent that fails past the decoder's own errors."""
+
+
+def load_json(content: str, **kwargs: Any) -> Any:
+    """``json.loads`` for a file a writer sent, refusing what not every Python
+    reads alike. ``JSONDecodeError`` and a hook's own non-``ValueError`` pass
+    through; the rest is ``UnreadableJsonError``, whose text is a hint."""
+    too_deep = UnreadableJsonError(f"nested more than {_MAX_JSON_DEPTH} levels deep")
+    try:
+        value = json.loads(content, **kwargs)
+    except json.JSONDecodeError:
+        raise
+    except RecursionError:
+        raise too_deep from None
+    except ValueError:
+        # Python reads an integer of at most 4300 digits, and says so in
+        # terms of its own settings.
+        raise UnreadableJsonError("a number has too many digits") from None
+    # Walked without recursion, since the value may nest deeper than Python
+    # can recurse.
+    stack = [(value, 0)]
+    while stack:
+        node, depth = stack.pop()
+        if isinstance(node, (dict, list)):
+            if depth == _MAX_JSON_DEPTH:
+                raise too_deep
+            stack.extend((child, depth + 1) for child in (node.values() if isinstance(node, dict) else node))
+    return value
 
 
 @dataclass(frozen=True)
@@ -142,14 +185,15 @@ class DbJsonFile[R, P, C]:
     order, under its locks; a file only says what its rows are."""
 
     # The report of a write of the very content the writer read.
-    unchanged: ClassVar[str | None] = None
+    unchanged: str | None = None
 
     async def fetch(self, user_id: str, conn: Any = None) -> R:
         """The rows; during a save, on ``conn``'s transaction."""
         raise NotImplementedError
 
-    def render(self, rows: R) -> tuple[str, str]:
-        """The file as the agent reads it, and its version."""
+    def render(self, rows: R) -> tuple[str, str] | None:
+        """The file as the agent reads it, and its version; None when the
+        rows hold no file."""
         raise NotImplementedError
 
     async def lock(self, user_id: str, conn: Any) -> None:
@@ -174,9 +218,9 @@ class DbJsonFile[R, P, C]:
 
     async def hold(self, user_id: str, changes: C, rows: R, conn: Any) -> str | None:
         """Lock what ``changes`` writes over, for the rest of ``conn``'s
-        transaction, and the version of ``rows`` as they stand locked, which
-        the save holds to the one it checked. None when the save's own lock
-        already keeps every other writer out."""
+        transaction, and the version of ``rows`` as they stand locked (empty
+        when they are gone), which the save holds to the one it checked. None
+        when the save's own lock already keeps every other writer out."""
         return None
 
     async def commit(self, user_id: str, changes: C, conn: Any) -> str | None:
@@ -187,12 +231,26 @@ class DbJsonFile[R, P, C]:
     async def committed(self, user_id: str, changes: C) -> None:
         """After the commit: drop what caches the rows outside the route."""
 
+    def plan_delete(self, rows: R) -> Plan[C]:
+        """What deleting the file changes, in a ``DbJsonFolderRoute``."""
+        raise NotImplementedError
+
+    async def rename(self, user_id: str, to: str, conn: Any) -> str | None:
+        """File the rows under the name ``to``, in a ``DbJsonFolderRoute``,
+        and report it; None when they are gone by the time it holds them.
+        Raises ``UserDataValidationError`` (``exists``) when another writer
+        took ``to`` first."""
+        raise NotImplementedError
+
 
 class DbJsonRoute:
-    """Composite route over a fixed set of DB-backed JSON files plus a README."""
+    """Composite route over a directory of DB-backed JSON files plus a README:
+    a fixed set of files, which a save changes but nothing makes, deletes or
+    moves."""
 
-    # The directory under the sandbox root, a key of ``USER_DATA_FILES``.
+    # The directory under the sandbox root, one of ``USER_DATA_DIRS``.
     directory: ClassVar[str] = ""
+    # The files every user has, by name.
     files: ClassVar[Mapping[str, DbJsonFile[Any, Any, Any]]] = {}
     data_files: ClassVar[frozenset[str]] = frozenset()
     readme_content: ClassVar[str] = ""
@@ -224,20 +282,45 @@ class DbJsonRoute:
         self._call = call
         self._sandbox = sandbox_backend
         self._root_prefix = root_prefix
-        # Filename → what the agent's last Read served. Only the Read tool's
-        # path fills it. Request-scoped via agent.py, never reused across users,
-        # but shared by the subagents of the request.
-        self._read_cache: dict[str, Served] = {}
+        # Agent → filename → what that agent's last Read served. Only the Read
+        # tool's path fills it. Request-scoped via agent.py, never reused across
+        # users. The request's subagents share this route and run beside the
+        # main agent, so each agent's Reads are its own: another's would let a
+        # Write land over content its writer never saw.
+        self._reads: dict[str | None, dict[str, Served]] = {}
 
-    # --- file panel ---
+    # --- the files there are ---
 
     @classmethod
-    async def load(cls, path: str, user_id: str) -> str:
+    def file_named(cls, name: str) -> DbJsonFile[Any, Any, Any] | None:
+        """The file ``name`` would be here, whether or not the rows hold it;
+        None for a name no file here may take."""
+        return cls.files.get(name)
+
+    @classmethod
+    async def names(cls, user_id: str) -> list[str]:
+        """The name of every file there is, the README aside."""
+        return sorted(cls.files)
+
+    @classmethod
+    async def rendered(cls, user_id: str) -> dict[str, tuple[str, str]]:
+        """Every file there is, by name: its content and version."""
+        names = sorted(cls.files)
+        files = [cls.files[name] for name in names]
+        fetched = await asyncio.gather(*(file.fetch(user_id) for file in files))
+        return {
+            name: rendered
+            for name, file, rows in zip(names, files, fetched)
+            if (rendered := file.render(rows)) is not None
+        }
+
+    @classmethod
+    async def load(cls, path: str, user_id: str) -> str | None:
         """The file at ``path`` (relative to the sandbox root), as the agent
-        reads it."""
-        file = cls.files[path.rsplit("/", 1)[-1]]
-        content, _version = file.render(await file.fetch(user_id))
-        return content
+        reads it; None when there is none. For the file panel."""
+        file = cls.file_named(path.rsplit("/", 1)[-1])
+        rendered = file.render(await file.fetch(user_id)) if file else None
+        return rendered[0] if rendered else None
 
     # --- composite-compatible surface ---
 
@@ -260,22 +343,19 @@ class DbJsonRoute:
 
     # --- helpers ---
 
-    @property
-    def _known_files(self) -> frozenset[str]:
-        return self.data_files | {README_FILE}
-
     def _namespace(self) -> tuple[str, ...]:
         """Key of the in-process lock serializing this user's writes."""
         return (self._user_id, self.directory)
 
     def _filename(self, normalized_path: str) -> str | None:
-        """Return the known basename if `path` is one of this route's files; else None."""
+        """The basename when ``path`` names the README or a file this route
+        may hold, whether or not the rows hold it; else None."""
         if not normalized_path.startswith(self._root_prefix):
             return None
         suffix = normalized_path[len(self._root_prefix):]
         if "/" in suffix:
             return None
-        if suffix in self._known_files:
+        if suffix == README_FILE or self.file_named(suffix) is not None:
             return suffix
         return None
 
@@ -291,24 +371,47 @@ class DbJsonRoute:
             readme=self._absolute(README_FILE),
         )
 
+    def _readme_instead(self) -> str:
+        return f"Update {' / '.join(sorted(self.data_files))} instead."
+
     def _readme_refusal(self, file_path: str) -> UserDataValidationError:
-        names = " / ".join(sorted(self.data_files))
         return self._refusal(
             "schema_error",
             README_FILE,
-            f"{file_path} is documentation, not data; it can't be edited. Update {names} instead.",
+            f"{file_path} is documentation, not data; it can't be edited. {self._readme_instead()}",
         )
 
-    def exists(self, file_path: str) -> bool:
-        """Whether a file is at ``file_path``: each of this route's always is."""
-        return self._filename(file_path) is not None
+    def is_fixed_path(self, file_path: str) -> bool:
+        """Whether a file is always at ``file_path``, so a create there is
+        refused without reading the rows: the README, or a fixed file."""
+        filename = self._filename(file_path)
+        return filename == README_FILE or filename in self.files
 
-    async def _live(self, filename: str) -> Served:
-        file = self.files[filename]
-        return Served(*file.render(await file.fetch(self._user_id)))
+    async def _live(self, filename: str) -> Served | None:
+        file = self.file_named(filename)
+        rendered = file.render(await file.fetch(self._user_id))
+        return Served(*rendered) if rendered else None
+
+    @property
+    def _read_cache(self) -> dict[str, Served]:
+        """The calling agent's Reads: a background subagent's when the tool
+        call is its own, else the main agent's."""
+        # Imported here: the middleware package imports this module.
+        from ptc_agent.agent.middleware.background_subagent.context import current_background_agent_id
+
+        return self._reads.setdefault(current_background_agent_id.get(), {})
 
     def _invalidate(self, filename: str) -> None:
+        """Drop the calling agent's Read. Another agent's stays: after a save
+        here, its Write is told the file changed since, which a dropped Read
+        would not say."""
         self._read_cache.pop(filename, None)
+
+    @staticmethod
+    @contextlib.asynccontextmanager
+    async def _transaction() -> AsyncIterator[Any]:
+        async with get_db_connection() as conn, conn.transaction():
+            yield conn
 
     def _require_read(self, filename: str) -> Served:
         """What the agent last read, or a refusal telling it to read."""
@@ -344,9 +447,10 @@ class DbJsonRoute:
         try:
             yield
         except UserDataValidationError as exc:
-            # A conflict drops the cached Read so the next one pulls fresh
-            # rows; kept, a retry would conflict again.
-            if exc.error_type == "version_conflict":
+            # A refusal over a stale Read drops it, so the next Read pulls
+            # fresh rows and the next Write of a deleted file makes it anew;
+            # kept, a retry would be refused again.
+            if exc.error_type in ("version_conflict", "deleted"):
                 self._invalidate(filename)
             exc.readme = exc.readme or self._absolute(README_FILE)
             raise
@@ -354,36 +458,52 @@ class DbJsonRoute:
             logger.exception("db json route write failed", path=self._absolute(filename))
             raise self._refusal("server_error", filename, _SERVER_FAILURE) from exc
 
-    async def _save(
-        self,
-        filename: str,
-        content: str,
-        version: str,
-        *,
-        served: str | None,
-        may_delete: bool,
-        settle: bool = False,
-    ) -> Stored:
-        """Plan and commit a save over ``version``, under the in-process and
-        database locks. ``may_delete`` says the writer saw everything the save
-        could drop: a Write after a Read of the whole file, an Edit, which
-        removes only text it quotes, or a program, which writes the whole file.
-        ``settle`` answers with the file as the save left it, read in the
-        save's own transaction, which spares the writer reading it back.
-        """
-        file = self.files[filename]
-        if served is not None and content == served:
-            # Written back as it was read: nothing to change, whatever the
-            # rows did since, so nothing to read or lock.
-            self._invalidate(filename)
-            return Stored(file.unchanged)
+    def _exists(self, filename: str) -> UserDataValidationError:
         path = self._absolute(filename)
-        conflict = self._refusal(
+        # A reply to a question starts a new run with no Reads, which the
+        # model sees as the same turn, so say what reset it.
+        return self._refusal(
+            "exists",
+            filename,
+            f"{path} already exists. To change it, Read({path}) first (answering a question starts "
+            "a new run, which needs a new Read); to add another, write it under another name.",
+        )
+
+    def _stale(self, filename: str, *, gone: bool) -> UserDataValidationError:
+        """A save over a version the rows no longer have; ``gone`` when they
+        hold no file, which a fixed one never is."""
+        path = self._absolute(filename)
+        return self._refusal(
             "version_conflict",
             filename,
             f"{path} changed since your last Read, so this write could undo that change. "
             f"Read({path}) again and reapply your change.",
         )
+
+    async def _save(
+        self,
+        filename: str,
+        content: str,
+        version: str | None,
+        *,
+        served: str | None,
+        may_delete: bool,
+        settle: bool = False,
+    ) -> Stored:
+        """Plan and commit a save over ``version``, or only where no file is
+        when it is None, under the in-process and database locks.
+        ``may_delete`` says the writer saw everything the save could drop: a
+        Write after a Read of the whole file, an Edit, which removes only text
+        it quotes, or a program, which writes the whole file. ``settle``
+        answers with the file as the save left it, read in the save's own
+        transaction, which spares the writer reading it back.
+        """
+        file = self.file_named(filename)
+        if served is not None and content == served:
+            # Written back as it was read: nothing to change, whatever the
+            # rows did since, so nothing to read or lock.
+            self._invalidate(filename)
+            return Stored(file.unchanged)
         user_id = self._user_id
         with self._refusals(filename):
             parsed = await file.parse(user_id, self._call, content, served)
@@ -392,24 +512,30 @@ class DbJsonRoute:
                 # One transaction, which anything raised inside rolls back:
                 # the plan and the writes go over the rows the version check
                 # read, under the lock taken before reading them.
-                async with get_db_connection() as conn, conn.transaction():
+                async with self._transaction() as conn:
                     await file.lock(user_id, conn)
                     rows = await file.fetch(user_id, conn)
-                    if file.render(rows)[1] != version:
-                        raise conflict
+                    rendered = file.render(rows)
+                    if version is None and rendered is not None:
+                        raise self._exists(filename)
+                    if (rendered[1] if rendered else None) != version:
+                        raise self._stale(filename, gone=rendered is None)
                     plan = file.plan(self._call, parsed, rows)
                     if plan.deletes and not may_delete:
                         raise self._unseen_deletes(filename, plan.deletes)
                     held = await file.hold(user_id, plan.changes, rows, conn)
                     if held is not None and held != version:
-                        raise conflict
+                        raise self._stale(filename, gone=not held)
                     report = await file.commit(user_id, plan.changes, conn)
                     if settle:
-                        # A save that changed nothing leaves the rows it read.
+                        # A save that changed nothing leaves the rows it read,
+                        # and one that deleted the file leaves none.
                         after = file.render(await file.fetch(user_id, conn) if plan else rows)
             await file.committed(user_id, plan.changes)
             self._invalidate(filename)
-        return Stored(report, *after) if settle else Stored(report)
+        if settle and after is not None:
+            return Stored(report, *after)
+        return Stored(report)
 
     # --- read ---
 
@@ -427,10 +553,11 @@ class DbJsonRoute:
         if filename == README_FILE:
             return self.readme_content
         try:
-            return (await self._live(filename)).content
+            live = await self._live(filename)
         except Exception:
             logger.exception("db json route read failed", path=file_path)
             return None
+        return live.content if live else None
 
     async def aread_range(self, file_path: str, offset: int = 0, limit: int = 2000) -> str | None:
         """The Read tool's path. Every Read shows live rows, even ones changed
@@ -445,6 +572,10 @@ class DbJsonRoute:
                 live = await self._live(filename)
             except Exception:
                 logger.exception("db json route read failed", path=file_path)
+                return None
+            if live is None:
+                # Gone since an earlier Read, which a Write must not update.
+                self._invalidate(filename)
                 return None
             content = live.content
             self._read_cache[filename] = Served(
@@ -461,7 +592,7 @@ class DbJsonRoute:
         if filename == README_FILE:
             return self._readme_refusal(file_path)
         # The composite routed this path here, so the folder is ours and the
-        # file can't exist; say which ones do rather than just fail.
+        # file can't exist; say which ones can rather than just fail.
         names = " / ".join(sorted(self.data_files))
         return self._refusal(
             "schema_error",
@@ -470,19 +601,20 @@ class DbJsonRoute:
             f"which the server keeps. Update {names} instead.",
         )
 
+    @staticmethod
+    def _written(stored: Stored) -> bool | WriteTextResult:
+        return {"success": True, "message": stored.report} if stored.report else True
+
     async def awrite_text(self, file_path: str, content: str) -> bool | WriteTextResult:
-        """Validate + apply a JSON write. Raises UserDataValidationError on bad input."""
+        """Validate + apply a JSON write over the agent's last Read in this
+        run. Raises UserDataValidationError on bad input."""
         filename = self._filename(file_path)
         if filename is None or filename == README_FILE:
             raise self._unwritable(file_path, filename)
-
         base = self._require_read(filename)
-        report = (
+        return self._written(
             await self._save(filename, content, base.version, served=base.content, may_delete=base.whole)
-        ).report
-        if report:
-            return {"success": True, "message": report}
-        return True
+        )
 
     async def aedit_text(
         self,
@@ -506,6 +638,8 @@ class DbJsonRoute:
                 base = await self._live(filename)
             except Exception as exc:
                 return {"success": False, "error": f"Read failed: {exc!s}"}
+            if base is None:
+                return {"success": False, "error": f"File not found: {file_path}"}
         content = base.content
 
         occurrences = content.count(old_string)
@@ -550,13 +684,11 @@ class DbJsonRoute:
     # stands behind a save there, so the version is the whole check.
 
     def is_writable(self, file_path: str) -> bool:
-        return self._filename(file_path) in self.data_files
-
-    async def _versioned(self, filename: str) -> tuple[str, str]:
-        if filename == README_FILE:
-            return self.readme_content, _text_version(self.readme_content)
-        live = await self._live(filename)
-        return live.content, live.version
+        """Whether a file at ``file_path`` takes saves, or for the folder
+        itself, whether new files may be made in it."""
+        if file_path.rstrip("/") == self._root_prefix.rstrip("/"):
+            return False
+        return self._filename(file_path) not in (None, README_FILE)
 
     async def aread_versioned(self, file_path: str) -> tuple[str, str] | None:
         """(content, version), or None for a path this route has no file at.
@@ -564,30 +696,37 @@ class DbJsonRoute:
         filename = self._filename(file_path)
         if filename is None:
             return None
-        return await self._versioned(filename)
+        if filename == README_FILE:
+            return self.readme_content, _text_version(self.readme_content)
+        live = await self._live(filename)
+        return (live.content, live.version) if live else None
 
     async def alist(self, path: str) -> list[dict[str, Any]] | None:
         """Every file, rendered for its size, so each carries the content it
         was rendered from and a read after the listing costs nothing."""
         if path.rstrip("/") != self._root_prefix.rstrip("/"):
             return None
-        names = sorted(self._known_files)
-        served = await asyncio.gather(*(self._versioned(name) for name in names))
+        files = {
+            README_FILE: (self.readme_content, _text_version(self.readme_content)),
+            **await self.rendered(self._user_id),
+        }
         return [
             {
                 "name": name,
                 "type": "file",
                 "size": len(content.encode()),
                 "version": version,
-                "writable": name in self.data_files,
+                "writable": name != README_FILE,
                 "content": content,
             }
-            for name, (content, version) in zip(names, served)
+            for name, (content, version) in sorted(files.items())
         ]
 
-    async def awrite_versioned(self, file_path: str, content: str, version: str) -> Stored:
-        """Apply a save through the mount over ``version``: its report, and
-        the file as it left it with its version, which the mount holds next.
+    async def awrite_versioned(self, file_path: str, content: str, version: str | None) -> Stored:
+        """Apply a save through the mount over ``version``, or only where no
+        file is when it is None: its report, and the file as it left it with
+        its version, which the mount holds next (none when the save deleted
+        it).
 
         A program writes the whole file, so the save may delete what it leaves
         out, and its report lists every deletion. Raises
@@ -598,9 +737,17 @@ class DbJsonRoute:
             raise self._unwritable(file_path, filename)
         return await self._save(filename, content, version, served=None, may_delete=True, settle=True)
 
-    async def adelete_text(self, file_path: str) -> bool:
-        if self._filename(file_path) is None:
-            return False
+    def _documentation(self, file_path: str) -> ReadOnlyStoreError:
+        return ReadOnlyStoreError(f"{file_path} is documentation, kept by the server.")
+
+    async def adelete_versioned(self, file_path: str) -> Stored | None:
+        """None where no file is; anything else here raises
+        ``ReadOnlyStoreError``, since every user has each of these files."""
+        filename = self._filename(file_path)
+        if filename is None:
+            return None
+        if filename == README_FILE:
+            raise self._documentation(file_path)
         raise ReadOnlyStoreError(
             f"{file_path} is a view of saved data and cannot be deleted. "
             "Write it back with the entries removed to clear it."
@@ -616,8 +763,13 @@ class DbJsonRoute:
     async def aglob_paths(self, pattern: str, path: str = ".") -> list[str]:
         if not self._covers(self.normalize_path(path)):
             return []
+        try:
+            names = await self.names(self._user_id)
+        except Exception:
+            logger.exception("db json route listing failed", path=self._root_prefix)
+            names = []
         out: list[str] = []
-        for filename in sorted(self._known_files):
+        for filename in sorted([README_FILE, *names]):
             absolute = self._absolute(filename)
             if fnmatch.fnmatch(filename, pattern) or fnmatch.fnmatch(absolute, pattern):
                 out.append(absolute)
@@ -653,20 +805,21 @@ class DbJsonRoute:
         except re.error:
             return []
 
+        try:
+            live = await self.rendered(self._user_id)
+        except Exception:
+            logger.exception("db json route listing failed", path=self._root_prefix)
+            live = {}
+        contents = {README_FILE: self.readme_content}
+        for filename, (content, _version) in live.items():
+            # What the agent last read, else the live file. Never cached: a
+            # Grep is no Read a Write can stand on.
+            served = self._read_cache.get(filename)
+            contents[filename] = served.content if served else content
         texts: list[tuple[str, str]] = []
-        for filename in sorted(self._known_files):
+        for filename, content in sorted(contents.items()):
             absolute = self._absolute(filename)
             if glob and not fnmatch.fnmatch(filename, glob) and not fnmatch.fnmatch(absolute, glob):
-                continue
-            try:
-                if filename == README_FILE:
-                    content = self.readme_content
-                else:
-                    # What the agent last read, else the live file. Never
-                    # cached: a Grep is no Read a Write can stand on.
-                    served = self._read_cache.get(filename)
-                    content = (served or await self._live(filename)).content
-            except Exception:
                 continue
             texts.append((absolute, content))
         return grep_texts(

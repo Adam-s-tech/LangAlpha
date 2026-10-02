@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from src.server.utils.api import CurrentUserId, require_workspace_owner
 from src.server.services.persistence.transfer import scan_cap_bytes
+from ptc_agent.agent.backends.db_json_route import DbJsonRoute
 from ptc_agent.core.sandbox.runtime import STREAM_CHUNK_BYTES
 from src.server.utils.uploads import read_capped
 from src.utils.storage import is_storage_enabled
@@ -84,6 +85,7 @@ from ._shared import (
     _requested_hidden_ok,
     _requested_system_ok,
     _to_client_path,
+    _present_virtual_file,
     _virtual_file,
     _virtual_files_in_scope,
     http_file_bytes,
@@ -135,6 +137,17 @@ async def _read_contained_target(
     if resolved is None:
         raise HTTPException(status_code=404, detail="File not found")
     return resolved
+
+
+async def _load_virtual_file(route: type[DbJsonRoute], path: str, user_id: str) -> str:
+    try:
+        text = await route.load(path, user_id)
+    except Exception:
+        logger.exception("virtual file read failed", extra={"path": path})
+        raise HTTPException(status_code=500, detail=route.read_failure) from None
+    if text is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    return text
 
 
 @router.get("/{workspace_id}/files")
@@ -194,7 +207,11 @@ async def list_workspace_files(
             if not _is_always_hidden_path(f["path"])
             and (include_system or not _is_system_path(f["path"]))
             and (allow_hidden or not _is_hidden_path(f["path"]))
+            # A row at a virtual path predates the backup skipping its folder;
+            # a read answers from the DB, so only the splice may list one.
+            and not _virtual_file(f["path"])
         ]
+        files = await _with_virtual_files(files, normalized_path, workspace["user_id"])
         return {
             "workspace_id": workspace_id,
             "path": path,
@@ -271,14 +288,23 @@ async def _live_listing(
 
         files.append(client_path)
 
-    # Splice in the virtual DB-backed files (user profile, automations) the
-    # request scope covers. They don't exist on the sandbox FS, so
-    # aglob_files never returns them.
     requested_norm = _normalize_requested_path(path, work_dir, previous_dirs)
-    for virtual_path in _virtual_files_in_scope(requested_norm):
+    return await _with_virtual_files(files, requested_norm, workspace["user_id"])
+
+
+async def _with_virtual_files(
+    files: list[str], requested_norm: str, user_id: str
+) -> list[str]:
+    """Splice in the virtual DB-backed files (user profile, automations) the
+    request scope covers.
+
+    Their rows are the only copy: they don't exist on the sandbox FS, so
+    aglob_files never returns them, and a backup skips their folder, so a
+    stopped workspace's stored copy has none either.
+    """
+    for virtual_path in await _virtual_files_in_scope(requested_norm, user_id):
         if virtual_path not in files:
             files.append(virtual_path)
-
     return files
 
 
@@ -319,7 +345,11 @@ async def resolve_workspace_file(
     if not candidates:
         raise HTTPException(status_code=400, detail="A file reference is required")
 
-    virtual = next((c for c in candidates if _virtual_file(c)), None)
+    virtual = None
+    for candidate in candidates:
+        if await _present_virtual_file(candidate, x_user_id):
+            virtual = candidate
+            break
     if virtual:
         return {
             "status": "resolved",
@@ -402,14 +432,9 @@ async def read_workspace_file(
     normalized_for_virtual = _normalize_requested_path(path, work_dir, previous_dirs)
     virtual = _virtual_file(normalized_for_virtual)
     if virtual:
-        try:
-            text_content = await virtual.load(normalized_for_virtual, x_user_id)
-        except Exception:
-            logger.exception(
-                "virtual file read failed",
-                extra={"path": normalized_for_virtual},
-            )
-            raise HTTPException(status_code=500, detail=virtual.read_failure)
+        text_content = await _load_virtual_file(
+            virtual, normalized_for_virtual, x_user_id
+        )
         if unlimited:
             content = text_content
             truncated = False
@@ -717,6 +742,17 @@ async def download_workspace_file(
     work_dir = owner_work_dir(workspace)
     previous_dirs = previous_dir_names_of(workspace)
 
+    # Virtual files come from the DB, as in /files/read: on the sandbox their
+    # folder links out to the file mount, and the stored copy has no row for them.
+    virtual_path = _normalize_requested_path(path, work_dir, previous_dirs)
+    virtual = _virtual_file(virtual_path)
+    if virtual:
+        text = await _load_virtual_file(virtual, virtual_path, x_user_id)
+        filename = virtual_path.rsplit("/", 1)[-1]
+        return _build_download_response(
+            text.encode(), filename, "application/json", request, disposition
+        )
+
     # DB fallback for stopped workspaces
     if served_from_mirror(workspace.get("status")):
         normalized_path = _normalize_requested_path(path, work_dir, previous_dirs)
@@ -869,6 +905,11 @@ async def workspace_file_download_url(
     layout = owner_layout(workspace)
     work_dir = layout.workspace
     previous_dirs = previous_dir_names_of(workspace)
+
+    # A virtual file is rendered from its rows when downloaded, so there is no
+    # stored object to link to.
+    if _virtual_file(_normalize_requested_path(path, work_dir, previous_dirs)):
+        return {"url": None}
 
     if served_from_mirror(workspace.get("status")):
         normalized_path = _normalize_requested_path(path, work_dir, previous_dirs)

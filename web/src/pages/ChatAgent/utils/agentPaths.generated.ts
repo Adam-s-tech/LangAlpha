@@ -17,6 +17,7 @@ export const SANDBOX_ROOT_PREFIXES = [
 export const MEMORY_USER_DIR = '.agents/user/memory';
 export const MEMORY_WORKSPACE_DIR = '.agents/memory';
 export const MEMO_USER_DIR = '.agents/user/memo';
+export const AUTOMATIONS_DIR = '.agents/user/automations';
 export const SKILLS_DIR = '.agents/skills';
 export const THREADS_DIR = '.agents/threads';
 export const LARGE_TOOL_RESULTS_DIR = '.agents/large_tool_results';
@@ -30,12 +31,22 @@ export const AGENT_MD_FILE = 'agent.md';
 export const MEMORY_INDEX_FILENAME = 'memory.md';
 export const MEMO_INDEX_FILENAME = 'memo.md';
 
-/** The DB-backed files (rows in Postgres), by the directory that serves
- *  them beside a README.md. Source: USER_DATA_FILES. */
+/** The directories of DB-backed files (rows in Postgres), each beside
+ *  a README.md. Source: USER_DATA_DIRS. */
+export const USER_DATA_DIRS = [
+  '.agents/user/profile',
+  '.agents/user/automations',
+] as const;
+
+/** The fixed DB-backed files, by the directory that serves them.
+ *  Source: USER_DATA_FILES. */
 export const USER_DATA_FILES = {
   '.agents/user/profile': ['portfolio.json', 'watchlist.json', 'preference.json'],
-  '.agents/user/automations': ['automations.json'],
 } as const;
+
+/** The names an automation's file in AUTOMATIONS_DIR may take, one
+ *  file per automation. Source: AUTOMATION_FILE_NAME. */
+export const AUTOMATION_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.json$/;
 
 /** Agent-infrastructure dirs at the sandbox root, collapsed by
  *  default in the file panel. Source: AGENT_SYSTEM_DIRS. */

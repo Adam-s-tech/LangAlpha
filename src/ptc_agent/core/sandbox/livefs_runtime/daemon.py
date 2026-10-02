@@ -1,22 +1,23 @@
-"""Mount the user's server-held files (memory, profile, workflows, transcripts)
-in the sandbox.
+"""Mount the user's server-held files (memory, profile, automations,
+workflows, memos, transcripts) in the sandbox.
 
 Runs as root, from the copy ``boot`` checked; every read and save goes to the
 server's livefs endpoint with the computer's mount token, and nothing is kept
 on disk.
 
-    python3 -m livefs start --root R --base-url U [--stage S]
+    python3 -m livefs start --root R --base-url U   (a new token in LIVEFS_CONFIG)
     python3 -m livefs link --root R [--link SRC:DST ...]
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 from .lifecycle import (
     Paths,
@@ -34,7 +35,7 @@ from .lifecycle import (
 )
 from .links import link, unlink
 from .ops import LiveFS
-from .protocol import CALL_ENV, MountError
+from .protocol import CALL_ENV, CONFIG_ENV, MountError
 from .remote import Remote
 from .views import CONTENT_BYTES
 
@@ -82,14 +83,17 @@ def _probing(paths: Paths) -> Callable[[], str | None]:
 def _ready(args, paths: Paths) -> tuple[dict | None, Callable[[], str | None] | None]:
     """Everything before the lock: the answer when the mount cannot serve
     yet, else the probe a start waits on (None when there is nothing to
-    probe). A staged token goes in first, so it reaches the sandbox whatever
+    probe). A new token goes in first, so it reaches the sandbox whatever
     else holds the mount back."""
     reason = unsupported()
     if reason:
         return {"ok": False, "error": MountError.UNSUPPORTED, "reason": reason}, None
     os.makedirs(paths.private, mode=0o700, exist_ok=True)
-    if args.stage:
-        problem = install_config(args.stage, paths)
+    if args.config:
+        # Under the lock, as the rebase below is: a rebase that read the
+        # config before a new token landed would write the old one back.
+        with locked(paths):
+            problem = install_config(args.config, paths)
         if problem:
             return {"ok": False, "error": MountError.BAD_CONFIG, "reason": problem}, None
     if not os.path.exists(paths.config):
@@ -101,8 +105,9 @@ def _ready(args, paths: Paths) -> tuple[dict | None, Callable[[], str | None] | 
             "error": MountError.INSTALLING,
             "reason": "installing libfuse",
         }, None
-    rebased = rebase(args.base_url, paths)
-    changed = args.stage or rebased or not healthy(paths.mount)
+    with locked(paths):
+        rebased = rebase(args.base_url, paths)
+    changed = bool(args.config) or rebased or not healthy(paths.mount)
     probe = _probing(paths) if changed else None
     return None, probe
 
@@ -134,6 +139,26 @@ def _serving(
     return started, None
 
 
+@contextlib.contextmanager
+def _as_owner(owner: os.stat_result) -> Iterator[None]:
+    """Act with the rights of the user who owns the folders. The links go
+    where that user writes, so as root a symlink they planted on the way
+    would aim each mkdir, rename and link at any path in the sandbox."""
+    if os.geteuid() != 0 or owner.st_uid == 0:
+        yield
+        return
+    egid, groups = os.getegid(), os.getgroups()
+    os.setgroups([])
+    os.setegid(owner.st_gid)
+    os.seteuid(owner.st_uid)
+    try:
+        yield
+    finally:
+        os.seteuid(0)
+        os.setegid(egid)
+        os.setgroups(groups)
+
+
 def link_folders(args, paths: Paths) -> dict:
     """Link exactly ``--link``.
 
@@ -150,19 +175,19 @@ def link_folders(args, paths: Paths) -> dict:
         for spec in args.link or ():
             source, _, target = spec.partition(":")
             wanted[os.path.abspath(target)] = source
-        for target in state.get("links", ()):
-            if target not in wanted:
-                unlink(target, paths.mount)
-        owner = os.stat(args.root)
         failed, moved = {}, {}
-        for target, source in wanted.items():
-            try:
-                aside = link(os.path.join(paths.mount, source), target, owner)
-            except OSError as exc:
-                failed[target] = str(exc)
-            else:
-                if aside:
-                    moved[target] = aside
+        with _as_owner(os.stat(args.root)):
+            for target in state.get("links", ()):
+                if target not in wanted:
+                    unlink(target, paths.mount)
+            for target, source in wanted.items():
+                try:
+                    aside = link(os.path.join(paths.mount, source), target)
+                except OSError as exc:
+                    failed[target] = str(exc)
+                else:
+                    if aside:
+                        moved[target] = aside
         state["links"] = sorted(wanted)
         # How the daemon tells a new layout from a rewrite that kept it.
         state["sources"] = sorted(set(wanted.values()))
@@ -176,7 +201,7 @@ def link_folders(args, paths: Paths) -> dict:
 
 
 def start_mount(args, paths: Paths) -> dict:
-    """Stage the token and make sure the mount serves current code. It needs
+    """Install a new token and make sure the mount serves current code. It needs
     no folder list, so the host runs it beside the asset sync. Beside a sync
     still replacing the code, ``boot`` answers ``stale_code`` and the host
     asks again once the sync has landed."""
@@ -216,6 +241,16 @@ def content_budget(default: int, cgroup: str = "/sys/fs/cgroup") -> int:
     return default
 
 
+def _truncate_fuse_3(fuse, path, length, fip):
+    """libfuse 3 hands truncate the open file when ftruncate(2) made the call,
+    and the vendored binding drops it. Without it the truncate goes through a
+    handle of its own, and the open one, still holding the old bytes, saves
+    over it: ``open('r+')``, ``truncate()``, ``write()`` keeps the old tail."""
+    fh = (fip.contents if fuse.raw_fi else fip.contents.fh) if fip else None
+    name = None if path is None else path.decode(fuse.encoding, fuse.errors)
+    return fuse.operations.truncate(name, length, fh)
+
+
 def serve(args, paths: Paths) -> None:
     # mfusepy is imported only here: ``start`` runs before libfuse may be
     # installed.
@@ -235,7 +270,11 @@ def serve(args, paths: Paths) -> None:
     # Loaded while ``start`` probes the server; mounted only once it answered.
     if getattr(args, "gated", False) and sys.stdin.readline().strip() != "go":
         return
-    fuse.FUSE(
+
+    class FUSE(fuse.FUSE):
+        truncate_fuse_3 = _truncate_fuse_3
+
+    FUSE(
         operations,
         args.mount,
         foreground=True,
@@ -253,11 +292,12 @@ def main() -> int:
     parser.add_argument("command", choices=("serve", "start", "link"))
     parser.add_argument("--root", required=True)
     parser.add_argument("--mount")
-    parser.add_argument("--stage")
     parser.add_argument("--base-url")
     parser.add_argument("--link", action="append")
     parser.add_argument("--gated", action="store_true")
     args = parser.parse_args()
+    # Taken out, so the daemon a start launches does not inherit the token.
+    args.config = os.environ.pop(CONFIG_ENV, None)
     paths = Paths()
     if args.command == "serve":
         serve(args, paths)

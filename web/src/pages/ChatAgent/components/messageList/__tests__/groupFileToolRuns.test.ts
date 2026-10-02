@@ -17,7 +17,7 @@ describe('file tool grouping', () => {
     expect(groupFileToolRuns(items)).toEqual([items]);
   });
 
-  it.each(['.agents/user/memory/note.md', '.agents/user/memo/note.md', '.agents/user/profile/portfolio.json', '.agents/user/automations/automations.json', '.agents/skills/research/SKILL.md'])('keeps %s distinct from other reads', (path) => {
+  it.each(['.agents/user/memory/note.md', '.agents/user/memo/note.md', '.agents/user/profile/portfolio.json', '.agents/user/automations/morning-brief.json', '.agents/skills/research/SKILL.md'])('keeps %s distinct from other reads', (path) => {
     const items = [read('a', path), read('b', path), read('c', 'data/a.csv')];
     expect(groupFileToolRuns(items)).toEqual(items.map((item) => [item]));
   });

@@ -16,11 +16,11 @@ from fastapi import HTTPException
 
 
 from ptc_agent.agent.backends.db_json_route import DbJsonRoute
-from ptc_agent.agent.filesystem_routes import route_for
+from ptc_agent.agent.filesystem_routes import USER_DATA_ROUTES, route_for
 from ptc_agent.core.paths import (
     AGENT_SYSTEM_DIRS,
     SANDBOX_ROOTS,
-    USER_DATA_FILES,
+    USER_DATA_DIRS,
     ALWAYS_HIDDEN_BASENAMES as _SHARED_BASENAMES,
     ALWAYS_HIDDEN_DIR_NAMES,
     ALWAYS_HIDDEN_PATH_SEGMENTS,
@@ -124,13 +124,12 @@ _CACHEABLE_IMAGE_TYPES = frozenset(
 # paths bypass the system-path filter and route to the DB layer. The panel
 # serves them read-only: a write belongs to the owning surface or the agent's
 # route, which make the schema and version checks this generic API cannot.
-_VIRTUAL_FILES = tuple(
-    f"{directory}/{name}" for directory, names in USER_DATA_FILES.items() for name in names
-)
-_VIRTUAL_DIRS = frozenset(USER_DATA_FILES)
+_VIRTUAL_DIRS = frozenset(USER_DATA_DIRS)
 
 
 def _virtual_file(client_path: str) -> type[DbJsonRoute] | None:
+    """The route a path would be a virtual file of, whether or not one is
+    there (an automation's file exists only while its row does)."""
     return route_for(client_path)
 
 
@@ -139,19 +138,42 @@ def _is_virtual_dir(client_path: str) -> bool:
     return client_path.rstrip("/") in _VIRTUAL_DIRS
 
 
-def _virtual_files_in_scope(requested_path: str) -> list[str]:
+async def _virtual_files_in_scope(requested_path: str, user_id: str) -> list[str]:
     """The virtual files a listing rooted at ``requested_path`` covers.
 
     A root inside a virtual directory covers all of its files, so a listing of
     one of them still shows its siblings.
     """
-    return [
-        path
-        for path in _VIRTUAL_FILES
-        if requested_path == ""
-        or path.startswith(f"{requested_path}/")
-        or requested_path.startswith(f"{path.rsplit('/', 1)[0]}/")
-    ]
+    paths: list[str] = []
+    for route in USER_DATA_ROUTES:
+        directory = route.directory
+        if not (
+            requested_path == ""
+            or f"{directory}/".startswith(f"{requested_path}/")
+            or requested_path.startswith(f"{directory}/")
+        ):
+            continue
+        try:
+            names = await route.names(user_id)
+        except Exception:
+            # The rest of the listing still serves; these files just don't show.
+            logger.exception("virtual file listing failed", extra={"path": directory})
+            continue
+        paths += [f"{directory}/{name}" for name in names]
+    return paths
+
+
+async def _present_virtual_file(client_path: str, user_id: str) -> bool:
+    """Whether ``client_path`` is a virtual file the user has."""
+    route = _virtual_file(client_path)
+    if route is None:
+        return False
+    try:
+        return client_path.rsplit("/", 1)[-1] in await route.names(user_id)
+    except Exception:
+        # Resolved as before; the read that follows reports the failure.
+        logger.exception("virtual file listing failed", extra={"path": client_path})
+        return True
 
 
 # Derived from shared constants (source of truth: ptc_agent.core.paths)
@@ -435,7 +457,7 @@ def _to_client_path(
 def _is_system_path(client_path: str) -> bool:
     # Virtual DB-backed files live under .agents/ but are first-class
     # user data, so never hide them from the file panel.
-    if client_path in _VIRTUAL_FILES or _is_virtual_dir(client_path):
+    if _virtual_file(client_path) or _is_virtual_dir(client_path):
         return False
     return any(client_path.startswith(prefix) for prefix in _SYSTEM_DIR_PREFIXES)
 

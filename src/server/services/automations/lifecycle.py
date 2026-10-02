@@ -1,12 +1,12 @@
 """Automation create, update and control: the rules every surface shares.
 
-The REST API, the flash tools and the automations file all write through
+The REST API, the flash tools and the automation files all write through
 here, so a rule lives once. Checks the request models can make alone
 (schedule, a known zone) are theirs; the ones that need the stored row, the
 user's targets or their models are made here. The guards against an agent's
 slips (a past or date-only time, a fixed-offset zone) are the models
 module's helpers, which only the agent's surfaces call. A refusal carries the
-field it is about, so the automations file can point at the entry's field.
+field it is about, so an automation's file can point at that field.
 """
 
 import logging
@@ -127,11 +127,13 @@ async def create_automation(
     *,
     conn=None,
     model_pref: dict[str, Any] | None = None,
+    file_name: str | None = None,
 ) -> Dict[str, Any]:
-    """Create a new automation. ``conn`` joins the write to a caller's
-    transaction, as the automations file applies a whole document in one.
-    Such a caller passes the user's ``model_pref``, read before it took its
-    locks: read here, it would hold a second pool connection while they wait.
+    """Create a new automation, filed as ``file_name`` or else as one derived
+    from its name. ``conn`` joins the write to a caller's transaction, as a
+    save of an automation's file does. Such a caller passes the user's
+    ``model_pref``, read before it took its locks: read here, it would hold a
+    second pool connection while they wait.
 
     Raises:
         AutomationRefusal: agent_mode='ptc' without a workspace, or a model
@@ -158,6 +160,7 @@ async def create_automation(
     automation = await auto_db.create_automation(
         user_id=user_id,
         name=data.name,
+        file_name=file_name,
         trigger_type=data.trigger_type,
         instruction=data.instruction,
         description=data.description,

@@ -25,6 +25,10 @@ import pytest
 from ptc_agent.core.sandbox.runtime import SandboxTransientError
 from src.server.app.workspace_files.crud import list_workspace_files
 
+# Every listing also carries the user's data files, read from their rows.
+# These tests pin the routing; test_workspace_files_virtual.py pins those.
+_DATA_FILES = "src.server.app.workspace_files.crud._virtual_files_in_scope"
+
 
 def _workspace(ws_id: str, user_id: str, status: str) -> dict:
     return {
@@ -37,6 +41,7 @@ def _workspace(ws_id: str, user_id: str, status: str) -> dict:
 
 
 @pytest.mark.asyncio
+@patch(_DATA_FILES, new=AsyncMock(return_value=[]))
 @patch("src.server.app.workspace_files.crud.owner_work_dir", return_value="/home/workspace")
 @patch("src.server.app.workspace_files.crud.FilePersistenceService")
 @patch("src.server.app.workspace_files.crud.db_get_workspace")
@@ -71,6 +76,7 @@ async def test_starting_status_routes_to_db_fallback(
 
 
 @pytest.mark.asyncio
+@patch(_DATA_FILES, new=AsyncMock(return_value=[]))
 @patch("src.server.app.workspace_files.crud.owner_work_dir", return_value="/home/workspace")
 @patch("src.server.app.workspace_files.crud.FilePersistenceService")
 @patch("src.server.app.workspace_files.crud.db_get_workspace")

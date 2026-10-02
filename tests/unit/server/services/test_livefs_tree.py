@@ -5,14 +5,16 @@ version must match what a read returns, a directory's writable flag decides
 whether create is refused up front, and a refusal's code becomes the errno a
 program sees. Past threads are renders of server state, so they refuse every
 change, and a workspace path reaches only the user's own workspaces on this
-computer. The
-automations file is rows in Postgres, so its version is the route's own, not a
-hash of the content, and a save takes its defaults from the command's context.
-The sandbox links each directory in where the file tools show the same files.
+computer. An
+automation's file is a row in Postgres, so its version is the route's own, not
+a hash of the content, a save takes its defaults from the command's context,
+and a move within its folder renames the file, not the automation. The
+sandbox links each directory in where the file tools show the same files.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from contextlib import asynccontextmanager
@@ -24,14 +26,21 @@ import pytest
 from langgraph.store.memory import InMemoryStore
 
 from ptc_agent.agent.backends import db_json_route
-from ptc_agent.agent.backends.automations import AUTOMATIONS_FILE, AutomationsBackend
+from ptc_agent.agent.backends.automations import AutomationsBackend
 from ptc_agent.agent.backends.db_json_route import Plan
 from ptc_agent.core.sandbox.livefs_mount import CallContext
 from ptc_agent.core.sandbox.livefs_runtime.protocol import INLINE_MAX_BYTES
 from src.server.database import workspace as workspace_db
 from src.server.database.thread_transcripts import ListedFile, StoredFile
 from src.server.database.workspace_folders import MOVING_DIR
-from src.server.services.automations.file import AutomationsFile, Document, FilePlan, _Delete
+from src.server.services.automations.file import (
+    AutomationFile,
+    Document,
+    FilePlan,
+    _Create,
+    _Delete,
+    is_file_name,
+)
 from src.server.services.livefs.routes import LivefsError
 from src.server.services.livefs.tokens import LivefsIdentity
 from src.server.services.livefs.tree import LivefsTree
@@ -69,11 +78,13 @@ TRANSCRIPT = {
     "tasks/k1/run-0001.jsonl": '{"role": "ai", "content": "✓"}\n',
 }
 NOW = datetime(2026, 9, 26, tzinfo=timezone.utc)
-AUTOMATIONS = "user/automations/automations.json"
-SERVED = '{"automations": [{"name": "Morning brief", "status": "active"}]}\n'
-EDITED = '{"automations": [{"name": "Morning brief", "status": "paused"}]}\n'
+FILE_NAME = "morning-brief.json"
+AUTOMATIONS = f"user/automations/{FILE_NAME}"
+SERVED = '{"name": "Morning brief", "status": "active"}\n'
+EDITED = '{"name": "Morning brief", "status": "paused"}\n'
 ROWS_VERSION = "sha256:rows-v1"
-REPORT = "Saved automations.json: 1 updated.\nRead automations.json again before your next edit."
+REPORT = 'Saved morning-brief.json: updated "Morning brief": paused'
+DOCUMENT = Document(fields={}, shown=None, timezone="UTC", model_pref=None)
 
 
 def _sha(data: bytes) -> str:
@@ -132,11 +143,32 @@ def tree(store, monkeypatch):
     return LivefsTree(LivefsIdentity(COMPUTER, USER, ROOT), store)
 
 
+def _new_file(name: str) -> MagicMock:
+    """A file name no automation has, which a save creates one under."""
+    new = MagicMock(spec=AutomationFile(name))
+    new.unchanged = None
+    new.rows = None
+    new.fetch = AsyncMock(side_effect=lambda user_id, conn=None: new.rows)
+    new.render = MagicMock(side_effect=lambda rows: None if rows is None else (EDITED, "sha256:new-v1"))
+    new.parse = AsyncMock(return_value=DOCUMENT)
+    new.plan = MagicMock(return_value=Plan(FilePlan(create=_Create(data=MagicMock(), pause=False))))
+    new.hold = AsyncMock(return_value=None)
+
+    async def commit(user_id, changes, conn):
+        new.rows = ["row"]
+        return f'Saved {name}: created "Morning brief"'
+
+    new.commit = AsyncMock(side_effect=commit)
+    return new
+
+
 @pytest.fixture
 def automations(monkeypatch):
-    """The user's automations as the file serves and saves them. Every read,
+    """The user's one automation as its file serves and saves it. Every read,
     the save's own included, renders the file as ``content`` and ``version``
-    stand at that moment, so a save leaves the file as a read serves it."""
+    stand at that moment, so a save leaves the file as a read serves it. Any
+    other valid name is in ``others``, holding no automation until a save
+    there creates one."""
     conn = MagicMock()
 
     @asynccontextmanager
@@ -145,16 +177,30 @@ def automations(monkeypatch):
 
     conn.transaction = conn.cursor = _open
     monkeypatch.setattr(db_json_route, "get_db_connection", _open)
-    rows = MagicMock(spec=AutomationsFile())
+    rows = MagicMock(spec=AutomationFile(FILE_NAME))
     rows.unchanged = None
     rows.content, rows.version = SERVED, ROWS_VERSION
     rows.fetch = AsyncMock(return_value=[])
     rows.render = MagicMock(side_effect=lambda _rows: (rows.content, rows.version))
-    rows.parse = AsyncMock(return_value=Document(entries=[], states=None, timezone="UTC", model_pref=None))
+    rows.parse = AsyncMock(return_value=DOCUMENT)
     rows.plan = MagicMock(return_value=Plan(FilePlan()))
     rows.hold = AsyncMock(side_effect=lambda user_id, changes, planned, conn: rows.version if changes else None)
     rows.commit = AsyncMock(return_value=REPORT)
-    monkeypatch.setitem(AutomationsBackend.files, AUTOMATIONS_FILE, rows)
+    rows.others = {}
+
+    def file_named(cls, name: str):
+        if name == FILE_NAME:
+            return rows
+        if not is_file_name(name):
+            return None
+        return rows.others.setdefault(name, _new_file(name))
+
+    async def rendered(cls, user_id: str):
+        return {FILE_NAME: rows.render(await rows.fetch(user_id))}
+
+    monkeypatch.setattr(AutomationsBackend, "file_named", classmethod(file_named))
+    monkeypatch.setattr(AutomationsBackend, "rendered", classmethod(rendered))
+    monkeypatch.setattr(AutomationsBackend, "names", classmethod(AsyncMock(return_value=[FILE_NAME])))
     return rows
 
 
@@ -222,16 +268,16 @@ async def test_the_root_holds_user_workflows_workspaces_and_computer(tree):
 
 
 @pytest.mark.asyncio
-async def test_user_holds_the_automations_folder_which_takes_no_new_files(tree, automations):
+async def test_user_holds_the_automations_folder_which_takes_new_files(tree, automations):
     entries = (await tree.list("user")).entries
     assert [e["name"] for e in entries] == ["memory", "memo", "profile", "automations"]
 
     listing = await tree.list("user/automations")
     assert [(e["name"], e["writable"]) for e in listing.entries] == [
         ("README.md", False),
-        ("automations.json", True),
+        (FILE_NAME, True),
     ]
-    assert listing.writable is False
+    assert listing.writable is True
 
 
 @pytest.mark.asyncio
@@ -291,7 +337,7 @@ async def test_workspace_memory_is_saved_under_that_workspaces_folder(tree, stor
 
 
 @pytest.mark.asyncio
-async def test_new_files_are_accepted_only_where_the_file_tools_write(tree, history):
+async def test_new_files_are_accepted_only_where_the_file_tools_write(tree, history, automations):
     # The daemon refuses create up front in the rest, since a refusal that
     # only arrives at close() goes unseen by most programs.
     directories = (
@@ -299,6 +345,7 @@ async def test_new_files_are_accepted_only_where_the_file_tools_write(tree, hist
         "user",
         "user/memory",
         "user/memo",
+        "user/automations",
         "workflows",
         "workspaces",
         f"workspaces/{HERE}",
@@ -309,7 +356,7 @@ async def test_new_files_are_accepted_only_where_the_file_tools_write(tree, hist
     )
     listings = {path: await tree.list(path) for path in directories}
     writable = {path for path, listing in listings.items() if listing.writable}
-    assert writable == {"user/memory", "workflows", f"workspaces/{HERE}/memory"}
+    assert writable == {"user/memory", "user/automations", "workflows", f"workspaces/{HERE}/memory"}
     # The daemon keeps a structural listing until the host runs ``link`` again,
     # so one a route serves (threads.jsonl moves under ``computer``) is not.
     structural = {path for path, listing in listings.items() if listing.structural}
@@ -455,7 +502,7 @@ async def test_every_file_lists_the_size_version_and_content_its_read_returns(
             "user/memo/brief.md",
             *(f"user/profile/{name}" for name in (*UserDataBackend.data_files, "README.md")),
             "user/automations/README.md",
-            "user/automations/automations.json",
+            AUTOMATIONS,
             "workflows/daily.js",
             f"workspaces/{HERE}/memory/plan.md",
             *(transcripts + name for name in TRANSCRIPT),
@@ -587,7 +634,150 @@ async def test_a_name_the_store_cannot_key_is_refused_as_invalid(tree, store):
     assert store.search((USER, "memory")) == []
 
 
-# -- the automations file ------------------------------------------------------
+class _YieldingStore(InMemoryStore):
+    """Yields at every read and write, as a store over a connection does, so
+    concurrent saves interleave there."""
+
+    async def aget(self, *args, **kwargs):
+        await asyncio.sleep(0)
+        return await super().aget(*args, **kwargs)
+
+    async def aput(self, *args, **kwargs):
+        await asyncio.sleep(0)
+        return await super().aput(*args, **kwargs)
+
+
+SHIPPED = "shipped\n"
+
+
+@pytest.fixture
+def racing(tree, monkeypatch):
+    """The mount over a yielding store holding a memory file and a saved
+    workflow, beside a shipped workflow no save has forked yet."""
+    from ptc_agent.agent.backends.workflows import build_workflow_value
+
+    monkeypatch.setattr(
+        "src.config.settings.get_workflow_orchestration_config",
+        lambda: SimpleNamespace(enabled=True, max_script_bytes=64 * 1024),
+    )
+    monkeypatch.setattr(
+        "ptc_agent.agent.filesystem_routes.get_prebuilt_workflows",
+        lambda: SimpleNamespace(files=lambda: {"shipped.js": SHIPPED}),
+    )
+    store = _YieldingStore()
+    store.put((USER, "memory"), "notes.md", {"content": "base"})
+    store.put((USER, "workflows"), "brief.js", build_workflow_value("base", None))
+    return LivefsTree(LivefsIdentity(COMPUTER, USER, ROOT), store)
+
+
+@pytest.mark.parametrize("path", ["user/memory/notes.md", "workflows/brief.js", "workflows/shipped.js"])
+@pytest.mark.asyncio
+async def test_two_saves_over_one_version_land_once_and_refuse_the_other(racing, path):
+    """Both name the version they read, and each is checked under the lock
+    its write holds, so the second finds the first one's save rather than
+    landing over it. A shipped workflow's first save forks it."""
+    _, version, _ = await racing.read(path)
+
+    results = await asyncio.gather(
+        *(
+            racing.write(path, body, if_match=f'"{version}"', if_none_match=None)
+            for body in (b"from A", b"from B")
+        ),
+        return_exceptions=True,
+    )
+
+    saved = [r for r in results if not isinstance(r, BaseException)]
+    refused = [r for r in results if isinstance(r, LivefsError)]
+    assert len(saved) == len(refused) == 1, results
+    assert (refused[0].status, refused[0].code) == (412, "changed")
+    content, version, _ = await racing.read(path)
+    assert content in ("from A", "from B")
+    assert version == saved[0].version
+
+
+@pytest.mark.asyncio
+async def test_two_creates_of_one_new_file_land_once_and_refuse_the_other(racing):
+    path = "user/memory/new.md"
+    results = await asyncio.gather(
+        *(racing.write(path, body, if_match=None, if_none_match="*") for body in (b"A", b"B")),
+        return_exceptions=True,
+    )
+
+    refused = [r for r in results if isinstance(r, LivefsError)]
+    assert len(refused) == 1, results
+    assert (refused[0].status, refused[0].code) == (412, "exists")
+
+
+@pytest.mark.asyncio
+async def test_a_create_over_a_shipped_workflow_is_refused_as_exists(racing):
+    """The mount serves the shipped script where no save has forked it."""
+    refused = await _refusal(
+        lambda: racing.write("workflows/shipped.js", b"mine", if_match=None, if_none_match="*")
+    )
+
+    assert (refused.status, refused.code) == (412, "exists")
+    assert (await racing.read("workflows/shipped.js"))[0] == SHIPPED
+
+
+@pytest.mark.parametrize("target", ["workflows/mine.js", "user/memory/mine.js"])
+@pytest.mark.asyncio
+async def test_a_shipped_workflow_is_refused_a_move_as_its_delete_is(racing, target):
+    """A move ends in deleting the source, which a script no save has
+    forked refuses, so it is refused before the copy at the target is made."""
+    removal = await _refusal(lambda: racing.delete("workflows/shipped.js"))
+    move = await _refusal(lambda: racing.rename("workflows/shipped.js", target))
+
+    assert (move.status, move.code) == (removal.status, removal.code) == (403, "read_only")
+    assert (await racing.read("workflows/shipped.js"))[0] == SHIPPED
+    assert (await _refusal(lambda: racing.read(target))).code == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_a_forked_shipped_workflow_moves_and_the_shipped_one_shows_again(racing):
+    """The move deletes the user's fork, as removing it does."""
+    _, version, _ = await racing.read("workflows/shipped.js")
+    await racing.write("workflows/shipped.js", b"mine", if_match=f'"{version}"', if_none_match=None)
+
+    await racing.rename("workflows/shipped.js", "workflows/mine.js")
+
+    assert (await racing.read("workflows/mine.js"))[0] == "mine"
+    assert (await racing.read("workflows/shipped.js"))[0] == SHIPPED
+
+
+@pytest.mark.parametrize(
+    ("target", "before"),
+    [("workflows/moved.js", None), ("user/memory/moved.md", None), ("workflows/kept.js", "kept")],
+    ids=["into-workflows", "within-memory", "over-a-file"],
+)
+@pytest.mark.asyncio
+async def test_a_save_landing_on_a_file_mid_move_is_kept_and_the_move_refused(
+    racing, target, before
+):
+    """The save lands after the move copied the file and before it deletes
+    it. The delete goes over the version the move copied, so it is refused
+    rather than deleting the saved bytes, and the copy is taken back."""
+    source = "user/memory/notes.md"
+    if before is not None:
+        await racing.write(target, before.encode(), if_match=None, if_none_match="*")
+    _, version, _ = await racing.read(source)
+
+    moved, saved = await asyncio.gather(
+        racing.rename(source, target),
+        racing.write(source, b"saved mid-move", if_match=f'"{version}"', if_none_match=None),
+        return_exceptions=True,
+    )
+
+    assert not isinstance(saved, BaseException), saved
+    assert isinstance(moved, LivefsError), moved
+    assert (moved.status, moved.code) == (412, "changed")
+    assert (await racing.read(source))[0] == "saved mid-move"
+    if before is None:
+        assert (await _refusal(lambda: racing.read(target))).code == "not_found"
+    else:
+        assert (await racing.read(target))[0] == before
+
+
+# -- the automations folder ----------------------------------------------------
 
 
 async def _save(tree: LivefsTree, if_match: str, body: str = EDITED):
@@ -596,23 +786,22 @@ async def _save(tree: LivefsTree, if_match: str, body: str = EDITED):
     )
 
 
+async def _create(tree: LivefsTree, path: str, body: str = EDITED):
+    return await tree.write(path, body.encode(), if_match=None, if_none_match="*")
+
+
 @pytest.mark.asyncio
 async def test_a_save_over_the_rows_version_lands_and_returns_its_report(
     tree, automations
 ):
-    """A program writes the whole file, so what it leaves out is deleted even
-    though no Read tool call stands behind it."""
-    gone = _Delete(automation_id="id-1", name="Old job")
-    automations.plan.return_value = Plan(FilePlan(deletes=[gone]), [gone.label])
+    """No Read tool call stands behind a program's save, so the version is
+    the whole check."""
     _, version, _ = await tree.read(AUTOMATIONS)
     assert version == ROWS_VERSION
 
     saved = await _save(tree, version)
 
-    assert (saved.path, saved.report) == (
-        f"{ROOT}/.agents/user/automations/automations.json",
-        REPORT,
-    )
+    assert (saved.path, saved.report) == (f"{ROOT}/.agents/{AUTOMATIONS}", REPORT)
     # Stored as the server renders it, which the sender has to read back.
     assert saved.size == len(SERVED.encode())
     assert not saved.as_sent
@@ -624,7 +813,7 @@ async def test_state_moving_under_a_read_never_makes_its_save_conflict(tree, aut
     """A run moves ``state``, which the save ignores; only the rows' own
     version names a change the program did not see."""
     _, version, _ = await tree.read(AUTOMATIONS)
-    automations.content = SERVED.replace("}]", ', "state": {"failure_count": 1}}]')
+    automations.content = SERVED.replace("}\n", ', "state": {"failure_count": 1}}\n')
 
     saved = await _save(tree, version)
 
@@ -668,7 +857,7 @@ async def test_a_save_answers_with_the_file_it_left_without_reading_it_back(
 ):
     """Read back after the commit, a read that failed would answer a save
     that landed as NOT SAVED, and a program rerun on that would create its
-    automations twice."""
+    automation twice."""
     async def fetch(user_id, conn=None):
         if conn is None:
             raise RuntimeError("connection reset")
@@ -683,17 +872,132 @@ async def test_a_save_answers_with_the_file_it_left_without_reading_it_back(
 
 
 @pytest.mark.asyncio
-async def test_the_automations_file_cannot_be_moved_away(tree, store, automations):
+async def test_a_new_name_in_the_folder_creates_an_automation(tree, automations):
+    saved = await _create(tree, "user/automations/evening-wrap.json")
+
+    assert saved.report == 'Saved evening-wrap.json: created "Morning brief"'
+    assert (saved.version, saved.size) == ("sha256:new-v1", len(EDITED.encode()))
+    automations.others["evening-wrap.json"].commit.assert_awaited_once()
+    automations.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_create_over_an_automations_file_is_refused_as_exists(tree, automations):
+    refused = await _refusal(lambda: _create(tree, AUTOMATIONS))
+
+    assert (refused.status, refused.code) == (412, "exists")
+    automations.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("name", ["notes.txt", "brief.json.tmp", ".brief.json.swp"])
+@pytest.mark.asyncio
+async def test_a_name_no_automation_may_take_is_refused_as_invalid(tree, automations, name):
+    """Where an editor's temporary file lands, so a save in place fails
+    loudly rather than creating an automation."""
+    refused = await _refusal(lambda: _create(tree, f"user/automations/{name}"))
+
+    assert (refused.status, refused.code) == (422, "invalid")
+    assert "1 to 64 letters, digits, - or _" in refused.message
+
+
+@pytest.mark.asyncio
+async def test_status_deleted_answers_with_no_file(tree, automations):
+    automations.plan.return_value = Plan(FilePlan(delete=_Delete(automation_id="id-1", name="Morning brief")))
+
+    async def delete(user_id, changes, conn):
+        automations.render.side_effect = lambda _rows: None
+        return 'Deleted "Morning brief" (morning-brief.json), with its run history'
+
+    automations.commit.side_effect = delete
+
+    saved = await _save(tree, ROWS_VERSION, '{"status": "deleted"}')
+
+    assert (saved.removed, saved.version, saved.size, saved.as_sent) == (True, "", 0, False)
+    assert saved.report.startswith('Deleted "Morning brief"')
+
+
+@pytest.mark.asyncio
+async def test_removing_an_automations_file_deletes_it_and_reports_that(tree, automations):
+    automations.plan_delete.return_value = Plan(FilePlan(delete=_Delete(automation_id="id-1", name="Morning brief")))
+    automations.commit.return_value = 'Deleted "Morning brief" (morning-brief.json), with its run history'
+
+    path, report = await tree.delete(AUTOMATIONS)
+
+    assert path == f"{ROOT}/.agents/{AUTOMATIONS}"
+    assert report == 'Deleted "Morning brief" (morning-brief.json), with its run history'
+
+
+@pytest.mark.parametrize(
+    ("path", "status", "code"),
+    [("user/automations/gone.json", 404, "not_found"), ("user/automations/README.md", 403, "read_only")],
+    ids=["no-automation", "readme"],
+)
+@pytest.mark.asyncio
+async def test_removing_what_is_no_automations_file_is_refused(tree, automations, path, status, code):
+    refused = await _refusal(lambda: tree.delete(path))
+
+    assert (refused.status, refused.code) == (status, code)
+    automations.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_move_within_the_folder_renames_the_file_and_keeps_the_automation(tree, automations):
+    automations.rename = AsyncMock(return_value="Renamed morning-brief.json to brief.json")
+
+    moved = await tree.rename(AUTOMATIONS, "user/automations/brief.json")
+
+    assert moved == (
+        f"{ROOT}/.agents/{AUTOMATIONS}",
+        f"{ROOT}/.agents/user/automations/brief.json",
+        "Renamed morning-brief.json to brief.json",
+    )
+    automations.rename.assert_awaited_once_with(USER, "brief.json", ANY)
+    automations.others["brief.json"].commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_move_onto_another_automations_file_is_refused_as_exists(tree, automations):
+    taken = automations.others["evening-wrap.json"] = _new_file("evening-wrap.json")
+    taken.rows = ["row"]
+
+    refused = await _refusal(lambda: tree.rename(AUTOMATIONS, "user/automations/evening-wrap.json"))
+
+    assert (refused.status, refused.code) == (412, "exists")
+    automations.rename.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_file_moved_into_the_folder_creates_an_automation(tree, store, automations):
+    store.put((USER, "memory"), "draft.json", {"content": EDITED})
+
+    _, _, report = await tree.rename("user/memory/draft.json", "user/automations/draft.json")
+
+    assert report == 'Saved draft.json: created "Morning brief"'
+    assert store.search((USER, "memory")) == []
+
+
+@pytest.mark.parametrize(
+    "target", ["user/memory/morning-brief.json", "workflows/morning-brief.json"]
+)
+@pytest.mark.asyncio
+async def test_an_automations_file_cannot_be_moved_out_of_its_folder(tree, store, automations, target):
     """Refused before loading it, so a database outage cannot turn the
     answer into not found."""
-    refused = await _refusal(
-        lambda: tree.rename(AUTOMATIONS, "user/memory/automations.json")
-    )
+    refused = await _refusal(lambda: tree.rename(AUTOMATIONS, target))
 
     assert (refused.status, refused.code) == (403, "read_only")
     assert store.search((USER, "memory")) == []
     automations.fetch.assert_not_awaited()
     automations.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_profile_files_still_move_nowhere(tree):
+    """Their names are fixed, so a move within their folder is refused as
+    before, without reading the rows."""
+    refused = await _refusal(lambda: tree.rename("user/profile/portfolio.json", "user/profile/mine.json"))
+
+    assert (refused.status, refused.code) == (403, "read_only")
 
 
 @pytest.mark.parametrize(

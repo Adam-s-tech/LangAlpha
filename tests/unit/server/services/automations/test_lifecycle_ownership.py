@@ -3,7 +3,7 @@
 Locks the cross-tenant contract: a ``workspace_id`` / ``conversation_thread_id``
 naming something the caller does not own is rejected before any row is written.
 The gate lives in the lifecycle because the REST router, the agent tools and
-the automations file all write through it.
+the automation files all write through it.
 """
 
 import uuid

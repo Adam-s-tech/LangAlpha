@@ -292,12 +292,14 @@ class TestDelivery:
             ([], []),
             ("slack, email", ["slack", "email"]),
             ("slack,", ["slack"]),
+            (["slack", ""], ["slack"]),
+            ([" "], []),
         ],
     )
     def test_a_list_or_a_comma_string_is_the_methods(self, written, methods):
         assert parse_delivery(written) == {"methods": methods}
 
-    @pytest.mark.parametrize("written", [None, 3, [""], ["slack", 1], {"methods": ["slack"]}])
+    @pytest.mark.parametrize("written", [None, 3, ["slack", 1], {"methods": ["slack"]}])
     def test_anything_else_is_refused_with_the_shape(self, written):
         with pytest.raises(ValueError, match=r'must be a list of delivery methods, e\.g\. \["slack"\]'):
             parse_delivery(written)

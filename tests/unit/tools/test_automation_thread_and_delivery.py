@@ -1,5 +1,5 @@
 """The flash tools' ``thread`` and ``delivery`` arguments, which read the
-same rules as the automations file through the model and the lifecycle."""
+same rules as the automation files through the model and the lifecycle."""
 
 from __future__ import annotations
 
@@ -120,11 +120,45 @@ async def test_update_pins_a_thread_named_by_its_id(updated):
     assert updated == [{"thread_strategy": "continue", "conversation_thread_id": THREAD_ID}]
 
 
+def _stored(monkeypatch, **thread) -> None:
+    async def get_automation(automation_id, user_id, **_kwargs):
+        return _row(**thread)
+
+    monkeypatch.setattr(tools.auto_db, "get_automation", get_automation)
+
+
+@pytest.mark.parametrize(
+    "thread",
+    [
+        {"thread_strategy": "new", "conversation_thread_id": None},
+        {"thread_strategy": "continue", "conversation_thread_id": CURRENT_THREAD_ID, "owns_thread": False},
+    ],
+)
 @pytest.mark.asyncio
-async def test_update_to_persistent_clears_a_pinned_conversation(updated):
+async def test_update_to_persistent_clears_a_pinned_conversation(updated, monkeypatch, thread):
+    _stored(monkeypatch, **thread)
+
     await _update(thread_id=CURRENT_THREAD_ID, thread="persistent")
 
     assert updated == [{"thread_strategy": "continue", "conversation_thread_id": None}]
+
+
+@pytest.mark.parametrize(
+    "thread",
+    [
+        {"thread_strategy": "continue", "conversation_thread_id": None},
+        {"thread_strategy": "continue", "conversation_thread_id": THREAD_ID, "owns_thread": True},
+    ],
+)
+@pytest.mark.asyncio
+async def test_update_restating_persistent_keeps_its_own_thread(updated, monkeypatch, thread):
+    """Clearing the pin would start the next run in a new thread."""
+    _stored(monkeypatch, **thread)
+
+    result = await _update(thread="persistent")
+
+    assert result["success"] is True
+    assert updated == [{"thread_strategy": "continue"}]
 
 
 @pytest.mark.parametrize(

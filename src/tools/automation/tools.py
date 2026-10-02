@@ -27,6 +27,7 @@ from src.server.services.automations import lifecycle
 from src.server.models.automation import (
     AutomationCreate,
     future_run,
+    in_own_thread,
     parse_delivery,
     run_time,
     thread_fields,
@@ -472,7 +473,15 @@ async def manage_automation(
                     update_data["delivery_config"]["methods"]
                 )
             if thread is not None:
-                update_data.update(_thread(thread, config))
+                thread_data = _thread(thread, config)
+                if thread == "persistent":
+                    current = await auto_db.get_automation(automation_id, user_id)
+                    if not current:
+                        return {"error": f"Automation '{automation_id}' not found."}
+                    # Restated, it keeps the thread its first run pinned.
+                    if in_own_thread(current):
+                        thread_data = {"thread_strategy": "continue"}
+                update_data.update(thread_data)
             if schedule is not None:
                 tz = _get_timezone(config)
                 schedule_info = _parse_schedule(schedule, tz)

@@ -23,7 +23,7 @@ class Contents:
     used longest ago goes first.
 
     Bytes whose version is their digest are any command's. A route may keep
-    a version while its content moves (the automations file's run state), so
+    a version while its content moves (an automation file's run state), so
     other bytes are kept per command too, and one command's never replace or
     stand for another's.
     """

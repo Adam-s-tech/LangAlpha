@@ -68,7 +68,8 @@ EGRESS_RELAY_SECRET: str = os.getenv("EGRESS_RELAY_SECRET", "")
 
 # Base URL sandboxes use to reach this backend: the egress relay (the generated
 # client appends /v1/egress/{grant_id}) and the file mount that serves memory,
-# profile and workflows to sandbox code (/api/v1/livefs/). Sandboxes are remote
+# profile, automations and workflows to sandbox code, plus memos and
+# transcripts read-only (/api/v1/livefs/). Sandboxes are remote
 # (or in OSS Docker, on a different network), so this must be a
 # sandbox-reachable address. Empty means
 # unconfigured: services/egress/reachability.py then falls back to the server

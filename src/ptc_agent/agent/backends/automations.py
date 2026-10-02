@@ -1,45 +1,35 @@
-"""AutomationsBackend: the user's automations as `.agents/user/automations/automations.json`.
+"""AutomationsBackend: each of the user's automations as a file in `.agents/user/automations/`.
 
-The rows live in Postgres; ``services.automations.file`` serializes them and
-turns a save into creates, updates and deletes in one transaction. Flash, which
-has no filesystem, manages the same rows through the automation tools.
+The rows live in Postgres; ``services.automations.file`` serializes each one
+and turns a save of its file into a create, update or delete. Flash, which has
+no filesystem, manages the same rows through the automation tools.
 """
 
 from __future__ import annotations
 
-from ptc_agent.agent.backends.db_json_route import README_FILE, DbJsonRoute
+from ptc_agent.agent.backends.db_json_folder import DbJsonFolderRoute
+from ptc_agent.agent.backends.db_json_route import README_FILE
 from ptc_agent.core.paths import SandboxLayout
-from src.server.services.automations.file import FILE_NAME as AUTOMATIONS_FILE
-from src.server.services.automations.file import AutomationsFile
+from src.server.services.automations import file
 
-__all__ = ["AUTOMATIONS_FILE", "README_FILE", "AutomationsBackend"]
+__all__ = ["README_FILE", "AutomationsBackend"]
 
 _README_CONTENT = """\
 # Automations
 
-`automations.json` holds every automation the user has: agent runs that start on
-a schedule or when a price condition is met, without the user present. It is
-the live database, not a copy. Reads are fresh. A write is checked, then saved
-all at once, and the Write/Edit result lists every automation it created,
+Each automation the user has is one JSON file in this folder: an agent run
+that starts on a schedule or when a price condition is met, without the user
+present. The files are the live database, not a copy. Reads are fresh. A write
+is checked, then saved, and the Write/Edit result says what it created,
 updated or deleted. If anything is refused, nothing is saved.
 
-Code sees the file at the same path when the sandbox has the file mount. A
-program saves it whole, deleting any automation it leaves out, and the
-command's result lists the changes or why the save was refused. Write it in
-place: `sed -i` and write-then-rename helpers need a new file in this folder,
-which fails with Permission denied.
+The file name is a reference you pick: 1 to 64 letters, digits, `-` or `_`,
+starting with a letter or digit, then `.json` (`morning-brief.json`). It need
+not match `name`, which is what the user sees. Automations made elsewhere get
+one derived from their name.
 
-**Read the file before you Write it.** A Write is refused if you haven't read
-the file in this run, or if it changed since (the user's Automations page, a
-run, another turn). The user's answer to a question starts a new run, so Read
-again after asking. A Write that leaves automations out deletes them, so it also
-needs a Read that showed the whole file, without offset or limit. Edit needs no
-Read of its own, since `old_string` must match the file, and is refused the same
-way if the file changed since you read it. After any write, Read again before
-the next one.
-
-**Confirm with the user first.** Automations run unattended, so before a write
-that creates or deletes one, summarize it and get a yes. Pin down:
+**Confirm with the user first.** Automations run unattended, so before you
+create or delete one, summarize it and get a yes. Pin down:
 - the schedule: "every morning" means which days, what time, which timezone?
 - the instruction: it runs with no one to ask. Make it self-contained: which
   tickers, which metrics, what format.
@@ -47,78 +37,87 @@ that creates or deletes one, summarize it and get a yes. Pin down:
 - delivery: in-app only, or also a channel such as Slack.
 
 Change only what the user asked for; suggest any other edit instead of making
-it. This file is the record of the user's automations: Read it when you need
-them rather than keeping their schedules or statuses in notes or memory, where
-they go stale.
+it. These files are the record of the user's automations: Read them when you
+need them rather than keeping their schedules or statuses in notes or memory,
+where they go stale.
 
 ## Editing
 
-- **Create:** append an object without `automation_id`. The server assigns one.
-- **Update:** change fields in place. A field you leave out keeps its value;
-  `null` clears `description` or `llm_model`.
+- **Create:** Write a new file. A name that is taken is refused, never
+  overwritten.
+- **Update:** Read the file, then Write it, or Edit it. A Write is refused if
+  you haven't read the file in this run, or if it changed since (the user's
+  Automations page, a run, another turn); the user's answer to a question
+  starts a new run, so Read again after asking. A field you leave out keeps
+  its value; `null` clears `description` or `llm_model`. Each file is checked
+  on its own, so a change to one never conflicts with another.
 - **Pause / resume:** set `status` to `"paused"` or `"active"`.
-- **Delete:** remove the object from the array. Its run history goes with it
-  and cannot be restored.
+- **Delete:** set `status` to `"deleted"`, or `rm` the file from code. Its run
+  history goes with it and cannot be restored.
+- **Rename:** `mv` a file to another name in this folder changes only the
+  file name; the automation and its history stay.
+- Copying a file creates a second automation that runs too, so never copy one
+  as a backup.
 - `state` is kept by the server and moves as runs happen, which never makes a
   write conflict. A write ignores it, and the result notes an edit to it: to
   move a run, change `cron_expression` or `next_run_at`.
-- Nothing in the file runs an automation now. The user can, with Run now on
-  the Automations page.
+- Nothing in a file runs an automation now. The user can, with Run now on the
+  Automations page.
 
-With Edit, make `old_string` the whole `{ ... }` object you are changing: every
-automation shares the same keys, so a single line such as `"status": "active"`
-matches several of them. Use Write to make many changes at once.
+Code sees these files at the same paths when the sandbox has the file mount,
+and the command's result lists each change or why a save was refused. Write a
+file in place: `sed -i` and write-then-rename helpers save a temporary file
+first, which is refused or becomes an automation of its own.
 
 ## Example
 
+`morning-brief.json`:
+
 ```json
 {
-  "automations": [
-    {
-      "automation_id": "6f1c2b1e-5d0a-4a57-9a8e-2f0b7c1d9e10",
-      "name": "Morning market brief",
-      "description": null,
-      "status": "active",
-      "trigger_type": "cron",
-      "cron_expression": "0 9 * * 1-5",
-      "timezone": "America/New_York",
-      "instruction": "Summarize overnight moves for my watchlist: top movers, news, one line each.",
-      "agent_mode": "flash",
-      "workspace_id": null,
-      "thread": "new",
-      "llm_model": null,
-      "delivery": ["slack"],
-      "max_failures": 3,
-      "state": {
-        "next_run_at": "2026-09-29T09:00:00-04:00",
-        "last_run": {"status": "completed", "at": "2026-09-28T09:01:12-04:00"}
-      }
-    },
-    {
-      "name": "AAPL below 200",
-      "trigger_type": "price",
-      "trigger_config": {
-        "symbol": "AAPL",
-        "conditions": [{"type": "price_below", "value": 200}]
-      },
-      "instruction": "AAPL just fell below $200. Summarize the news and analyst moves behind it.",
-      "agent_mode": "flash"
-    }
-  ]
+  "name": "Morning market brief",
+  "description": null,
+  "status": "active",
+  "trigger_type": "cron",
+  "cron_expression": "0 9 * * 1-5",
+  "timezone": "America/New_York",
+  "instruction": "Summarize overnight moves for my watchlist: top movers, news, one line each.",
+  "agent_mode": "flash",
+  "workspace_id": null,
+  "thread": "new",
+  "llm_model": null,
+  "delivery": ["slack"],
+  "max_failures": 3,
+  "state": {
+    "automation_id": "6f1c2b1e-5d0a-4a57-9a8e-2f0b7c1d9e10",
+    "next_run_at": "2026-09-29T09:00:00-04:00",
+    "last_run": {"status": "completed", "at": "2026-09-28T09:01:12-04:00"}
+  }
 }
 ```
 
-The second entry is a new automation: no `automation_id`, no `state`, and the
-fields it leaves out take their defaults.
+A new one needs only what has no default, e.g. `aapl-below-200.json`:
+
+```json
+{
+  "name": "AAPL below 200",
+  "trigger_type": "price",
+  "trigger_config": {
+    "symbol": "AAPL",
+    "conditions": [{"type": "price_below", "value": 200}]
+  },
+  "instruction": "AAPL just fell below $200. Summarize the news and analyst moves behind it.",
+  "agent_mode": "flash"
+}
+```
 
 ## Fields
 
 | Field | Required on create | Notes |
 |-------|--------------------|-------|
-| automation_id  | no (server sets it) | Identifies the automation. Never change it. |
-| name           | yes | Up to 255 characters. |
+| name           | yes | What the user sees; up to 255 characters. |
 | description    | no  | Free text. |
-| status         | no  | `active` (default) or `paused`. The server also sets `executing` (a price alert firing now), `completed` (a one-time or one-shot run finished) and `disabled` (switched off, see `state.disable_reason`); set `active` to resume a disabled one. A `completed` one won't run on its own again: add a new entry for another run. |
+| status         | no  | `active` (default) or `paused`. The server also sets `executing` (a price alert firing now), `completed` (a one-time or one-shot run finished) and `disabled` (switched off, see `state.disable_reason`); set `active` to resume a disabled one. A `completed` one won't run on its own again: write a new file for another run. `deleted` deletes it. |
 | trigger_type   | no  | `cron`, `once` or `price`; inferred from the schedule field you give. Fixed once created: to change it, create a new automation and delete the old one. |
 | cron_expression| cron | 5-field cron on the automation's clock: `0 9 * * 1-5` weekdays 9:00, `0 */4 * * *` every 4 hours, `30 8 1 * *` the 1st at 8:30. No seconds field; a step can't span fields (no "every 90 minutes"). |
 | next_run_at    | once | A future ISO time with a time of day, e.g. `2026-10-01T09:00:00`. Without an offset it is read in `timezone`. |
@@ -160,6 +159,7 @@ you save a price alert.
 
 ## state (read-only)
 
+- `automation_id`: the server's id for the automation.
 - `next_run_at`: when a cron automation runs next.
 - `last_run`: its newest run, absent before the first. `status` is `pending`,
   `waiting` (queued behind the turn running on its thread), `running`,
@@ -179,20 +179,33 @@ you save a price alert.
 """
 
 
-class AutomationsBackend(DbJsonRoute):
+class AutomationsBackend(DbJsonFolderRoute):
     """Filesystem surface backed by the `automations` table."""
 
     directory = SandboxLayout.AUTOMATIONS_DIR
-    files = {AUTOMATIONS_FILE: AutomationsFile()}
     readme_content = _README_CONTENT
+    name_rule = file.NAME_RULE
+    entry = "an automation"
 
     source = "automations_backend"
     read_failure = "Failed to read automations data"
     read_only = (
-        "The automations JSON file is read-only through the file panel. "
-        "Edit via the Automations page or ask the agent to update it."
+        "Automation files are read-only through the file panel. "
+        "Edit via the Automations page or ask the agent to update them."
     )
     undeletable = (
-        "The automations JSON file cannot be deleted through the file panel. "
+        "Automation files cannot be deleted through the file panel. "
         "Manage automations via the Automations page."
     )
+
+    @classmethod
+    def file_named(cls, name: str) -> file.AutomationFile | None:
+        return file.AutomationFile(name) if file.is_file_name(name) else None
+
+    @classmethod
+    async def names(cls, user_id: str) -> list[str]:
+        return await file.file_names(user_id)
+
+    @classmethod
+    async def rendered(cls, user_id: str) -> dict[str, tuple[str, str]]:
+        return await file.rendered_files(user_id)

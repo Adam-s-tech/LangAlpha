@@ -48,16 +48,16 @@ from ptc_agent.core.paths import (
 from ptc_agent.core.sandbox.livefs_mount import CallContext
 
 # The routes that serve the user's database rows as files, one per directory
-# of ``USER_DATA_FILES``.
+# of ``USER_DATA_DIRS``.
 USER_DATA_ROUTES = (UserDataBackend, AutomationsBackend)
 
 
 def route_for(path: str) -> type[DbJsonRoute] | None:
-    """The route serving ``path`` (relative to the sandbox root), if it is
-    one of the user's data files."""
+    """The route serving ``path`` (relative to the sandbox root), if it may
+    be one of the user's data files, whether or not one is there."""
     directory, _, name = path.rpartition("/")
     return next(
-        (r for r in USER_DATA_ROUTES if r.directory == directory and name in r.data_files),
+        (r for r in USER_DATA_ROUTES if r.directory == directory and r.file_named(name) is not None),
         None,
     )
 

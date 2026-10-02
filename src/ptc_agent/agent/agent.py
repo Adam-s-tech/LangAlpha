@@ -301,7 +301,7 @@ class PTCAgent:
                 workspace_id_present=bool(workspace_id_for_memory),
             )
 
-        # Who this turn writes for: the automations file's defaults, for the
+        # Who this turn writes for: a new automation's defaults, for the
         # file tools and for a save through the file mount alike.
         call_context = CallContext(
             workspace_id=workspace_id_for_memory,
@@ -331,7 +331,7 @@ class PTCAgent:
         bash_tool = create_execute_bash_tool(
             backend, thread_id=short_thread_id, call_context=call_context
         )
-        bash_output_tool = create_bash_output_tool(backend)
+        bash_output_tool = create_bash_output_tool(backend, call_context=call_context)
 
         # Create the preview URL tool for sandbox service previews
         workspace_id = project.workspace_id if project else ""

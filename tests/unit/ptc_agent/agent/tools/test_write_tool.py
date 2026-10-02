@@ -37,10 +37,10 @@ async def _write(backend: Any, path: str, content: str) -> str:
 
 @pytest.mark.asyncio
 async def test_a_routes_report_is_the_tool_result():
-    report = "Saved automations.json: 1 created.\n- created \"Brief\" (id)\nRead automations.json again before your next edit."
+    report = 'Saved brief.json: created "Brief"; next run 2030-10-01T09:00:00-04:00'
     backend = _backend({"success": True, "message": report})
 
-    result = await _write(backend, f"{ROOT}/.agents/user/automations/automations.json", "{}")
+    result = await _write(backend, f"{ROOT}/.agents/user/automations/brief.json", "{}")
 
     assert result == report
 

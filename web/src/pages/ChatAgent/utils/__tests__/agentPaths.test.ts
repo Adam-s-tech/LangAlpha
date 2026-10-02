@@ -330,7 +330,7 @@ describe('classifyAgentPath', () => {
       }
     });
 
-    it('classifies the profile files and automations.json', () => {
+    it('classifies the profile files and each automation file', () => {
       const entity = (path: string) => {
         const r = classifyAgentPath(path);
         return r.kind === 'user-data' ? r.entity : null;
@@ -338,22 +338,28 @@ describe('classifyAgentPath', () => {
       expect(entity('.agents/user/profile/portfolio.json')).toBe('portfolio');
       expect(entity('.agents/user/profile/watchlist.json')).toBe('watchlist');
       expect(entity('.agents/user/profile/preference.json')).toBe('preference');
-      expect(entity('.agents/user/automations/automations.json')).toBe('automations');
+      // One file per automation, under any name the server accepts.
+      expect(entity('.agents/user/automations/morning-brief.json')).toBe('automations');
+      expect(entity('.agents/user/automations/AAPL_below_200.json')).toBe('automations');
+      expect(entity('.agents/user/automations/portfolio.json')).toBe('automations');
     });
 
     it('strips the sandbox-root prefix', () => {
       expect(classifyAgentPath('home/workspace/.agents/user/profile/portfolio.json').kind).toBe('user-data');
-      expect(classifyAgentPath('/home/workspace/.agents/user/automations/automations.json').kind).toBe('user-data');
+      expect(classifyAgentPath('/home/workspace/.agents/user/automations/morning-brief.json').kind).toBe('user-data');
     });
 
-    it('falls back to file for unknown names and the directories themselves', () => {
+    it('falls back to file for names no data file takes and the directories themselves', () => {
       expect(classifyAgentPath('.agents/user/profile/other.json').kind).toBe('file');
       expect(classifyAgentPath('.agents/user/profile/').kind).toBe('file');
-      expect(classifyAgentPath('.agents/user/automations/other.json').kind).toBe('file');
       expect(classifyAgentPath('.agents/user/automations/').kind).toBe('file');
-      // A data file's name under the other directory is not that file.
-      expect(classifyAgentPath('.agents/user/profile/automations.json').kind).toBe('file');
-      expect(classifyAgentPath('.agents/user/automations/portfolio.json').kind).toBe('file');
+      expect(classifyAgentPath('.agents/user/automations/notes.txt').kind).toBe('file');
+      // An editor's temporary file, which the server refuses too.
+      expect(classifyAgentPath('.agents/user/automations/brief.json.tmp').kind).toBe('file');
+      expect(classifyAgentPath('.agents/user/automations/-brief.json').kind).toBe('file');
+      expect(classifyAgentPath('.agents/user/automations/sub/brief.json').kind).toBe('file');
+      expect(classifyAgentPath(`.agents/user/automations/${'a'.repeat(65)}.json`).kind).toBe('file');
+      expect(classifyAgentPath('.agents/user/profile/morning-brief.json').kind).toBe('file');
     });
 
     it('classifies the README beside the data files as a generic file', () => {
@@ -370,7 +376,7 @@ describe('classifyAgentPath', () => {
         expect(profile.entity).toBe('portfolio');
         expect(profile.crossWorkspaceId).toBe('ws-7');
       }
-      const automations = classifyAgentPath('__wsref__/ws-7/.agents/user/automations/automations.json');
+      const automations = classifyAgentPath('__wsref__/ws-7/.agents/user/automations/morning-brief.json');
       expect(automations.kind).toBe('user-data');
       if (automations.kind === 'user-data') {
         expect(automations.entity).toBe('automations');
@@ -397,9 +403,9 @@ describe('computeAgentArtifactRouting: user data', () => {
     expect(r.clearWorkspaceId).toBe(true);
   });
 
-  it('routes automations.json to the Files tab as user-scoped, ignoring a caller wsid', () => {
-    const r = computeAgentArtifactRouting('.agents/user/automations/automations.json', 'ws-A');
-    expect(r.targetFile).toBe('.agents/user/automations/automations.json');
+  it('routes an automation file to the Files tab as user-scoped, ignoring a caller wsid', () => {
+    const r = computeAgentArtifactRouting('.agents/user/automations/morning-brief.json', 'ws-A');
+    expect(r.targetFile).toBe('.agents/user/automations/morning-brief.json');
     expect(r.setWorkspaceId).toBeNull();
     expect(r.clearWorkspaceId).toBe(true);
   });
@@ -453,7 +459,7 @@ describe('isUserDataReadmePath', () => {
     expect(isUserDataReadmePath('.agents/user/profile/portfolio.json')).toBe(false);
     expect(isUserDataReadmePath('.agents/user/profile/watchlist.json')).toBe(false);
     expect(isUserDataReadmePath('.agents/user/profile/preference.json')).toBe(false);
-    expect(isUserDataReadmePath('.agents/user/automations/automations.json')).toBe(false);
+    expect(isUserDataReadmePath('.agents/user/automations/morning-brief.json')).toBe(false);
   });
 
   it('does not match other READMEs in the sandbox', () => {

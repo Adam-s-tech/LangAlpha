@@ -14,6 +14,7 @@ route owns has no files behind it to serve.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -24,7 +25,7 @@ from ptc_agent.agent.filesystem_routes import (
     build_filesystem_backend,
     resolve_identity_gates,
 )
-from ptc_agent.core.paths import USER_DATA_FILES, SandboxLayout, WorkspaceLayout
+from ptc_agent.core.paths import USER_DATA_DIRS, SandboxLayout, WorkspaceLayout
 from ptc_agent.core.sandbox.livefs_mount import CallContext
 from ptc_agent.core.sandbox.livefs_runtime.protocol import (
     INLINE_LISTING_MAX_BYTES,
@@ -32,6 +33,7 @@ from ptc_agent.core.sandbox.livefs_runtime.protocol import (
     MAX_FILE_BYTES,
     MOUNT,
     Refusal,
+    etag_version,
 )
 from src.server.database import workspace as workspace_db
 from src.server.database.workspace_folders import is_top_level
@@ -86,7 +88,7 @@ POINTS = (
             for directory in (
                 SandboxLayout.MEMORY_USER_DIR,
                 SandboxLayout.MEMO_USER_DIR,
-                *USER_DATA_FILES,
+                *USER_DATA_DIRS,
             )
         ),
     ),
@@ -108,6 +110,11 @@ POINTS = (
 _COMPUTER_POINTS = {p.name: p for p in POINTS if not p.per_workspace}
 _WORKSPACE_POINTS = {p.name: p for p in POINTS if p.per_workspace}
 _WORKSPACES = "workspaces"
+# Longer than any path the sandbox can open.
+_MAX_PATH_BYTES = 4096
+# A NUL reaches Postgres, which refuses it as an outage would; the rest have
+# no place in a name the tools show.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
 def _mounted(path: str) -> str:
@@ -117,9 +124,16 @@ def _mounted(path: str) -> str:
 
 
 def _segments(path: str) -> tuple[str, ...]:
+    if len(path.encode()) > _MAX_PATH_BYTES:
+        # Named by its start: the refusal reaches the tool result.
+        shown = _mounted(_CONTROL.sub("?", path[:64])) + "..."
+        raise LivefsError(
+            Refusal.INVALID, f"Path longer than {_MAX_PATH_BYTES} bytes: {shown}", shown
+        )
     parts = tuple(p for p in path.strip("/").split("/") if p)
-    if any(p in (".", "..") for p in parts):
-        raise LivefsError(Refusal.INVALID, f"Invalid path: {_mounted(path)}", _mounted(path))
+    if any(p in (".", "..") for p in parts) or _CONTROL.search(path):
+        shown = _mounted(_CONTROL.sub("?", path))
+        raise LivefsError(Refusal.INVALID, f"Invalid path: {shown}", shown)
     return parts
 
 
@@ -429,36 +443,44 @@ class LivefsTree:
                 ) from None
             if if_none_match == "*":
                 version = None
-            elif if_match is None:
+            elif (version := etag_version(if_match)) is None:
+                # An empty tag too: taken as no version, it would save only
+                # where no file is.
                 raise LivefsError(
                     Refusal.PRECONDITION_REQUIRED,
                     "Send If-Match or If-None-Match",
                     node.path,
                 )
-            else:
-                version = if_match.strip('"')
             return await node.route.write(node.path, content, version)
 
-    async def delete(self, path: str) -> str:
+    async def delete(self, path: str) -> tuple[str, str | None]:
+        """The path deleted, and what the delete changed, for a file that
+        reports that."""
         node = await self._file(path)
         with _answering(node.path):
-            if not await node.route.delete(node.path):
+            removed = await node.route.delete(node.path)
+            if removed is None:
                 raise await self._missing(node)
-        return node.path
+        return node.path, removed.report
 
     async def rename(self, path: str, to: str) -> tuple[str, str, str | None]:
-        """Move a file as write-then-delete, so a failure leaves the source.
+        """Move a file as its route moves one, else as write-then-delete, so
+        a failure leaves the source.
 
         Directories are refused as ``is_directory``; the daemon answers that
         as a cross-device rename, which ``mv`` completes file by file. Also
-        returns what the save changed, as ``write`` does.
+        returns what the move changed, as ``write`` does.
         """
         source = await self._file(path)
         target = await self._file(to)
         if source.path == target.path:
             return source.path, target.path, None
         with _answering(source.path):
-            if not source.route.movable(source.path):
+            if source.route.root_prefix == target.route.root_prefix:
+                report = await source.route.rename(source.path, target.path)
+                if report is not None:
+                    return source.path, target.path, report
+            if not await source.route.movable(source.path):
                 # Before loading it, so an outage cannot answer as not found.
                 raise LivefsError(
                     Refusal.READ_ONLY, f"{source.path} cannot be moved", source.path
@@ -471,5 +493,33 @@ class LivefsTree:
             saved = await target.route.write(
                 target.path, served[0], current[1] if current else None
             )
-            await source.route.delete(source.path)
+            try:
+                # Over the version copied, so a save since is not deleted.
+                await source.route.delete(source.path, served[1])
+            except LivefsError as exc:
+                if exc.code != Refusal.CHANGED:
+                    raise
+                await self._unmove(target, saved, current)
+                raise LivefsError(
+                    Refusal.CHANGED,
+                    f"{source.path} changed while it was being moved, so it was not "
+                    "moved. Move it again.",
+                    source.path,
+                ) from exc
         return source.path, target.path, saved.report
+
+    async def _unmove(
+        self, target: _Routed, saved: Saved, replaced: tuple[str, str] | None
+    ) -> None:
+        """Take back a refused move's copy: put back the file it replaced, or
+        remove it. Over the version the copy left, so a save since stays."""
+        left = None if saved.removed else saved.version
+        try:
+            if replaced is not None:
+                await target.route.write(target.path, replaced[0], left)
+            elif left is not None:
+                await target.route.delete(target.path, left)
+        except Exception:
+            logger.warning(
+                "livefs move left its copy", extra={"path": target.path}, exc_info=True
+            )

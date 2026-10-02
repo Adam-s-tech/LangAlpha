@@ -90,6 +90,14 @@ class TestPortfolioParseAndDiff:
             _diff_portfolio("not json{", [])
         assert exc.value.error_type == "parse_error"
 
+    def test_nesting_past_the_bound_is_a_parse_error(self):
+        """Deep enough that the decoder raises RecursionError on some
+        Pythons, which the route would answer as a server error."""
+        with pytest.raises(UserDataValidationError) as exc:
+            _diff_portfolio('{"holdings": ' + "[" * 100_000 + "]" * 100_000 + "}", [])
+        assert exc.value.error_type == "parse_error"
+        assert "nested more than 64 levels deep" in exc.value.hint
+
     def test_missing_version_accepted(self):
         """Agent JSON no longer carries __version__; the backend tracks the
         version server-side, so parsing a payload without __version__ must

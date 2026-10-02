@@ -1,29 +1,31 @@
-"""The user's automations as one JSON document, and a save of it as row changes.
+"""Each of the user's automations as one JSON file, and a save of it as a row change.
 
-Serves ``AutomationsBackend`` (`.agents/user/automations/automations.json`). The
-document is ``{"automations": [...]}``, oldest first. Each entry is the
-automation's definition, which the agent may edit, plus a read-only ``state``
-block the server keeps (next cron run, newest run, strikes).
+Serves ``AutomationsBackend`` (`.agents/user/automations/<file_name>`). A file
+is one object: the automation's definition, which the agent may edit, then a
+read-only ``state`` block the server keeps (the automation's id, next cron
+run, newest run, strikes). The file name is a reference the agent picks,
+stored in ``automations.file_name`` and unique per user; ``name`` is what the
+user sees.
 
-A save is planned against the rows as they stand: an entry without
-``automation_id`` is created, a changed entry is updated (``status`` pauses and
-resumes), and an automation missing from the document is deleted. The
-document's own shape is checked first (``AutomationsFile.parse``), before
-the save reads or locks anything. The plan then checks the guards against an
-agent's slips (a past or date-only time, a fixed-offset zone) and what only
-the file can see, such as a completed automation keeping its schedule; every
-rule an automation obeys anywhere is ``lifecycle``'s, which the commit runs
-for each change. The report names each change, because the agent cannot see
-the rows it touched any other way.
+A save is planned against the one row its file name holds: a name no row has
+creates an automation, and a changed file updates it (``status`` pauses,
+resumes or deletes it). The file's own shape is checked first
+(``AutomationFile.parse``), before the save reads or locks anything. The plan
+then checks the guards against an agent's slips (a past or date-only time, a
+fixed-offset zone) and what only the file can see, such as a completed
+automation keeping its schedule; every rule an automation obeys anywhere is
+``lifecycle``'s, which the commit runs. The report names the change, because
+the agent cannot see the row it touched any other way.
 
-The version is a hash of the definitions only. ``state`` moves with every
-firing and every scheduler poll, and hashing it would refuse most writes.
+The version is a hash of the id and definition only. ``state`` moves with
+every firing and every scheduler poll, and hashing it would refuse most writes.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -31,18 +33,28 @@ from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import HTTPException
+from psycopg.errors import DataError, UniqueViolation
 from pydantic import BaseModel, ConfigDict, ValidationError, ValidationInfo, field_validator
 
-from ptc_agent.agent.backends.db_json_route import DbJsonFile, ErrorType, Plan, UserDataValidationError
-from ptc_agent.core.paths import USER_DATA_FILES, SandboxLayout
+from ptc_agent.agent.backends.db_json_route import (
+    DbJsonFile,
+    ErrorType,
+    Plan,
+    UnreadableJsonError,
+    UserDataValidationError,
+    load_json,
+)
+from ptc_agent.core.paths import AUTOMATION_FILE_NAME
 from ptc_agent.core.sandbox.livefs_mount import CallContext
 from src.server.database import automation as auto_db
 from src.server.models.automation import (
+    SCHEDULE_FIELD,
     AutomationCreate,
     AutomationUpdate,
     MarketType,
     PriceTriggerConfig,
     future_run,
+    in_own_thread,
     on_clock,
     parse_delivery,
     region_zone,
@@ -53,9 +65,15 @@ from src.server.services.automations import lifecycle
 from src.server.services.llm import user_models
 from src.utils.timezone_utils import zone_or_none
 
-(FILE_NAME,) = USER_DATA_FILES[SandboxLayout.AUTOMATIONS_DIR]
+_FILE_NAME = re.compile(AUTOMATION_FILE_NAME)
 
-# The fields an entry may carry, in the order they are written.
+# The rule AUTOMATION_FILE_NAME states, as a refusal of another name says it.
+NAME_RULE = (
+    "an automation's file name is 1 to 64 letters, digits, - or _, starting with a "
+    "letter or digit, then .json (e.g. morning-brief.json)"
+)
+
+# The fields a file may carry, in the order they are written.
 _EDITABLE = (
     "name",
     "description",
@@ -74,9 +92,6 @@ _EDITABLE = (
     "max_failures",
 )
 
-# The schedule field each kind reads; an entry shows only its own kind's.
-_SCHEDULE_FIELD = {"cron": "cron_expression", "once": "next_run_at", "price": "trigger_config"}
-
 # Model field → the file field a refusal of it should point at.
 _FILE_FIELD = {
     "thread_strategy": "thread",
@@ -86,6 +101,10 @@ _FILE_FIELD = {
 
 _ERROR_EXCERPT = 300
 _MAX_PROBLEMS = 10
+
+
+def is_file_name(name: str) -> bool:
+    return _FILE_NAME.fullmatch(name) is not None
 
 
 # =============================================================================
@@ -104,12 +123,12 @@ class AutomationFileError(UserDataValidationError):
             return super()._text()
         count = len(self.problems)
         lines = [f"{self.error_type}:{self.file}: {count} problem{'s' if count > 1 else ''}, nothing was saved."]
-        lines += [f"- {path}: {msg}" for path, msg in self.problems]
+        lines += [f"- {path}: {msg}" if path else f"- {msg}" for path, msg in self.problems]
         return "\n".join(lines)
 
 
-def _refuse(hint: str, error_type: ErrorType = "schema_error") -> AutomationFileError:
-    return AutomationFileError(error_type=error_type, file=FILE_NAME, field_path="", hint=hint)
+def _refuse(file_name: str, hint: str, error_type: ErrorType = "schema_error") -> AutomationFileError:
+    return AutomationFileError(error_type=error_type, file=file_name, field_path="", hint=hint)
 
 
 # =============================================================================
@@ -135,8 +154,7 @@ def _thread_value(row: dict[str, Any]) -> str:
     # shows as an id.
     if row.get("thread_strategy") != "continue":
         return "new"
-    pinned = row.get("conversation_thread_id")
-    return str(pinned) if pinned and not row.get("owns_thread") else "persistent"
+    return "persistent" if in_own_thread(row) else str(row["conversation_thread_id"])
 
 
 def _definition(row: dict[str, Any]) -> dict[str, Any]:
@@ -144,7 +162,6 @@ def _definition(row: dict[str, Any]) -> dict[str, Any]:
     kind = row["trigger_type"]
     tz = row.get("timezone") or "UTC"
     entry: dict[str, Any] = {
-        "automation_id": str(row["automation_id"]),
         "name": row["name"],
         "description": row.get("description"),
         "status": row["status"],
@@ -164,7 +181,11 @@ def _definition(row: dict[str, Any]) -> dict[str, Any]:
         workspace_id=str(workspace_id) if workspace_id else None,
         thread=_thread_value(row),
         llm_model=row.get("llm_model"),
-        delivery=list((row.get("delivery_config") or {}).get("methods") or []),
+        delivery=[
+            m
+            for m in (row.get("delivery_config") or {}).get("methods") or []
+            if not isinstance(m, str) or m.strip()
+        ],
         max_failures=row["max_failures"],
     )
     return entry
@@ -173,7 +194,7 @@ def _definition(row: dict[str, Any]) -> dict[str, Any]:
 def _state(row: dict[str, Any]) -> dict[str, Any]:
     """What the server keeps about the automation; read-only in the file."""
     tz = row.get("timezone")
-    state: dict[str, Any] = {}
+    state: dict[str, Any] = {"automation_id": str(row["automation_id"])}
     if row["trigger_type"] == "cron" and row.get("next_run_at"):
         state["next_run_at"] = _iso(row["next_run_at"], tz)
     last = row.get("last_execution")
@@ -205,10 +226,26 @@ def _state(row: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
-def _version(rows: list[dict[str, Any]]) -> str:
-    definitions = sorted((_definition(r) for r in rows), key=lambda d: d["automation_id"])
-    blob = json.dumps(definitions, sort_keys=True, ensure_ascii=False, default=str)
+def _version(row: dict[str, Any]) -> str:
+    # The id too, so a file deleted and made again with the same content
+    # is not the one a writer read.
+    definition = {"automation_id": str(row["automation_id"]), **_definition(row)}
+    blob = json.dumps(definition, sort_keys=True, ensure_ascii=False, default=str)
     return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _render(row: dict[str, Any]) -> tuple[str, str]:
+    content = json.dumps({**_definition(row), "state": _state(row)}, indent=2, ensure_ascii=False) + "\n"
+    return content, _version(row)
+
+
+async def rendered_files(user_id: str) -> dict[str, tuple[str, str]]:
+    """Every automation's file, by file name: its content and version."""
+    return {row["file_name"]: _render(row) for row in await auto_db.list_all_automations(user_id)}
+
+
+async def file_names(user_id: str) -> list[str]:
+    return await auto_db.list_automation_file_names(user_id)
 
 
 # =============================================================================
@@ -223,12 +260,11 @@ def _not_null(value: Any) -> Any:
 
 
 class _Entry(BaseModel):
-    """One entry as written. Only the document's own shape is checked here:
-    the automation's rules run where every surface's do, in ``lifecycle``."""
+    """A file as written. Only the file's own shape is checked here: the
+    automation's rules run where every surface's do, in ``lifecycle``."""
 
     model_config = ConfigDict(extra="forbid")
 
-    automation_id: UUID | None = None
     name: str | None = None
     description: str | None = None
     status: str | None = None
@@ -256,9 +292,9 @@ class _Entry(BaseModel):
     @field_validator("timezone")
     @classmethod
     def _written_zone(cls, value: str | None, info: ValidationInfo) -> str | None:
-        # Only a zone the agent writes is held to region zones; the one a row
-        # already has passes, whichever surface stored it.
-        stored = (info.context or {}).get("zones", {}).get(str(info.data.get("automation_id")))
+        # Only a zone the agent writes is held to region zones; the one the
+        # row already has passes, whichever surface stored it.
+        stored = (info.context or {}).get("zone")
         return value if value is None or value == stored else region_zone(value)
 
     @field_validator("thread", mode="before")
@@ -287,14 +323,12 @@ _ALLOWED = ", ".join(_Entry.model_fields)
 
 @dataclass
 class _Create:
-    path: str
     data: AutomationCreate
     pause: bool
 
 
 @dataclass
 class _Update:
-    path: str
     automation_id: str
     name: str
     fields: dict[str, Any]
@@ -310,59 +344,57 @@ class _Delete:
     automation_id: str
     name: str
 
-    @property
-    def label(self) -> str:
-        return f'"{self.name}" ({self.automation_id})'
-
 
 @dataclass
 class FilePlan:
-    deletes: list[_Delete] = field(default_factory=list)
-    updates: list[_Update] = field(default_factory=list)
-    creates: list[_Create] = field(default_factory=list)
+    """What a save of one file changes: at most one of the three."""
+
+    create: _Create | None = None
+    update: _Update | None = None
+    delete: _Delete | None = None
     notes: list[str] = field(default_factory=list)
     # What the lifecycle checks a named model against; None reads it there.
     model_pref: dict[str, Any] | None = None
 
     def __bool__(self) -> bool:
-        return bool(self.deletes or self.updates or self.creates)
+        return bool(self.create or self.update or self.delete)
 
 
 class _Problems:
-    """Refusals gathered across the whole document, so one retry can fix all."""
+    """Refusals gathered across the whole file, so one retry can fix all."""
 
-    def __init__(self) -> None:
+    def __init__(self, file_name: str) -> None:
+        self.file_name = file_name
         self.items: list[tuple[str, str]] = []
 
     def add(self, path: str, msg: str) -> None:
         if len(self.items) < _MAX_PROBLEMS:
             self.items.append((path, msg))
 
-    def add_validation(self, path: str, exc: ValidationError) -> None:
+    def add_validation(self, exc: ValidationError) -> None:
         for err in exc.errors(include_url=False):
             loc = [str(p) for p in err["loc"]]
             if loc:
                 loc[0] = _FILE_FIELD.get(loc[0], loc[0])
-            where = ".".join([path, *loc]) if loc else path
             if err["type"] == "extra_forbidden":
                 msg = f"unknown field; allowed: {_ALLOWED}"
             else:
                 msg = err["msg"].removeprefix("Value error, ")
-            self.add(where, msg)
+            self.add(".".join(loc), msg)
 
     def raise_if_any(self) -> None:
         if self.items:
             first_path, first_msg = self.items[0]
             raise AutomationFileError(
                 error_type="schema_error",
-                file=FILE_NAME,
+                file=self.file_name,
                 field_path=first_path,
                 hint=first_msg,
                 problems=list(self.items),
             )
 
 
-class _DuplicateKey(ValueError):
+class _DuplicateKey(Exception):
     pass
 
 
@@ -379,30 +411,27 @@ def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return dict(pairs)
 
 
-def _parse_document(content: str) -> list[Any]:
+def _parse_object(content: str, file_name: str) -> dict[str, Any]:
     try:
-        doc = json.loads(content, object_pairs_hook=_unique_keys)
+        written = load_json(content, object_pairs_hook=_unique_keys)
     except json.JSONDecodeError as exc:
-        raise _refuse(f"invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}", "parse_error")
+        raise _refuse(file_name, f"invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}", "parse_error")
     except _DuplicateKey as exc:
-        raise _refuse(str(exc), "parse_error")
-    if not isinstance(doc, dict) or set(doc) != {"automations"} or not isinstance(doc["automations"], list):
-        raise _refuse('the file must be one object, {"automations": [...]}, and nothing else')
-    return doc["automations"]
+        raise _refuse(file_name, str(exc), "parse_error")
+    except UnreadableJsonError as exc:
+        raise _refuse(file_name, f"invalid JSON: {exc}", "parse_error")
+    if not isinstance(written, dict):
+        raise _refuse(file_name, "the file must be one JSON object: one automation's fields")
+    return written
 
 
-def _served(served_content: str) -> dict[str, dict[str, Any]]:
-    """Each automation as the agent was shown it, by id."""
+def _shown(served_content: str) -> dict[str, Any]:
+    """The file as the agent was shown it."""
     try:
-        entries = json.loads(served_content)["automations"]
-    except (ValueError, KeyError, TypeError):
+        shown = json.loads(served_content)
+    except ValueError:
         return {}
-    return {e["automation_id"]: e for e in entries if isinstance(e, dict)}
-
-
-def _label(path: str, entry: dict[str, Any]) -> str:
-    name = entry.get("name")
-    return f'{path} ("{name}")' if isinstance(name, str) and name else path
+    return shown if isinstance(shown, dict) else {}
 
 
 def _same(written: Any, stored: Any) -> bool:
@@ -414,13 +443,11 @@ def _same(written: Any, stored: Any) -> bool:
     return str(written) == str(stored)
 
 
-_RAN_ONCE = (
-    "already ran and is completed; it won't run on its own again. Add a new entry "
-    "(without automation_id) for another run."
-)
+_RAN_ONCE = "already ran and is completed; it won't run on its own again. Write a new file for another run."
 
 
-# The status changes a writer may ask for, as the lifecycle call that makes each.
+# The status changes a writer may ask for, as the lifecycle call that makes
+# each. "deleted" is the other, from any status.
 _STATUS_ACTIONS = {
     ("active", "paused"): "pause",
     ("paused", "active"): "resume",
@@ -433,57 +460,53 @@ def _status_problem(current: str, value: Any) -> str:
         return f"this automation {_RAN_ONCE}"
     return (
         f'can\'t go from "{current}" to {json.dumps(value)}: set "paused" to pause an active '
-        'automation, "active" to resume a paused or disabled one. Other statuses are set by the server.'
+        'automation, "active" to resume a paused or disabled one, or "deleted" to delete it. '
+        "Other statuses are set by the server."
     )
 
 
 @dataclass
 class Document:
-    """A written document, its entries not yet checked (the plan checks each
-    once, against the rows), and what the save read about the user for it."""
+    """A written file, its fields not yet checked (the plan checks them
+    against the row), and what the save read about the user for it."""
 
-    entries: list[Any]
-    # Each automation's ``state`` as the writer was shown it, by id; None
-    # when it saw the live file, whose rows the plan reads it from.
-    states: dict[str, Any] | None
-    # A new automation's clock when its entry names none.
+    fields: dict[str, Any]
+    # The file as the writer was shown it; None when it saw the live file,
+    # whose row the plan reads its ``state`` from.
+    shown: dict[str, Any] | None
+    # A new automation's clock when the file names none.
     timezone: str
-    # What the lifecycle checks a named model against; None when no entry
-    # names one it would check.
+    # What the lifecycle checks a named model against; None when the file
+    # names no model it would check.
     model_pref: dict[str, Any] | None
 
 
-def _names_model(raw: dict[str, Any], shown: dict[str, dict[str, Any]] | None) -> bool:
-    model = raw.get("llm_model")
+def _names_model(fields: dict[str, Any], shown: dict[str, Any] | None) -> bool:
+    model = fields.get("llm_model")
     if not model:
         return False
-    automation_id = raw.get("automation_id")
-    if automation_id is None or shown is None:
-        return True
     # The model the writer was shown is the stored one, or the version check
     # refuses the save; resent as it was, it isn't checked.
-    return (shown.get(str(automation_id)) or {}).get("llm_model") != model
+    return shown is None or shown.get("llm_model") != model
 
 
-def _plan_create(
-    entry: _Entry, path: str, call: CallContext, zone: str, problems: _Problems
-) -> _Create | None:
+def _plan_create(entry: _Entry, call: CallContext, zone: str, problems: _Problems) -> _Create | None:
     written = entry.model_fields_set
     kind = entry.trigger_type or next(
-        (k for k, f in _SCHEDULE_FIELD.items() if getattr(entry, f) is not None), None
+        (k for k, f in SCHEDULE_FIELD.items() if getattr(entry, f) is not None), None
     )
     status = entry.status or "active"
     if status not in ("active", "paused"):
-        problems.add(f"{path}.status", 'a new automation starts "active" or "paused"')
+        problems.add("status", 'a new automation starts "active" or "paused"')
     if kind is None:
         problems.add(
-            f"{path}.trigger_type",
+            "trigger_type",
             'required: "cron" (with cron_expression), "once" (with next_run_at) or "price" (with trigger_config)',
         )
         return None
 
     # The defaults of the old automation tool, so an automation made through
-    # the file matches one it made: this workspace, the user's clock, a PTC run.
+    # a file matches one it made: this workspace, the user's clock, a PTC run.
     tz = entry.timezone or zone
     data: dict[str, Any] = {
         "trigger_type": kind,
@@ -497,7 +520,7 @@ def _plan_create(
             data[key] = getattr(entry, key)
     if "delivery" in written:
         data["delivery_config"] = entry.delivery
-    for other_kind, kind_field in _SCHEDULE_FIELD.items():
+    for other_kind, kind_field in SCHEDULE_FIELD.items():
         value = getattr(entry, kind_field)
         # Another kind's field left null reads as absent, as on an update.
         if kind_field in written and (other_kind == kind or value is not None):
@@ -511,17 +534,15 @@ def _plan_create(
         if create.next_run_at is not None:
             future_run(create.next_run_at, tz)
     except ValidationError as exc:
-        problems.add_validation(path, exc)
+        problems.add_validation(exc)
         return None
     except ValueError as exc:
-        problems.add(f"{path}.next_run_at", str(exc))
+        problems.add("next_run_at", str(exc))
         return None
-    return _Create(path=path, data=create, pause=status == "paused")
+    return _Create(data=create, pause=status == "paused")
 
 
-def _plan_update(
-    entry: _Entry, raw: dict[str, Any], row: dict[str, Any], path: str, problems: _Problems
-) -> _Update | None:
+def _plan_update(entry: _Entry, raw: dict[str, Any], row: dict[str, Any], problems: _Problems) -> _Update | None:
     """The fields that differ from the row, and the pause or resume a status
     asks for; what the row allows beyond that is the lifecycle's to say."""
     current = _definition(row)
@@ -535,12 +556,15 @@ def _plan_update(
         if key not in entry.model_fields_set:
             continue  # an omitted field keeps its value
         value = getattr(entry, key)
-        where = f"{path}.{key}"
-        if value is None and key in _SCHEDULE_FIELD.values():
-            if key != _SCHEDULE_FIELD[kind]:
+        if value is None and key in SCHEDULE_FIELD.values():
+            if key != SCHEDULE_FIELD[kind]:
                 continue  # another kind's schedule field, left null, is absent
+            if current.get(key) is None:
+                # A one-time automation claimed or completed shows null, and
+                # an edit to another field writes it back as it read it.
+                continue
             problems.add(
-                where,
+                key,
                 'a one-time automation needs a time; set status "paused" to hold it instead'
                 if kind == "once"
                 else "can't be null",
@@ -551,7 +575,7 @@ def _plan_update(
                 continue
             action = _STATUS_ACTIONS.get((current["status"], value))
             if action is None:
-                problems.add(where, _status_problem(current["status"], value))
+                problems.add(key, _status_problem(current["status"], value))
             continue
         if key == "next_run_at":
             wanted = value if value.tzinfo else value.replace(tzinfo=_zone(tz))
@@ -559,12 +583,12 @@ def _plan_update(
             if current.get("next_run_at") and wanted == datetime.fromisoformat(current["next_run_at"]):
                 continue
             if current["status"] == "completed":
-                problems.add(where, f"this automation {_RAN_ONCE}")
+                problems.add(key, f"this automation {_RAN_ONCE}")
                 continue
             try:
                 fields[key] = future_run(wanted, tz)
             except ValueError as exc:
-                problems.add(where, str(exc))
+                problems.add(key, str(exc))
                 continue
             changed.append(key)
             continue
@@ -585,27 +609,26 @@ def _plan_update(
         if _same(value, current.get(key)):
             continue
         if key == "trigger_config" and current["status"] == "completed":
-            problems.add(where, f"this automation {_RAN_ONCE}")
+            problems.add(key, f"this automation {_RAN_ONCE}")
             continue
         if key == "workspace_id" and value is None:
-            problems.add(where, "can't be cleared; point it at another workspace instead")
+            problems.add(key, "can't be cleared; point it at another workspace instead")
             continue
         fields[key] = value
         changed.append(key)
 
     if fields:
         # Checked again by the lifecycle under the lock; checked here too so
-        # one refusal lists every entry's field problems, as a create's are.
+        # one refusal lists every field's problems, as a create's does.
         try:
             AutomationUpdate.model_validate(fields, context={"trigger_type": kind})
         except ValidationError as exc:
-            problems.add_validation(path, exc)
+            problems.add_validation(exc)
             return None
     if not fields and action is None:
         return None
     return _Update(
-        path=path,
-        automation_id=current["automation_id"],
+        automation_id=str(row["automation_id"]),
         name=entry.name or current["name"],
         fields=fields,
         changed=changed,
@@ -636,22 +659,17 @@ def _next_run(row: dict[str, Any] | None) -> str:
     return f"; next run {when}" if when else ""
 
 
-def _at(path: str, model_field: str | None) -> str:
-    return f"{path}.{_FILE_FIELD.get(model_field, model_field)}" if model_field else path
+def _at(model_field: str | None) -> str:
+    return _FILE_FIELD.get(model_field, model_field) if model_field else ""
 
 
 _REFUSED = object()
 
 
-def _no_changes(notes: list[str]) -> str:
-    """The report of a save that changed nothing."""
-    return "\n".join(
-        [
-            f"No changes: {FILE_NAME} already matches the saved automations.",
-            *notes,
-            f"Read {FILE_NAME} again before your next edit.",
-        ]
-    )
+def _taken(file_name: str) -> AutomationFileError:
+    # The user's lock keeps the agent's own saves apart, but a create on the
+    # Automations page takes a name without it.
+    return _refuse(file_name, "another automation took this file name meanwhile; use another name", "exists")
 
 
 # =============================================================================
@@ -659,165 +677,141 @@ def _no_changes(notes: list[str]) -> str:
 # =============================================================================
 
 
-class AutomationsFile(DbJsonFile[list[dict[str, Any]], Document, FilePlan]):
-    """Every automation of the user, oldest first, as one document."""
+class AutomationFile(DbJsonFile[dict[str, Any] | None, Document, FilePlan]):
+    """The automation filed as ``file_name``, or the one a save there makes."""
 
-    unchanged = _no_changes([])
+    def __init__(self, file_name: str) -> None:
+        self.file_name = file_name
+        self.unchanged = self._no_changes([])
 
-    async def fetch(self, user_id: str, conn: Any = None) -> list[dict[str, Any]]:
-        return await auto_db.list_all_automations(user_id, conn=conn)
+    def _no_changes(self, notes: list[str]) -> str:
+        """The report of a save that changed nothing."""
+        return "\n".join([f"No changes: {self.file_name} already matches the saved automation", *notes])
 
-    def render(self, rows: list[dict[str, Any]]) -> tuple[str, str]:
-        # An empty state is left out: shown as {}, it was copied into new entries.
-        entries = [{**_definition(r), **({"state": state} if (state := _state(r)) else {})} for r in rows]
-        content = json.dumps({"automations": entries}, indent=2, ensure_ascii=False) + "\n"
-        return content, _version(rows)
+    async def fetch(self, user_id: str, conn: Any = None) -> dict[str, Any] | None:
+        return await auto_db.get_automation_file(user_id, self.file_name, conn=conn)
+
+    def render(self, row: dict[str, Any] | None) -> tuple[str, str] | None:
+        return _render(row) if row else None
 
     async def lock(self, user_id: str, conn: Any) -> None:
         await auto_db.lock_user_automations(user_id, conn=conn)
 
     async def parse(self, user_id: str, call: CallContext, content: str, served: str | None) -> Document:
-        """The document ``content`` holds. Content that is no document is
-        refused here, before the save reads or locks anything; each entry is
-        checked by the plan, which lists its problems with the ones the rows
-        show, so one retry can fix all. ``served`` is the document the writer
-        read, whose ``state`` blocks the write may repeat but not change;
-        None compares them with the live rows.
+        """The object ``content`` holds. Content that is no object is refused
+        here, before the save reads or locks anything; its fields are checked
+        by the plan, which lists their problems with the ones the row shows,
+        so one retry can fix all. ``served`` is the file the writer read,
+        whose ``state`` the write may repeat but not change; None compares it
+        with the live row.
 
-        What the save reads about the user, it reads only when an entry as
-        written needs it, which may ask for more than the checked entries
-        would: most saves change existing automations and name no model.
+        What the save reads about the user, it reads only when the file as
+        written may need it: a create's default clock, or a model it names.
         """
-        entries = _parse_document(content)
-        shown = _served(served) if served is not None else None
-        written = [e for e in entries if isinstance(e, dict)]
-        # The conversation's clock first, else the user's stored zone, else UTC.
+        written = _parse_object(content, self.file_name)
+        shown = _shown(served) if served is not None else None
+        # The conversation's clock first, else the user's stored zone, else
+        # UTC. A writer that read the file is updating it, so needs neither.
         zone = call.timezone or "UTC"
-        if not call.timezone and any(e.get("automation_id") is None and e.get("timezone") is None for e in written):
+        if not call.timezone and served is None and written.get("timezone") is None:
             zone = await auto_db.get_user_timezone(user_id) or "UTC"
-        names_model = any(_names_model(e, shown) for e in written)
         return Document(
-            entries=entries,
-            states=None if shown is None else {i: e.get("state") for i, e in shown.items()},
+            fields=written,
+            shown=shown,
             timezone=zone,
-            model_pref=await user_models.get_model_preference(user_id) if names_model else None,
+            model_pref=await user_models.get_model_preference(user_id) if _names_model(written, shown) else None,
         )
 
-    def plan(self, call: CallContext, document: Document, rows: list[dict[str, Any]]) -> Plan[FilePlan]:
-        """The changes a save of ``document`` over ``rows`` makes. Raises
+    def plan(self, call: CallContext, document: Document, row: dict[str, Any] | None) -> Plan[FilePlan]:
+        """The change a save of ``document`` over ``row`` makes. Raises
         ``AutomationFileError`` with every problem it finds."""
-        by_id = {str(r["automation_id"]): r for r in rows}
-        states = (
-            document.states
-            if document.states is not None
-            else {automation_id: _state(row) for automation_id, row in by_id.items()}
-        )
-        zones = {automation_id: row.get("timezone") or "UTC" for automation_id, row in by_id.items()}
-        problems = _Problems()
+        problems = _Problems(self.file_name)
+        raw = document.fields
         result = FilePlan(model_pref=document.model_pref)
-        seen: set[str] = set()
-
-        for index, raw in enumerate(document.entries):
-            label = f"automations[{index}]"
-            if not isinstance(raw, dict):
-                problems.add(label, "each automation must be a JSON object")
-                continue
-            label = _label(label, raw)
-            try:
-                entry = _Entry.model_validate(raw, context={"thread_id": call.thread_id, "zones": zones})
-            except ValidationError as exc:
-                problems.add_validation(label, exc)
-                continue
-            automation_id = str(entry.automation_id) if entry.automation_id else None
-            if "state" in raw and (raw["state"] or {}) != (states.get(automation_id) or {}):
-                # Ignored, not refused: models "fix" state.next_run_at alongside a
-                # schedule change, and a refusal cost a whole-document retry.
-                result.notes.append(
-                    f"- note: {label}: state is kept by the server, so what you wrote in it was ignored"
-                )
-            if automation_id is None:
-                create = _plan_create(entry, label, call, document.timezone, problems)
-                if create:
-                    result.creates.append(create)
-                continue
-            if automation_id in seen:
-                problems.add(f"{label}.automation_id", "appears twice; each automation is listed once")
-                continue
-            seen.add(automation_id)
-            row = by_id.get(automation_id)
+        try:
+            entry = _Entry.model_validate(
+                raw, context={"thread_id": call.thread_id, "zone": row.get("timezone") if row else None}
+            )
+        except ValidationError as exc:
+            problems.add_validation(exc)
+            problems.raise_if_any()
+        shown_state = (
+            document.shown.get("state") if document.shown is not None else _state(row) if row else None
+        )
+        if "state" in raw and (raw["state"] or {}) != (shown_state or {}):
+            # Ignored, not refused: models "fix" state.next_run_at alongside a
+            # schedule change, and a refusal cost a whole retry.
+            result.notes.append("- note: state is kept by the server, so what you wrote in it was ignored")
+        if entry.status == "deleted":
             if row is None:
-                problems.add(
-                    f"{label}.automation_id",
-                    "no automation has this id. Leave automation_id out to create a new one.",
-                )
-                continue
-            update = _plan_update(entry, raw, row, label, problems)
-            if update:
-                result.updates.append(update)
-
+                problems.add("status", f'"deleted" deletes an existing automation, and none is filed as {self.file_name}')
+            else:
+                result.delete = _Delete(automation_id=str(row["automation_id"]), name=row["name"])
+        elif row is None:
+            result.create = _plan_create(entry, call, document.timezone, problems)
+        else:
+            result.update = _plan_update(entry, raw, row, problems)
         problems.raise_if_any()
-        for automation_id, row in by_id.items():
-            if automation_id not in seen:
-                result.deletes.append(_Delete(automation_id=automation_id, name=row["name"]))
-        return Plan(result, [d.label for d in result.deletes])
+        return Plan(result)
 
-    async def hold(self, user_id: str, plan: FilePlan, rows: list[dict[str, Any]], conn: Any) -> str | None:
-        """Lock the rows before a save with changes writes over them: the
-        version of the rows it was planned from, as they stand locked. The
-        caller holds that to the version it checked, since an edit elsewhere
-        may have landed after its read. None for a save with no changes,
-        which locks no row.
+    def plan_delete(self, row: dict[str, Any] | None) -> Plan[FilePlan]:
+        return Plan(FilePlan(delete=_Delete(automation_id=str(row["automation_id"]), name=row["name"])))
 
-        A row created since is left out of the version: the plan never touches it.
-        """
-        if not plan:
+    async def hold(self, user_id: str, plan: FilePlan, row: dict[str, Any] | None, conn: Any) -> str | None:
+        """Lock the row before a save writes over it: its version as it
+        stands locked, which the caller holds to the version it checked,
+        since an edit on the Automations page may have landed after its
+        read. None for a create, which the user's lock and the unique file
+        name keep apart, and for a save with no changes."""
+        if not (plan.update or plan.delete):
             return None
-        planned = {str(r["automation_id"]) for r in rows}
-        locked = await auto_db.list_all_automations(user_id, conn=conn, lock=True)
-        return _version([r for r in locked if str(r["automation_id"]) in planned])
+        locked = await auto_db.get_automation_file(user_id, self.file_name, conn=conn, lock=True)
+        return _version(locked) if locked else ""
 
     async def commit(self, user_id: str, plan: FilePlan, conn: Any) -> str:
         """Apply ``plan`` in ``conn``'s transaction and report what changed.
 
-        Each change runs through the lifecycle under its own savepoint, so one
-        refused change leaves the rest to be checked and the report names each
-        entry's first problem. Any refusal raises ``AutomationFileError`` at the
-        end, which rolls the whole save back. The lifecycle writes over the rows
-        the plan read, which ``hold`` locked unchanged, rather than reading each
-        again.
+        Each lifecycle call runs under its own savepoint, and its refusal is
+        gathered as a problem rather than raised mid-save; any refusal raises
+        ``AutomationFileError`` at the end, which rolls the whole save back.
+        The lifecycle writes over the row the plan read, which ``hold``
+        locked unchanged, rather than reading it again.
         """
         if not plan:
-            return _no_changes(plan.notes)
+            return self._no_changes(plan.notes)
 
-        report: list[str] = []
-        problems = _Problems()
+        problems = _Problems(self.file_name)
+        report = ""
         warning: str | None = None
 
-        async def step(path: str, change: Callable[..., Awaitable[Any]], *args: Any, **kwargs: Any) -> Any:
+        async def step(change: Callable[..., Awaitable[Any]], *args: Any, **kwargs: Any) -> Any:
             try:
                 async with conn.transaction():
                     return await change(*args, conn=conn, **kwargs)
+            except UniqueViolation as exc:
+                raise _taken(self.file_name) from exc
             except ValidationError as exc:
-                problems.add_validation(path, exc)
+                problems.add_validation(exc)
             except lifecycle.AutomationRefusal as exc:
-                problems.add(_at(path, exc.field), str(exc))
+                problems.add(_at(exc.field), str(exc))
             except HTTPException as exc:
                 detail = {404: "not found", 403: "belongs to another user"}.get(exc.status_code, str(exc.detail))
-                problems.add(_at(path, getattr(exc, "field", None)), detail)
+                problems.add(_at(getattr(exc, "field", None)), detail)
             except ValueError as exc:
-                problems.add(path, str(exc))
+                problems.add("", str(exc))
+            except DataError as exc:
+                # A value the column cannot hold: the content's fault, not an outage.
+                problems.add("", f"a value is too long or out of range for its column ({type(exc).__name__})")
             return _REFUSED
 
-        if plan.deletes:
-            await auto_db.delete_automations([d.automation_id for d in plan.deletes], user_id, conn=conn)
-        for delete in plan.deletes:
-            report.append(f"- deleted {delete.label}, with its run history")
+        if delete := plan.delete:
+            await auto_db.delete_automation(delete.automation_id, user_id, conn=conn)
+            report = f'Deleted "{delete.name}" ({self.file_name}), with its run history'
 
-        for update in plan.updates:
+        if update := plan.update:
             row = update.row
             if update.fields:
                 row = await step(
-                    update.path,
                     lifecycle.update_automation,
                     update.automation_id,
                     user_id,
@@ -825,48 +819,47 @@ class AutomationsFile(DbJsonFile[list[dict[str, Any]], Document, FilePlan]):
                     model_pref=plan.model_pref,
                     current=row,
                 )
-                if row is _REFUSED:
-                    continue
-            if update.action:
+            if update.action and row is not _REFUSED:
                 control = lifecycle.pause_automation if update.action == "pause" else lifecycle.resume_automation
-                row = await step(update.path, control, update.automation_id, user_id, current=row)
-                if row is _REFUSED:
-                    continue
-            parts = []
-            if update.changed:
-                parts.append(", ".join(update.changed))
-            if update.action:
-                parts.append("paused" if update.action == "pause" else "resumed")
-            report.append(f'- updated "{update.name}" ({update.automation_id}): {"; ".join(parts)}{_next_run(row)}')
-            warning = warning or lifecycle.delivery_warning(
-                (update.fields.get("delivery_config") or {}).get("methods")
-            )
+                row = await step(control, update.automation_id, user_id, current=row)
+            if row is not _REFUSED:
+                parts = [", ".join(update.changed)] if update.changed else []
+                if update.action:
+                    parts.append("paused" if update.action == "pause" else "resumed")
+                report = f'Saved {self.file_name}: updated "{update.name}": {"; ".join(parts)}{_next_run(row)}'
+                warning = lifecycle.delivery_warning((update.fields.get("delivery_config") or {}).get("methods"))
 
-        for create in plan.creates:
+        if create := plan.create:
             row = await step(
-                create.path, lifecycle.create_automation, user_id, create.data, model_pref=plan.model_pref
+                lifecycle.create_automation,
+                user_id,
+                create.data,
+                model_pref=plan.model_pref,
+                file_name=self.file_name,
             )
-            if row is _REFUSED:
-                continue
-            automation_id = str(row["automation_id"])
-            if create.pause:
-                row = await step(create.path, lifecycle.pause_automation, automation_id, user_id, current=row)
-                if row is _REFUSED:
-                    continue
-                report.append(f'- created "{row["name"]}" ({automation_id}), paused')
-            else:
-                report.append(f'- created "{row["name"]}" ({automation_id}){_next_run(row)}')
+            if row is not _REFUSED and create.pause:
+                row = await step(lifecycle.pause_automation, str(row["automation_id"]), user_id, current=row)
+                if row is not _REFUSED:
+                    report = f'Saved {self.file_name}: created "{row["name"]}", paused'
+            elif row is not _REFUSED:
+                report = f'Saved {self.file_name}: created "{row["name"]}"{_next_run(row)}'
             delivery = create.data.delivery_config
-            warning = warning or lifecycle.delivery_warning(delivery.methods if delivery else None)
+            warning = lifecycle.delivery_warning(delivery.methods if delivery else None)
 
         problems.raise_if_any()
-
-        counts = [
-            f"{len(items)} {verb}"
-            for items, verb in ((plan.creates, "created"), (plan.updates, "updated"), (plan.deletes, "deleted"))
-            if items
-        ]
-        lines = [f"Saved {FILE_NAME}: {', '.join(counts)}.", *report]
+        lines = [report]
         if warning:
             lines.append(f"Note: {warning}")
-        return "\n".join([*lines, *plan.notes, f"Read {FILE_NAME} again before your next edit."])
+        return "\n".join([*lines, *plan.notes])
+
+    async def rename(self, user_id: str, to: str, conn: Any) -> str | None:
+        # The row is locked, since a delete on the Automations page takes no
+        # user lock: a rename that lost to one moved nothing.
+        row = await auto_db.get_automation_file(user_id, self.file_name, conn=conn, lock=True)
+        if row is None:
+            return None
+        try:
+            moved = await auto_db.rename_automation_file(str(row["automation_id"]), user_id, to, conn=conn)
+        except UniqueViolation as exc:
+            raise _taken(to) from exc
+        return f"Renamed {self.file_name} to {to}" if moved else None

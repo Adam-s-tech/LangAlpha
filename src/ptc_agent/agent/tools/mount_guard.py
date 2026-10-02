@@ -18,7 +18,7 @@ async def run_guarded(
     run: Callable[[str | None], Awaitable[tuple[str, dict[str, Any]]]],
     *,
     memory_error: str,
-    automations_error: str,
+    files_error: str,
     blocked_event: str,
     **blocked_fields: Any,
 ) -> tuple[str, dict[str, Any]]:
@@ -30,6 +30,6 @@ async def run_guarded(
     tree = livefs_mount.unserved_tree(mount, text)
     if tree is not None:
         logger.info(blocked_event, tree=tree, **blocked_fields)
-        error = memory_error if tree == "memory" else automations_error
+        error = memory_error if tree == "memory" else files_error.format(dir=tree)
         return error, {"mcp_trace": []}
     return await livefs_mount.through_mount(mount, call_context, run)

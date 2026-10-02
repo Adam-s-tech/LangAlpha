@@ -76,7 +76,6 @@ EXPECTED_ABSOLUTE = {
     "memory_user": "/home/workspace/.agents/user/memory",
     "memo_user": "/home/workspace/.agents/user/memo",
     "user_profile": "/home/workspace/.agents/user/profile",
-    "automations": "/home/workspace/.agents/user/automations",
     "workflows": "/home/workspace/.agents/workflows",
     "system": "/home/workspace/.system",
     "system_code": "/home/workspace/.system/code",
@@ -1127,7 +1126,10 @@ class TestGeneratedFrontendModule:
             "  'home/workspace/',",
             "  'home/daytona/',",
             "  '.agents/user/profile': ['portfolio.json', 'watchlist.json', 'preference.json'],",
-            "  '.agents/user/automations': ['automations.json'],",
+            "export const AUTOMATIONS_DIR = '.agents/user/automations';",
+            "export const USER_DATA_DIRS = [\n  '.agents/user/profile',\n  '.agents/user/automations',\n] as const;",
+            # One file per automation, under a name the server also checks.
+            "export const AUTOMATION_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\\.json$/;",
             # Root directories an earlier layout owned. A sandbox reused
             # across its migration still has them, so the file panel filters
             # on them by name.

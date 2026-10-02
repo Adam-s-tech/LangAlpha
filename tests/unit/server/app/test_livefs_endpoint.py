@@ -15,6 +15,7 @@ import hashlib
 import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -23,7 +24,7 @@ from httpx import ASGITransport, AsyncClient
 from langgraph.store.memory import InMemoryStore
 
 from ptc_agent.agent.backends import db_json_route
-from ptc_agent.agent.backends.automations import AUTOMATIONS_FILE, AutomationsBackend
+from ptc_agent.agent.backends.automations import AutomationsBackend
 from ptc_agent.agent.backends.db_json_route import Plan
 from ptc_agent.agent.backends.langgraph_store import MAX_CONTENT_BYTES
 from ptc_agent.core.sandbox.livefs_mount import CallContext
@@ -31,7 +32,7 @@ from ptc_agent.core.sandbox.livefs_runtime.protocol import MAX_FILE_BYTES
 from src.server.app import livefs as livefs_app
 from src.server.app import setup as setup_mod
 from src.server.database import user as user_db
-from src.server.services.automations.file import AutomationsFile, Document, FilePlan
+from src.server.services.automations.file import AutomationFile, Document, FilePlan
 from src.server.services.livefs import cache, outcomes, tokens
 from tests.conftest import create_test_app
 
@@ -44,12 +45,17 @@ TOKEN = f"lfs1.{COMPUTER}.{SECRET}"
 CALL = "call0000test"
 
 NOTES = "user/memory/notes.md"
-AUTOMATIONS = "user/automations/automations.json"
-SERVED = '{"automations": [{"name": "Morning brief", "status": "active"}]}\n'
+FILE_NAME = "morning-brief.json"
+AUTOMATIONS = f"user/automations/{FILE_NAME}"
+SERVED = '{"name": "Morning brief", "status": "active"}\n'
 ROWS_VERSION = "sha256:rows-v1"
-REPORT = "Saved automations.json: 1 updated.\n- updated Morning brief"
+REPORT = 'Saved morning-brief.json: updated "Morning brief": paused'
+DELETED = 'Deleted "Morning brief" (morning-brief.json), with its run history'
 WORKSPACE = "00000000-0000-4000-8000-00000000aaaa"
 THREAD = "00000000-0000-4000-8000-00000000bbbb"
+
+# Taken before the ``reported`` fixture fakes it.
+_RECORD = outcomes.record
 
 
 class _Tokens:
@@ -78,7 +84,7 @@ def reported(monkeypatch) -> list[tuple[str | None, dict]]:
     """The save outcomes filed for tool results, as (call id, outcome)."""
     filed: list[tuple[str | None, dict]] = []
 
-    async def record(computer_id, call_id, outcome):
+    async def record(computer_id, call_id, outcome, context=None):
         filed.append((call_id, outcome))
 
     monkeypatch.setattr(outcomes, "record", record)
@@ -90,8 +96,8 @@ async def client(monkeypatch, reported):
     monkeypatch.setattr(setup_mod, "store", InMemoryStore(), raising=False)
     monkeypatch.setattr(tokens, "db", _Tokens())
     monkeypatch.setattr(cache, "get_cache_client", lambda: _NoCache())
-    # No command filed who it runs for, so a save runs for no conversation.
-    monkeypatch.setattr(outcomes, "call_context", AsyncMock(return_value=None))
+    # Each command filed that it runs for no conversation.
+    monkeypatch.setattr(outcomes, "call_context", AsyncMock(return_value=CallContext()))
     app = create_test_app(livefs_app.router)
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -101,12 +107,24 @@ async def client(monkeypatch, reported):
         yield c
 
 
+@pytest_asyncio.fixture
+async def through_gzip(client):
+    """The endpoint behind the app's GZip, asked as a CDN in front of it asks:
+    for gzip, whatever its own client asked. Shares ``client``'s store."""
+    app = create_test_app(livefs_app.router)
+    app.add_middleware(setup_mod._SelectiveGZip, minimum_size=1000)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {TOKEN}", "Accept-Encoding": "gzip"},
+    ) as c:
+        yield c
+
+
 @pytest.fixture
-def parse(monkeypatch) -> AsyncMock:
-    """The automations rows' save, planned and committed as nothing changing;
-    the rows themselves never change, so the save settles on what was served.
-    The save's context reaches the file first where it parses the document,
-    which this returns."""
+def automation(monkeypatch) -> MagicMock:
+    """One automation's file, saved as planned and committed as nothing
+    changing; its row never changes, so a save settles on what was served."""
     conn = MagicMock()
 
     @asynccontextmanager
@@ -115,16 +133,26 @@ def parse(monkeypatch) -> AsyncMock:
 
     conn.transaction = conn.cursor = _open
     monkeypatch.setattr(db_json_route, "get_db_connection", _open)
-    file = MagicMock(spec=AutomationsFile())
+    file = MagicMock(spec=AutomationFile(FILE_NAME))
     file.unchanged = None
-    file.fetch = AsyncMock(return_value=[])
+    file.fetch = AsyncMock(return_value=["row"])
     file.render = MagicMock(return_value=(SERVED, ROWS_VERSION))
-    file.parse = AsyncMock(return_value=Document(entries=[], states=None, timezone="UTC", model_pref=None))
+    file.parse = AsyncMock(return_value=Document(fields={}, shown=None, timezone="UTC", model_pref=None))
     file.plan = MagicMock(return_value=Plan(FilePlan()))
+    file.plan_delete = MagicMock(return_value=Plan(FilePlan()))
     file.hold = AsyncMock(return_value=None)
     file.commit = AsyncMock(return_value=REPORT)
-    monkeypatch.setitem(AutomationsBackend.files, AUTOMATIONS_FILE, file)
-    return file.parse
+    monkeypatch.setattr(
+        AutomationsBackend, "file_named", classmethod(lambda cls, name: file if name == FILE_NAME else None)
+    )
+    return file
+
+
+@pytest.fixture
+def parse(automation) -> AsyncMock:
+    """The save's context reaches the file first where it parses the
+    document, which this returns."""
+    return automation.parse
 
 
 async def _put(client, path, body: bytes, **headers):
@@ -185,6 +213,58 @@ async def test_the_etag_a_read_returns_is_accepted_as_the_next_writes_if_match(c
 
 
 @pytest.mark.asyncio
+async def test_a_save_naming_its_version_in_a_weak_tag_lands(client):
+    # A CDN that re-encodes a read marks its ETag weak on the way to the daemon.
+    version = await _create(client, NOTES, "first\n")
+
+    resp = await _put(client, NOTES, b"second\n", **{"If-Match": f'W/"{version}"'})
+
+    assert resp.status_code == 200, resp.text
+    assert (await _read(client, NOTES)).content == b"second\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tag", ['""', 'W/""'])
+async def test_a_tag_naming_no_version_is_refused_and_saves_nothing(client, tag):
+    """Taken as no version, it would save only where no file is."""
+    resp = await _put(client, NOTES, b"blind\n", **{"If-Match": tag})
+
+    assert _refusal(resp) == (428, "precondition_required")
+    assert (await _read(client, NOTES)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_read_leaves_gzip_and_any_cdn_its_body_and_strong_etag(client, through_gzip):
+    # Regression: a CDN asked for gzip and decompressed it for the daemon,
+    # which asks for no encoding, so the ETag came back weak and the save
+    # over it was refused as changed.
+    text = "line of notes\n" * 200
+    version = await _create(client, NOTES, text)
+
+    resp = await through_gzip.get("/api/v1/livefs/read", params={"path": NOTES})
+
+    assert resp.status_code == 200
+    assert "content-encoding" not in resp.headers
+    assert resp.content == text.encode()
+    assert resp.headers["etag"] == f'"{version}"'
+    assert "no-transform" in resp.headers["cache-control"]
+
+
+@pytest.mark.parametrize(
+    ("path", "exempt"),
+    [
+        ("/api/v1/livefs/read", True),
+        ("/api/v1/livefs/list", True),
+        ("/api/v1/workspaces/w/files/download", True),
+        ("/api/v1/livefsx/read", False),
+        ("/api/v1/threads", False),
+    ],
+)
+def test_gzip_leaves_the_file_mount_and_downloads_alone(path, exempt):
+    assert setup_mod._gzip_exempt(path) is exempt
+
+
+@pytest.mark.asyncio
 async def test_a_write_naming_a_stale_version_is_refused_as_changed(client):
     stale = await _make_stale(client)
 
@@ -228,8 +308,10 @@ async def test_a_memo_write_is_refused_as_read_only(client):
         ("user/memory/../memo/brief.md", b"x"),
         (NOTES, b"\xff\xfe not utf-8"),
         ("user/profile/notes.txt", b"{}"),
+        ("user/memory/a\x00b.md", b"x"),
+        ("user/memory/a\nb.md", b"x"),
     ],
-    ids=["traversal", "non-utf8", "unknown-profile-file"],
+    ids=["traversal", "non-utf8", "unknown-profile-file", "nul", "control"],
 )
 @pytest.mark.asyncio
 async def test_a_bad_path_body_or_file_name_is_refused_as_invalid(client, path, body):
@@ -245,6 +327,14 @@ async def test_a_body_over_the_file_cap_is_refused_as_too_large(client):
     )
 
     assert _refusal(resp) == (413, "too_large")
+
+
+@pytest.mark.asyncio
+async def test_a_path_past_the_cap_is_refused_without_quoting_it_whole(client):
+    resp = await _put(client, f"user/memory/{'a' * 5000}.md", b"x", **{"If-None-Match": "*"})
+
+    assert _refusal(resp) == (422, "invalid")
+    assert len(resp.json()["message"]) < 200
 
 
 def test_the_daemon_refuses_a_write_at_the_cap_the_store_keeps():
@@ -316,6 +406,47 @@ async def test_a_refused_provisional_save_is_not_reported(client, reported):
 
 
 @pytest.mark.asyncio
+async def test_a_refused_provisional_save_logs_no_automation_name(
+    client, reported, automation, caplog
+):
+    caplog.set_level(logging.INFO, logger=livefs_app.logger.name)
+
+    resp = await _put(
+        client,
+        AUTOMATIONS,
+        SERVED.encode(),
+        **{"If-Match": '"sha256:stale"', "X-Livefs-Provisional": "1"},
+    )
+
+    assert resp.status_code == 412
+    (logged,) = [
+        r for r in caplog.records if r.getMessage() == "livefs provisional write refused"
+    ]
+    assert logged.path == f"{ROOT}/.agents/user/automations"
+    assert not hasattr(logged, "error")
+    assert reported == []
+
+
+@pytest.mark.parametrize("provisional", [False, True], ids=["save", "provisional"])
+@pytest.mark.asyncio
+async def test_a_save_the_server_failed_on_is_reported_not_saved(
+    client, reported, monkeypatch, provisional
+):
+    """Once answered, error or not, the daemon does not send a save again;
+    only a provisional one is sent again at release."""
+    monkeypatch.setattr(
+        livefs_app.LivefsTree, "write", AsyncMock(side_effect=RuntimeError("store down"))
+    )
+    headers = {"If-None-Match": "*", **({"X-Livefs-Provisional": "1"} if provisional else {})}
+
+    with pytest.raises(RuntimeError):
+        await _put(client, NOTES, b"x", **headers)
+
+    failed = {"op": "write", "path": f"/mnt/livefs/{NOTES}", "ok": False, "error": "the server failed; retry"}
+    assert reported == ([] if provisional else [(CALL, failed)])
+
+
+@pytest.mark.asyncio
 async def test_what_a_save_changed_reaches_its_outcome_but_not_the_log(
     client, reported, parse, caplog
 ):
@@ -330,7 +461,7 @@ async def test_what_a_save_changed_reaches_its_outcome_but_not_the_log(
             CALL,
             {
                 "op": "write",
-                "path": f"{ROOT}/.agents/user/automations/automations.json",
+                "path": f"{ROOT}/.agents/{AUTOMATIONS}",
                 "ok": True,
                 "size": len(SERVED.encode()),
                 "report": REPORT,
@@ -339,6 +470,115 @@ async def test_what_a_save_changed_reaches_its_outcome_but_not_the_log(
     ]
     (logged,) = [r for r in caplog.records if r.getMessage() == "livefs write"]
     assert logged.ok is True and not hasattr(logged, "report")
+    # The file name is derived from the automation's name, so only the
+    # folder is logged.
+    assert logged.path == f"{ROOT}/.agents/user/automations"
+
+
+@pytest.mark.asyncio
+async def test_the_log_names_no_automation_a_move_or_refusal_touches(
+    client, reported, automation, monkeypatch, caplog
+):
+    caplog.set_level(logging.INFO, logger=livefs_app.logger.name)
+    automation.rename = AsyncMock(return_value="Renamed morning-brief.json to brief.json")
+    absent = MagicMock(spec=AutomationFile("brief.json"))
+    absent.fetch = AsyncMock(return_value=None)
+    absent.render = MagicMock(return_value=None)
+    names = {FILE_NAME: automation, "brief.json": absent}
+    monkeypatch.setattr(AutomationsBackend, "file_named", classmethod(lambda cls, name: names.get(name)))
+
+    moved = await client.post(
+        "/api/v1/livefs/rename",
+        params={"path": AUTOMATIONS, "to": "user/automations/brief.json"},
+        headers={"X-Livefs-Call": CALL},
+    )
+    refused = await _put(client, AUTOMATIONS, SERVED.encode(), **{"If-Match": '"sha256:stale"'})
+
+    assert (moved.status_code, refused.status_code) == (204, 412)
+    folder = f"{ROOT}/.agents/user/automations"
+    logged = [r for r in caplog.records if r.getMessage() in ("livefs rename", "livefs write")]
+    assert [(r.op, r.ok, r.path, getattr(r, "from", None)) for r in logged] == [
+        ("rename", True, folder, folder),
+        ("write", False, folder, None),
+    ]
+    assert not any(hasattr(r, "error") or hasattr(r, "report") for r in logged)
+    # The tool result still gets the whole outcome.
+    assert reported[1][1]["path"] == f"{ROOT}/.agents/{AUTOMATIONS}"
+    assert "morning-brief.json" in reported[1][1]["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_save_that_deletes_the_automation_answers_removed_and_reports_it(
+    client, reported, automation
+):
+    """The daemon drops the file from its listings, as after an unlink,
+    rather than hold a version of a file that is gone."""
+    automation.commit.return_value = DELETED
+    automation.render.side_effect = [(SERVED, ROWS_VERSION), None]
+
+    resp = await _put(
+        client, AUTOMATIONS, b'{"status": "deleted"}', **{"If-Match": f'"{ROWS_VERSION}"'}
+    )
+
+    assert (resp.status_code, resp.json()) == (200, {"removed": True})
+    assert reported == [
+        (CALL, {"op": "write", "path": f"{ROOT}/.agents/{AUTOMATIONS}", "ok": True, "report": DELETED})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_save_over_an_automation_deleted_since_is_refused_as_not_found(client, reported, automation):
+    automation.render.return_value = None
+
+    resp = await _put(client, AUTOMATIONS, SERVED.encode(), **{"If-Match": f'"{ROWS_VERSION}"'})
+
+    assert _refusal(resp) == (404, "not_found")
+    assert "was deleted since it was read" in resp.json()["message"]
+    automation.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_removing_an_automations_file_reports_the_delete(client, reported, automation):
+    """``rm`` deletes the automation; the command's tool result says which."""
+    automation.commit.return_value = DELETED
+
+    resp = await client.post("/api/v1/livefs/delete", params={"path": AUTOMATIONS}, headers={"X-Livefs-Call": CALL})
+
+    assert resp.status_code == 204, resp.text
+    assert reported == [
+        (CALL, {"op": "delete", "path": f"{ROOT}/.agents/{AUTOMATIONS}", "ok": True, "report": DELETED})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_removing_a_file_that_reports_nothing_files_no_report(client, reported):
+    await _create(client, NOTES, "first\n")
+    reported.clear()
+
+    resp = await client.post("/api/v1/livefs/delete", params={"path": NOTES}, headers={"X-Livefs-Call": CALL})
+
+    assert resp.status_code == 204, resp.text
+    assert reported == [(CALL, {"op": "delete", "path": f"{ROOT}/.agents/{NOTES}", "ok": True})]
+
+
+@pytest.mark.asyncio
+async def test_renaming_an_automations_file_reports_the_move(client, reported, automation, monkeypatch):
+    automation.rename = AsyncMock(return_value="Renamed morning-brief.json to brief.json")
+    absent = MagicMock(spec=AutomationFile("brief.json"))
+    absent.fetch = AsyncMock(return_value=None)
+    absent.render = MagicMock(return_value=None)
+    names = {FILE_NAME: automation, "brief.json": absent}
+    monkeypatch.setattr(AutomationsBackend, "file_named", classmethod(lambda cls, name: names.get(name)))
+
+    resp = await client.post(
+        "/api/v1/livefs/rename",
+        params={"path": AUTOMATIONS, "to": "user/automations/brief.json"},
+        headers={"X-Livefs-Call": CALL},
+    )
+
+    assert resp.status_code == 204, resp.text
+    [(call, outcome)] = reported
+    assert (call, outcome["op"], outcome["report"]) == (CALL, "rename", "Renamed morning-brief.json to brief.json")
 
 
 # -- who a save runs for -----------------------------------------------------------
@@ -362,15 +602,43 @@ async def test_a_save_runs_for_the_workspace_thread_and_clock_its_command_filed(
 
 
 @pytest.mark.asyncio
-async def test_a_save_no_command_filed_runs_for_no_conversation(client, parse):
+async def test_a_save_and_its_report_run_for_one_read_of_what_its_command_filed(
+    client, parse, monkeypatch
+):
+    """A second read for the report could find the filing expired since the
+    save, and hand the report to whichever conversation runs next."""
+    context = CallContext(workspace_id=WORKSPACE, thread_id=THREAD)
+    filed = AsyncMock(side_effect=[context, None])
+    monkeypatch.setattr(outcomes, "call_context", filed)
+    monkeypatch.setattr(outcomes, "record", _RECORD)
+    redis = MagicMock(eval=AsyncMock(return_value=0))
+    monkeypatch.setattr(outcomes, "cache", SimpleNamespace(client=lambda: redis, tag=cache.tag))
+
+    await _save_automations(client)
+
+    filed.assert_awaited_once_with(COMPUTER, CALL)
+    assert parse.await_args.args[:2] == (USER, context)
+    late_key = redis.eval.await_args.args[4]
+    assert late_key == f"{cache.tag(COMPUTER)}:late:{THREAD}"
+
+
+@pytest.mark.asyncio
+async def test_a_save_no_command_filed_runs_and_reports_as_no_calls(
+    client, parse, reported, monkeypatch
+):
+    """The filing expired, Redis lost it, or the sandbox's code made the id
+    up, which it can do for every request: nothing is kept under it."""
+    monkeypatch.setattr(outcomes, "call_context", AsyncMock(return_value=None))
+
     await _save_automations(client)
 
     assert parse.await_args.args[:2] == (USER, CallContext())
+    assert [call for call, _ in reported] == [None]
 
 
 @pytest.mark.asyncio
 async def test_the_endpoint_never_looks_up_the_user(client, parse, monkeypatch):
-    """The user's own clock is the automations file's to read, and only when
+    """The user's own clock is the automation files' to read, and only when
     the command filed none, so no other save waits on, or fails with, the
     users table."""
     get_user = AsyncMock(side_effect=RuntimeError("database down"))

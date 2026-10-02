@@ -29,7 +29,9 @@ from ptc_agent.core.paths import (  # noqa: E402
     LEGACY_ROOT_TOOLS_DIR,
     MEMO_INDEX_FILENAME,
     MEMORY_INDEX_FILENAME,
+    AUTOMATION_FILE_NAME,
     SANDBOX_ROOTS,
+    USER_DATA_DIRS,
     USER_DATA_FILES,
     SandboxLayout,
     WorkspaceLayout,
@@ -101,6 +103,7 @@ def render() -> str:
         ("MEMORY_USER_DIR", SandboxLayout, "MEMORY_USER_DIR"),
         ("MEMORY_WORKSPACE_DIR", WorkspaceLayout, "MEMORY_DIR"),
         ("MEMO_USER_DIR", SandboxLayout, "MEMO_USER_DIR"),
+        ("AUTOMATIONS_DIR", SandboxLayout, "AUTOMATIONS_DIR"),
         ("SKILLS_DIR", WorkspaceLayout, "SKILLS_DIR"),
         ("THREADS_DIR", WorkspaceLayout, "THREADS_DIR"),
         ("LARGE_TOOL_RESULTS_DIR", WorkspaceLayout, "LARGE_TOOL_RESULTS_DIR"),
@@ -121,14 +124,25 @@ def render() -> str:
     out.append(f"export const MEMO_INDEX_FILENAME = '{MEMO_INDEX_FILENAME}';\n\n")
 
     out.append(
-        "/** The DB-backed files (rows in Postgres), by the directory that serves\n"
-        " *  them beside a README.md. Source: USER_DATA_FILES. */\n"
+        "/** The directories of DB-backed files (rows in Postgres), each beside\n"
+        " *  a README.md. Source: USER_DATA_DIRS. */\n"
+    )
+    out.append(_string_list("USER_DATA_DIRS", USER_DATA_DIRS))
+    out.append("\n")
+    out.append(
+        "/** The fixed DB-backed files, by the directory that serves them.\n"
+        " *  Source: USER_DATA_FILES. */\n"
     )
     out.append("export const USER_DATA_FILES = {\n")
     for directory, files in USER_DATA_FILES.items():
         names = ", ".join(f"'{name}'" for name in files)
         out.append(f"  '{directory}': [{names}],\n")
     out.append("} as const;\n\n")
+    out.append(
+        "/** The names an automation's file in AUTOMATIONS_DIR may take, one\n"
+        " *  file per automation. Source: AUTOMATION_FILE_NAME. */\n"
+    )
+    out.append(f"export const AUTOMATION_FILE_NAME = /^{AUTOMATION_FILE_NAME}$/;\n\n")
 
     out.append(
         "/** Agent-infrastructure dirs at the sandbox root, collapsed by\n"

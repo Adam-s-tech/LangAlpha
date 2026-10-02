@@ -24,7 +24,7 @@ from ptc_agent.agent.tools.context_file_policy import (
     MAX_MEMORY_BLOCK_SIZE,
     capped_file,
 )
-from ptc_agent.core.paths import MEMORY_INDEX_FILENAME, WorkspaceLayout
+from ptc_agent.core.paths import MEMORY_INDEX_FILENAME, SandboxLayout, WorkspaceLayout
 from ptc_agent.core.sandbox.livefs_mount import unserved_tree
 
 WORKSPACE_MEMORY = WorkspaceLayout.MEMORY_DIR
@@ -64,6 +64,17 @@ class TestTheWorkspaceTierIsGuarded:
         )
         assert capped is not None
         assert capped.cap == MAX_MEMORY_BLOCK_SIZE
+
+
+def test_every_tree_the_mount_serves_is_refused_without_it():
+    """A write under one of these with no mount lands on the sandbox disk,
+    where the server never reads it."""
+    for tree in (
+        SandboxLayout.AUTOMATIONS_DIR,
+        SandboxLayout.USER_PROFILE_DIR,
+        SandboxLayout.WORKFLOWS_DIR,
+    ):
+        assert unserved_tree(None, f"echo x > {tree}/a.json") == tree
 
 
 class TestTheGuardsStayNarrow:

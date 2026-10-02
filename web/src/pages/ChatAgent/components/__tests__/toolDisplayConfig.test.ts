@@ -64,7 +64,7 @@ describe('categorizeTool — memo classification', () => {
   });
 
   it('classifies automations reads + writes into automationsRead / automationsWrite buckets', () => {
-    const file_path = '.agents/user/automations/automations.json';
+    const file_path = '.agents/user/automations/morning-brief.json';
     expect(categorizeTool('Read', { args: { file_path } })).toBe('automationsRead');
     expect(categorizeTool('Write', { args: { file_path } })).toBe('automationsWrite');
     expect(categorizeTool('Edit', { args: { file_path } })).toBe('automationsWrite');
@@ -189,7 +189,7 @@ describe('chart annotation — symbol + interval headline', () => {
   });
 });
 
-describe('user-profile — entity-aware labels for portfolio/watchlist/preference', () => {
+describe('user-data — entity-aware labels for portfolio/watchlist/preference', () => {
   const ENTITIES = ['portfolio', 'watchlist', 'preference'] as const;
 
   for (const entity of ENTITIES) {
@@ -227,8 +227,8 @@ describe('user-profile — entity-aware labels for portfolio/watchlist/preferenc
   }
 });
 
-describe('automations: entity-aware labels for automations.json', () => {
-  const call = { args: { file_path: '.agents/user/automations/automations.json' } };
+describe('automations: entity-aware labels for an automation file', () => {
+  const call = { args: { file_path: '.agents/user/automations/morning-brief.json' } };
 
   it('titles a completed Read "read_automations" and a Write or Edit "updated_automations"', () => {
     expect(getCompletedRowTitle('Read', call, tIdentity)).toBe('toolArtifact.completed.read_automations');
@@ -241,8 +241,13 @@ describe('automations: entity-aware labels for automations.json', () => {
     expect(getInProgressText('Edit', call, tIdentity)).toBe('toolArtifact.inProgress.updating_automations');
   });
 
-  it('carries no summary pill, since the title already names the file', () => {
-    expect(getCompletedSummary('Read', call)).toBeNull();
+  it('names the automation file in the summary pill, since the title does not', () => {
+    expect(getCompletedSummary('Read', call)).toBe('morning-brief');
+    expect(getCompletedSummary('Edit', { args: { file_path: '/home/workspace/.agents/user/automations/aapl.json' } })).toBe('aapl');
+  });
+
+  it('carries no pill for a profile file, whose title names it', () => {
+    expect(getCompletedSummary('Read', { args: { file_path: '.agents/user/profile/portfolio.json' } })).toBeNull();
   });
 
   it('uses the Clock icon check_automations uses', () => {

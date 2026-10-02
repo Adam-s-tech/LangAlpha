@@ -14,15 +14,41 @@ import stat
 import threading
 import time
 from collections.abc import Callable
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
-from .protocol import MAX_FILE_BYTES, PROVISIONAL_HEADER, Refusal, SaveAnswer, code_of
+from .protocol import (
+    MAX_FILE_BYTES,
+    PROVISIONAL_HEADER,
+    Refusal,
+    RemovedAnswer,
+    SaveAnswer,
+    code_of,
+    etag,
+    etag_version,
+)
 from .remote import Remote, error_for, fail
 from .views import CONTENT_BYTES, DIR, Entry, View, Views, split
 
+if TYPE_CHECKING:
+    import http.client
+
 PID_TTL_S = 2.0
+#: Entries the pid cache holds before it starts over: pids are reused, so a
+#: busy sandbox would otherwise grow it for good.
+PID_CACHE_LIMIT = 4096
 
 _GONE = (Refusal.NOT_FOUND, Refusal.NOT_DIRECTORY)
+
+
+def _version_read(resp: http.client.HTTPResponse) -> str:
+    """The version a ``/read`` answered with, failing for none: a save naming
+    no version would make the file anew. It is not worked out from the bytes,
+    being the route's and not always their digest (an automation keeps its
+    version while its run state moves)."""
+    version = etag_version(resp.getheader("ETag"))
+    if version is None:
+        raise fail(errno.EIO)
+    return version
 
 
 class _Sent(NamedTuple):
@@ -133,7 +159,7 @@ class LiveFS:
                 return hit[0]
         call = self._call_of(pid)
         with self._lock:
-            if len(self._pids) > 4096:
+            if len(self._pids) > PID_CACHE_LIMIT:
                 self._pids.clear()
             self._pids[pid] = (call, now + PID_TTL_S)
         return call
@@ -230,7 +256,7 @@ class LiveFS:
         )
         if status != 200:
             raise self._refused(path, status, data, view)
-        got = resp.getheader("ETag", "").strip('"')
+        got = _version_read(resp)
         # A version that is not a digest can come back with other bytes;
         # those are shown, as they would be had nothing been let go.
         if pinned and got != pinned:
@@ -471,22 +497,34 @@ class LiveFS:
         handle = self._handles.get(fh)
         try:
             if handle is not None and handle.dirty:
-                self._save(handle)
+                first = handle.unanswered is None
+                try:
+                    self._save(handle)
+                except OSError:
+                    # A handle that only made or emptied its file is not saved
+                    # at flush, so this was its first save. With no answer it
+                    # gets the one checked retry a flushed save gets here;
+                    # dropped instead, a save lost on the way would leave the
+                    # file as it was, unreported.
+                    if not first or handle.unanswered is None:
+                        raise
+                    self._save(handle)
         finally:
             with self._lock:
                 self._handles.pop(fh, None)
         return 0
 
-    def _settle(self, path: str) -> None:
+    def _settle(self, path: str, *, written: bool = False) -> None:
         """Send the saves ``flush`` left for release on ``path``, for an
-        operation the server must see the made or emptied file for first.
+        operation the server must see the made or emptied file for first;
+        ``written`` sends unflushed writes too, which a rename carries along.
         Provisional, since bytes may still follow on those handles: a refusal
         is not reported, and release sends it again if none did."""
         with self._lock:
             waiting = [
                 h
                 for h in self._handles.values()
-                if h.path == path and h.writing and h.dirty and not h.written
+                if h.path == path and h.writing and h.dirty and (written or not h.written)
             ]
         for handle in waiting:
             with contextlib.suppress(OSError):
@@ -510,12 +548,13 @@ class LiveFS:
                     if not handle.dirty:
                         return  # the save with no answer had sent it all
             headers = (
-                {"If-Match": f'"{handle.base}"'}
+                {"If-Match": etag(handle.base)}
                 if handle.base
                 else {"If-None-Match": "*"}
             )
             if provisional:
                 headers[PROVISIONAL_HEADER] = "1"
+            call = self._call() or handle.call
             try:
                 status, _, data = self._remote.request(
                     "PUT",
@@ -523,7 +562,7 @@ class LiveFS:
                     {"path": handle.path.lstrip("/")},
                     body=body,
                     headers=headers,
-                    call=self._call() or handle.call,
+                    call=call,
                 )
             except OSError:
                 # It may have landed, and sent again its precondition would
@@ -538,7 +577,10 @@ class LiveFS:
                     if handle.rev == rev:
                         handle.dirty = provisional
                 raise self._refused(handle.path, status, data)
-            saved: SaveAnswer = json.loads(data)
+            saved: SaveAnswer | RemovedAnswer = json.loads(data)
+            if "removed" in saved:
+                self._removed(handle, rev, call)
+                return
             self._saved(
                 handle, body, rev, saved["version"], saved["size"], bool(saved.get("as_sent"))
             )
@@ -554,8 +596,7 @@ class LiveFS:
         )
         if status != 200 or data != sent.body:
             return False
-        version = resp.getheader("ETag", "").strip('"')
-        self._saved(handle, sent.body, sent.rev, version, len(sent.body), True)
+        self._saved(handle, sent.body, sent.rev, _version_read(resp), len(sent.body), True)
         return True
 
     def _saved(
@@ -567,6 +608,16 @@ class LiveFS:
             if handle.rev == rev:
                 handle.dirty = False
         self._views.saved(handle.path, handle.call, body, version, size, as_sent)
+
+    def _removed(self, handle: Handle, rev: int, call: str | None) -> None:
+        """A save that deleted its file leaves the views as an unlink does.
+        The handle keeps its base, so a save through it again is refused
+        as over a deleted file rather than making a new one."""
+        with handle.lock:
+            handle.unanswered = None
+            if handle.rev == rev:
+                handle.dirty = False
+        self._views.removed(handle.path, self._views.view(call))
 
     def unlink(self, path):
         self._settle(path)
@@ -586,7 +637,7 @@ class LiveFS:
                 raise fail(errno.EEXIST)
             self._views.moved_dir(old, new, view)
             return 0
-        self._settle(old)
+        self._settle(old, written=True)
         self._settle(new)
         status, _, data = self._remote.request(
             "POST",
@@ -600,6 +651,12 @@ class LiveFS:
         if status != 204:
             raise self._refused(old, status, data, view)
         self._views.renamed(old, new, view)
+        # An open file follows its rename, as a temp file written, replaced
+        # into place and then closed relies on. A move keeps the version.
+        with self._lock:
+            for handle in self._handles.values():
+                if handle.path == old:
+                    handle.path = new
         return 0
 
     # --- directories ----------------------------------------------------

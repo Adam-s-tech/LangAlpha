@@ -11,8 +11,8 @@ from psycopg.types.json import Json
 from src.server.contracts.status import INTERRUPT_REASON_CREDIT_PAUSE
 from src.server.database.automation import (
     EXECUTION_COLUMNS,
-    _UNSETTLED,
-    _not_a_server_skip,
+    UNSETTLED_STATUSES,
+    not_a_server_skip,
 )
 from src.server.database.pool import get_db_connection
 from src.server.utils.db import UpdateQueryBuilder
@@ -190,8 +190,8 @@ async def settle_execution(
                     SELECT p.failure_reason, p.delivery_result
                     FROM automation_executions p
                     WHERE p.automation_id = %s AND p.automation_execution_id <> %s
-                      AND p.status NOT IN {_UNSETTLED}
-                      AND {_not_a_server_skip("p")}
+                      AND p.status NOT IN {UNSETTLED_STATUSES}
+                      AND {not_a_server_skip("p")}
                     ORDER BY p.created_at DESC, p.automation_execution_id DESC
                     LIMIT 1
                 """, (automation_id, execution_id))
@@ -388,7 +388,7 @@ async def touch_execution(execution_id: str) -> None:
             await cur.execute(f"""
                 UPDATE automation_executions SET heartbeat_at = NOW()
                 WHERE automation_execution_id = %s
-                  AND status IN {_UNSETTLED}
+                  AND status IN {UNSETTLED_STATUSES}
             """, (execution_id,))
 
 
@@ -409,7 +409,7 @@ async def settle_legacy_executions(error_message: str) -> int:
                 UPDATE automation_executions
                 SET status = 'failed', failure_reason = 'interrupted',
                     error_message = %s, completed_at = NOW()
-                WHERE status IN {_UNSETTLED}
+                WHERE status IN {UNSETTLED_STATUSES}
                   AND heartbeat_at IS NULL
                   AND created_at < NOW() - INTERVAL '1 day'
             """, (error_message,))
@@ -435,7 +435,7 @@ async def list_abandoned_executions(
                 JOIN automations a ON a.automation_id = e.automation_id
                 LEFT JOIN conversation_threads t
                     ON t.conversation_thread_id = e.conversation_thread_id
-                WHERE e.status IN {_UNSETTLED}
+                WHERE e.status IN {UNSETTLED_STATUSES}
                   AND e.heartbeat_at < NOW() - make_interval(secs => %s)
                   AND NOT EXISTS (
                       SELECT 1 FROM conversation_responses r

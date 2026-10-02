@@ -19,7 +19,7 @@ from ptc_agent.agent.tools.bash_output import create_bash_output_tool
 
 
 def _make_backend(*, status: dict | None = None, stopped: bool = True) -> Any:
-    backend = SimpleNamespace()
+    backend = SimpleNamespace(livefs=None)
     backend.aget_background_command_status = AsyncMock(return_value=status or {})
     backend.astop_background_command = AsyncMock(return_value=stopped)
     return backend

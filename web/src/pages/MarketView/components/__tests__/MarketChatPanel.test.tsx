@@ -290,7 +290,7 @@ describe('MarketChatPanel', () => {
 
     it('follows a streaming reply, lets a reader scroll away from it, and stops when the turn ends', () => {
       h.isLoading = true;
-      const { rerender, layout, grow, nextFrame, userScroll } = renderTranscript();
+      const { rerender, container, layout, grow, nextFrame, userScroll } = renderTranscript();
 
       grow(1000);
       expect(scrollTo).toHaveBeenLastCalledWith({ top: 600 });
@@ -329,11 +329,41 @@ describe('MarketChatPanel', () => {
       expect(scrollTo).toHaveBeenLastCalledWith({ top: 1350 });
       nextFrame();
 
-      // A row opened at the end of the settled turn stays where it opened.
-      scrollTo.mockClear();
+      // The reply's actions and the text the typewriter still held land
+      // after the turn has ended, and are followed too.
       grow(1750);
+      grow(1800);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 1400 });
+      nextFrame();
+
+      // A row the reader opens at the end of the settled turn stays where it
+      // opened.
+      scrollTo.mockClear();
+      fireEvent.pointerDown(container);
       grow(2000);
       expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it('stops following the end of a turn once the transcript has been quiet', () => {
+      vi.useFakeTimers();
+      try {
+        h.isLoading = true;
+        const { rerender, layout, grow, nextFrame } = renderTranscript();
+        grow(1000);
+        nextFrame();
+        layout.height = 1100;
+        h.isLoading = false;
+        rerender({ quickQueries: [] });
+        nextFrame();
+
+        scrollTo.mockClear();
+        act(() => { vi.advanceTimersByTime(1600); });
+        grow(1100);
+        grow(1300);
+        expect(scrollTo).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('takes a reader who scrolled up to the end when they send, and follows the reply', () => {

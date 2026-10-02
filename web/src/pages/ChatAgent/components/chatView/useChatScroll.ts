@@ -192,11 +192,28 @@ export function useChatScroll({
     () => !memoryTidRef.current || restoredForThreadRef.current === memoryTidRef.current,
     [memoryTidRef],
   );
-  /** A turn is streaming, nothing else owns the scroll and the reader is
-   *  riding the end. Growth in a settled transcript is the reader's own doing
-   *  (a block opened, a panel rewrapping the text) and is left where it is. */
+  // The follow outlasts the stream by one settle window. The commit that ends
+  // a turn adds the reply's actions, then the typewriter types out what it
+  // still held and late media lands, all after isStreaming has gone false.
+  const followTailRef = useRef(false);
+  const tailWindowRef = useRef<SettleWindow | null>(null);
+  const wasStreamingRef = useRef(isStreaming);
+  useLayoutEffect(() => {
+    const ended = wasStreamingRef.current && !isStreaming;
+    wasStreamingRef.current = isStreaming;
+    tailWindowRef.current ??= createSettleWindow(() => {
+      followTailRef.current = false;
+    });
+    followTailRef.current = ended;
+    if (ended) tailWindowRef.current.arm();
+    else tailWindowRef.current.clear();
+  }, [isStreaming]);
+  /** A turn is streaming or just ended, nothing else owns the scroll and the
+   *  reader is riding the end. Growth in a settled transcript is the reader's
+   *  own doing (a block opened, a panel rewrapping the text) and is left where
+   *  it is. */
   const isFollowing = useCallback(
-    () => isStreamingRef.current && !pinTargetRef.current && isNearBottomRef.current && entryRestoreSettled(),
+    () => (isStreamingRef.current || followTailRef.current) && !pinTargetRef.current && isNearBottomRef.current && entryRestoreSettled(),
     [entryRestoreSettled, isStreamingRef],
   );
 
@@ -550,7 +567,10 @@ export function useChatScroll({
             return;
           }
         }
-        if (grew && isFollowing()) stream.follow();
+        if (grew && isFollowing()) {
+          stream.follow();
+          if (followTailRef.current) tailWindowRef.current?.arm();
+        }
       });
       ro.observe(getScrollContent(c));
     }
@@ -701,6 +721,7 @@ export function useChatScroll({
   useEffect(() => {
     return () => {
       settleRef.current?.clear();
+      tailWindowRef.current?.clear();
       if (entryRestoreRafRef.current != null) cancelAnimationFrame(entryRestoreRafRef.current);
     };
   }, []);

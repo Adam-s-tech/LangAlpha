@@ -80,12 +80,14 @@ export function useStreamFollow(
   active: boolean,
 ): StreamFollowControls {
   const activeRef = useRef(active);
-  const attachedRef = useRef<(StreamFollowControls & Pick<StreamFollow, 'follow'>) | null>(null);
+  const attachedRef = useRef<(StreamFollowControls & { settled(): void }) | null>(null);
   // The commit that ends a turn or a history load carries its last growth,
   // and the observer reports it only after this has marked the transcript
-  // settled. Followed here instead, where layout already measures it.
+  // settled. Followed here instead, where layout already measures it, and
+  // for one settle window after, while the typewriter types out what it still
+  // held and late media lands.
   useLayoutEffect(() => {
-    if (activeRef.current && !active) attachedRef.current?.follow();
+    if (activeRef.current && !active) attachedRef.current?.settled();
     activeRef.current = active;
   }, [active]);
   useEffect(() => {
@@ -101,14 +103,22 @@ export function useStreamFollow(
     const settle = createSettleWindow(() => {
       held = null;
     });
+    // After a turn ends, its growth is still followed until the transcript
+    // has been quiet for the settle window or the reader does anything.
+    let tail = false;
+    const tailWindow = createSettleWindow(() => {
+      tail = false;
+    });
     const release = () => {
       held = null;
       settle.clear();
+      tail = false;
+      tailWindow.clear();
     };
     let lastHeight = -1;
     const ro = new ResizeObserver((entries) => {
       const height = entries[0]?.contentRect.height ?? lastHeight;
-      const follow = lastHeight < 0 || (height > lastHeight && activeRef.current);
+      const follow = lastHeight < 0 || (height > lastHeight && (activeRef.current || tail));
       lastHeight = height;
       if (held) {
         const top = anchorTop(c, held.id, 'reply');
@@ -125,6 +135,7 @@ export function useStreamFollow(
         settle.arm();
       } else if (follow) {
         stream.follow();
+        if (tail) tailWindow.arm();
       }
     });
     const onScroll = () => { stream.scrolled(!held); };
@@ -132,7 +143,11 @@ export function useStreamFollow(
     for (const type of INTENT_EVENTS) c.addEventListener(type, release, { passive: true });
     ro.observe(el);
     attachedRef.current = {
-      follow: () => stream.follow(),
+      settled() {
+        tail = true;
+        tailWindow.arm();
+        stream.follow();
+      },
       rejoin() {
         release();
         following.current = true;

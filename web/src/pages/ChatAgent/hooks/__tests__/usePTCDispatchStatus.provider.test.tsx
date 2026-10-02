@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
 import { act, screen, waitFor } from '@testing-library/react';
+import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/test/utils';
 
 vi.mock('../../utils/api', () => ({
@@ -26,6 +27,20 @@ const mockLiveness = getDispatchLiveness as unknown as Mock;
 function Probe({ id, tag }: { id: string; tag?: string }) {
   const { status } = useDispatchStatus(id, true);
   return <div data-testid={`probe-${tag ?? id}`}>{status}</div>;
+}
+
+/** A rejection shaped like the API client's, which carries the response. */
+function httpError(status: number) {
+  return Object.assign(new Error(`Request failed with status code ${status}`), {
+    response: { status },
+  });
+}
+
+/** The app's query defaults, one retry for a failed read. The retry is made
+ *  at once, so a failed poll is two calls a millisecond apart, and the checks
+ *  below land between polls rather than on one. */
+function appQueryClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: 1, retryDelay: 0, gcTime: 0 } } });
 }
 
 /** A turn with one card for thread-a, plus an optional second card on the SAME
@@ -180,6 +195,61 @@ describe('DispatchStatusProvider', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
       await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
       expect(mockLiveness.mock.calls.length).toBe(afterWake + 2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('backs off and then gives up while the liveness read keeps failing', async () => {
+    vi.useFakeTimers();
+    try {
+      mockLiveness.mockRejectedValue(httpError(503));
+      renderWithProviders(turn(false), { queryClient: appQueryClient() });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      // A failed read is still a finished poll: the fast window is five polls.
+      await act(async () => { await vi.advanceTimersByTimeAsync(18_000); });
+      expect(mockLiveness).toHaveBeenCalledTimes(2 * 5);
+      // Then the steady cadence, not 4s forever.
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(mockLiveness).toHaveBeenCalledTimes(2 * 11);
+      // Never read once, the dispatch shows 'starting' on every round, so the
+      // starting cap ends the watch.
+      await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
+      expect(mockLiveness).toHaveBeenCalledTimes(2 * 30);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a live run on the steady cadence through a failing read', async () => {
+    vi.useFakeTimers();
+    try {
+      mockLiveness.mockResolvedValue([
+        { thread_id: 'thread-a', status: 'active', run_id: 'run-a', can_reconnect: true },
+      ]);
+      renderWithProviders(turn(false), { queryClient: appQueryClient() });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      mockLiveness.mockRejectedValue(httpError(401));
+      await act(async () => { await vi.advanceTimersByTimeAsync(18_000); });
+      expect(mockLiveness).toHaveBeenCalledTimes(1 + 2 * 4);
+      // The last answer still says running, so a 401 (a session that can come
+      // back) neither stops the poll nor keeps it fast.
+      await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
+      expect(mockLiveness).toHaveBeenCalledTimes(1 + 2 * 64);
+      expect(screen.getByTestId('probe-thread-a')).toHaveTextContent('running');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops polling on a refusal that asking again will not change', async () => {
+    vi.useFakeTimers();
+    try {
+      mockLiveness.mockRejectedValue(httpError(403));
+      renderWithProviders(turn(false), { queryClient: appQueryClient() });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(mockLiveness).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

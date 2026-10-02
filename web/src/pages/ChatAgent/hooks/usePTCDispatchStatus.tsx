@@ -12,6 +12,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { useThreadRunStatus, type PublicRunStatus } from '@/lib/threadLifecycle/store';
 import { getDispatchLiveness, type DispatchLiveness } from '../utils/api';
+import { isLastingRefusal } from '../utils/api/errors';
 
 /** UI-facing lifecycle of a dispatched PTC research run. */
 export type PTCDispatchStatus =
@@ -25,9 +26,10 @@ export type PTCDispatchStatus =
 const TERMINAL: ReadonlySet<PTCDispatchStatus> = new Set(['completed', 'failed', 'stopped']);
 
 // A dispatched run that never registers (e.g. a continuation rejected by the
-// per-user cap) stays 'starting' on every poll. Stop after this many successful
-// polls so the turn doesn't watch a genuinely stuck dispatch forever. A real run
-// flips to 'running' within seconds, so this only trips on a stuck dispatch.
+// per-user cap) stays 'starting' on every poll. Stop after this many polls so
+// the turn doesn't watch a genuinely stuck dispatch forever. A real run flips to
+// 'running' within seconds, so this only trips on a stuck dispatch, or on a read
+// that keeps failing before it ever saw the run.
 const STARTING_POLL_CAP = 30;
 // The batched liveness read is cheap, but a flash turn can register several
 // dispatched runs at once, so stay responsive for the first few polls (quick
@@ -112,11 +114,11 @@ export function DispatchStatusProvider({ children }: { children: ReactNode }) {
   const countsRef = useRef<Map<string, number>>(new Map());
   // Latest distributed slices, readable from the stable `register` callback.
   const slicesRef = useRef<Map<string, PTCDispatchStatus>>(new Map());
-  // Poll-cadence counters scoped to the CURRENT polling window. dataUpdateCount
-  // is cumulative for the query's life, so deriving cadence from it directly
-  // makes the starting cap trip instantly (and skips the fast window) on any
-  // later dispatch; these reset whenever polling re-arms instead.
-  const cadenceRef = useRef({ polls: 0, startingRounds: 0, lastUpdateCount: 0 });
+  // Poll-cadence counters scoped to the CURRENT polling window. The query's
+  // update counts are cumulative for its life, so deriving cadence from them
+  // directly makes the starting cap trip instantly (and skips the fast window)
+  // on any later dispatch; these reset whenever polling re-arms instead.
+  const cadenceRef = useRef({ polls: 0, startingRounds: 0, lastSettledCount: 0 });
 
   const register = useCallback((threadId: string) => {
     const counts = countsRef.current;
@@ -152,10 +154,10 @@ export function DispatchStatusProvider({ children }: { children: ReactNode }) {
 
   const sortedIds = useMemo(() => [...ids].sort(), [ids]);
 
-  // A changed id set is a NEW cache entry (dataUpdateCount restarts at 0), so
+  // A changed id set is a NEW cache entry (its settle count restarts at 0), so
   // the cadence window restarts with it.
   useEffect(() => {
-    cadenceRef.current = { polls: 0, startingRounds: 0, lastUpdateCount: 0 };
+    cadenceRef.current = { polls: 0, startingRounds: 0, lastSettledCount: 0 };
   }, [sortedIds]);
 
   const { data } = useQuery({
@@ -169,16 +171,25 @@ export function DispatchStatusProvider({ children }: { children: ReactNode }) {
       // Omitted ids map to 'starting' (keep watching), matching mapStatus.
       const statuses = sortedIds.map((id) => mapStatus(byId.get(id)?.status));
       const aggregate = aggregateStatus(statuses);
-      // Advance window-scoped counters once per fetch RESULT (deduped on the
-      // cumulative dataUpdateCount — this callback re-evaluates more often).
+      // Advance window-scoped counters once per SETTLED fetch, deduped on the
+      // cumulative settle count since this callback re-evaluates more often.
+      // A failure counts too: the query keeps the last answer, so the round
+      // reads as that answer did. Counting only successes held a failing
+      // endpoint on the fast cadence forever.
       const cadence = cadenceRef.current;
-      if (query.state.dataUpdateCount !== cadence.lastUpdateCount) {
-        cadence.lastUpdateCount = query.state.dataUpdateCount;
+      const settled = query.state.dataUpdateCount + query.state.errorUpdateCount;
+      if (settled !== cadence.lastSettledCount) {
+        cadence.lastSettledCount = settled;
         cadence.polls += 1;
         cadence.startingRounds = aggregate === 'starting' ? cadence.startingRounds + 1 : 0;
       }
+      // A 403 answers the same next time. A 401 is an expired session that
+      // can come back, so it only backs off.
+      if (isLastingRefusal(query.state.error)) return false;
       return nextDispatchPollInterval(aggregate, cadence.polls, cadence.startingRounds);
     },
+    // The app's one retry, except for the refusal that stops the poll above.
+    retry: (failureCount, err) => failureCount < 1 && !isLastingRefusal(err),
   });
 
   const slices = useMemo(() => {

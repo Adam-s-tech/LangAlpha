@@ -115,14 +115,17 @@ html.desktop-mac [data-chrome~='drag'] {
    two lists are asserted against each other in desktop/test/shell.test.js,
    because the failure is silent in both directions.
 
-   Not coverable from here: a plain div or span carrying an onClick, which is how
-   many shadcn triggers and icon buttons render. Those opt in with
-   `[data-no-drag]`, and inside a drag region they must. */
+   A plain div or span carrying an onClick, which is how many shadcn triggers and
+   icon buttons render, cannot be told apart from prose here. Those opt in with
+   `[data-no-drag]`, and inside a drag region they must. `.cursor-pointer` is the
+   exception that can be covered: nothing is given a pointer cursor without being
+   clickable, so a row scrolling under the overlapping titlebar strip keeps its
+   clicks. */
 html.desktop-mac :is(a, button, input, textarea, select,
   [role='button'], [role='tab'], [role='menuitem'], [role='menuitemradio'],
   [role='menuitemcheckbox'], [role='option'], [role='switch'], [role='radio'],
   [role='checkbox'], label, summary,
-  [contenteditable='true'], [data-selectable], .selectable, [data-no-drag]) {
+  [contenteditable='true'], [data-selectable], .selectable, [data-no-drag], .cursor-pointer) {
   -webkit-app-region: no-drag;
 }
 

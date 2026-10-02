@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { createContext, useContext, useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkCjkFriendly from 'remark-cjk-friendly';
@@ -16,7 +16,7 @@ import { parseAgentPath } from '../utils/agentPaths';
 import { normalizeFileRefs } from '../utils/normalizeFileRefs';
 import { splitFileLocation, type OpenFileHandler } from '../utils/fileLocation';
 import { mapOutsideCode, mapOutsideMultilineCode } from '../utils/markdownSegments';
-import { splitMarkdownBlocks } from '../utils/markdownBlocks';
+import { splitMarkdownBlocks, scanStreamingBlock } from '../utils/markdownBlocks';
 import CitationBubble from './CitationBubble';
 
 // Sanitize schema: extends GitHub-style defaults to allow KaTeX output,
@@ -59,6 +59,36 @@ interface CodeBlockProps {
   code: string;
   compact?: boolean;
   codeTheme?: 'light' | 'dark';
+  /** The fence is still streaming in. */
+  live?: boolean;
+}
+
+const CODE_STYLE: React.CSSProperties = { margin: 0, padding: '1rem', backgroundColor: 'transparent', fontSize: '0.875rem', lineHeight: '1.5' };
+const COMPACT_CODE_STYLE: React.CSSProperties = { ...CODE_STYLE, padding: '0.6rem', fontSize: '0.75rem' };
+
+// The highlighted line being typed (null between lines), handed past the
+// memoized highlighter of the lines above it into the same <code>. No value
+// while the fence is settled.
+const TypingLine = createContext<{ line: React.ReactNode } | null>(null);
+
+const DONE_LINES_STYLE: React.CSSProperties = { display: 'block' };
+
+function LiveCode({ children, ...props }: React.ComponentProps<'code'>): React.ReactElement {
+  const typing = useContext(TypingLine);
+  if (!typing) return <code {...props}>{children}</code>;
+  // The finished lines are a block of their own, so a keystroke lays out and
+  // shapes the typing line alone rather than every line above it. Their
+  // trailing newline draws no extra line, so the height is the one a single
+  // highlighter gives at every prefix; only a line too long to wrap scrolls
+  // 1rem less far until the fence settles. Each part in its own element also
+  // keeps a finished line an append: landing in front of the typing line, it
+  // restyled the whole <code>, since the sibling-space rules (`.x > * ~ *`)
+  // have a universal right side.
+  return <code {...props}><span style={DONE_LINES_STYLE}>{children}</span><span>{typing.line}</span></code>;
+}
+
+function Bare({ children }: { children?: React.ReactNode }): React.ReactElement {
+  return <>{children}</>;
 }
 
 // --- CodeBlock component ---
@@ -66,10 +96,39 @@ interface CodeBlockProps {
 // per token on every render, which was the single largest cost of a streaming
 // reply once it contained a fence. The parent re-renders on every typewriter
 // tick; the code itself only changes while its own fence is still open.
-const CodeBlock = React.memo(function CodeBlock({ language, code, compact = false, codeTheme }: CodeBlockProps): React.ReactElement {
+//
+// While it is open only its last line changes, so a live fence highlights the
+// lines above it once per newline and the line being typed on its own, into
+// the same <code>: the text is the one a single highlighter draws. A line
+// alone cannot see what an earlier line opened (a string, a comment), so it
+// can color differently until it is done, and the fence settles to one
+// highlighter over the whole code once it closes.
+const CodeBlock = React.memo(function CodeBlock({ language, code, compact = false, codeTheme, live = false }: CodeBlockProps): React.ReactElement {
   const { theme } = useTheme();
   const effectiveTheme = codeTheme ?? theme;
   const [copied, setCopied] = useState(false);
+  const lang = language || 'text';
+  const prismStyle = effectiveTheme === 'light' ? oneLight : oneDark;
+  const cut = live ? code.lastIndexOf('\n') + 1 : code.length;
+  const done = code.slice(0, cut);
+  const typing = code.slice(cut);
+  // Memoized by hand: this is the whole point of the split, so it must not
+  // depend on the compiler (REACT_COMPILER=off) to hold.
+  const highlighted = useMemo(() => (
+    <SyntaxHighlighter
+      language={lang}
+      style={prismStyle}
+      customStyle={compact ? COMPACT_CODE_STYLE : CODE_STYLE}
+      codeTagProps={{ style: { backgroundColor: 'transparent' } }}
+      CodeTag={LiveCode}
+      wrapLongLines
+    >
+      {done}
+    </SyntaxHighlighter>
+  ), [lang, prismStyle, compact, done]);
+  const typingLine = typing
+    ? <SyntaxHighlighter language={lang} style={prismStyle} PreTag={Bare} CodeTag={Bare} wrapLongLines>{typing}</SyntaxHighlighter>
+    : null;
 
   const handleCopy = (): void => {
     navigator.clipboard.writeText(code);
@@ -130,21 +189,7 @@ const CodeBlock = React.memo(function CodeBlock({ language, code, compact = fals
             </button>
           </div>
         )}
-        <SyntaxHighlighter
-          language={language || 'text'}
-          style={effectiveTheme === 'light' ? oneLight : oneDark}
-          customStyle={{
-            margin: 0,
-            padding: compact ? '0.6rem' : '1rem',
-            backgroundColor: 'transparent',
-            fontSize: compact ? '0.75rem' : '0.875rem',
-            lineHeight: '1.5',
-          }}
-          codeTagProps={{ style: { backgroundColor: 'transparent' } }}
-          wrapLongLines
-        >
-          {code}
-        </SyntaxHighlighter>
+        <TypingLine.Provider value={live ? { line: typingLine } : null}>{highlighted}</TypingLine.Provider>
       </div>
     </div>
   );
@@ -166,7 +211,9 @@ function extractCodeFromPre(children: React.ReactNode): { language: string | nul
   const codeEl = (children as any)?.props ? (children as any) : null;
   const className = (codeEl?.props?.className || '') as string;
   const match = /language-(\w+)/.exec(className);
-  const raw = String(codeEl?.props?.children ?? children ?? '').replace(/\n$/, '');
+  // An empty fence's <code> has no children; falling back to `children` there
+  // would stringify the element itself.
+  const raw = String((codeEl ? codeEl.props.children : children) ?? '').replace(/\n$/, '');
   const json = !match ? tryFormatJson(raw) : null;
   const language = match?.[1] || json?.language || null;
   const code = json?.formatted || raw;
@@ -180,6 +227,23 @@ function extractCodeFromPre(children: React.ReactNode): { language: string | nul
 type MarkdownComponentProps = Record<string, any>;
 
 // --- Shared overrides (used by all variants) ---
+// Where the fence still open at the end of a streaming block starts, from
+// MarkdownBlock; -1 when there is none. Nothing follows an open fence in its
+// block, so the <pre> starting at or after that line is the fence.
+const LiveFence = createContext(-1);
+
+function useLiveFence(node: MarkdownComponentProps['node']): boolean {
+  const from = useContext(LiveFence);
+  return from >= 0 && (node?.position?.start?.offset ?? -1) >= from;
+}
+function Pre({ node, children }: MarkdownComponentProps): React.ReactElement {
+  const { language, code } = extractCodeFromPre(children);
+  return <CodeBlock language={language} code={code} live={useLiveFence(node)} />;
+}
+function CompactPre({ node, children }: MarkdownComponentProps): React.ReactElement {
+  const { language, code } = extractCodeFromPre(children);
+  return <CodeBlock language={language} code={code} compact live={useLiveFence(node)} />;
+}
 const strong = ({ node: _node, ...props }: MarkdownComponentProps) => (
   <strong style={{ color: 'var(--color-text-primary)', fontWeight: 700 }} {...props} />
 );
@@ -246,10 +310,6 @@ const chatCode = ({ node: _node, className, children, ...props }: MarkdownCompon
     );
   }
   return <code className={className} {...props}>{children}</code>;
-};
-const chatPre = ({ node: _node, children, ..._props }: MarkdownComponentProps) => {
-  const { language, code } = extractCodeFromPre(children);
-  return <CodeBlock language={language} code={code} />;
 };
 const chatBlockquote = ({ node: _node, ...props }: MarkdownComponentProps) => (
   <blockquote
@@ -335,10 +395,6 @@ const panelCode = ({ node: _node, className, children, ...props }: MarkdownCompo
   }
   return <code className={className} {...props}>{children}</code>;
 };
-const panelPre = ({ node: _node, children, ..._props }: MarkdownComponentProps) => {
-  const { language, code } = extractCodeFromPre(children);
-  return <CodeBlock language={language} code={code} />;
-};
 const panelA = ({ node: _node, ...props }: MarkdownComponentProps) => (
   <a className="underline" style={{ color: 'var(--color-accent-primary)' }} target="_blank" rel="noopener noreferrer" {...props} />
 );
@@ -392,17 +448,13 @@ const compactCode = ({ node: _node, className, children, ...props }: MarkdownCom
   }
   return <code className={className} {...props}>{children}</code>;
 };
-const compactPre = ({ node: _node, children, ..._props }: MarkdownComponentProps) => {
-  const { language, code } = extractCodeFromPre(children);
-  return <CodeBlock language={language} code={code} compact />;
-};
 
 // ===================== Variant component maps =====================
 const CHAT_COMPONENTS = {
   strong, em, del, input, img,
   ul: chatUl, ol: chatOl, li: chatLi,
   p: chatP, h1: chatH1, h2: chatH2, h3: chatH3, h4: chatH4,
-  code: chatCode, pre: chatPre,
+  code: chatCode, pre: Pre,
   blockquote: chatBlockquote, a: chatA, hr: chatHr,
   table: chatTable, thead: chatThead, tbody: chatTbody, tr: chatTr, th: chatTh, td: chatTd,
   'cite-bubble': CitationBubble,
@@ -411,7 +463,7 @@ const CHAT_COMPONENTS = {
 const PANEL_COMPONENTS = {
   strong, em, del, input, img, ul, ol, li,
   p: panelP, h1: panelH1, h2: panelH2, h3: panelH3, h4: panelH4,
-  code: panelCode, pre: panelPre,
+  code: panelCode, pre: Pre,
   a: panelA, blockquote: panelBlockquote, hr: panelHr,
   table: panelTable, thead: panelThead, tr: panelTr, th: panelTh, td: panelTd,
   'cite-bubble': CitationBubble,
@@ -435,7 +487,7 @@ const compactTd = ({ node: _node, ...props }: MarkdownComponentProps) => (
 const COMPACT_COMPONENTS = {
   strong, em, del, ul, ol, li,
   p: compactP, h1: compactH1, h2: compactH2, h3: compactH3,
-  code: compactCode, pre: compactPre,
+  code: compactCode, pre: CompactPre,
   a: panelA, blockquote: panelBlockquote, hr: panelHr,
   table: compactTable, thead: compactThead, tr: compactTr, th: compactTh, td: compactTd,
   'cite-bubble': CitationBubble,
@@ -653,6 +705,8 @@ const REHYPE_PLUGINS: React.ComponentProps<typeof ReactMarkdown>['rehypePlugins'
 interface MarkdownBlockProps {
   source: string;
   components: React.ComponentProps<typeof ReactMarkdown>['components'];
+  /** The block text is still arriving. */
+  live: boolean;
 }
 
 // One parsed block. Memoized on its source, so a streaming reply only re-parses
@@ -661,18 +715,19 @@ interface MarkdownBlockProps {
 // count so the block being streamed remounts on each newline, which clears a
 // stale inline-emphasis node React otherwise leaves behind mid-stream.
 //
-// The key is not scoped to prose blocks: a fence needs no such clearing, but a
-// block can hold both (an intro line with the fence opened right under it, no
-// blank line between), so there is no reliable per-block test. A fence still
-// arriving therefore re-highlights on each newline. The cost is bounded to the
-// one block receiving text, and the blocks already settled above it are
-// untouched, which is the whole point of splitting.
-const MarkdownBlock = React.memo(function MarkdownBlock({ source, components }: MarkdownBlockProps) {
-  const lineKey = useMemo(() => (source.match(/\n/g) || []).length, [source]);
+// A fence needs no such clearing, so lines added to a fence still open at the
+// block's end do not count (`scanStreamingBlock`): a long fence would otherwise
+// rebuild every highlighted token on each new line. Closing the fence counts
+// its lines at once, one remount per fence. While the block is live, that
+// fence highlights only its typing line per tick (CodeBlock).
+const MarkdownBlock = React.memo(function MarkdownBlock({ source, components, live }: MarkdownBlockProps) {
+  const { lineKey, openFence } = useMemo(() => scanStreamingBlock(source), [source]);
   return (
-    <ReactMarkdown key={lineKey} remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={components}>
-      {source}
-    </ReactMarkdown>
+    <LiveFence.Provider value={live ? openFence : -1}>
+      <ReactMarkdown key={lineKey} remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={components}>
+        {source}
+      </ReactMarkdown>
+    </LiveFence.Provider>
   );
 });
 
@@ -687,9 +742,11 @@ interface MarkdownProps {
   onAnchorLink?: (fragment: string) => void;
   /** Force code blocks to use a specific syntax theme regardless of app theme */
   codeTheme?: 'light' | 'dark';
+  /** The content is still arriving, so a fence open at its end is still being written. */
+  streaming?: boolean;
 }
 
-function Markdown({ content, variant = 'panel', className = '', style, onOpenFile, onAnchorLink, codeTheme }: MarkdownProps): React.ReactElement {
+function Markdown({ content, variant = 'panel', className = '', style, onOpenFile, onAnchorLink, codeTheme, streaming = false }: MarkdownProps): React.ReactElement {
   const config = VARIANTS[variant];
   // Every pass below rewrites prose before the markdown parser sees it, so each
   // one has to say how much of the string it may touch. Inside code, markdown
@@ -813,7 +870,7 @@ function Markdown({ content, variant = 'panel', className = '', style, onOpenFil
           {/* mdast-to-hast puts a newline text node between top-level siblings;
               keep the DOM identical to a whole-document render. */}
           {i > 0 && '\n'}
-          <MarkdownBlock source={block} components={components} />
+          <MarkdownBlock source={block} components={components} live={streaming && i === blocks.length - 1} />
         </React.Fragment>
       ))}
     </div>

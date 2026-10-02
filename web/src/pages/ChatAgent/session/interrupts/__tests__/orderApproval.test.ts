@@ -9,11 +9,11 @@
  * keeps, what the resume sends, and what a replay reads back.
  */
 import { describe, it, expect, vi } from 'vitest';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 import type { ActionRequest, OrderProposal } from '@/types/sse';
 import { projectLiveInterrupt } from '../fromLiveEvent';
 import type { StreamRuntime } from '../../runtime';
-import type { MessageRecord, SSEEvent, StreamProcessorRefs } from '../../types';
+import type { SSEEvent, StreamProcessorRefs } from '../../types';
 import {
   buildToolApprovalState,
   isToolApprovalRequest,
@@ -152,11 +152,11 @@ describe('the verdict a replay reads back', () => {
 
 describe('the live projection of an order interrupt', () => {
   function build() {
-    let current: MessageRecord[] = [
-      { id: 'a-1', role: 'assistant', content: '', contentSegments: [] } as unknown as MessageRecord,
+    let current: ChatMessage[] = [
+      { id: 'a-1', role: 'assistant', content: '', contentSegments: [] } as unknown as ChatMessage,
     ];
     const rt = {
-      setMessages: ((updater: (prev: MessageRecord[]) => MessageRecord[]) => {
+      setMessages: ((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
         current = updater(current);
       }) as StreamRuntime['setMessages'],
       setPendingInterrupt: vi.fn(),

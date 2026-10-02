@@ -1,4 +1,4 @@
-import { useState, type ReactNode, type RefObject } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Check, ChevronDown, ChevronRight, Rocket } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
@@ -189,7 +189,7 @@ export function ChatInputModelMenu({
   isCodexModel,
   reasoningEfforts,
   dropdownDirection,
-  containerRef,
+  container,
   disabled = false,
 }: {
   selectedModel: string | null;
@@ -216,7 +216,7 @@ export function ChatInputModelMenu({
   reasoningEfforts: string[];
   dropdownDirection: 'up' | 'down';
   /** Mobile portals into the composer so the menu can't escape the sheet. */
-  containerRef: RefObject<HTMLElement | null>;
+  container: HTMLElement | null;
   /** Until the model list arrives every thread model reads as reachable, and a
    *  pick is saved to the account, so an unreachable one would become every
    *  composer's default. */
@@ -255,7 +255,7 @@ export function ChatInputModelMenu({
         align="end"
         side={dropdownDirection === 'down' ? 'bottom' : 'top'}
         className="w-60"
-        container={isMobile ? containerRef.current : undefined}
+        container={isMobile ? container : undefined}
         data-click-outside-ignore
         onClick={(e) => e.stopPropagation()}
         style={{ backgroundColor: 'var(--color-bg-elevated)', borderColor: 'var(--color-border-muted)' }}

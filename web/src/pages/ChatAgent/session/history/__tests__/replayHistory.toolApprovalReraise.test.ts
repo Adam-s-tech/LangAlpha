@@ -8,7 +8,7 @@
  * `approved` with no pending interrupt, and the turn cannot be answered at all.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 
 const api = vi.hoisted(() => ({ replayThreadHistory: vi.fn() }));
 
@@ -17,7 +17,6 @@ vi.mock('../../../utils/api', () => ({
 }));
 
 import { loadConversationHistory } from '../replayHistory';
-import type { MessageRecord } from '../../types';
 import { buildRuntime, makeDeps, replayOf } from './replayHarness';
 
 const ARGS = { acc_id: '12345678', code: 'US.AAPL', side: 'BUY', qty: '1' };
@@ -66,12 +65,12 @@ const RE_RAISE = {
   },
 };
 
-function cardsOn(messages: MessageRecord[]) {
+function cardsOn(messages: ChatMessage[]) {
   const bubble = messages.find((m) => m.id === 'history-assistant-0') as unknown as AssistantMessage;
   return bubble?.toolApprovals || {};
 }
 
-function approvalSegments(messages: MessageRecord[]) {
+function approvalSegments(messages: ChatMessage[]) {
   return (messages.filter((m) => m.role === 'assistant') as unknown as AssistantMessage[])
     .flatMap((b) => (b.contentSegments || []).filter((sg) => sg.type === 'tool_approval'));
 }

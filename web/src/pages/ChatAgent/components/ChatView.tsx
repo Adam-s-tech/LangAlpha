@@ -48,7 +48,7 @@ import {
 import './FilePanel.css';
 import ChatInput, { type ChatInputHandle } from '../../../components/ui/chat-input';
 import { attachmentsToContexts, widgetSnapshotsToContexts, type Attachment } from '../utils/fileUpload';
-import MessageList, { normalizeSubagentText } from './MessageList';
+import MessageList, { LiveMessageList, normalizeSubagentText } from './MessageList';
 import { MessageActionsProvider } from './messageList/MessageActionsContext';
 import { SubagentTelemetryContext } from './SubagentTelemetryContext';
 import { WorkflowRunContext } from './WorkflowRunContext';
@@ -57,6 +57,7 @@ import { WORKFLOW_TASK_TYPE } from '../session/subagents/workflowRunState';
 import { deriveSubagentStatus, isTerminalStatus } from '../session/subagents/subagentStatus';
 import Markdown from './Markdown';
 import ChatMinimap from './ChatMinimap';
+import { DispatchStatusProvider } from '../hooks/usePTCDispatchStatus';
 import JumpToLatestPill from './JumpToLatestPill';
 import ShareButton from './ShareButton';
 import { WorkspaceProvider } from '../contexts/WorkspaceContext';
@@ -170,20 +171,13 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     isActiveRef.current = isActive;
   });
 
-  // Nav-panel controller — mobile drawer only now (desktop nav lives in the
-  // app-shell AppSidebar); hover/pin members are unused here.
   const {
     navPanelVisible,
-    contentAreaRef,
     navSlideIn,
     handleNavMinimize,
     handleNavExpand,
     inheritNavOnActivate,
-  } = useNavPanel({ isMobile, isActiveRef });
-
-
-
-
+  } = useNavPanel();
 
   // Floating cards management - extracted to custom hook for better encapsulation
   // Must be called before useChatMessages since updateTodoListCard and updateSubagentCard are passed to it
@@ -266,6 +260,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   // Chat messages management - receives updateTodoListCard and updateSubagentCard from floating cards hook
   const {
     messages,
+    liveMessages,
     isLoading,
     hasActiveSubagents,
     awaitingReportBack,
@@ -807,11 +802,8 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     handleOpenInMarketView,
     detailToolCall,
     detailPlanData,
-    getToolCallProcess,
-    getSourcesRecords,
-    getAllSourcesRecords,
+    transcript,
     getRecentWritePaths,
-    getWriteLog,
   } = useRightPanel({
     isMobile,
     workspaceId,
@@ -827,6 +819,9 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     subagentTranscripts,
     watching: showWatchChip,
   });
+  // The file panel's props are one compiled scope, so this handler's per-chunk
+  // identity would re-create every inline prop beside it and re-render the panel.
+  const openSubagentTaskFromPanel = useStableHandler(handleOpenSubagentTask);
 
   // Keep the ref in sync so SSE events (via handleOpenPreviewFromStream) use the latest closure
   useLayoutEffect(() => {
@@ -1338,7 +1333,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
 
         {/* Content area: Chat Window (+ nav drawer on mobile — desktop nav
             lives in the app-shell AppSidebar now) */}
-        <div ref={contentAreaRef} className="flex-1 flex overflow-hidden" style={{ position: 'relative', containerType: 'inline-size' }}>
+        <div className="flex-1 flex overflow-hidden" style={{ position: 'relative', containerType: 'inline-size' }}>
           {isMobile && (
             <MobileNavDrawer
               visible={navPanelVisible}
@@ -1356,9 +1351,10 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
           <div className="flex-1 flex flex-col overflow-hidden min-w-0">
             {/* Messages Area - Fixed height, scrollable */}
             {/* Subscribe inline subagent cards directly to live telemetry. The
-                resolver identity changes on every SSE token (cards is a dep),
-                but only context consumers re-render — MessageBubble /
-                MessageContentSegments stay React.memo'd. */}
+                resolver identity changes whenever a card or the subagent
+                history does, not per main-agent token, and only context
+                consumers re-render: MessageBubble / MessageContentSegments
+                stay React.memo'd. */}
             <SubagentTelemetryContext value={resolveSubagentTelemetry}>
             <WorkflowRunContext value={resolveWorkflowRun}>
             <TranscriptDisplayContext value={transcriptDisplay}>
@@ -1394,15 +1390,20 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                   <div className={`${isMobile ? 'px-3 py-3' : 'px-6 py-4'} flex justify-center`}>
                     <div className="w-full max-w-3xl overflow-x-hidden">
                       <MessageActionsProvider actions={messageActions}>
-                        <MessageList
-                          messages={messages as unknown as MessageRecord[]}
-                          isLoading={isLoading}
-                          isLoadingHistory={isLoadingHistory}
-                          feedbackByTurn={feedbackByTurn}
-                          flashContext={flashContext}
-                          workspaceDirName={workspaceRecord?.dir_name}
-                          previousDirNames={workspaceRecord?.previous_dir_names}
-                        />
+                        {/* Above the list's chunk boundary: one batched
+                            dispatch-liveness query for every PTC card in the
+                            list, which a streamed frame does not re-render. */}
+                        <DispatchStatusProvider>
+                          <LiveMessageList
+                            store={liveMessages}
+                            isLoading={isLoading}
+                            isLoadingHistory={isLoadingHistory}
+                            feedbackByTurn={feedbackByTurn}
+                            flashContext={flashContext}
+                            workspaceDirName={workspaceRecord?.dir_name}
+                            previousDirNames={workspaceRecord?.previous_dir_names}
+                          />
+                        </DispatchStatusProvider>
                       </MessageActionsProvider>
                     </div>
                   </div>
@@ -1475,14 +1476,15 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                             {/* Keyed per agent: which folds are open is one
                                 transcript's state, and every subagent numbers
                                 its turns from 0. */}
-                            <MessageList
-                              key={activeAgentId}
-                              messages={activeAgent.messages as MessageRecord[]}
-                              isSubagentView={true}
-                              isLoading={subagentTurnLive}
-                              workspaceDirName={workspaceRecord?.dir_name}
-                              previousDirNames={workspaceRecord?.previous_dir_names}
-                            />
+                            <DispatchStatusProvider key={activeAgentId}>
+                              <MessageList
+                                messages={activeAgent.messages as MessageRecord[]}
+                                isSubagentView={true}
+                                isLoading={subagentTurnLive}
+                                workspaceDirName={workspaceRecord?.dir_name}
+                                previousDirNames={workspaceRecord?.previous_dir_names}
+                              />
+                            </DispatchStatusProvider>
                           </MessageActionsProvider>
                         </div>
                       )}
@@ -1500,7 +1502,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
               {/* Minimap TOC — desktop only, when no right panel open */}
               {isActive && !isMobile && !rightPanelType && activeAgentId === 'main' && (
                 <ChatMinimap
-                  messages={messages as unknown as MessageRecord[]}
+                  store={liveMessages}
                   scrollAreaRef={scrollAreaRef}
                   turnInFlight={isLoading}
                   pinToMessage={pinToMessage}
@@ -1778,14 +1780,11 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                   onTargetMemoryHandled={handleTargetMemoryHandled}
                   onTargetMemoHandled={handleTargetMemoHandled}
                   onOpenInMarketView={handleOpenInMarketView}
-                  onOpenSubagentTask={handleOpenSubagentTask}
-                  getToolCallProcess={getToolCallProcess}
-                  getSourcesRecords={getSourcesRecords}
-                  getAllSourcesRecords={getAllSourcesRecords}
+                  onOpenSubagentTask={openSubagentTaskFromPanel}
+                  transcript={transcript}
                   marketWatch={marketWatch}
                   onOpenFile={handleOpenFileFromChat}
                   getRecentWritePaths={getRecentWritePaths}
-                  getWriteLog={getWriteLog}
                   files={workspaceFiles}
                   filesLoading={filesLoading}
                   filesError={filesError}
@@ -1845,14 +1844,11 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                       onTargetMemoryHandled={handleTargetMemoryHandled}
                       onTargetMemoHandled={handleTargetMemoHandled}
                       onOpenInMarketView={handleOpenInMarketView}
-                      onOpenSubagentTask={handleOpenSubagentTask}
-                      getToolCallProcess={getToolCallProcess}
-                      getSourcesRecords={getSourcesRecords}
-                      getAllSourcesRecords={getAllSourcesRecords}
+                      onOpenSubagentTask={openSubagentTaskFromPanel}
+                      transcript={transcript}
                       marketWatch={marketWatch}
                       onOpenFile={handleOpenFileFromChat}
                       getRecentWritePaths={getRecentWritePaths}
-                      getWriteLog={getWriteLog}
                       files={workspaceFiles}
                       filesLoading={filesLoading}
                       filesError={filesError}

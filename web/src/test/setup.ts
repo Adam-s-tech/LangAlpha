@@ -51,6 +51,10 @@ class ResizeObserverMock {
 }
 window.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
 
+// jsdom has no canvas: getContext already answers null, which painters guard,
+// but logs "Not implemented" on every call. Same answer, without the noise.
+HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext;
+
 // Tests run past the auth gate, as the app does. A platform build keeps no
 // workspace state for nobody (lib/userStorage.ts), so without a user every
 // tab and thread persistence test would find nothing stored. Imported per test

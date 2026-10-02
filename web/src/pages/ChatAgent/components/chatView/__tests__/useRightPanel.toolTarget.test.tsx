@@ -4,22 +4,23 @@ import { renderHook, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 
 import { useRightPanel } from '../useRightPanel';
+import type { TranscriptMessage } from '../toolCallLookup';
 
 vi.mock('../../../utils/api', async (importOriginal) => ({ ...(await importOriginal<Record<string, unknown>>()), getPreviewUrl: vi.fn() }));
 
 const TOOL_CALL = { toolName: 'WebFetch', toolCall: { id: 'tc1', args: {} }, isComplete: true, toolCallResult: { content: 'done' } };
-const MESSAGES = [{ id: 'm1', toolCallProcesses: { tc1: TOOL_CALL } }];
+const MESSAGES: readonly TranscriptMessage[] = [{ id: 'm1', toolCallProcesses: { tc1: TOOL_CALL } }];
 
 function open(isMobile: boolean) {
   const setFilePanelWorkspaceId = vi.fn();
-  return renderHook((props: { messages: unknown[] }) => useRightPanel({
+  return renderHook((props: { messages: readonly TranscriptMessage[] }) => useRightPanel({
     isMobile,
     workspaceId: 'ws',
     isActive: true,
     containerRef: { current: null },
     setFilePanelWorkspaceId,
     messages: props.messages,
-  }), { initialProps: { messages: MESSAGES as unknown[] }, wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> });
+  }), { initialProps: { messages: MESSAGES }, wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> });
 }
 
 describe('a tool row whose record the transcript no longer holds', () => {

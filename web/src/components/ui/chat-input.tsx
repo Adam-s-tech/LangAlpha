@@ -222,10 +222,13 @@ function ChatInput({
   // Follow the preference when it moves, which includes the optimistic write a
   // pick (or its undo) makes below, and its rollback. A preference that goes
   // back to unset is followed too: holding the old selection would keep
-  // sending a model the account never kept.
-  useEffect(() => {
+  // sending a model the account never kept. Adjusted during render, so the
+  // pill never commits a frame behind the preference.
+  const [followedPreference, setFollowedPreference] = useState(modePreferredModel);
+  if (followedPreference !== modePreferredModel) {
+    setFollowedPreference(modePreferredModel);
     setSelectedModel(modePreferredModel);
-  }, [modePreferredModel]);
+  }
 
   // Mirror the live selection to the host (ChatView gates the fallback
   // suggestion pill on the model the next send will actually use).
@@ -303,6 +306,14 @@ function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  // The composer box as state too: the mobile menus portal into it, and render
+  // may only read it from state. The callback ref keeps the ref filled for the
+  // effects and hooks that read it after commit.
+  const [chatContainer, setChatContainer] = useState<HTMLDivElement | null>(null);
+  const attachChatContainer = useCallback((el: HTMLDivElement | null) => {
+    chatContainerRef.current = el;
+    setChatContainer(el);
+  }, []);
 
   // @file mentions and /slash commands — trigger detection, filtering,
   // selection and menu keyboard navigation live in these two machines. Both
@@ -472,10 +483,9 @@ function ChatInput({
     if (pillModel) writeModelProfile(pillModel, { fast_mode: fast });
   }, [pillModel, writeModelProfile]);
 
-  // Reset isStopping once both a running turn and a compaction have finished.
-  useEffect(() => {
-    if (!isLoading && !isCompacting) setIsStopping(false);
-  }, [isLoading, isCompacting]);
+  // Reset isStopping once both a running turn and a compaction have finished,
+  // in the render that sees them finish.
+  if (isStopping && !isLoading && !isCompacting) setIsStopping(false);
 
   const handleStop = useCallback(() => {
     if (isStopping) return;
@@ -692,7 +702,7 @@ function ChatInput({
     >
       {/* Main Container */}
       <div
-        ref={chatContainerRef}
+        ref={attachChatContainer}
         className={`chat-input-container owns-its-edge flex flex-col items-stretch transition-all duration-200 relative z-10 rounded-2xl cursor-text border border-(--color-border-input) bg-(--color-bg-card) ${isListening ? 'recording' : ''}`}
         onClick={() => textareaRef.current?.focus()}
       >
@@ -928,7 +938,7 @@ function ChatInput({
                     align="start"
                     side={dropdownDirection === 'down' ? 'bottom' : 'top'}
                     className="w-52"
-                    container={isMobile ? chatContainerRef.current : undefined}
+                    container={isMobile ? chatContainer : undefined}
                   >
                     {foldedItems.map((item, idx) => (
                       <React.Fragment key={item.id}>
@@ -975,7 +985,7 @@ function ChatInput({
                 isCodexModel={isCodexModel}
                 reasoningEfforts={reasoningEfforts}
                 dropdownDirection={dropdownDirection}
-                containerRef={chatContainerRef}
+                container={chatContainer}
                 disabled={modelsLoading}
               />
               {/* Voice Input Button (Show only if enabled in user settings) */}

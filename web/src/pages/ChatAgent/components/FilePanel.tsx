@@ -17,7 +17,6 @@ import {
   triggerFileDownload, resolveWorkspaceFile,
 } from '../utils/api';
 import { linkCandidates } from '../utils/fileRefResolver';
-import type { WriteEvent } from '../utils/fileRefResolver';
 import { classifyAgentPath, parseAgentPath } from '../utils/agentPaths';
 import { useStableHandler } from '@/hooks/useStableHandler';
 import { useLatestRef } from '@/hooks/useLatestRef';
@@ -40,7 +39,7 @@ import { useFileFocus } from './filePanel/useFileFocus';
 import { FocusChip } from './filePanel/FocusChip';
 import { useFileTabs, isListingTab, lastChartSymbol, type FileTab } from './filePanel/useFileTabs';
 import { useTreeFilter } from './filePanel/useTreeFilter';
-import { useTreeInteraction } from './filePanel/useTreeInteraction';
+import { useTreeInteraction, useTreeOpen } from './filePanel/useTreeInteraction';
 import { useFileRefOpen } from './filePanel/useFileRefOpen';
 import { PanelNotices } from './filePanel/PanelNotices';
 import { FileContextMenu, type FileMenuAction } from './filePanel/FileContextMenu';
@@ -60,8 +59,8 @@ import { ActiveTabBody } from './filePanel/ActiveTabBody';
 import { useWatchTab } from './filePanel/useWatchTab';
 import type { MarketWatchState } from '../session/marketWatchEvents';
 import { RouteLeaveGuardContext, type RouteLeaveGuard } from '../contexts/RouteLeaveGuardContext';
-import type { SubagentInfo, ToolCallProcessRecord } from './ToolCallDetailView';
-import { countDedupedSources, type ProvenanceRecord } from '@/types/chat';
+import type { SubagentInfo } from './ToolCallDetailView';
+import type { TranscriptReader } from './filePanel/useTranscript';
 
 /** Below this the tree cannot be a column without starving the viewer. */
 const TREE_OVERLAY_WIDTH = 720;
@@ -85,18 +84,14 @@ interface FilePanelProps {
   onOpenInMarketView?: ((spec: ChartTabSpec) => void) | null;
   /** Leaves for a subagent's own transcript, from a tool tab showing its task. */
   onOpenSubagentTask?: ((info: SubagentInfo) => void) | null;
-  /** A tool call's live record, for a tool tab; read on every render so a running call's result shows when it lands. */
-  getToolCallProcess?: ((toolCallId: string) => ToolCallProcessRecord | undefined) | null;
-  /** A turn's live provenance, for a sources tab; read on every render so records streaming in show. */
-  getSourcesRecords?: ((messageId: string) => Record<string, ProvenanceRecord> | undefined) | null;
-  /** Every turn's provenance merged, the sources tab's "All sources" scope; read only while that tab is showing. */
-  getAllSourcesRecords?: (() => Record<string, ProvenanceRecord> | undefined) | null;
+  /** The chat's transcript, subscribed to by what reads it: a tool tab follows
+   *  its call's record, a sources tab its turn's records, and the changed-file
+   *  dot the write log, each as it lands. Absent where no chat is streaming. */
+  transcript?: TranscriptReader | null;
   /** Opens a reference to another workspace (a `__wsref__` link inside a viewed file). */
   onOpenFile?: OpenFileHandler | null;
   /** This thread's Write/Edit paths, newest first, for resolving a reference by name. */
   getRecentWritePaths?: (() => string[]) | null;
-  /** Every Write/Edit in the thread, newest first; what marks an open tab changed. */
-  getWriteLog?: (() => WriteEvent[]) | null;
   files?: string[];
   filesLoading?: boolean;
   filesError?: string | null;
@@ -142,12 +137,9 @@ function FilePanel({
   marketWatch = null,
   onOpenInMarketView = null,
   onOpenSubagentTask = null,
-  getToolCallProcess = null,
-  getSourcesRecords = null,
-  getAllSourcesRecords = null,
+  transcript = null,
   onOpenFile = null,
   getRecentWritePaths = null,
-  getWriteLog = null,
   files = [],
   filesLoading = false,
   filesError = null,
@@ -235,10 +227,10 @@ function FilePanel({
   const fileContent = body?.content ?? null;
   const fileMime = body?.mime ?? null;
 
-  const changed = useChangedFiles(getWriteLog);
+  const { markRead, forget: forgetChanged, hasChanged } = useChangedFiles(transcript);
   useEffect(() => {
-    if (selectedFile && readAt) changed.markRead(selectedFile);
-  }, [selectedFile, readAt]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (selectedFile && readAt) markRead(selectedFile);
+  }, [selectedFile, readAt, markRead]);
   // The read marks die with this mount, so the bytes they describe must too:
   // a panel reopened inside the body's fresh window would otherwise show
   // bytes written over while it was away and stamp that write as read. With
@@ -274,6 +266,9 @@ function FilePanel({
   const edit = useFileEdit({
     tabId: activeTab.id, workspaceId, selectedFile, setFileContent, readFileFullFn, writeFileFn, ask, onSaveSettled,
   });
+  // Taken apart here: the hook hands back a new object every render, so a
+  // callback that closed over `edit` would be new every render too.
+  const { forgetTab, tabHasUnsavedChanges, anyUnsavedNow, handleStartEdit } = edit;
 
   // Reported on mount too, for a strip restored with a chart in front.
   const reportActiveKind = useEffectEvent((kind: FileTab['kind'] | null) => onActiveTabKindChange?.(kind));
@@ -307,6 +302,7 @@ function FilePanel({
   // remount does not replay the ask and pop the tree open again.
   const [scopeDir, setScopeDir] = useState<string | null>(() => (target?.kind === 'file' ? target.dir ?? null : null));
   const filter = useTreeFilter({ workspaceId, files, scopeDir, rootRef: panelRef });
+  const { revealDir, showMatches, clearSearch } = filter;
   // A deleted file's tab goes with it, draft and cached bytes included, or the
   // strip keeps showing a file the tree no longer lists and a save would write
   // it back. No confirm: the reader just confirmed the delete, and the write
@@ -316,29 +312,27 @@ function FilePanel({
     const gone = new Set(paths);
     for (const tab of tabs.tabs) {
       if (tab.kind !== 'file' || !gone.has(tab.path)) continue;
-      edit.forgetTab(tab.id);
-      changed.forget(tab.path);
+      forgetTab(tab.id);
+      forgetChanged(tab.path);
       cache.invalidate(tab.path);
       tabs.closeTab(tab.id);
     }
-  }, [tabs, edit, changed, cache]);
+  }, [tabs, forgetTab, forgetChanged, cache]);
   const selection = useFileSelection({ workspaceId, filteredSortedFiles: filter.filteredSortedFiles, targetDirectory: scopeDir, onRefreshFiles, onDeleted: forgetDeleted });
   const backup = useFileBackup({ workspaceId, files, readOnly });
+  // The notices' dismiss handlers close over these alone, not over the whole
+  // selection and backup, which change with every file list.
+  const { setDeleteError } = selection;
+  const { setBackupResult } = backup;
 
-  // `openFileAt` is defined below, so the tree reaches it through a handler
-  // that stays the same object across renders.
-  const openFromTree = useStableHandler((path: string) => { void openFileAt(path); });
-  const tree = useTreeInteraction({
-    workspaceId, rootRef: panelRef, selection, narrow, activePath: selectedFile, openFile: openFromTree,
-  });
-  const { open: treeOpen, setOpen: setTreeOpen } = tree;
+  const { open: treeOpen, setOpen: setTreeOpen } = useTreeOpen(workspaceId, narrow);
   const treeShown = treeOpen && !singleFileMode && listingTab;
 
   /** A breadcrumb segment points the tree at that directory. */
   const revealInTree = useCallback((dir: string) => {
     setTreeOpen(true);
-    filter.revealDir(dir);
-  }, [setTreeOpen, filter]);
+    revealDir(dir);
+  }, [setTreeOpen, revealDir]);
 
   /** Nothing the panel is showing over the viewer survives a file landing in it. */
   const onBeforeOpen = useCallback(() => {
@@ -347,30 +341,37 @@ function FilePanel({
 
   /** A reference nothing could settle: the tree, filtered to the name it used. */
   const landOnSearch = useCallback((ref: string, name: string, matches: string[]) => {
-    filter.showMatches(ref, name, matches);
+    showMatches(ref, name, matches);
     tabs.showListing();
     setTreeOpen(true);
     // A folder scope would hide candidates outside it, so it goes.
     setScopeDir(null);
-  }, [filter, tabs, setTreeOpen]);
+  }, [showMatches, tabs, setTreeOpen]);
 
   const { openFileAt, openFileRef, retryOpen, cancelPending } = useFileRefOpen({
     tabs,
     cache,
-    hasChanged: changed.hasChanged,
+    hasChanged,
     files,
     workspaceStatus: wsData?.status,
     resolveFileFn,
     getRecentWritePaths,
     onBeforeOpen,
-    clearSearch: filter.clearSearch,
+    clearSearch,
     onLandOnSearch: landOnSearch,
     refetch,
   });
 
+  // Stable, so a change mark moving, which makes a new `openFileAt`, does not
+  // re-render the tree.
+  const openFromTree = useStableHandler((path: string) => { void openFileAt(path); });
+  const tree = useTreeInteraction({
+    rootRef: panelRef, selection, narrow, activePath: selectedFile, openFile: openFromTree, setOpen: setTreeOpen,
+  });
+
   usePanelTarget({
     target, tabs, previews, openFileRef, cancelPending,
-    clearSearch: filter.clearSearch, setTreeOpen, setScopeDir, onTargetHandled,
+    clearSearch, setTreeOpen, setScopeDir, onTargetHandled,
   });
 
   // Opening a singleton tab drops a reference still resolving, like any other
@@ -392,23 +393,12 @@ function FilePanel({
 
   useWatchTab(tabs, marketWatch);
 
-  const sourceCount = useCallback(
-    (messageId: string) => countDedupedSources(getSourcesRecords?.(messageId)),
-    [getSourcesRecords],
-  );
-
-  // Merged only while a sources tab is showing: the accessor is remade per
-  // transcript change, so a thread streaming with a file in front never pays
-  // for a merge nothing reads.
-  const allSourcesRecords = useMemo(
-    () => (activeTab.kind === 'sources' ? getAllSourcesRecords?.() : undefined),
-    [activeTab.kind, getAllSourcesRecords],
-  );
-
-  const retry = useCallback(() => {
+  // Stable: `retryOpen` is new with every file list and every change mark, and
+  // the viewer this reaches should render only for its own file.
+  const retry = useStableHandler(() => {
     downloads.clearError();
     retryOpen(selectedFile);
-  }, [downloads, retryOpen, selectedFile]);
+  });
 
   // --- file actions ---
 
@@ -447,10 +437,10 @@ function FilePanel({
    */
   const activateTab = useCallback((id: string) => {
     const tab = tabs.tabs.find((x) => x.id === id);
-    if (tab?.kind === 'file' && changed.hasChanged(tab.path)) cache.invalidate(tab.path);
+    if (tab?.kind === 'file' && hasChanged(tab.path)) cache.invalidate(tab.path);
     cancelPending();
     tabs.activate(id);
-  }, [tabs, changed, cache, cancelPending]);
+  }, [tabs, hasChanged, cache, cancelPending]);
 
   const newTab = useCallback(() => {
     cancelPending();
@@ -459,8 +449,8 @@ function FilePanel({
 
   const startEdit = useCallback(() => {
     tabs.pinTab(activeTab.id);
-    void edit.handleStartEdit();
-  }, [tabs, activeTab.id, edit]);
+    void handleStartEdit();
+  }, [tabs, activeTab.id, handleStartEdit]);
 
   // Citing a range is working with the file, so its tab stops being the loaned
   // one, the same rule the selection tooltip and the tree's menu follow.
@@ -478,7 +468,6 @@ function FilePanel({
     discard,
   ), [ask, t]);
 
-  const { anyUnsavedNow } = edit;
   const guardLeave = useCallback<RouteLeaveGuard>((go) => {
     if (anyUnsavedNow()) askDiscard(go);
     else go();
@@ -506,20 +495,20 @@ function FilePanel({
 
   const closeTab = useCallback((id: string) => {
     const close = () => {
-      edit.forgetTab(id);
+      forgetTab(id);
       const tab = tabs.tabs.find((x) => x.id === id);
       if (tab?.kind === 'file') {
         // The marker is what forces a re-read on reopen; the cached bytes must
         // not outlive it, or a rewrite lands inside the body's fresh window.
-        if (changed.hasChanged(tab.path)) cache.invalidate(tab.path);
-        changed.forget(tab.path);
+        if (hasChanged(tab.path)) cache.invalidate(tab.path);
+        forgetChanged(tab.path);
       }
       if (singleFileMode && tabs.tabs.length <= 1) return onClose();
       tabs.closeTab(id);
     };
-    if (edit.tabHasUnsavedChanges(id)) askDiscard(close);
+    if (tabHasUnsavedChanges(id)) askDiscard(close);
     else close();
-  }, [edit, tabs, changed, cache, singleFileMode, onClose, askDiscard]);
+  }, [forgetTab, tabHasUnsavedChanges, tabs, hasChanged, forgetChanged, cache, singleFileMode, onClose, askDiscard]);
 
   const handleViewerLink = useStableHandler((path: string, linkWorkspaceId?: string, location?: FileLocation, opts?: { rooted?: boolean; pin?: boolean }) => {
     const rooted = !!opts?.rooted;
@@ -544,15 +533,12 @@ function FilePanel({
     if (selectedFile) focus.focusAt(selectedFile, parseFragment(fragment));
   });
 
-  const handleSyncMemo = useCallback(async () => {
+  const handleSyncMemo = useCallback(() => {
     if (!selectedFile || memoSyncing) return;
     setMemoSyncing(true);
-    try {
-      await handleAddToMemo(selectedFile);
-      refreshMemoStale();
-    } finally {
-      setMemoSyncing(false);
-    }
+    void handleAddToMemo(selectedFile)
+      .then(() => refreshMemoStale())
+      .finally(() => setMemoSyncing(false));
   }, [selectedFile, memoSyncing, handleAddToMemo, refreshMemoStale]);
 
   // Editing needs a text viewer under it: the pdf, excel and html readers are
@@ -598,10 +584,9 @@ function FilePanel({
         onActivate={activateTab}
         onClose={closeTab}
         onPin={tabs.pinTab}
-        sourceCount={sourceCount}
-        getToolCallProcess={getToolCallProcess ?? undefined}
+        transcript={transcript}
         onNewTab={singleFileMode || readOnly ? null : newTab}
-        hasChanged={changed.hasChanged}
+        hasChanged={hasChanged}
         treeOpen={treeShown}
         onToggleTree={singleFileMode || !listingTab ? null : () => setTreeOpen((v) => !v)}
         // Locked to one file, the panel has no tree to pin the stores in, so
@@ -662,7 +647,7 @@ function FilePanel({
       <PanelNotices
         uploadProgress={uploadProgress}
         error={uploadError || selection.deleteError}
-        onDismissError={() => { setUploadError(null); selection.setDeleteError(null); }}
+        onDismissError={() => { setUploadError(null); setDeleteError(null); }}
         // The tree shows this itself; the body takes it over while the tree is
         // folded or absent, so a listing that failed is never a silent blank.
         // A tab that is not a listing carries neither notice.
@@ -671,7 +656,7 @@ function FilePanel({
         onRefreshFiles={onRefreshFiles}
         busy={selection.deleteLoading || backup.backingUp}
         backupResult={backup.backupResult}
-        onDismissBackupResult={() => backup.setBackupResult(null)}
+        onDismissBackupResult={() => setBackupResult(null)}
         editing={edit.isEditing}
       />
       {memoEntry && selectedFile && (
@@ -739,9 +724,7 @@ function FilePanel({
                 marketWatch={marketWatch}
                 onOpenFile={onOpenFile}
                 onOpenSubagentTask={onOpenSubagentTask}
-                getToolCallProcess={getToolCallProcess}
-                getSourcesRecords={getSourcesRecords}
-                allSourcesRecords={allSourcesRecords}
+                transcript={transcript}
                 onAddContext={onAddContext}
                 onOpenInMarketView={onOpenInMarketView ? leaveForMarketView : null}
                 file={{

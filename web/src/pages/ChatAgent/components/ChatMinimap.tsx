@@ -2,16 +2,19 @@ import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, 
 import { useTranslation } from 'react-i18next';
 import { Loader } from '@/components/ui/loader';
 import { useStableArray } from '@/hooks/useStableArray';
-import { isNearBottom } from '../utils/scrollHelpers';
+import { NEAR_BOTTOM_PX, isNearBottom } from '../utils/scrollHelpers';
 import { resolveScrollContent, resolveScrollViewport } from '../utils/scrollDom';
 import type { MessageRecord } from './messageList/types';
+import { useLiveMessages, type LiveMessages } from '../session/stream/liveMessages';
+import type { ChatMessage } from '@/types/chat';
 import { buildEntries, entriesEqual } from './minimapEntries';
 import type { PinTarget } from './chatView/useChatScroll';
 import './ChatMinimap.css';
 import { prefersReducedMotion } from '@/lib/reducedMotion';
 
 interface ChatMinimapProps {
-  messages: MessageRecord[];
+  /** Subscribed here rather than read off the view, so a streamed chunk renders the minimap alone. */
+  store: LiveMessages<ChatMessage[]>;
   scrollAreaRef: React.RefObject<HTMLDivElement | null>;
   /** The newest prompt with no reply text yet shows a skeleton only while a turn is actually running. */
   turnInFlight: boolean;
@@ -21,8 +24,6 @@ interface ChatMinimapProps {
   pinTargetRef: React.RefObject<PinTarget | null>;
 }
 
-/** Same band the scroll controller's jump pill uses, so "at the bottom" agrees. */
-const NEAR_BOTTOM_PX = 120;
 /** A turn becomes active once its prompt crosses this line below the viewport top; on short viewports the line sits at a fraction of the height instead. */
 const ACTIVE_LINE_PX = 96;
 const ACTIVE_LINE_MAX_FRACTION = 0.3;
@@ -94,7 +95,8 @@ const Tick = memo(function Tick({
   );
 });
 
-export default function ChatMinimap({ messages, scrollAreaRef, turnInFlight, pinToMessage, pinTargetRef }: ChatMinimapProps) {
+export default function ChatMinimap({ store, scrollAreaRef, turnInFlight, pinToMessage, pinTargetRef }: ChatMinimapProps) {
+  const messages: MessageRecord[] = useLiveMessages(store);
   const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement>(null);
   const railRef = useRef<HTMLDivElement>(null);

@@ -4,8 +4,9 @@ import type { RefObject } from 'react';
 import { userLocalStorage } from '@/lib/userStorage';
 import type { FileSelection } from './useFileSelection';
 
+type SetOpen = (next: boolean | ((prev: boolean) => boolean)) => void;
+
 interface TreeInteractionArgs {
-  workspaceId: string;
   /** The panel root: the rows and the focused element are both looked up in it. */
   rootRef: RefObject<HTMLElement | null>;
   selection: FileSelection;
@@ -13,6 +14,7 @@ interface TreeInteractionArgs {
   narrow: boolean;
   activePath: string | null;
   openFile: (path: string) => void;
+  setOpen: SetOpen;
 }
 
 function readDocked(key: string): boolean {
@@ -20,15 +22,11 @@ function readDocked(key: string): boolean {
 }
 
 /**
- * Whether the tree column is showing, and what clicking or typing in it does.
- *
- * A modified click is a selection gesture rather than an open, and it turns
- * select mode on rather than being swallowed: the reader who shift-clicks two
- * files means to have selected two files, not to have done nothing.
+ * Whether the tree column is showing. A hook of its own because the file
+ * opener needs it (a missed reference lands on the tree's search) and the
+ * tree's clicks need the file opener.
  */
-export function useTreeInteraction({
-  workspaceId, rootRef, selection, narrow, activePath, openFile,
-}: TreeInteractionArgs) {
+export function useTreeOpen(workspaceId: string, narrow: boolean): { open: boolean; setOpen: SetOpen } {
   // Two states, because the column means two different things. Beside the
   // viewer it is furniture and the reader's choice is worth remembering; over
   // it, it is a sheet, and a remembered sheet would greet every narrow panel
@@ -54,10 +52,22 @@ export function useTreeInteraction({
   useEffect(() => { if (narrow) setSheet(false); }, [narrow]);
 
   const open = narrow ? sheet : docked;
-  const setOpen = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
+  const setOpen = useCallback<SetOpen>((next) => {
     (narrow ? setSheet : setDocked)(next);
   }, [narrow, setDocked]);
+  return { open, setOpen };
+}
 
+/**
+ * What clicking or typing in the tree does.
+ *
+ * A modified click is a selection gesture rather than an open, and it turns
+ * select mode on rather than being swallowed: the reader who shift-clicks two
+ * files means to have selected two files, not to have done nothing.
+ */
+export function useTreeInteraction({
+  rootRef, selection, narrow, activePath, openFile, setOpen,
+}: TreeInteractionArgs) {
   /** The visible file rows, in the order the reader sees them. */
   const visibleRowPaths = useCallback(
     () => Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[data-row-kind="file"]') ?? [])
@@ -78,9 +88,9 @@ export function useTreeInteraction({
       return;
     }
     // A sheet covers the file it just opened.
-    if (narrow) setSheet(false);
+    if (narrow) setOpen(false);
     openFile(path);
-  }, [selection, visibleRowPaths, narrow, openFile]);
+  }, [selection, visibleRowPaths, narrow, openFile, setOpen]);
 
   /**
    * Escape leaves select mode, and otherwise hands the focus back to the open
@@ -106,5 +116,5 @@ export function useTreeInteraction({
     requestAnimationFrame(() => row.focus());
   }, [selection, rootRef, activePath, setOpen]);
 
-  return { open, setOpen, onOpen, onEscape };
+  return { onOpen, onEscape };
 }

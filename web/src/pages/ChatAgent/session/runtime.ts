@@ -30,14 +30,16 @@
 
 import type React from 'react';
 import type {
-  MessageRecord, SetMessages, TokenUsage, PendingInterrupt, OffloadBatch, SSEEvent,
-  SubagentHistoryEntry, TaskRefs, HistoryInterruptInfo, FallbackSuggestion,
+  SetMessages, TokenUsage, PendingInterrupt, OffloadBatch, SSEEvent,
+  TaskRefs, HistoryInterruptInfo, FallbackSuggestion,
 } from './types';
-import type { UpdateSubagentCard } from './streamRefs';
+import type { CardUpdater } from './streamRefs';
+import type { SubagentHistoryStore } from './subagents/historyStore';
 import type { SubagentTokenUsage } from '../utils/tokenUsage';
 import type { RecentlySentTracker } from '../hooks/utils/recentlySentTracker';
 import type { PreviewData } from '../hooks/utils/types';
 import type { StructuredError } from '@/utils/rateLimitError';
+import type { ChatMessage } from '@/types/chat';
 
 /** Mutable ref container (matches both useRef cells and hand-built refs). */
 type Ref<T> = { current: T };
@@ -53,18 +55,17 @@ export interface SubagentRuntime {
   // render-current
   workspaceId: string;
   t: Translate;
-  updateSubagentCard: UpdateSubagentCard | null;
+  updateSubagentCard: CardUpdater | null;
   // stable (setters)
   setMessages: SetMessages;
   setHasActiveSubagents: React.Dispatch<React.SetStateAction<boolean>>;
   setReloadTrigger: React.Dispatch<React.SetStateAction<number>>;
   // stable containers, ref-current reads — owned by this lane
   subagentStateRefsRef: Ref<Record<string, TaskRefs>>;
-  subagentHistoryRef: Ref<Record<string, SubagentHistoryEntry>>;
+  subagentHistory: SubagentHistoryStore;
   subagentProcessEventRef: Ref<((event: SSEEvent) => void) | null>;
   subagentTokenUsageRef: Ref<Record<string, SubagentTokenUsage>>;
   terminalTaskOutcomesRef: Ref<Map<string, 'completed' | 'cancelled' | 'error'>>;
-  toolCallIdToTaskIdMapRef: Ref<Map<string, string>>;
   historyPendingTaskToolCallIdsRef: Ref<string[]>;
   pendingMuxResyncRef: Ref<boolean>;
   // stable containers, ref-current reads — consumed read-only
@@ -81,7 +82,6 @@ export interface HistoryRuntime {
   // render-current
   workspaceId: string;
   threadId: string;
-  messages: MessageRecord[];
   t: Translate;
   updateTodoListCard: ((todoData: Record<string, unknown>, isNew?: boolean) => void) | null;
   // stable (setters)
@@ -108,7 +108,7 @@ export interface HistoryRuntime {
   currentMessageRef: Ref<string | null>;
   lastEventIdRef: Ref<number | string | null>;
   renderedInterruptIdsRef: Ref<Set<string>>;
-  toolCallIdToTaskIdMapRef: Ref<Map<string, string>>;
+  subagentHistory: SubagentHistoryStore;
   recentlySentTrackerRef: Ref<RecentlySentTracker>;
   offloadBatchRef: Ref<OffloadBatch>;
 }
@@ -123,7 +123,7 @@ export interface StreamRuntime {
   workspaceId: string;
   threadId: string;
   t: Translate;
-  updateSubagentCard: UpdateSubagentCard | null;
+  updateSubagentCard: CardUpdater | null;
   onWorkspaceCreated: ((info: { workspaceId: string; question: string }) => void) | null;
   onFileArtifact: ((event: SSEEvent) => void) | null;
   onPreviewUrl: ((data: PreviewData) => void) | null;
@@ -131,7 +131,7 @@ export interface StreamRuntime {
   // stable (setters)
   setMessages: SetMessages;
   /** Per-token writes, applied on the next frame (`frameQueue.ts`). */
-  queueMessages: (update: (prev: MessageRecord[]) => MessageRecord[]) => void;
+  queueMessages: (update: (prev: ChatMessage[]) => ChatMessage[]) => void;
   /** Apply the queued per-token writes now. */
   flushMessages: () => void;
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;
@@ -159,8 +159,7 @@ export interface StreamRuntime {
   renderedInterruptIdsRef: Ref<Set<string>>;
   unresolvedHistoryInterruptRef: Ref<HistoryInterruptInfo[]>;
   terminalTaskOutcomesRef: Ref<Map<string, 'completed' | 'cancelled' | 'error'>>;
-  toolCallIdToTaskIdMapRef: Ref<Map<string, string>>;
-  subagentHistoryRef: Ref<Record<string, SubagentHistoryEntry>>;
+  subagentHistory: SubagentHistoryStore;
   subagentTokenUsageRef: Ref<Record<string, SubagentTokenUsage>>;
   offloadBatchRef: Ref<OffloadBatch>;
 }
@@ -174,7 +173,7 @@ export interface StreamRuntime {
  */
 export interface RecoveryRuntime {
   // render-current
-  updateSubagentCard: UpdateSubagentCard | null;
+  updateSubagentCard: CardUpdater | null;
   // stable (setters)
   setMessages: SetMessages;
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;
@@ -204,7 +203,7 @@ export interface RecoveryRuntime {
   terminalTaskOutcomesRef: Ref<Map<string, 'completed' | 'cancelled' | 'error'>>;
   unresolvedHistoryInterruptRef: Ref<HistoryInterruptInfo[]>;
   renderedInterruptIdsRef: Ref<Set<string>>;
-  subagentHistoryRef: Ref<Record<string, SubagentHistoryEntry>>;
+  subagentHistory: SubagentHistoryStore;
   subagentTokenUsageRef: Ref<Record<string, SubagentTokenUsage>>;
 }
 

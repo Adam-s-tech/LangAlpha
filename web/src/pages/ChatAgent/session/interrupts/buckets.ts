@@ -5,9 +5,9 @@
  * A new interrupt type registers here first, then adds its projection branches.
  */
 
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 import { updateMessage } from '../../hooks/utils/messageHelpers';
-import type { HistoryInterruptInfo, MessageRecord, SetMessages } from '../types';
+import type { HistoryInterruptInfo, SetMessages } from '../types';
 
 /** Interrupt types that map to proposal-based HITL cards (workspace, question, ptc, secretary). */
 const PROPOSAL_INTERRUPT_TYPES = new Set([
@@ -60,11 +60,11 @@ const INTERRUPT_CARD_BUCKETS = [
  * message is searched rather than the one that was clicked.
  */
 function setCardFields(
-  messages: MessageRecord[],
+  messages: ChatMessage[],
   bucket: string,
   cardId: string,
   fields: Record<string, unknown>,
-): MessageRecord[] {
+): ChatMessage[] {
   return messages.map((m) => {
     if (m.role !== 'assistant') return m;
     const cards = (m as unknown as Record<string, Record<string, Record<string, unknown>>>)[bucket];
@@ -75,11 +75,11 @@ function setCardFields(
 
 /** Flip one card's status wherever it lives. */
 function setCardStatus(
-  messages: MessageRecord[],
+  messages: ChatMessage[],
   bucket: string,
   cardId: string,
   status: string,
-): MessageRecord[] {
+): ChatMessage[] {
   return setCardFields(messages, bucket, cardId, { status });
 }
 
@@ -100,9 +100,9 @@ const PROPOSAL_SEGMENT_TYPES = new Set([
  * leave those cards standing next to the redelivered pair.
  */
 function stripHistoryInterruptCards(
-  messages: MessageRecord[],
+  messages: ChatMessage[],
   strips: HistoryInterruptInfo[],
-): MessageRecord[] {
+): ChatMessage[] {
   if (strips.length === 0) return messages;
   const stripQuestionIds = new Set(
     strips.filter((s) => s.type === 'ask_user_question' && s.questionId).map((s) => s.questionId!),

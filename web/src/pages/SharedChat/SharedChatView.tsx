@@ -47,13 +47,9 @@ import type { FileLocation } from '../ChatAgent/utils/fileLocation';
 import { computeAgentArtifactRouting } from '../ChatAgent/utils/agentPaths';
 import { collectRecentWritePaths, downloadTarget, type TurnMessage } from '../ChatAgent/utils/fileRefResolver';
 import { useStableHandler } from '@/hooks/useStableHandler';
+import { DispatchStatusProvider } from '../ChatAgent/hooks/usePTCDispatchStatus';
 import { useIsMobile } from '@/hooks/useIsMobile';
-
-// Message record type compatible with historyEventHandlers
-type MessageRecord = Record<string, unknown>;
-
-/** SetMessages type matching historyEventHandlers' signature */
-type SetMessages = (updater: (prev: MessageRecord[]) => MessageRecord[]) => void;
+import type { MessageRecord, SetMessages } from '../ChatAgent/hooks/utils/types';
 
 
 function updateMessage(messages: MessageRecord[], messageId: string, updater: (m: MessageRecord) => MessageRecord): MessageRecord[] {
@@ -187,7 +183,6 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
               assistantMessagesByPair,
               pairStateByPair,
               refs: sharedRefs,
-              messages: [],
               setMessages: setMessagesCompat,
             });
             return;
@@ -675,11 +670,13 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
                     ) : (
                       <WorkspaceProvider workspaceId={null} downloadFile={imageDownloader}>
                       <MessageActionsProvider actions={readOnlyActions}>
+                      <DispatchStatusProvider>
                         <MessageList
                           messages={messages}
                           readOnly={true}
                           allowFiles={canBrowseFiles}
                         />
+                      </DispatchStatusProvider>
                       </MessageActionsProvider>
                       </WorkspaceProvider>
                     )}

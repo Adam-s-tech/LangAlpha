@@ -1,6 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import { useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useAnimatedText } from '../animated-text';
+import { onPageReturn } from '@/lib/pageVisibility';
 
 const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ') + ' ';
 
@@ -95,9 +98,41 @@ describe('useAnimatedText catch-up', () => {
         text += words(20);
         act(() => rerender({ text }));
       }
-      // The lag is bounded by the snap threshold plus one chunk, not the whole backlog.
-      expect(result.current.length).toBeGreaterThanOrEqual(text.length - 720);
-      expect(text.startsWith(result.current)).toBe(true);
+      // Nobody watched it arrive: all of it is on screen, nothing left to type.
+      expect(result.current).toBe(text);
+    });
+
+    it('shows a reply that ended while hidden in full', () => {
+      const { result, rerender } = renderHook(({ text, enabled }) => useAnimatedText(text, { enabled }), {
+        initialProps: { text: 'seed ', enabled: true },
+      });
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+      const text = 'seed ' + words(60) + 'end.';
+      act(() => rerender({ text, enabled: true }));
+      expect(result.current).toBe('seed ' + words(60));
+      act(() => rerender({ text, enabled: false }));
+      expect(result.current).toBe(text);
+    });
+
+    it('shows what the hidden page held in the commit that brings it back', () => {
+      const { result } = renderHook(() => {
+        const [text, setText] = useState('seed ');
+        return { shown: useAnimatedText(text, { enabled: true }), setText };
+      });
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+      // A live-sized delta, which in view types out (see the first test).
+      const text = 'seed ' + words(30);
+      let atReturn = '';
+      const off = onPageReturn(() => {
+        flushSync(() => result.current.setText(text));
+        atReturn = result.current.shown;
+      });
+      Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      off();
+      expect(atReturn).toBe(text);
     });
   });
 

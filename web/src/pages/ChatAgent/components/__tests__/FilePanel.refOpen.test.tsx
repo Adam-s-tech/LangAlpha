@@ -53,6 +53,7 @@ vi.mock('@/pages/ChatAgent/components/viewers/CodeEditor', () => ({
 
 import * as api from '@/pages/ChatAgent/utils/api';
 import FilePanel from '@/pages/ChatAgent/components/FilePanel';
+import { createTranscriptStore } from '@/pages/ChatAgent/components/filePanel/transcriptStore';
 
 const resolveMock = () => api.resolveWorkspaceFile as ReturnType<typeof vi.fn>;
 
@@ -182,21 +183,22 @@ describe('FilePanel reference opens', () => {
     // would hide the cached-body case this is about.
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 5 * 60_000 } } });
     const log = { current: [] as { id: string; path: string }[] };
-    const getWriteLog = () => log.current;
+    const collectWrites = () => log.current;
+    const writes = createTranscriptStore({ messages: [], collectWrites });
     const files = ['notes.md', 'report.py'];
     const first = { kind: 'file', path: 'notes.md', seq: 1 } as const;
     const { rerender } = renderWithProviders(
-      <FilePanel workspaceId="ws" onClose={() => {}} files={files} getWriteLog={getWriteLog} target={first} />,
+      <FilePanel workspaceId="ws" onClose={() => {}} files={files} transcript={writes.reader} target={first} />,
       { queryClient },
     );
     await screen.findByText('My private notes body.');
     // Pinned, so the next single open sits beside it instead of taking its tab.
     fireEvent.doubleClick(within(screen.getByRole('tablist')).getByText('notes.md'));
 
-    rerender(<FilePanel workspaceId="ws" onClose={() => {}} files={files} getWriteLog={getWriteLog} target={{ kind: 'file', path: 'report.py', seq: 2 }} />);
+    rerender(<FilePanel workspaceId="ws" onClose={() => {}} files={files} transcript={writes.reader} target={{ kind: 'file', path: 'report.py', seq: 2 }} />);
     await screen.findByLabelText('Close report.py');
     log.current = [{ id: 'w1', path: 'notes.md' }];
-    rerender(<FilePanel workspaceId="ws" onClose={() => {}} files={files} getWriteLog={getWriteLog} target={{ kind: 'file', path: 'report.py', seq: 2 }} />);
+    act(() => writes.publish({ messages: [], collectWrites }));
     await screen.findByTitle('Changed since you opened it');
 
     let land: (v: { content: string; mime: string; truncated: boolean }) => void = () => {};
@@ -218,22 +220,24 @@ describe('FilePanel reference opens', () => {
     // rather than adopt the old bytes and stamp the newer write as read.
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 5 * 60_000 } } });
     const log = { current: [] as { id: string; path: string }[] };
-    const getWriteLog = () => log.current;
+    const collectWrites = () => log.current;
+    const writes = createTranscriptStore({ messages: [], collectWrites });
     const files = ['notes.md'];
     const first = renderWithProviders(
-      <FilePanel workspaceId="ws" onClose={() => {}} files={files} getWriteLog={getWriteLog} target={{ kind: 'file', path: 'notes.md', seq: 1 }} />,
+      <FilePanel workspaceId="ws" onClose={() => {}} files={files} transcript={writes.reader} target={{ kind: 'file', path: 'notes.md', seq: 1 }} />,
       { queryClient },
     );
     await screen.findByText('My private notes body.');
     first.unmount();
 
     log.current = [{ id: 'w1', path: 'notes.md' }];
+    writes.publish({ messages: [], collectWrites });
     (api.readWorkspaceFile as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
       { content: 'Rewritten notes body.', mime: 'text/markdown', truncated: false },
     );
     // No target: the strip comes back from storage with notes.md active.
     renderWithProviders(
-      <FilePanel workspaceId="ws" onClose={() => {}} files={files} getWriteLog={getWriteLog} />,
+      <FilePanel workspaceId="ws" onClose={() => {}} files={files} transcript={writes.reader} />,
       { queryClient },
     );
     await screen.findByText('Rewritten notes body.');
@@ -245,24 +249,23 @@ describe('FilePanel reference opens', () => {
     // forgets the change marker, so the marker cannot force the re-read; the
     // close has to drop the cached bytes instead.
     const log = { current: [] as { id: string; path: string }[] };
-    const getWriteLog = () => log.current;
-    // One target object across the write, so the re-render only carries the
-    // log and does not itself re-open the file.
+    const collectWrites = () => log.current;
+    const writes = createTranscriptStore({ messages: [], collectWrites });
     const first = { kind: 'file', path: 'notes.md', seq: 1 } as const;
     const { rerender } = renderWithProviders(
-      <FilePanel workspaceId="ws" onClose={() => {}} files={['notes.md']} getWriteLog={getWriteLog} target={first} />,
+      <FilePanel workspaceId="ws" onClose={() => {}} files={['notes.md']} transcript={writes.reader} target={first} />,
     );
     // The marker is stamped once the bytes are in hand, so the write has to
     // come after the body is on screen to count as a change.
     await screen.findByText('My private notes body.');
 
     log.current = [{ id: 'w1', path: 'notes.md' }];
-    rerender(<FilePanel workspaceId="ws" onClose={() => {}} files={['notes.md']} getWriteLog={getWriteLog} target={first} />);
+    act(() => writes.publish({ messages: [], collectWrites }));
     await screen.findByTitle('Changed since you opened it');
     fireEvent.click(screen.getByLabelText('Close notes.md'));
 
     rerender(
-      <FilePanel workspaceId="ws" onClose={() => {}} files={['notes.md']} getWriteLog={getWriteLog} target={{ kind: 'file', path: 'notes.md', seq: 2 }} />,
+      <FilePanel workspaceId="ws" onClose={() => {}} files={['notes.md']} transcript={writes.reader} target={{ kind: 'file', path: 'notes.md', seq: 2 }} />,
     );
     await waitFor(() => expect(api.readWorkspaceFile).toHaveBeenCalledTimes(2));
   });

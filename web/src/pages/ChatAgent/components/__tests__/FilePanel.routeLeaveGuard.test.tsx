@@ -42,6 +42,7 @@ vi.mock('@/pages/ChatAgent/components/viewers/CodeEditor', () => ({
 
 import FilePanel, { type PanelTarget } from '@/pages/ChatAgent/components/FilePanel';
 import type { ToolCallProcessRecord } from '@/pages/ChatAgent/components/ToolCallDetailView';
+import { createTranscriptStore } from '@/pages/ChatAgent/components/filePanel/transcriptStore';
 
 // An automations listing, whose result view ends in a link to the Automations page.
 const automationsCall: ToolCallProcessRecord = {
@@ -59,6 +60,8 @@ const automationsCall: ToolCallProcessRecord = {
   isComplete: true,
 };
 
+const transcript = createTranscriptStore({ messages: [{ toolCallProcesses: { 'call-1': automationsCall } }] }).reader;
+
 const FILE: PanelTarget = { kind: 'file', path: 'notes.md', seq: 1 };
 const TOOL: PanelTarget = { kind: 'tool', toolCallId: 'call-1', seq: 2 };
 
@@ -72,7 +75,7 @@ const app = (target: PanelTarget) => (
           onClose={() => {}}
           files={['notes.md']}
           target={target}
-          getToolCallProcess={(id) => (id === 'call-1' ? automationsCall : undefined)}
+          transcript={transcript}
         />
       )}
     />

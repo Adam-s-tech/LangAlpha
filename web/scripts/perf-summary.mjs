@@ -36,6 +36,11 @@ const STREAMING_ROWS = [
   ['charDataChanges', 'text node edits', 'lower'],
   ['attrChanges', 'attribute changes', 'lower'],
   ['commits', 'React commits', 'lower'],
+  // A run with PERF_PANEL counts the panel's own churn; other runs have none.
+  ['region.mutations', 'panel DOM mutations', 'lower', 'optional'],
+  ['region.nodesAdded', 'panel nodes added', 'lower', 'optional'],
+  ['region.charDataChanges', 'panel text edits', 'lower', 'optional'],
+  ['region.attrChanges', 'panel attribute changes', 'lower', 'optional'],
 ];
 
 const TYPEWRITER_ROWS = [
@@ -68,7 +73,7 @@ const KINDS = {
     // One table: every streaming run is the same scenario.
     groupOf: () => '',
     configOf: (r) => ({ ...r.config, mode: r.mode }),
-    describe: (c) => (c.cpuRate != null ? `${modeText(c.mode)}, cpu x${c.cpuRate}, ${c.events} events, ${c.chunkChars} chars every ${c.chunkDelayMs} ms, reply ${c.replyChars} chars` : '(no config recorded)'),
+    describe: (c) => (c.cpuRate != null ? `${modeText(c.mode)}, cpu x${c.cpuRate}, ${c.events} events, ${c.chunkChars} chars every ${c.chunkDelayMs} ms, reply ${c.replyChars} chars${c.panel ? `, panel ${c.panel}` : ''}${c.renders ? ', renders counted' : ''}${c.endWait ? '' : ', end awaited by getByText'}` : '(no config recorded)'),
   },
   typewriter: {
     prefix: 'typewriter-',
@@ -158,9 +163,22 @@ for (const [group, byLabel] of [...groups].sort((a, b) => String(a[0]).localeCom
   const line = (name, vals, suffix) => console.log(name.padEnd(26) + vals.map((v) => String(v).padStart(w + 2)).join('') + suffix);
 
   console.log('metric'.padEnd(26) + labels.map((l) => l.padStart(w + 2)).join('') + (labels.length > 1 ? '   vs first' : ''));
-  for (const [key, name, better] of spec.rows) {
+  for (const [key, name, better, optional] of spec.rows) {
     const vals = labels.map((l) => median(byLabel.get(l).map((r) => get(r.metrics, key))));
+    if (optional && vals.every((v) => v === 'n/a')) continue;
     line(name, vals, delta(vals, better));
+  }
+
+  // Component renders under the probe's scope, when the run counted them
+  // (PERF_RENDERS): which components the stream re-rendered, not only how often.
+  const scoped = [...new Set(labels.flatMap((l) => byLabel.get(l).flatMap((r) => Object.keys(r.metrics?.scopeRenders || {}))))];
+  if (scoped.length) {
+    console.log(`\nrenders under ${byLabel.get(labels[0])[0].metrics?.region?.scope ?? 'the scope'} (median per label)`);
+    const rows = scoped
+      .map((n) => ({ n, vals: labels.map((l) => median(byLabel.get(l).map((r) => r.metrics?.scopeRenders?.[n] || 0))) }))
+      .sort((a, b) => Math.max(...b.vals) - Math.max(...a.vals))
+      .slice(0, 20);
+    for (const { n, vals } of rows) line(n.length > 25 ? n.slice(0, 25) : n, vals, delta(vals, 'lower'));
   }
 
   // Requests issued during the run, when the benchmark recorded them: a

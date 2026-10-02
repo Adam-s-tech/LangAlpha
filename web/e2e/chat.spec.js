@@ -386,6 +386,37 @@ test.describe('Chat View -- SSE Streaming', () => {
     await expect(page.getByText('is up 1.2% today.')).toBeVisible({ timeout: 15000 });
   });
 
+  test('a long link does not stall the reveal while text arrives every frame', async ({ page }) => {
+    // The typewriter holds a word back until it is whole, and restarted from
+    // the held cursor on every update, so with text arriving every frame it
+    // never got through a run longer than one frame's progress: the reply
+    // froze at the first link until the stream ended.
+    await mockAPI(page, chatViewOverrides());
+    await configureEmptyReplay();
+    const text = 'Filed today, see [the full filing](https://example.com/filings/2026/q3/10-q.htm) for detail. '
+      + 'Next the margin bridge. '
+      + 'Revenue grew on mix while costs held flat across the quarter. '.repeat(24);
+    const events = [];
+    for (let i = 0; i < text.length; i += 4) events.push(sseEvents.messageChunk(text.slice(i, i + 4)));
+    events.push(sseEvents.finishStop(), sseEvents.creditUsage());
+    await configureSSE({
+      method: 'POST',
+      path: '/api/v1/threads/b0000001-0000-4000-8000-000000000001/messages',
+      events,
+      delay: 16,
+    });
+
+    await page.goto('/chat/t/b0000001-0000-4000-8000-000000000001');
+    await page.waitForSelector('textarea', { timeout: 10000 });
+    await page.locator('textarea').fill('Summarize the filing');
+    await page.locator('button[aria-label="Send message"]').click();
+
+    // The stream runs about six seconds; the words after the link show long
+    // before it ends.
+    await expect(page.getByText('Next the margin bridge.', { exact: false })).toBeVisible({ timeout: 4000 });
+    await expect(page.locator('[data-testid="streaming-indicator"]')).toHaveCount(1);
+  });
+
   test('tool call renders tool card with result', async ({ page }) => {
     await mockAPI(page, chatViewOverrides());
 

@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { useHomeTimezone } from '@/hooks/useHomeTimezone';
+import { useStableHandler } from '@/hooks/useStableHandler';
 import { useUser } from '@/hooks/useUser';
 import { sendChatMessageStream, sendRetryStream, getWorkflowStatus, sendHitlResponse, fetchThreadTurns, cancelWorkflow } from '../utils/api';
 import { useLocalRunPublisher } from '@/lib/threadLifecycle/useLocalRunPublisher';
@@ -33,7 +34,7 @@ import { ensureThreadId } from '../session/threadCreation';
 export { removeStoredThreadId } from './utils/threadStorage';
 import { createUserMessage, createAssistantMessage, createNotificationMessage, appendMessage, updateMessage, type AttachmentMeta } from './utils/messageHelpers';
 import type { HitlResponseBody, HitlResumeEntry } from '@/types/api';
-import type { AssistantMessage, ToolApprovalPosition, UserMessage } from '@/types/chat';
+import type { AssistantMessage, ToolApprovalPosition, UserMessage, ChatMessage } from '@/types/chat';
 import type { PreviewData } from './utils/types';
 import { createRecentlySentTracker } from './utils/recentlySentTracker';
 import { createRequestKeyTracker } from './utils/requestKey';
@@ -47,8 +48,8 @@ import { refreshComputersAfterTurn } from './useComputers';
 
 // --- Module scope extracted to session/types + utils (W1) ---
 import type {
-  MessageRecord, TokenUsage, PendingInterrupt, PendingRejection,
-  SSEEvent, ModelOptions, OffloadBatch, SubagentHistoryEntry, TaskRefs,
+  TokenUsage, PendingInterrupt, PendingRejection,
+  SSEEvent, ModelOptions, OffloadBatch, TaskRefs,
   HistoryInterruptInfo, StreamProcessorRefs,
   ModelStatus, FallbackSuggestion,
 } from '../session/types';
@@ -56,14 +57,13 @@ import { PROPOSAL_INTERRUPT_TYPES, SECRETARY_ACTION_TYPES, setCardFields, setCar
 import { createAnswerBoard, type AnswerBoard } from '../session/interrupts/answerBoard';
 export type { ModelStatus, FallbackSuggestion } from '../session/types';
 import type { ChatSessionRuntime } from '../session/runtime';
+import type { CardUpdater } from '../session/streamRefs';
 import { projectSubagentHistory } from '../session/subagents/projectHistory';
 import { createSubagentMuxController, getTaskIdFromEvent } from '../session/subagents/muxSink';
-import {
-  hydrateTaskTranscript, type TaskTranscriptMeta,
-} from '../session/subagents/hydrateTaskTranscript';
 import { loadConversationHistory as replayConversationHistory } from '../session/history/replayHistory';
 import { createStreamEventProcessor, type StreamRouterDeps } from '../session/stream/processStreamEvent';
-import { createFrameQueue } from '../session/stream/frameQueue';
+import { createLiveTranscript, type LiveMessages } from '../session/stream/liveMessages';
+import { useSubagentHistory } from '../session/subagents/useSubagentHistory';
 import {
   acquireStreamOwnership as acquireOwnership,
   releaseStreamOwnership as releaseOwnership,
@@ -80,7 +80,7 @@ export function useChatMessages(
   workspaceId: string,
   initialThreadId: string | null = null,
   updateTodoListCard: ((todoData: Record<string, unknown>, isNew?: boolean) => void) | null = null,
-  updateSubagentCard: ((agentId: string, data: Record<string, unknown>) => void) | null = null,
+  updateSubagentCard: CardUpdater | null = null,
   finalizePendingTodos: (() => void) | null = null,
   onOnboardingRelatedToolComplete: (() => void) | null = null,
   onFileArtifact: ((event: SSEEvent) => void) | null = null,
@@ -99,17 +99,18 @@ export function useChatMessages(
   const userTimezone = useHomeTimezone();
 
   // State
-  const [messages, setMessagesState] = useState<MessageRecord[]>([]);
-  // Streamed chunks wait for the next frame (see createFrameQueue). Every
-  // other write carries them along in the same update, so it can neither
-  // overtake a chunk nor be overtaken by one.
-  const [chunkQueue] = useState(() => createFrameQueue<MessageRecord[]>(setMessagesState));
-  const setMessages = useCallback<React.Dispatch<React.SetStateAction<MessageRecord[]>>>((next) => {
-    const queued = chunkQueue.take();
-    if (queued && typeof next === 'function') setMessagesState((prev) => next(queued(prev)));
-    else setMessagesState(next);
-  }, [chunkQueue]);
-  useEffect(() => () => chunkQueue.cancel(), [chunkQueue]);
+  const [messages, setMessagesState] = useState<ChatMessage[]>([]);
+  // Streamed chunks wait for the next frame and then land in `liveMessages`
+  // alone, which only the transcript's readers render from: `messages` holds
+  // the structure and lags on the text. Every other write goes through
+  // `setMessages`, computed on the live value, never on `messages`: nearly
+  // every updater copies the streaming message whole, and on a lagging copy it
+  // would put the old text back.
+  const [liveMessages] = useState(() => createLiveTranscript<ChatMessage[]>([], setMessagesState));
+  const setMessages = liveMessages.write;
+  useEffect(() => liveMessages.dispose, [liveMessages]);
+  // What the views get: read-only, since a write from there would skip `messages`.
+  const liveView: LiveMessages<ChatMessage[]> = liveMessages;
   const [threadId, setThreadId] = useState<string>(() => {
     // If threadId is provided from URL, use it; otherwise use localStorage
     if (initialThreadId) {
@@ -202,6 +203,12 @@ export function useChatMessages(
 
   // Track current plan mode so HITL resume can forward it
   const currentPlanModeRef = useRef(false);
+
+  // The agent mode the latest run in view was started in. The server picks the
+  // graph that resumes a checkpoint by agent_mode, so a resume answers in this
+  // mode rather than the one the composer shows now. Null for a run this view
+  // only attached to; the resume then sends the current mode.
+  const runAgentModeRef = useRef<string | null>(null);
 
   // Track last-used model options so HITL resume can forward them
   const lastModelOptionsRef = useRef<ModelOptions>({ model: null, reasoningEffort: null, fastMode: null });
@@ -352,6 +359,17 @@ export function useChatMessages(
   // streaming or last streamed. Read, not handed out, so no caller can move
   // the reconnect target.
   const isOwnRun = useCallback((runId: string) => runId === currentRunIdRef.current, []);
+  // Every run this view starts begins here: its assistant message counts
+  // content from zero, and its run_id comes from its own metadata frame unless
+  // the response header already named it. A stale one would bias a reconnect
+  // into the previous run's stream key.
+  const beginRun = (mode: string, runId: string | null = null): void => {
+    contentOrderCounterRef.current = 0;
+    currentReasoningIdRef.current = null;
+    currentToolCallIdRef.current = null;
+    currentRunIdRef.current = runId;
+    runAgentModeRef.current = mode;
+  };
   // Highest turn_index this view has RENDERED, compared against
   // /status.latest_turn_index by the reactivation staleness check (a run that
   // finished while this cached view was hidden is terminal — can_reconnect is
@@ -449,9 +467,6 @@ export function useChatMessages(
   // retransmits of the same send until response headers prove acceptance.
   const requestKeyRef = useRef(createRequestKeyTracker());
 
-  // Map tool call IDs (from main agent's task tool calls) to agent_ids for routing subagent events
-  const toolCallIdToTaskIdMapRef = useRef(new Map<string, string>()); // Map<toolCallId, agentId>
-
   // The CURRENT stream processor for subagent frames off the thread mux.
   // Send, reconnect and HITL resume each install theirs at attach time, so
   // task frames always route through live refs instead of a stale closure.
@@ -472,13 +487,14 @@ export function useChatMessages(
   // on a full history-backed reset; a genuine resume deletes just that task's entry.
   const terminalTaskOutcomesRef = useRef(new Map<string, 'completed' | 'cancelled' | 'error'>());
 
-  // Track subagent history loaded from replay so it can be shown lazily
-  // Keyed by agent_id. Structure: { [agentId]: { taskId, description, type, messages, status, ... } }
-  const subagentHistoryRef = useRef<Record<string, SubagentHistoryEntry>>({});
-
   // Persistent subagent state refs — survives across turns so resumed subagents
   // retain messages from previous runs. Keyed by taskId (e.g., "task:k7Xm2p").
   const subagentStateRefsRef = useRef<Record<string, TaskRefs>>({});
+  // Replayed per-task transcripts and the tool-call id to task id index. A
+  // publish applies the queued chunks first, like any write that is not one.
+  const {
+    store: subagentHistory, resolveSubagentIdToAgentId, getSubagentHistory, hydrateTaskTranscript,
+  } = useSubagentHistory(liveMessages.flush, { t, threadId, subagentStateRefsRef });
 
   /**
    * Handler-refs bag shared by every stream entry point. One construction
@@ -533,7 +549,6 @@ export function useChatMessages(
     // render-current
     workspaceId,
     threadId,
-    messages,
     t,
     updateSubagentCard,
     updateTodoListCard,
@@ -550,8 +565,8 @@ export function useChatMessages(
     onOnboardingRelatedToolComplete,
     // setters (stable)
     setMessages,
-    queueMessages: chunkQueue.queue,
-    flushMessages: chunkQueue.flush,
+    queueMessages: liveMessages.queue,
+    flushMessages: liveMessages.flush,
     setIsLoading,
     setIsLoadingHistory,
     setHistoryLoadFailed,
@@ -591,11 +606,10 @@ export function useChatMessages(
     offloadBatchRef,
     replayedRunIdsRef,
     subagentStateRefsRef,
-    subagentHistoryRef,
+    subagentHistory,
     subagentProcessEventRef,
     subagentTokenUsageRef,
     terminalTaskOutcomesRef,
-    toolCallIdToTaskIdMapRef,
     pendingMuxResyncRef,
   };
 
@@ -736,6 +750,7 @@ export function useChatMessages(
         // to another thread with it unanswered is the expected way to meet it.
         setPendingInterrupt(null);
         setPendingRejection(null);
+        runAgentModeRef.current = null;
       }
     }
     // answerBoard is created once and never replaced, so it is omitted the way
@@ -1031,7 +1046,7 @@ export function useChatMessages(
         // Pre-seed cards from history so per-task events don't create empty cards
         for (const taskId of muxTasks) {
           const agentId = `task:${taskId}`;
-          const historyData = subagentHistoryRef.current?.[agentId];
+          const historyData = subagentHistory.get().entries[agentId];
           if (updateSubagentCard && historyData) {
             subagentTokenUsageRef.current[agentId] = historyData.tokenUsage ?? ZERO_USAGE;
             updateSubagentCard(agentId, {
@@ -1429,7 +1444,7 @@ export function useChatMessages(
     // context cards (widget snapshots / chart selections) so a message queued
     // during compaction keeps them when the flush routes through steering.
     const userMsg = createUserMessage(message, attachmentMeta as AttachmentMeta[] | null, widgetSnapshots ?? null, chartSelections ?? null);
-    const userMessage: MessageRecord = { ...userMsg, steering: true };
+    const userMessage: ChatMessage = { ...userMsg, steering: true };
     recentlySentTrackerRef.current.track(message.trim(), userMessage.timestamp, userMessage.id);
     setMessages((prev) => appendMessage(prev,userMessage));
 
@@ -1456,9 +1471,6 @@ export function useChatMessages(
       // finally below honors wasStoppedRef and returns.
       if (wasStoppedRef.current) return;
       demotedToNewTurn = true;
-      if (pendingRunIdFromHeader) {
-        currentRunIdRef.current = pendingRunIdFromHeader;
-      }
       setMessages((prev) =>
         updateMessage(prev, userMessage.id as string, (msg) => {
           if (msg.role !== 'user') return msg;
@@ -1471,9 +1483,7 @@ export function useChatMessages(
       );
       const newAssistantId = `assistant-${Date.now()}`;
       demotedAssistantId = newAssistantId;
-      contentOrderCounterRef.current = 0;
-      currentReasoningIdRef.current = null;
-      currentToolCallIdRef.current = null;
+      beginRun(agentMode, pendingRunIdFromHeader);
       const assistantMessage = createAssistantMessage(newAssistantId);
       setMessages((prev) => appendMessage(prev, assistantMessage));
       currentMessageRef.current = newAssistantId;
@@ -1660,7 +1670,7 @@ export function useChatMessages(
         widgetSnapshots ?? null,
         chartSelections ?? null,
       );
-      const queuedMessage: MessageRecord = { ...queuedMsg, queued: true };
+      const queuedMessage: ChatMessage = { ...queuedMsg, queued: true };
       queuedSendRef.current = {
         message,
         planMode,
@@ -1766,14 +1776,7 @@ export function useChatMessages(
 
     // Create assistant message placeholder
     const assistantMessageId = `assistant-${Date.now()}`;
-    // Reset counters for this new message
-    contentOrderCounterRef.current = 0;
-    currentReasoningIdRef.current = null;
-    currentToolCallIdRef.current = null;
-    // Clear the active run_id; the new turn's metadata frame will repopulate
-    // it. Prevents a stale run_id from biasing a reconnect into an older
-    // ``workflow:stream:{tid}:{rid}`` key.
-    currentRunIdRef.current = null;
+    beginRun(agentMode);
     // Fresh AbortController so stopWorkflow can abort this stream's reader.
     const abortController = new AbortController();
     mainStreamAbortRef.current = abortController;
@@ -2003,8 +2006,13 @@ export function useChatMessages(
   /**
    * Resumes an interrupted turn with an HITL response (approve or reject).
    * Follows the same pattern as handleSendMessage but sends messages: [] with hitl_response.
+   * Stable, and always the last committed render's body: a resume can come
+   * long after the render that armed the interrupt, through handlers memoized
+   * on it, and has to use the current runtime, callbacks and model options.
    */
-  const resumeWithHitlResponse = useCallback(async (hitlResponse: HitlResponseBody, planMode: boolean = false) => {
+  const resumeWithHitlResponse = useStableHandler(async (hitlResponse: HitlResponseBody, planMode: boolean = false) => {
+    // The resume opens the next run, in the same mode.
+    const resumeAgentMode = runAgentModeRef.current ?? agentMode;
     // Ahead of beginResume, so the settler's fence captures this run's own
     // epoch rather than the previous one (which it would already fail).
     sessionEpochRef.current += 1;
@@ -2016,13 +2024,9 @@ export function useChatMessages(
 
     // Create assistant message placeholder
     const assistantMessageId = `assistant-hitl-${Date.now()}`;
-    contentOrderCounterRef.current = 0;
-    currentReasoningIdRef.current = null;
-    currentToolCallIdRef.current = null;
     // HITL resume always opens a fresh run on the backend (1:1 with
-    // ``conversation_response_id``); clear the stale ref so the new turn's
-    // metadata frame is the source of truth.
-    currentRunIdRef.current = null;
+    // ``conversation_response_id``).
+    beginRun(resumeAgentMode);
 
     const assistantMessage = createAssistantMessage(assistantMessageId);
     setMessages((prev) => appendMessage(prev, assistantMessage));
@@ -2061,7 +2065,7 @@ export function useChatMessages(
         processEvent,
         planMode,
         lastModelOptionsRef.current as { model?: string; reasoningEffort?: string; fastMode?: boolean },
-        agentMode,
+        resumeAgentMode,
         // Latch the fresh run_id from response headers before the first SSE
         // body byte. Without this, an early disconnect (between the pre-POST
         // clear above and the metadata frame) would let
@@ -2170,8 +2174,7 @@ export function useChatMessages(
       // edit/regenerate map UI position → turn_index by counting non-steering
       // assistant bubbles. MessageList hides empty settled bubbles instead.
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, threadId, updateTodoListCard, updateSubagentCard, finalizePendingTodos]);
+  });
 
   const handleApproveInterrupt = useCallback(() => {
     if (!pendingInterrupt) return;
@@ -2444,8 +2447,12 @@ export function useChatMessages(
    * POST /retry attempt chain with `checkpointId=null` (the server resolves the
    * retry checkpoint). Sets up the assistant placeholder, event processor, and
    * stream lifecycle.
+   * Stable, and always the last committed render's body, like resume: an edit
+   * can come long after the transcript last changed, and has to send the
+   * current platform, locale, timezone and runtime. `snapshot` is the render
+   * the caller computed `truncateIndex` against.
    */
-  const streamFromCheckpoint = useCallback(async (message: string | null, checkpointId: string | null, truncateIndex: number, forkFromTurn: number | null = null, modelOptions: ModelOptions = {}, viaRetryEndpoint: boolean = false) => {
+  const streamFromCheckpoint = useStableHandler(async (message: string | null, checkpointId: string | null, truncateIndex: number, snapshot: readonly ChatMessage[], forkFromTurn: number | null = null, modelOptions: ModelOptions = {}, viaRetryEndpoint: boolean = false) => {
     // Callers check the slot is free: an edit or regenerate already holds it
     // for its checkpoint read, and takes it again below with the same result.
 
@@ -2467,12 +2474,10 @@ export function useChatMessages(
 
     // Truncate messages and add new user message (if editing) + assistant placeholder
     const assistantMessageId = `assistant-${Date.now()}`;
-    contentOrderCounterRef.current = 0;
-    currentReasoningIdRef.current = null;
-    currentToolCallIdRef.current = null;
-    // Edit/regenerate opens a fresh backend run; clear the prior run_id so
-    // the new metadata frame becomes the source of truth.
-    currentRunIdRef.current = null;
+    // Edit/regenerate opens a fresh backend run. The retry route takes no
+    // agent_mode, so the server starts it from its default; answering in that
+    // same default resolves to the same graph.
+    beginRun(viaRetryEndpoint ? 'ptc' : agentMode);
     // A fork truncates persisted turns > forkFromTurn server-side; pin the
     // rendered-turn watermark to the fork turn so the reactivation staleness
     // check compares against the post-truncation reality (a stale-high
@@ -2497,9 +2502,8 @@ export function useChatMessages(
     // the id of a card this truncation removes; a stale entry would suppress
     // the new card and leave the interrupt unanswerable. Done synchronously
     // (not in the setMessages updater) so the first stream event can't race
-    // the rebuild. `messages` here is the same render snapshot the caller
-    // computed truncateIndex against.
-    renderedInterruptIdsRef.current = collectRenderedInterruptIds(messages.slice(0, truncateIndex));
+    // the rebuild. The caller's snapshot, since truncateIndex indexes into it.
+    renderedInterruptIdsRef.current = collectRenderedInterruptIds(snapshot.slice(0, truncateIndex));
 
     setMessages((prev) => {
       const truncated = prev.slice(0, truncateIndex);
@@ -2627,10 +2631,7 @@ export function useChatMessages(
         cleanupAfterStreamEnd(finalId);
       }
     }
-  // `messages` is a real dep: the rendered-interrupt rebuild above needs the
-  // same render snapshot the caller computed truncateIndex against.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, workspaceId, threadId, agentMode]);
+  });
 
   /**
    * Edit a user message: truncate to before that message, send modified content
@@ -2639,14 +2640,15 @@ export function useChatMessages(
   const handleEditMessage = useCallback(async (messageId: string, newContent: string, modelOptions: ModelOptions = {}) => {
     if (!newContent?.trim()) return;
 
-    const msgIndex = messages.findIndex((m) => m.id === messageId);
+    const transcript = liveMessages.get();
+    const msgIndex = transcript.findIndex((m) => m.id === messageId);
     if (msgIndex === -1) return;
 
     // Steering bubbles are mid-turn injections with no boundary in /turns —
     // an edit fork would land on the NEXT turn and leave the original
     // steering text in the agent's context. The UI hides the pencil for
     // them; this guards every other caller.
-    const editTarget = messages[msgIndex];
+    const editTarget = transcript[msgIndex];
     if (isSteeringUserMessage(editTarget)) {
       setMessageError("Steering messages can't be edited");
       return;
@@ -2654,13 +2656,13 @@ export function useChatMessages(
 
     // Count non-steering assistant messages before this user message to get turn_index.
     // Excludes steering assistant messages (mid-turn continuations) which don't map to backend turns.
-    const turnIndex = messages.slice(0, msgIndex).filter((m) => m.role === 'assistant' && !isSteeringContinuation(m)).length;
+    const turnIndex = transcript.slice(0, msgIndex).filter((m) => m.role === 'assistant' && !isSteeringContinuation(m)).length;
 
     if (!claimForkPreflight()) return;
 
     // Immediate visual feedback: truncate, show edited message + loading placeholder.
     // Save snapshot so we can restore on failure.
-    const snapshotMessages = messages;
+    const snapshotMessages = transcript;
     setIsLoading(true);
     setMessageError(null);
     setFallbackSuggestion(null);
@@ -2689,23 +2691,23 @@ export function useChatMessages(
       return;
     }
 
-    await streamFromCheckpoint(newContent, checkpointId, msgIndex, turnIndex, modelOptions);
-  // The slot helpers reach only refs and the threadId streamFromCheckpoint
-  // already tracks.
+    await streamFromCheckpoint(newContent, checkpointId, msgIndex, transcript, turnIndex, modelOptions);
+  // The slot helpers reach only refs and threadId.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, getTurnCheckpoints, streamFromCheckpoint, setMessages]);
+  }, [liveMessages, threadId, getTurnCheckpoints, streamFromCheckpoint, setMessages]);
 
   /**
    * Regenerate an assistant response: truncate the assistant message,
    * re-run from the checkpoint that has the user message but before AI response.
    */
   const handleRegenerate = useCallback(async (messageId: string, modelOptions: ModelOptions = {}) => {
-    const msgIndex = messages.findIndex((m) => m.id === messageId);
+    const transcript = liveMessages.get();
+    const msgIndex = transcript.findIndex((m) => m.id === messageId);
     if (msgIndex === -1) return;
 
     // Count non-steering assistant messages up to and including this one to get turn_index.
     // Excludes steering assistant messages (mid-turn continuations) which don't map to backend turns.
-    const turnIndex = messages.slice(0, msgIndex + 1).filter((m) => m.role === 'assistant' && !isSteeringContinuation(m)).length - 1;
+    const turnIndex = transcript.slice(0, msgIndex + 1).filter((m) => m.role === 'assistant' && !isSteeringContinuation(m)).length - 1;
 
     // A steered turn renders as several bubbles (pre-steering half + isSteering
     // continuations) but has only one regenerate: the whole turn re-runs from
@@ -2713,10 +2715,10 @@ export function useChatMessages(
     // back to the turn's first bubble so the stale halves and the steering
     // bubbles leave the transcript together with the re-run.
     let truncateIndex = msgIndex;
-    const regenTarget = messages[msgIndex];
+    const regenTarget = transcript[msgIndex];
     if (isSteeringContinuation(regenTarget)) {
       for (let i = msgIndex - 1; i >= 0; i--) {
-        const m = messages[i];
+        const m = transcript[i];
         if (m.role === 'assistant' && !isSteeringContinuation(m)) {
           truncateIndex = i;
           break;
@@ -2728,7 +2730,7 @@ export function useChatMessages(
 
     // Immediate visual feedback: truncate at the assistant message, show loading placeholder.
     // Save snapshot so we can restore on failure.
-    const snapshotMessages = messages;
+    const snapshotMessages = transcript;
     setIsLoading(true);
     setMessageError(null);
     setFallbackSuggestion(null);
@@ -2748,10 +2750,10 @@ export function useChatMessages(
 
     const checkpointId = turnsData.turns[turnIndex].regenerate_checkpoint_id;
     // Truncate at the turn's first assistant bubble (keep everything before it, including user msg)
-    await streamFromCheckpoint(null, checkpointId, truncateIndex, turnIndex, modelOptions);
+    await streamFromCheckpoint(null, checkpointId, truncateIndex, transcript, turnIndex, modelOptions);
   // Same as handleEditMessage: the slot helpers reach only refs and threadId.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, getTurnCheckpoints, streamFromCheckpoint, setMessages]);
+  }, [liveMessages, threadId, getTurnCheckpoints, streamFromCheckpoint, setMessages]);
 
   /**
    * Retry the last failed turn as a new attempt on the same turn (v4 attempt
@@ -2762,10 +2764,11 @@ export function useChatMessages(
    */
   const handleRetry = useCallback(async (modelOptions: ModelOptions = {}) => {
     if (isStreamingRef.current) return;
-    const lastErrorIndex = messages.findLastIndex((m) => m.role === 'assistant' && (m as AssistantMessage).error);
-    const truncateIndex = lastErrorIndex !== -1 ? lastErrorIndex : messages.length;
-    await streamFromCheckpoint(null, null, truncateIndex, null, modelOptions, true);
-  }, [messages, streamFromCheckpoint]);
+    const transcript = liveMessages.get();
+    const lastErrorIndex = transcript.findLastIndex((m) => m.role === 'assistant' && (m as AssistantMessage).error);
+    const truncateIndex = lastErrorIndex !== -1 ? lastErrorIndex : transcript.length;
+    await streamFromCheckpoint(null, null, truncateIndex, transcript, null, modelOptions, true);
+  }, [liveMessages, streamFromCheckpoint]);
 
   // A PTC run's sandbox acquisition settles every folder on its computer, which
   // rewrites the dir_name and previous_dir_names that agent paths fold
@@ -2809,7 +2812,10 @@ export function useChatMessages(
   };
 
   return {
+    // Which messages there are; the text as of the last write that was not a
+    // chunk. Render the text from `liveMessages` (useLiveMessages).
     messages,
+    liveMessages: liveView,
     threadId,
     threadModels,
     isLoading,
@@ -2863,17 +2869,8 @@ export function useChatMessages(
     handleThumbUp,
     handleThumbDown,
     feedbackByTurn,
-    // Resolve subagentId (e.g. toolCallId from segment) to stable agent_id for card operations.
-    resolveSubagentIdToAgentId: (subagentId: string) =>
-      toolCallIdToTaskIdMapRef.current.get(subagentId) || subagentId,
-    // Expose subagent history for lazy loading. Resolves toolCallId -> agent_id via mapping.
-    // Returns { ...historyData, agentId } so caller can use agentId for card operations.
-    getSubagentHistory: (subagentId: string) => {
-      const agentId = toolCallIdToTaskIdMapRef.current.get(subagentId) || subagentId;
-      const data = subagentHistoryRef.current?.[agentId];
-      return data ? { ...data, agentId } : null;
-    },
-    hydrateTaskTranscript: (subagentId: string, meta?: TaskTranscriptMeta) =>
-      hydrateTaskTranscript(runtime, threadId, subagentId, meta),
+    resolveSubagentIdToAgentId,
+    getSubagentHistory,
+    hydrateTaskTranscript,
   };
 }

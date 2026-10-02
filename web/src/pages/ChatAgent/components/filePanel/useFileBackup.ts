@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { backupWorkspaceFiles, getBackupStatus } from '../../utils/api';
 import type { BackupResult } from './types';
 
+const sameMembers = (set: ReadonlySet<string>, list: readonly string[]) =>
+  set.size === list.length && list.every((path) => set.has(path));
+
 /** COS backup status + manual backup trigger (skipped entirely in readOnly). */
 export function useFileBackup({ workspaceId, files, readOnly }: {
   workspaceId: string;
@@ -21,9 +24,13 @@ export function useFileBackup({ workspaceId, files, readOnly }: {
   }, []);
   useEffect(() => () => clearTimeout(dismissTimer.current), []);
 
+  // Asked again after every file list, and usually unchanged: an equal answer
+  // keeps the old sets so the tree is not re-rendered for nothing.
   const updateBackupStatus = useCallback((data: { backed_up?: string[]; modified?: string[] }) => {
-    setBackedUpSet(new Set(data.backed_up || []));
-    setModifiedSet(new Set(data.modified || []));
+    const backedUp = data.backed_up || [];
+    const modified = data.modified || [];
+    setBackedUpSet((prev) => (sameMembers(prev, backedUp) ? prev : new Set(backedUp)));
+    setModifiedSet((prev) => (sameMembers(prev, modified) ? prev : new Set(modified)));
   }, []);
 
   // Fetch backup status on mount and when files change (skip in readOnly mode)
@@ -55,9 +62,10 @@ export function useFileBackup({ workspaceId, files, readOnly }: {
       const msg = e?.response?.data?.detail || e?.message || 'Backup failed';
       setBackupResult({ error: msg });
       dismissAfter(4000);
-    } finally {
-      setBackingUp(false);
     }
+    // After the try rather than in a `finally`, which the compiler cannot
+    // build: the catch above cannot throw, so both paths reach it.
+    setBackingUp(false);
   }, [workspaceId, backingUp, updateBackupStatus, dismissAfter]);
 
   return {

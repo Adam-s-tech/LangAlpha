@@ -55,7 +55,6 @@ describe('historyEventHandlers — bubble id determinism', () => {
       assistantMessagesByPair,
       pairStateByPair,
       refs,
-      messages: [],
       setMessages,
     });
 
@@ -81,7 +80,6 @@ describe('historyEventHandlers — bubble id determinism', () => {
       assistantMessagesByPair,
       pairStateByPair,
       refs,
-      messages: [],
       setMessages,
     });
 
@@ -115,7 +113,6 @@ describe('historyEventHandlers — bubble id determinism', () => {
         assistantMessagesByPair,
         pairStateByPair,
         refs,
-        messages: [],
         setMessages,
       });
       collector.push(...inserted.map((m) => m.id as string));

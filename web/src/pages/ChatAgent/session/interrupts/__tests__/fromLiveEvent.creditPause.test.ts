@@ -10,11 +10,11 @@
  * and `status` is what history replays, so the dead end survives a reload.
  */
 import { describe, it, expect, vi } from 'vitest';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 
 import { projectLiveInterrupt } from '../fromLiveEvent';
 import type { StreamRuntime } from '../../runtime';
-import type { MessageRecord, SSEEvent, StreamProcessorRefs } from '../../types';
+import type { SSEEvent, StreamProcessorRefs } from '../../types';
 
 type Ref<T> = { current: T };
 const ref = <T,>(current: T): Ref<T> => ({ current });
@@ -29,10 +29,10 @@ function pauseEvent(): SSEEvent {
   } as unknown as SSEEvent;
 }
 
-function build(messages: MessageRecord[]) {
+function build(messages: ChatMessage[]) {
   let current = messages;
   const rt = {
-    setMessages: ((updater: (prev: MessageRecord[]) => MessageRecord[]) => {
+    setMessages: ((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
       current = updater(current);
     }) as StreamRuntime['setMessages'],
     setPendingInterrupt: vi.fn(),
@@ -45,10 +45,10 @@ function build(messages: MessageRecord[]) {
   return { rt, refs, read: () => current };
 }
 
-const bubble = (id: string): MessageRecord =>
-  ({ id, role: 'assistant', content: '', contentSegments: [] }) as unknown as MessageRecord;
+const bubble = (id: string): ChatMessage =>
+  ({ id, role: 'assistant', content: '', contentSegments: [] }) as unknown as ChatMessage;
 
-const cardOn = (m: MessageRecord) =>
+const cardOn = (m: ChatMessage) =>
   (m as AssistantMessage).creditPauses?.[PAUSE_ID];
 
 describe('a credit pause that is raised twice', () => {
@@ -64,7 +64,7 @@ describe('a credit pause that is raised twice', () => {
     msgs = msgs.map((m) => ({
       ...(m as AssistantMessage),
       creditPauses: { [PAUSE_ID]: { ...cardOn(m)!, status: 'resumed' } },
-    })) as unknown as MessageRecord[];
+    })) as unknown as ChatMessage[];
     const second = build([...msgs, bubble('a-2')]);
     second.rt.renderedInterruptIdsRef.current.add(PAUSE_ID);
 

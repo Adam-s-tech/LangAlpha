@@ -3,7 +3,7 @@ import type { WidgetContextSnapshot } from '@/pages/Dashboard/widgets/framework/
 import type { ChartSelectionSnapshot } from '@/pages/MarketView/stores/chartSelectionStore';
 import type { SubagentTokenUsage } from '../../utils/tokenUsage';
 
-export type MessageRecord = Record<string, unknown>;
+export type { MessageRecord } from '../../hooks/utils/types';
 
 export interface LocationState {
   agentMode?: string;

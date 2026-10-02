@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useLayoutEffect, useRef } from 'react';
 import { SPRING_FOLD } from './liveZoneTiming';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown } from 'lucide-react';
@@ -78,13 +78,15 @@ export function TurnFold({ state, startedAt, completedAt, onToggle }: TurnFoldPr
  * The elapsed label writes its own text node once a second. A turn runs for
  * minutes beside a stream that already commits on every chunk; putting the
  * clock through React state would add a commit per second to that, for one
- * word that no other part of the tree reads.
+ * word that no other part of the tree reads. The first write is a layout
+ * effect, so the first painted frame already carries the text while render
+ * stays free of the clock.
  */
 function WorkingLabel({ startedAt }: { startedAt: number }): React.ReactElement {
   const { t } = useTranslation();
   const ref = useRef<HTMLSpanElement>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const write = () => {
       const el = ref.current;
       if (el) el.textContent = t('chat.workingFor', { duration: formatWorkedFor(Date.now() - startedAt, t) });
@@ -94,11 +96,7 @@ function WorkingLabel({ startedAt }: { startedAt: number }): React.ReactElement 
     return () => clearInterval(id);
   }, [startedAt, t]);
 
-  return (
-    <span ref={ref} className="tabular-nums">
-      {t('chat.workingFor', { duration: formatWorkedFor(Date.now() - startedAt, t) })}
-    </span>
-  );
+  return <span ref={ref} className="tabular-nums" />;
 }
 
 export default TurnFold;

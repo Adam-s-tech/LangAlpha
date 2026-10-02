@@ -83,8 +83,11 @@ function TaskStopReason({ reason }: { reason: string }): React.ReactElement {
  * not look like two different kinds of event depending on when it landed. The
  * placement is MessageContentSegments' call, and the reason it is last is
  * written there.
+ *
+ * Memoized because that parent re-creates it on every streamed chunk, and the
+ * telemetry read counts the task's tool calls: only the context moves it.
  */
-export function SubagentStopNotice({ subagentId }: { subagentId: string | undefined }): React.ReactElement | null {
+export const SubagentStopNotice = React.memo(function SubagentStopNotice({ subagentId }: { subagentId: string | undefined }): React.ReactElement | null {
   const { t } = useTranslation();
   const telemetry = useSubagentTelemetry(subagentId);
   const reason = telemetry?.stopReason;
@@ -114,7 +117,7 @@ export function SubagentStopNotice({ subagentId }: { subagentId: string | undefi
       )}
     </div>
   );
-}
+});
 
 interface SubagentInfo {
   subagentId: string;

@@ -479,7 +479,6 @@ export async function loadConversationHistory(
           assistantMessagesByPair,
           pairStateByPair,
           refs,
-          messages: rt.messages as unknown as Record<string, unknown>[],
           setMessages: setMessagesForHandlers,
         });
         return;
@@ -762,7 +761,7 @@ export async function loadConversationHistory(
               agentId,
               action,
               rt.historyPendingTaskToolCallIdsRef.current,
-              rt.toolCallIdToTaskIdMapRef.current,
+              rt.subagentHistory.toolCalls,
             );
           }
         }
@@ -828,7 +827,7 @@ export async function loadConversationHistory(
         const artifact = event.artifact as Record<string, unknown> | undefined;
         if (artifact?.task_id && event.tool_call_id) {
           const agentId = `task:${artifact.task_id}`;
-          rt.toolCallIdToTaskIdMapRef.current.set(event.tool_call_id, agentId);
+          rt.subagentHistory.toolCalls.set(event.tool_call_id, agentId);
 
           // Ensure subagentHistoryByTaskId has description from artifact.
           // Resume calls are filtered out of the tool_calls handler, so this

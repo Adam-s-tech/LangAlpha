@@ -6,6 +6,9 @@
  *  - frame gaps from a requestAnimationFrame loop (what the eye sees)
  *  - Long Animation Frames from PerformanceObserver (why a frame was late)
  *  - DOM mutation churn on the transcript (how much the renderer touches)
+ *
+ * Optionally, per start: component renders by name, and the DOM churn of one
+ * region of the page (the file panel), counted apart from the transcript's.
  */
 export function installSmoothProbe() {
   const S = (window.__smooth = {
@@ -13,7 +16,47 @@ export function installSmoothProbe() {
     frameGaps: [], loaf: [], longTasks: [],
     mutations: 0, nodesAdded: 0, nodesRemoved: 0, charDataChanges: 0, attrChanges: 0,
     commits: 0,
+    countRenders: false, scope: null, renders: {}, scopeRenders: {},
+    region: { mutations: 0, nodesAdded: 0, nodesRemoved: 0, charDataChanges: 0, attrChanges: 0 },
   });
+
+  // Which components a commit rendered, read off its fiber tree the way React
+  // DevTools reads it: a component rendered if it mounted or carries
+  // PerformedWork, and a child list the commit left as it was is the previous
+  // commit's, so nothing under it rendered and the walk stops there. Names are
+  // the source names in a dev or unminified build and mangled in a minified one.
+  const PERFORMED_WORK = 1;
+  // Function, class, forwardRef, memo and simple memo components.
+  const COMPONENT_TAGS = new Set([0, 1, 11, 14, 15]);
+  const HOST_COMPONENT = 5;
+  const nameOf = (fiber) => {
+    let type = fiber.type;
+    if (type && typeof type === 'object') type = type.type || type.render;
+    return (type && (type.displayName || type.name)) || '(anonymous)';
+  };
+  const rendered = (fiber, prev) => COMPONENT_TAGS.has(fiber.tag) && (!prev || (fiber.flags & PERFORMED_WORK) !== 0);
+  const visit = (next, prev, inScope) => {
+    const scopeRoot = !inScope && next.tag === HOST_COMPONENT && !!S.scope && !!next.stateNode?.matches?.(S.scope);
+    const scoped = inScope || scopeRoot;
+    if (rendered(next, prev)) {
+      const name = nameOf(next);
+      S.renders[name] = (S.renders[name] || 0) + 1;
+      if (scoped) S.scopeRenders[name] = (S.scopeRenders[name] || 0) + 1;
+    }
+    // The component that renders the scope's element (FilePanel for
+    // .file-panel) counts as part of it: it was visited on the way down.
+    if (scopeRoot) {
+      let owner = next.return;
+      while (owner && !COMPONENT_TAGS.has(owner.tag)) owner = owner.return;
+      if (owner && rendered(owner, owner.alternate)) {
+        const name = nameOf(owner);
+        S.scopeRenders[name] = (S.scopeRenders[name] || 0) + 1;
+      }
+    }
+    if (prev && next.child === prev.child) return;
+    for (let child = next.child; child; child = child.sibling) visit(child, child.alternate, scoped);
+  };
+
   // React commits, through the DevTools hook React calls on every commit in
   // production builds too (without a priority there, so no lane split).
   if (!window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
@@ -21,8 +64,10 @@ export function installSmoothProbe() {
       supportsFiber: true, renderers: new Map(),
       inject() { return 1; },
       checkDCE() {},
-      onCommitFiberRoot() {
-        if (S.running) S.commits += 1;
+      onCommitFiberRoot(_id, root) {
+        if (!S.running) return;
+        S.commits += 1;
+        if (S.countRenders) visit(root.current, root.current.alternate, false);
       },
       onCommitFiberUnmount() {},
       onPostCommitFiberRoot() {},
@@ -59,28 +104,51 @@ export function installSmoothProbe() {
     }).observe({ type: 'longtask', buffered: false });
   } catch { /* entry type unsupported in this browser */ }
 
+  const churn = (into) => (records) => {
+    into.mutations += records.length;
+    for (const r of records) {
+      into.nodesAdded += r.addedNodes.length;
+      into.nodesRemoved += r.removedNodes.length;
+      if (r.type === 'characterData') into.charDataChanges += 1;
+      // Counted apart from the node churn: an attribute write is a class or
+      // style flip, which costs style recalc but no reconciliation.
+      if (r.type === 'attributes') into.attrChanges += 1;
+    }
+  };
+  const OBSERVE = { childList: true, subtree: true, characterData: true, attributes: true };
+
   let mo = null;
-  S.start = (root) => {
+  let regionMo = null;
+  /**
+   * `scope` is a selector for one region of the page: its DOM churn is
+   * counted on its own, and with `renders` so are the components under it.
+   * `renders` walks every commit's tree, which costs main-thread time, so a
+   * run that counts renders is not a run to read frame timings from.
+   */
+  S.start = (root, { scope = null, renders = false } = {}) => {
+    // PERF_PANEL=tool starts the probe again once the tab is open, and an
+    // observer left connected would count every mutation a second time.
+    mo?.disconnect();
+    regionMo?.disconnect();
     S.frameGaps = []; S.loaf = []; S.longTasks = [];
-    S.mutations = 0; S.nodesAdded = 0; S.nodesRemoved = 0; S.charDataChanges = 0; S.attrChanges = 0;
     S.commits = 0;
-    mo = new MutationObserver((records) => {
-      S.mutations += records.length;
-      for (const r of records) {
-        S.nodesAdded += r.addedNodes.length;
-        S.nodesRemoved += r.removedNodes.length;
-        if (r.type === 'characterData') S.charDataChanges += 1;
-        // Counted apart from the node churn: an attribute write is a class or
-        // style flip, which costs style recalc but no reconciliation.
-        if (r.type === 'attributes') S.attrChanges += 1;
-      }
-    });
-    mo.observe(root || document.body, { childList: true, subtree: true, characterData: true, attributes: true });
+    const totals = { mutations: 0, nodesAdded: 0, nodesRemoved: 0, charDataChanges: 0, attrChanges: 0 };
+    Object.assign(S, totals);
+    mo = new MutationObserver(churn(S));
+    mo.observe(root || document.body, OBSERVE);
+    S.scope = scope; S.countRenders = renders; S.renders = {}; S.scopeRenders = {};
+    S.region = { ...totals };
+    const regionRoot = scope && document.querySelector(scope);
+    if (regionRoot) {
+      regionMo = new MutationObserver(churn(S.region));
+      regionMo.observe(regionRoot, OBSERVE);
+    }
     S.t0 = performance.now(); S.running = true;
   };
   S.stop = () => {
     S.running = false; S.t1 = performance.now();
     if (mo) mo.disconnect();
+    if (regionMo) regionMo.disconnect();
     const gaps = S.frameGaps.slice().sort((a, b) => a - b);
     const q = (p) => (gaps.length ? gaps[Math.min(gaps.length - 1, Math.floor(p * gaps.length))] : 0);
     const durationMs = S.t1 - S.t0;
@@ -104,6 +172,8 @@ export function installSmoothProbe() {
       mutations: S.mutations, nodesAdded: S.nodesAdded, nodesRemoved: S.nodesRemoved,
       charDataChanges: S.charDataChanges, attrChanges: S.attrChanges,
       commits: S.commits,
+      ...(S.scope ? { region: { scope: S.scope, ...S.region } } : {}),
+      ...(S.countRenders ? { renders: S.renders, scopeRenders: S.scopeRenders } : {}),
     };
   };
 }

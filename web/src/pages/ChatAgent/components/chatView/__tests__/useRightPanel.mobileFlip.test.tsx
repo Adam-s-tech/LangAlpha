@@ -4,6 +4,7 @@ import { renderHook, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 
 import { useRightPanel } from '../useRightPanel';
+import type { TranscriptMessage } from '../toolCallLookup';
 
 const { getPreviewUrl } = vi.hoisted(() => ({ getPreviewUrl: vi.fn() }));
 vi.mock('../../../utils/api', async (importOriginal) => ({ ...(await importOriginal<Record<string, unknown>>()), getPreviewUrl }));
@@ -15,14 +16,14 @@ function open(isMobile: boolean) {
   // Hoisted out of the render callback: a fresh identity per render would
   // re-run the workspace-reset effect and wipe the state under test.
   const setFilePanelWorkspaceId = vi.fn();
-  return renderHook((props: { isMobile: boolean; messages?: unknown[] }) => useRightPanel({
+  return renderHook((props: { isMobile: boolean; messages?: readonly TranscriptMessage[] }) => useRightPanel({
     isMobile: props.isMobile,
     workspaceId: 'ws',
     isActive: true,
     containerRef: { current: null },
     setFilePanelWorkspaceId,
     messages: props.messages ?? MESSAGES,
-  }), { initialProps: { isMobile } as { isMobile: boolean; messages?: unknown[] }, wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> });
+  }), { initialProps: { isMobile } as { isMobile: boolean; messages?: readonly TranscriptMessage[] }, wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> });
 }
 
 const APP = { url: '', port: 8050, title: 'Dashboard', command: 'python app.py', path: '/timeline.html', loading: true };

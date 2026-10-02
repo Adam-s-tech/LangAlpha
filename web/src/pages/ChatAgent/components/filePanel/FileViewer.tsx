@@ -28,6 +28,14 @@ type FileViewerFocus = Pick<ReturnType<typeof useFileFocus>, 'lineRange' | 'focu
 
 const NO_FOCUS: FileViewerFocus = { lineRange: null, focusPage: null, htmlAnchor: null, focusCell: null, seq: null };
 
+// The highlighter re-tokenizes the whole file on every render it gets, so
+// its element is reused only while every prop, these included, is the same.
+const CODE_STYLE: React.CSSProperties = { margin: 0, padding: 0, backgroundColor: 'transparent', fontSize: '0.75rem', lineHeight: '1.6' };
+const CODE_TAG_PROPS = { style: { backgroundColor: 'transparent' } };
+const LINE_NUMBER_STYLE: React.CSSProperties = {
+  minWidth: '2.5em', paddingRight: '1em', color: 'var(--color-text-tertiary)', userSelect: 'none', fontSize: '0.6875rem', opacity: 0.5,
+};
+
 export interface FileViewerProps {
   path: string;
   body: FileBody | null;
@@ -70,6 +78,8 @@ export interface FileViewerProps {
 /** The open file, rendered by whichever viewer its bytes belong to. */
 export function FileViewer(props: FileViewerProps): React.ReactElement {
   const { path, body, loading, error, isEditing = false, focus = NO_FOCUS } = props;
+  // Out of `focus` so the highlighter's line props follow the range alone, not every focus change.
+  const { lineRange } = focus;
   const { t } = useTranslation();
   const { theme } = useTheme();
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -79,11 +89,10 @@ export function FileViewer(props: FileViewerProps): React.ReactElement {
   // An image is cached as bytes, not as a blob URL: a URL minted into the
   // query cache has no owner left to revoke it, and the leak is the whole
   // image. Minted here instead, it dies with the view that showed it.
+  const imageBuffer = body?.mime === 'image' ? body.buffer : undefined;
   const imageUrl = useMemo(
-    () => (body?.mime === 'image' && body.buffer
-      ? URL.createObjectURL(new Blob([body.buffer], { type: imageMime(path) }))
-      : null),
-    [body?.mime, body?.buffer, path],
+    () => (imageBuffer ? URL.createObjectURL(new Blob([imageBuffer], { type: imageMime(path) })) : null),
+    [imageBuffer, path],
   );
   useEffect(() => () => { if (imageUrl) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
 
@@ -205,14 +214,13 @@ export function FileViewer(props: FileViewerProps): React.ReactElement {
         <SyntaxHighlighter
           language={EXT_TO_LANG[ext] || 'text'}
           style={theme === 'light' ? oneLight : oneDark}
-          customStyle={{ margin: 0, padding: 0, backgroundColor: 'transparent', fontSize: '0.75rem', lineHeight: '1.6' }}
-          codeTagProps={{ style: { backgroundColor: 'transparent' } }}
+          customStyle={CODE_STYLE}
+          codeTagProps={CODE_TAG_PROPS}
           showLineNumbers
-          lineNumberStyle={{ minWidth: '2.5em', paddingRight: '1em', color: 'var(--color-text-tertiary)', userSelect: 'none', fontSize: '0.6875rem', opacity: 0.5 }}
+          lineNumberStyle={LINE_NUMBER_STYLE}
           wrapLines
           lineProps={(lineNumber: number) => {
-            const range = focus.lineRange;
-            const focused = !!range && lineNumber >= range[0] && lineNumber <= range[1];
+            const focused = !!lineRange && lineNumber >= lineRange[0] && lineNumber <= lineRange[1];
             return { 'data-line': lineNumber, ...(focused ? { className: 'file-focus-line' } : {}) } as React.HTMLProps<HTMLElement>;
           }}
           wrapLongLines

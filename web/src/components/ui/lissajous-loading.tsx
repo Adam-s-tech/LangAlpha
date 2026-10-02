@@ -1,7 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-
-const SVG_NS = "http://www.w3.org/2000/svg";
 
 const PARTICLE_COUNT = 68;
 const TRAIL_SPAN = 0.34;
@@ -13,6 +11,10 @@ const AX = 3;
 const BY = 4;
 const PHASE = 1.57;
 const Y_SCALE = 0.92;
+/** The caller's opacity fade, which it sets as its `transitionDuration`. */
+export const FADE_MS = 200;
+// Outlasts that fade, so the dots never freeze while still seen.
+const SETTLE_MS = FADE_MS + 50;
 
 function normalizeProgress(p: number) {
   return ((p % 1) + 1) % 1;
@@ -32,73 +34,122 @@ function point(progress: number, detailScale: number) {
   };
 }
 
-interface LissajousLoadingProps {
-  className?: string;
+// Radius and opacity depend only on trail position, not time.
+const RADIUS: number[] = [];
+const ALPHA: number[] = [];
+for (let i = 0; i < PARTICLE_COUNT; i++) {
+  const fade = Math.pow(1 - i / (PARTICLE_COUNT - 1), 0.56);
+  RADIUS.push(0.9 + fade * 2.7);
+  ALPHA.push(0.04 + fade * 0.96);
 }
 
+interface LissajousLoadingProps {
+  className?: string;
+  /** False while the caller has faded the glyph out: the frame loop stops once
+   *  the fade has run, instead of redrawing a figure nobody can see. */
+  active?: boolean;
+}
+
+/**
+ * Drawn on a canvas rather than as 68 SVG circles: moving the circles cost a
+ * style recalc of the page every frame, which made the glyph more than twice
+ * as expensive to animate. It keeps `currentColor` semantics by reading the
+ * computed color when it starts and on every theme flip.
+ */
 export default function LissajousLoading({
   className,
+  active = true,
 }: LissajousLoadingProps) {
-  const groupRef = useRef<SVGGElement>(null);
-  const rafRef = useRef<number>(0);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const startRef = useRef<number>(0);
 
+  const [running, setRunning] = useState(active);
+  if (active && !running) setRunning(true);
   useEffect(() => {
-    const group = groupRef.current;
-    if (!group) return;
+    if (active || !running) return;
+    const id = setTimeout(() => setRunning(false), SETTLE_MS);
+    return () => clearTimeout(id);
+  }, [active, running]);
 
-    const particles: SVGCircleElement[] = [];
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const circle = document.createElementNS(SVG_NS, "circle");
-      circle.setAttribute("fill", "currentColor");
-
-      // Radius and opacity depend only on trail position (index), not time.
-      // Set once to avoid per-frame setAttribute overhead.
-      const fade = Math.pow(1 - i / (PARTICLE_COUNT - 1), 0.56);
-      circle.setAttribute("r", (0.9 + fade * 2.7).toFixed(2));
-      circle.setAttribute("opacity", (0.04 + fade * 0.96).toFixed(3));
-
-      group.appendChild(circle);
-      particles.push(circle);
-    }
-
+  useEffect(() => {
     startRef.current = performance.now();
+  }, []);
 
-    function render(now: number) {
+  // className is a dependency so a caller's new color class is read again.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = running ? canvas?.getContext("2d") : null;
+    if (!canvas || !ctx) return;
+
+    let color = getComputedStyle(canvas).color;
+    let cssWidth = 0;
+    let cssHeight = 0;
+
+    function draw(now: number) {
+      // Read per frame, not measured: moving the window to another display
+      // changes the ratio without resizing the box.
+      const dpr = window.devicePixelRatio || 1;
+      const width = Math.round(cssWidth * dpr);
+      const height = Math.round(cssHeight * dpr);
+      if (!width || !height) return;
+      if (canvas!.width !== width || canvas!.height !== height) {
+        canvas!.width = width;
+        canvas!.height = height;
+      }
+
       const time = now - startRef.current;
       const progress = (time % DURATION_MS) / DURATION_MS;
       const detailScale = getDetailScale(time);
 
+      ctx!.setTransform(width / 100, 0, 0, height / 100, 0, 0);
+      ctx!.clearRect(0, 0, 100, 100);
+      ctx!.fillStyle = color;
       for (let i = 0; i < PARTICLE_COUNT; i++) {
         const p = point(
           normalizeProgress(progress - (i / (PARTICLE_COUNT - 1)) * TRAIL_SPAN),
           detailScale,
         );
-        particles[i].setAttribute("cx", p.x.toFixed(2));
-        particles[i].setAttribute("cy", p.y.toFixed(2));
+        ctx!.globalAlpha = ALPHA[i];
+        ctx!.beginPath();
+        ctx!.arc(p.x, p.y, RADIUS[i], 0, Math.PI * 2);
+        ctx!.fill();
       }
-
-      rafRef.current = requestAnimationFrame(render);
     }
 
-    rafRef.current = requestAnimationFrame(render);
+    let raf = 0;
+    function frame(now: number) {
+      draw(now);
+      raf = requestAnimationFrame(frame);
+    }
+
+    // The first observation lands after layout and before paint, so a resumed
+    // figure is placed where the running clock says before it is seen, never
+    // shown frozen where it stopped.
+    const sizes = new ResizeObserver(([entry]) => {
+      cssWidth = entry.contentRect.width;
+      cssHeight = entry.contentRect.height;
+      draw(performance.now());
+    });
+    sizes.observe(canvas);
+    const themes = new MutationObserver(() => {
+      color = getComputedStyle(canvas).color;
+    });
+    themes.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme", "class"],
+    });
+    raf = requestAnimationFrame(frame);
 
     return () => {
-      cancelAnimationFrame(rafRef.current);
-      particles.forEach((c) => c.remove());
+      cancelAnimationFrame(raf);
+      sizes.disconnect();
+      themes.disconnect();
     };
-  }, []);
+  }, [running, className]);
 
   return (
     <div className={cn("relative", className)}>
-      <svg
-        viewBox="0 0 100 100"
-        fill="none"
-        className="w-full h-full overflow-visible"
-        aria-hidden="true"
-      >
-        <g ref={groupRef} />
-      </svg>
+      <canvas ref={canvasRef} className="w-full h-full" aria-hidden="true" />
     </div>
   );
 }

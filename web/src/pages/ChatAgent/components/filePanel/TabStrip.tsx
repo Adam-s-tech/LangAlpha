@@ -8,6 +8,8 @@ import { getCompletedRowTitle, getCompletedSummary, getToolIcon, isTaskTool } fr
 import { isOnLoan, type FileTab } from './useFileTabs';
 import { isToolCallFailed } from './toolCallFailure';
 import type { ToolCallProcessRecord } from '../ToolCallDetailView';
+import { countDedupedSources, type ProvenanceRecord } from '@/types/chat';
+import { useTranscriptReads, type TranscriptReader } from './useTranscript';
 import './TabStrip.css';
 
 interface TabStripProps {
@@ -20,10 +22,8 @@ interface TabStripProps {
   onNewTab: (() => void) | null;
   /** The file changed under this tab since it last read it: the amber dot. */
   hasChanged: (path: string) => boolean;
-  /** How many distinct sources a turn cites, as its pill counts them. */
-  sourceCount?: (messageId: string) => number;
-  /** The live record behind a tool tab, which names it the way its row is named. */
-  getToolCallProcess?: (toolCallId: string) => ToolCallProcessRecord | undefined;
+  /** What names a tool tab (its call's live record) and a sources tab (its turn's records). */
+  transcript?: TranscriptReader | null;
   treeOpen: boolean;
   /** Null where the panel is locked to one file and has no tree to show. */
   onToggleTree: (() => void) | null;
@@ -37,10 +37,13 @@ interface TabStripProps {
   backArrow?: boolean;
 }
 
-/** The transcript reads a tool or sources tab is named from; the tab itself holds only an id. */
-interface Lookups {
-  sourceCount?: (messageId: string) => number;
-  getToolCallProcess?: (toolCallId: string) => ToolCallProcessRecord | undefined;
+/** What a tool or sources tab is named from; the tab itself holds only an id. */
+type TabSource = ToolCallProcessRecord | Record<string, ProvenanceRecord> | undefined;
+
+function readTabSource(reader: TranscriptReader, tab: FileTab): TabSource {
+  if (tab.kind === 'tool') return reader.toolCall(tab.toolCallId);
+  if (tab.kind === 'sources') return reader.sources(tab.messageId);
+  return undefined;
 }
 
 /** A tool tab's summary past this is cut with an ellipsis; the hover card carries the whole of it. */
@@ -62,8 +65,8 @@ interface TabReading {
   failed?: boolean;
 }
 
-// The strip re-reads on every streamed chunk, but a call's record is replaced,
-// never edited, when the call changes, so a tool tab's reading is kept per record.
+// A call's record is replaced, never edited, when the call changes, so a tool
+// tab's reading is kept per record rather than worked out on every render.
 const toolReadings = new WeakMap<ToolCallProcessRecord, { t: TFunction; reading: TabReading }>();
 
 function readToolCall(proc: ToolCallProcessRecord, t: TFunction): TabReading {
@@ -81,7 +84,7 @@ function readToolCall(proc: ToolCallProcessRecord, t: TFunction): TabReading {
   };
 }
 
-function describe(tab: FileTab, t: TFunction, { sourceCount, getToolCallProcess }: Lookups): TabReading {
+function describe(tab: FileTab, t: TFunction, source: TabSource): TabReading {
   switch (tab.kind) {
     case 'empty':
       return { name: t('filePanel.openFile'), Glyph: FolderOpen, detail: null };
@@ -104,7 +107,7 @@ function describe(tab: FileTab, t: TFunction, { sourceCount, getToolCallProcess 
     case 'tool': {
       // Named the way its row is, so the tab is found by what was clicked. A
       // record the transcript no longer holds leaves the tab with a plain name.
-      const proc = getToolCallProcess?.(tab.toolCallId);
+      const proc = source as ToolCallProcessRecord | undefined;
       if (!proc) return { name: t('toolArtifact.toolCall'), Glyph: getToolIcon('', undefined), detail: null };
       const kept = toolReadings.get(proc);
       if (kept?.t === t) return kept.reading;
@@ -115,7 +118,7 @@ function describe(tab: FileTab, t: TFunction, { sourceCount, getToolCallProcess 
     case 'plan':
       return { name: t('filePanel.planTab'), Glyph: Zap, detail: null };
     case 'sources':
-      return { name: t('filePanel.sourcesTab', { count: sourceCount?.(tab.messageId) ?? 0 }), Glyph: BookOpen, detail: null };
+      return { name: t('filePanel.sourcesTab', { count: countDedupedSources(source as Record<string, ProvenanceRecord> | undefined) }), Glyph: BookOpen, detail: null };
   }
 }
 
@@ -134,8 +137,7 @@ export function TabStrip({
   onPin,
   onNewTab,
   hasChanged,
-  sourceCount,
-  getToolCallProcess,
+  transcript = null,
   treeOpen,
   onToggleTree,
   onOpenMemory = null,
@@ -145,6 +147,7 @@ export function TabStrip({
 }: TabStripProps): React.ReactElement {
   const { t } = useTranslation();
   const listRef = useRef<HTMLDivElement>(null);
+  const sources = useTranscriptReads(transcript, tabs, readTabSource);
 
   /**
    * A tab closed from the keyboard hands the focus to the tab that takes its
@@ -183,8 +186,8 @@ export function TabStrip({
     <div className="file-panel-header file-panel-tabstrip">
       <TooltipProvider delayDuration={350} skipDelayDuration={600}>
       <div className="file-panel-tabs clips-focus-ring" role="tablist" aria-label={t('filePanel.openFiles')} ref={listRef}>
-        {tabs.map((tab) => {
-          const { name, Glyph, detail, failed } = describe(tab, t, { sourceCount, getToolCallProcess });
+        {tabs.map((tab, i) => {
+          const { name, Glyph, detail, failed } = describe(tab, t, sources[i]);
           const hasHint = detail != null || tab.kind === 'file';
           const active = tab.id === activeId;
           const onLoan = isOnLoan(tab);

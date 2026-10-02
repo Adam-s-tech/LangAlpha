@@ -7,7 +7,7 @@
  * and the rejected one keeps its own reason.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 
 const api = vi.hoisted(() => ({ replayThreadHistory: vi.fn() }));
 
@@ -16,7 +16,6 @@ vi.mock('../../../utils/api', () => ({
 }));
 
 import { loadConversationHistory } from '../replayHistory';
-import type { MessageRecord } from '../../types';
 import { buildRuntime, makeDeps, replayOf } from './replayHarness';
 
 const ARGS = { acc_id: '12345678', code: 'US.AAPL', side: 'BUY', qty: '1' };
@@ -71,7 +70,7 @@ function mixedResume(runId?: string) {
   };
 }
 
-function allCards(messages: MessageRecord[]) {
+function allCards(messages: ChatMessage[]) {
   return Object.fromEntries(
     (messages.filter((m) => m.role === 'assistant') as unknown as AssistantMessage[])
       .flatMap((b) => Object.entries(b.toolApprovals || {})),

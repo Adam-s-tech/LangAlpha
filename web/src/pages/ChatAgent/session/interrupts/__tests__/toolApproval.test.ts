@@ -5,13 +5,13 @@
  * leave the plan branch for everything else it used to catch.
  */
 import { describe, it, expect, vi } from 'vitest';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 
 import { projectLiveInterrupt } from '../fromLiveEvent';
 import { projectHistoryInterrupt, type HistoryInterruptContext } from '../fromHistoryEvent';
 import { createApprovalEvidence } from '../claims';
 import type { StreamRuntime, HistoryRuntime } from '../../runtime';
-import type { MessageRecord, SSEEvent, StreamProcessorRefs, PairState } from '../../types';
+import type { SSEEvent, StreamProcessorRefs, PairState } from '../../types';
 
 type Ref<T> = { current: T };
 const ref = <T,>(current: T): Ref<T> => ({ current });
@@ -65,14 +65,14 @@ function planEvent(): SSEEvent {
   } as unknown as SSEEvent;
 }
 
-const bubble = (id: string): MessageRecord =>
-  ({ id, role: 'assistant', content: '', contentSegments: [] }) as unknown as MessageRecord;
+const bubble = (id: string): ChatMessage =>
+  ({ id, role: 'assistant', content: '', contentSegments: [] }) as unknown as ChatMessage;
 
 describe('live projection', () => {
-  function build(messages: MessageRecord[]) {
+  function build(messages: ChatMessage[]) {
     let current = messages;
     const rt = {
-      setMessages: ((updater: (prev: MessageRecord[]) => MessageRecord[]) => {
+      setMessages: ((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
         current = updater(current);
       }) as StreamRuntime['setMessages'],
       setPendingInterrupt: vi.fn(),
@@ -166,7 +166,7 @@ describe('live projection', () => {
           { ...card, status: id === ids[0] ? 'approved' : 'rejected', reason: null },
         ]),
       ),
-    })) as unknown as MessageRecord[];
+    })) as unknown as ChatMessage[];
 
     const second = build([...current, bubble('a-2')]);
     second.rt.renderedInterruptIdsRef.current.add(INTERRUPT_ID);
@@ -184,10 +184,10 @@ describe('live projection', () => {
 });
 
 describe('history projection', () => {
-  function build(messages: MessageRecord[]) {
+  function build(messages: ChatMessage[]) {
     let current = messages;
     const rt = {
-      setMessages: ((updater: (prev: MessageRecord[]) => MessageRecord[]) => {
+      setMessages: ((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
         current = updater(current);
       }) as HistoryRuntime['setMessages'],
       renderedInterruptIdsRef: ref(new Set<string>()),

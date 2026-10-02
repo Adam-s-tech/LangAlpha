@@ -1,7 +1,6 @@
 import React from 'react';
 import { motion } from '@/lib/framer';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { DispatchStatusProvider } from '../hooks/usePTCDispatchStatus';
 import { NotificationDivider } from './messageList/NotificationDivider';
 import { MessageBubble } from './messageList/MessageBubble';
 import { TurnFold } from './messageList/TurnFold';
@@ -9,6 +8,8 @@ import { projectMessageContent } from './messageList/contentProjection';
 import { useMessageActions } from './messageList/MessageActionsContext';
 import { isSteeringUserMessage } from './messageList/messagePredicates';
 import { computeTurnTails, projectTurns, visibleProjection } from './messageList/turnProjection';
+import { useLiveMessages, type LiveMessages } from '../session/stream/liveMessages';
+import type { ChatMessage } from '@/types/chat';
 import { turnFilesByTurn } from '../utils/turnFiles';
 import type { FeedbackResult, FoldState, MessageRecord } from './messageList/types';
 
@@ -240,13 +241,12 @@ function MessageList({ messages, isLoading, isLoadingHistory, isSubagentView, re
     );
   }
 
-  // Render message list. One DispatchStatusProvider for the whole list so every
-  // PTCAgentCard in the turn shares a single batched dispatch-liveness query +
-  // timer instead of each card polling /status on its own.
+  // The host renders DispatchStatusProvider above the list, so every
+  // PTCAgentCard in it shares one batched dispatch-liveness query and timer.
+  // Here it re-rendered, and re-ran its query hook, on every streamed frame.
+  // sibling-space-y, not space-y: NotificationDivider's own my-1 would
+  // otherwise replace the gap below it.
   return (
-    <DispatchStatusProvider>
-    {/* sibling-space-y, not space-y: NotificationDivider's own my-1 would
-        otherwise replace the gap below it. */}
     <div className={`font-content ${isMobile ? 'sibling-space-y-4' : 'sibling-space-y-6'}`}>
       {visible.map(({ message, turnIndex }, i) => {
         if ((message.role as string) === 'notification') {
@@ -315,8 +315,17 @@ function MessageList({ messages, isLoading, isLoadingHistory, isSubagentView, re
         );
       })}
     </div>
-    </DispatchStatusProvider>
   );
+}
+
+/**
+ * The list as of the latest streamed chunk. A component of its own so that a
+ * chunk renders the list and not the view that placed it.
+ */
+export function LiveMessageList({ store, ...props }: Omit<MessageListProps, 'messages'> & { store: LiveMessages<ChatMessage[]> }) {
+  const messages = useLiveMessages(store);
+  // The session types its messages; the list reads them as records.
+  return <MessageList messages={messages} {...props} />;
 }
 
 export default MessageList;

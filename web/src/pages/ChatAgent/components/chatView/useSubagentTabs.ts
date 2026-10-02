@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useStableHandler } from '@/hooks/useStableHandler';
+import { useLatestRef } from '@/hooks/useLatestRef';
 import { useStableArray } from '@/hooks/useStableArray';
 import { countToolCalls } from '../../session/subagents/subagentMetrics';
 import {
@@ -31,6 +32,7 @@ import type { AgentInfo, SubagentInfo, SubagentMessage, SubagentUpdateData } fro
 
 type CardStateAPI = ReturnType<typeof useCardState>;
 type ChatMessagesAPI = ReturnType<typeof useChatMessages>;
+type HistoryView = NonNullable<ReturnType<ChatMessagesAPI['getSubagentHistory']>>;
 
 /** Subagent tab registry (carved out of ChatView, 5.9c): the sidebar agents
  * list, active-tab switching with URL sync, card refresh/hydration on open,
@@ -253,10 +255,15 @@ export function useSubagentTabs({
   // Ensures status/currentTool are accurate regardless of stale streaming data.
   // agentId: stable agent_id (already resolved from toolCallId if needed)
   // overrides: optional { description, type, status } from inline card click
-  const refreshSubagentCard = useCallback((agentId: string, overrides: Partial<SubagentInfo> = {}) => {
+  // landedHistory: an entry that landed after this render's history snapshot
+  const refreshSubagentCard = useCallback((
+    agentId: string,
+    overrides: Partial<SubagentInfo> = {},
+    landedHistory?: HistoryView,
+  ) => {
     if (!updateSubagentCard || !agentId) return;
 
-    const history = getSubagentHistory ? getSubagentHistory(agentId) : null;
+    const history = landedHistory ?? (getSubagentHistory ? getSubagentHistory(agentId) : null);
     // Preserve existing card description/type. Priority:
     // 1. History description (most authoritative — from replay)
     // 2. Existing card description (set during spawn — must not be overwritten
@@ -377,7 +384,10 @@ export function useSubagentTabs({
   // Lazy transcript hydration for tasks replay never projects as lanes
   // (workflow children have no Task-tool launch artifact in the main
   // transcript): fetch the checkpoint transcript on demand, then re-refresh
-  // the card so the landed history entry populates it.
+  // the card with the landed entry. The refresh goes through the latest
+  // commit's closure, since the cards may have moved during the fetch, and
+  // takes the entry explicitly, since no render has published it yet.
+  const refreshSubagentCardRef = useLatestRef(refreshSubagentCard);
   const hydrateTranscriptThenRefresh = useCallback(
     (agentId: string, overrides: Partial<SubagentInfo> = {}) => {
       if (!hydrateTaskTranscript) return;
@@ -388,10 +398,10 @@ export function useSubagentTabs({
         type: overrides.type,
         status: overrides.status,
       }).then((landed) => {
-        if (landed) refreshSubagentCard(agentId, overrides);
+        if (landed) refreshSubagentCardRef.current(agentId, overrides, landed);
       });
     },
-    [hydrateTaskTranscript, getSubagentHistory, refreshSubagentCard],
+    [hydrateTaskTranscript, getSubagentHistory, refreshSubagentCardRef],
   );
 
   // Handle sidebar agent selection — refresh card data, then switch tab.

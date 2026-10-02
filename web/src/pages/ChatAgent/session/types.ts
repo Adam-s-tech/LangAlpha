@@ -9,15 +9,12 @@ import type { ChatMessage } from '@/types/chat';
 import type { ActionRequest, ToolCallData } from '@/types/sse';
 import type { SubagentTokenUsage } from '../utils/tokenUsage';
 import type { DecisionTarget } from './interrupts/toolApprovalCard';
-import type { StreamRefs } from './streamRefs';
+import type { StreamRefs, UpdateSubagentCard } from './streamRefs';
 
 // --- Internal types for useChatMessages ---
 
-/** Message record — now properly typed as ChatMessage. */
-type MessageRecord = ChatMessage;
-
 /** React state setter for messages array. */
-type SetMessages = React.Dispatch<React.SetStateAction<MessageRecord[]>>;
+type SetMessages = React.Dispatch<React.SetStateAction<ChatMessage[]>>;
 
 /** Token usage state for context window progress ring. */
 interface TokenUsage {
@@ -165,7 +162,7 @@ interface ContextWindowCallbacks {
   offloadBatch: React.MutableRefObject<OffloadBatch>;
 }
 
-/** Subagent history entry stored in subagentHistoryRef. */
+/** Subagent history entry, one per task in the history snapshot (`subagents/historyStore.ts`). */
 interface SubagentHistoryEntry {
   taskId: string;
   description: string;
@@ -235,6 +232,9 @@ interface SubagentHistoryData {
   error?: string;
   /** The reason's machine spelling (``credit_stop``, ``transport_lost``, …). */
   errorType?: string;
+  /** Owning workflow run's agent id, for a workflow child whose owner is
+   *  known from elsewhere: its own transcript never names it. */
+  ownerTaskId?: string;
   /** Build-time stamp: start (epoch ms) of the newest run whose transcript
    *  the projection actually claimed — NOT the ledger's latest run, which
    *  can still be executing and deliberately excluded from the payload. */
@@ -245,7 +245,7 @@ interface SubagentHistoryData {
  *  the handler-facing bag plus the fields only the main stream carries. */
 interface StreamProcessorRefs extends StreamRefs {
   steeringAtOrderRef?: { current: number | null };
-  updateSubagentCard?: ((agentId: string, data: Record<string, unknown>) => void);
+  updateSubagentCard?: UpdateSubagentCard;
   unresolvedHistoryInterruptRef?: React.MutableRefObject<HistoryInterruptInfo[]>;
 }
 
@@ -261,7 +261,7 @@ interface PairState {
 
 
 export type {
-  MessageRecord, SetMessages, TokenUsage, PendingInterrupt, PendingRejection,
+  SetMessages, TokenUsage, PendingInterrupt, PendingRejection,
   SSEEvent, ModelOptions, OffloadBatch, ContextWindowCallbacks,
   SubagentHistoryEntry, TaskRefs, HistoryInterruptInfo, SubagentHistoryData,
   StreamProcessorRefs, PairState,

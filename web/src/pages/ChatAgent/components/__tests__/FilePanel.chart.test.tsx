@@ -51,6 +51,7 @@ vi.mock('@/pages/MarketView/components/MarketChartSurface', () => ({
 }));
 
 import FilePanel from '@/pages/ChatAgent/components/FilePanel';
+import { createTranscriptStore } from '@/pages/ChatAgent/components/filePanel/transcriptStore';
 import { lastChartStorageKey, tabsStorageKey } from '@/pages/ChatAgent/components/filePanel/useFileTabs';
 import { userLocalStorage } from '@/lib/userStorage';
 
@@ -286,7 +287,7 @@ describe('FilePanel chart tabs', () => {
 
 describe('FilePanel tool tabs', () => {
   it('says the call is gone when its record has left the chat', async () => {
-    renderWithProviders(panel({ target: { kind: 'tool', toolCallId: 'call-1', seq: 1 }, getToolCallProcess: () => undefined }));
+    renderWithProviders(panel({ target: { kind: 'tool', toolCallId: 'call-1', seq: 1 }, transcript: createTranscriptStore({ messages: [] }).reader }));
     expect(await screen.findByText(/This tool call is no longer in the chat/)).toBeTruthy();
   });
 });

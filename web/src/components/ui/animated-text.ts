@@ -1,14 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { animate, type AnimationPlaybackControls } from '@/lib/framer';
+import { isPageUnseen } from '@/lib/pageVisibility';
 
 interface UseAnimatedTextOptions {
   enabled?: boolean;
 }
 
 // Text that lands in one update by more than CATCH_UP_CHARS is not a token
-// stream (a reconnect replay applied in one pass), and text that arrives while
-// the tab is hidden is not being watched; both show at once with only the last
-// LIVE_TAIL_CHARS left to type.
+// stream (a reconnect replay applied in one pass): it shows at once with only
+// the last LIVE_TAIL_CHARS left to type.
 const CATCH_UP_CHARS = 600;
 const LIVE_TAIL_CHARS = 320;
 
@@ -79,6 +79,9 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
   // between, then jump to full height as a layout shift.
   const [displayText, setDisplayText] = useState(text);
   const cursorRef = useRef(text.length); // characters revealed so far
+  // Where the reveal has reached before the word hold: it runs ahead of the
+  // cursor while it types through a word the hold keeps off screen.
+  const posRef = useRef(text.length);
   const targetRef = useRef(text);        // latest full text
   const animatingRef = useRef(false);
   const controlsRef = useRef<AnimationPlaybackControls | null>(null);
@@ -112,8 +115,14 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
     a.cps += (inst - a.cps) * k;
   }, []);
 
-  const startChain = useCallback(() => {
-    const from = cursorRef.current;
+  const startChain = useCallback(function startChain() {
+    // Resume from where the reveal reached, not from what the hold let on
+    // screen. Every update restarts the chain, so restarting at the held
+    // cursor threw away the progress into the word being held: once text
+    // arrived every frame, a word longer than one frame's progress (any
+    // link past MAX_WORD_CHARS) stayed hidden until the stream ended.
+    const shown = cursorRef.current;
+    const from = Math.max(posRef.current, shown);
     const target = targetRef.current;
     const to = finishingRef.current ? target.length : wordStart(target, target.length);
 
@@ -124,6 +133,11 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
 
     animatingRef.current = true;
     const chain = ++chainRef.current;
+    // A finished chain writes nothing more. With its animations skipped (a
+    // hidden tab, see lib/framer) framer completes at once but applies the
+    // final value on its next frame, after the completion: that late update
+    // cut a reply that ended while hidden back to its last word's start.
+    let done = false;
 
     const segment = target.slice(from, to);
     const wordCount = segment.split(/\s+/).filter(Boolean).length || 1;
@@ -143,10 +157,11 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
       duration,
       ease: 'linear',
       onUpdate(latest) {
-        if (chain !== chainRef.current) return;
-        // Never behind `from`: a cursor that already sits inside a word
-        // (mounted mid-stream) holds there rather than retracting the stub.
-        const idx = Math.max(from, wordStart(target, Math.round(latest)));
+        if (done || chain !== chainRef.current) return;
+        posRef.current = latest;
+        // Never behind what is shown: a cursor that already sits inside a
+        // word (mounted mid-stream) holds there rather than retracting the stub.
+        const idx = Math.max(shown, wordStart(target, Math.round(latest)));
         cursorRef.current = idx;
         const now = Date.now();
         if (now - lastUpdateTimeRef.current < 32) return;
@@ -155,7 +170,9 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
       },
       onComplete() {
         if (chain !== chainRef.current) return;
+        done = true;
         cursorRef.current = to;
+        posRef.current = to;
         setDisplayText(target.slice(0, to));
 
         // Check if more text arrived while we were animating
@@ -169,7 +186,33 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
     });
   }, []);
 
+  // Text that arrives unseen (a hidden page, or what one held back and applies
+  // on its return, see lib/pageVisibility) was never watched arriving: it is on
+  // screen at once, up to the word the hold keeps, and the effect below finds
+  // nothing left to type. A layout effect, because the return applies in a
+  // synchronous commit and only an update from here renders before the first
+  // frame back paints.
+  useLayoutEffect(() => {
+    if (!mountedRef.current || !isPageUnseen()) return;
+    const prev = targetRef.current;
+    const continues = text.startsWith(prev.slice(0, cursorRef.current));
+    const delta = text.length - prev.length;
+    stopChain();
+    if (!continues) arrivalRef.current = { at: 0, cps: 0 };
+    else if (delta <= CATCH_UP_CHARS) noteArrival(delta);
+    targetRef.current = text;
+    finishingRef.current = false;
+    const end = enabled ? wordStart(text, text.length) : text.length;
+    cursorRef.current = continues ? Math.max(cursorRef.current, end) : end;
+    posRef.current = cursorRef.current;
+    setDisplayText(text.slice(0, cursorRef.current));
+  }, [text, enabled, stopChain, noteArrival]);
+
   useEffect(() => {
+    // If the stretch the reveal ran through changed, resume from the screen.
+    if (!text.startsWith(targetRef.current.slice(0, posRef.current))) {
+      posRef.current = cursorRef.current;
+    }
     if (!enabled) {
       const behind = mountedRef.current && cursorRef.current > 0 && text.startsWith(targetRef.current.slice(0, cursorRef.current))
         ? text.length - cursorRef.current
@@ -187,6 +230,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
       }
       setDisplayText(text);
       cursorRef.current = text.length;
+      posRef.current = text.length;
       return;
     }
 
@@ -198,6 +242,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
       mountedRef.current = true;
       setDisplayText(text);
       cursorRef.current = text.length;
+      posRef.current = text.length;
       targetRef.current = text;
       return;
     }
@@ -205,6 +250,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
     if (!text) {
       setDisplayText('');
       cursorRef.current = 0;
+      posRef.current = 0;
       targetRef.current = '';
       return;
     }
@@ -213,6 +259,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
     if (!text.startsWith(targetRef.current.slice(0, cursorRef.current))) {
       stopChain();
       cursorRef.current = 0;
+      posRef.current = 0;
       arrivalRef.current = { at: 0, cps: 0 };
     }
 
@@ -222,11 +269,12 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
     if (!arrivedAtOnce) noteArrival(delta);
     finishingRef.current = false;
 
-    if ((arrivedAtOnce || document.hidden) && text.length - cursorRef.current > CATCH_UP_CHARS) {
+    if (arrivedAtOnce && text.length - cursorRef.current > CATCH_UP_CHARS) {
       stopChain();
       // Never behind what is already on screen: the boundary can sit before
       // the cursor when the snap point falls inside the run it was typing.
       cursorRef.current = Math.max(cursorRef.current, wordStart(text, text.length - LIVE_TAIL_CHARS));
+      posRef.current = Math.max(posRef.current, cursorRef.current);
       setDisplayText(text.slice(0, cursorRef.current));
     }
 
@@ -241,8 +289,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
     return () => {
       stopChain();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text, enabled]);
+  }, [text, enabled, stopChain, startChain, noteArrival]);
 
   // Decided during render, not in the effect: the render that turns `enabled`
   // off runs before the effect, and returning the full text there would flash

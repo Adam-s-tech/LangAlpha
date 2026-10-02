@@ -1,6 +1,5 @@
 import {
   createContext,
-  createElement,
   useCallback,
   useContext,
   useEffect,
@@ -199,7 +198,9 @@ export function DispatchStatusProvider({ children }: { children: ReactNode }) {
     [register, unregister, slices],
   );
 
-  return createElement(DispatchStatusContext, { value }, children);
+  // JSX, not createElement: the compiler reads a plain call that is handed
+  // the ref-backed callbacks as a ref read in render, and skips the provider.
+  return <DispatchStatusContext value={value}>{children}</DispatchStatusContext>;
 }
 
 /** Lifecycle-store status → card status; null while the store has nothing

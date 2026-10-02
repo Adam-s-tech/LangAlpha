@@ -6,20 +6,21 @@
 import { vi } from 'vitest';
 
 import type { HistoryRuntime } from '../../runtime';
-import type { HistoryInterruptInfo, MessageRecord } from '../../types';
+import type { HistoryInterruptInfo } from '../../types';
+import { createSubagentHistoryStore } from '../../subagents/historyStore';
+import type { ChatMessage } from '@/types/chat';
 
 type Ref<T> = { current: T };
 const ref = <T,>(current: T): Ref<T> => ({ current });
 
 export function buildRuntime() {
-  let messages: MessageRecord[] = [];
+  let messages: ChatMessage[] = [];
   const rt = {
     workspaceId: 'ws-1',
     threadId: 'thread-1',
-    get messages() { return messages; },
     t: (key: string) => key,
     updateTodoListCard: null,
-    setMessages: ((updater: (prev: MessageRecord[]) => MessageRecord[]) => {
+    setMessages: ((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
       messages = updater(messages);
     }) as HistoryRuntime['setMessages'],
     setIsLoadingHistory: vi.fn(),
@@ -42,7 +43,7 @@ export function buildRuntime() {
     currentMessageRef: ref<string | null>(null),
     lastEventIdRef: ref<number | string | null>(null),
     renderedInterruptIdsRef: ref(new Set<string>()),
-    toolCallIdToTaskIdMapRef: ref(new Map<string, string>()),
+    subagentHistory: createSubagentHistoryStore(),
     recentlySentTrackerRef: ref({ isRecentlySent: () => false }),
     offloadBatchRef: ref(null),
   } as unknown as HistoryRuntime;

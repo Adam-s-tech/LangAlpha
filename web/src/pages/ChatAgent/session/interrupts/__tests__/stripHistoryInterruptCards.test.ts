@@ -8,14 +8,13 @@
  * standing beside the redelivered one.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 
 const api = vi.hoisted(() => ({ replayThreadHistory: vi.fn() }));
 vi.mock('../../../utils/api', () => ({ replayThreadHistory: api.replayThreadHistory }));
 
 import { loadConversationHistory } from '../../history/replayHistory';
 import { stripHistoryInterruptCards } from '../buckets';
-import type { MessageRecord } from '../../types';
 import { buildRuntime, makeDeps, replayOf } from '../../history/__tests__/replayHarness';
 
 const ARGS = { acc_id: '12345678', code: 'US.AAPL', side: 'BUY', qty: '1' };
@@ -44,12 +43,12 @@ const RE_RAISED_THREAD = [
   },
 ];
 
-function approvalSegments(messages: MessageRecord[]) {
+function approvalSegments(messages: ChatMessage[]) {
   return (messages.filter((m) => m.role === 'assistant') as unknown as AssistantMessage[])
     .flatMap((b) => (b.contentSegments || []).filter((sg) => sg.type === 'tool_approval'));
 }
 
-function approvalCards(messages: MessageRecord[]) {
+function approvalCards(messages: ChatMessage[]) {
   return (messages.filter((m) => m.role === 'assistant') as unknown as AssistantMessage[])
     .flatMap((b) => Object.keys(b.toolApprovals || {}));
 }
@@ -74,7 +73,7 @@ describe('reconnect strip of replayed interrupt cards', () => {
   });
 
   it('strips by card id, and leaves cards no entry names', async () => {
-    const messages: MessageRecord[] = [
+    const messages: ChatMessage[] = [
       {
         id: 'bubble-1',
         role: 'assistant',
@@ -87,7 +86,7 @@ describe('reconnect strip of replayed interrupt cards', () => {
           'int-1#0': { status: 'pending' },
           'int-2': { status: 'pending' },
         },
-      } as unknown as MessageRecord,
+      } as unknown as ChatMessage,
     ];
 
     const stripped = stripHistoryInterruptCards(messages, [

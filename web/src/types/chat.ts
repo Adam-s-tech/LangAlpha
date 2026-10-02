@@ -18,12 +18,22 @@ export interface ReasoningSegment {
   order: number;
 }
 
+/** Where each chunk of a streamed text segment ended, newest first. Immutable,
+ *  so extending a segment by a chunk is O(1) (see `session/stream/textChunks`). */
+export interface TextChunkMark {
+  readonly order: number;
+  readonly end: number;
+  readonly prev: TextChunkMark | null;
+}
+
 export interface TextSegment {
   type: 'text';
   content: string;
   order: number;
   /** OpenAI Responses text-block phase, carried through but not yet rendered. */
   phase?: 'commentary' | 'final_answer';
+  /** Set on text that arrived live: one segment holds a run of chunks. */
+  chunks?: TextChunkMark;
 }
 
 export interface ToolCallSegment {
@@ -418,7 +428,7 @@ export interface CreditPauseState {
 
 // --- Chat Messages ---
 
-export interface UserMessage {
+export type UserMessage = {
   id: string;
   role: 'user';
   content: string;
@@ -450,9 +460,9 @@ export interface UserMessage {
    * and dropped if the user stops the compaction.
    */
   queued?: boolean;
-}
+};
 
-export interface AssistantMessage {
+export type AssistantMessage = {
   id: string;
   role: 'assistant';
   content: string;
@@ -493,11 +503,11 @@ export interface AssistantMessage {
   /** Local observation of completion, stop, or failure. Not set on transport
    * loss or a paused turn; replay's completedAt takes precedence. */
   completionObservedAt?: number;
-}
+};
 
 export type NotificationVariant = 'info' | 'success' | 'warning';
 
-export interface NotificationMessage {
+export type NotificationMessage = {
   id: string;
   role: 'notification';
   content: string;
@@ -507,7 +517,7 @@ export interface NotificationMessage {
    *  notification's expand toggle. */
   detail?: string;
   isHistory?: boolean;
-}
+};
 
 export type ChatMessage = UserMessage | AssistantMessage | NotificationMessage;
 

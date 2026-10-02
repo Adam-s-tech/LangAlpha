@@ -8,6 +8,10 @@ import type { MessageRecord } from '../hooks/utils/types';
 /** Callback to update a subagent card by task ID. */
 type UpdateSubagentCard = (taskId: string, patch: Record<string, unknown>) => void;
 
+/** The card state's own updater, which can also hold a patch for the next
+ *  frame, as a streamed chunk is (useCardState). */
+type CardUpdater = (taskId: string, patch: Record<string, unknown>, options?: { nextFrame?: boolean }) => void;
+
 /** Per-task ref state created by getOrCreateTaskRefs. */
 interface TaskRefs {
   contentOrderCounterRef: { current: number };
@@ -70,4 +74,4 @@ export function getOrCreateTaskRefs(refs: StreamRefs, taskId: string): TaskRefs 
   return subagentStateRefs[taskId];
 }
 
-export type { TaskRefs, StreamRefs, ToolCallChunkRecord, UpdateSubagentCard };
+export type { TaskRefs, StreamRefs, ToolCallChunkRecord, UpdateSubagentCard, CardUpdater };

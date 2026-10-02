@@ -7,7 +7,7 @@
 import { finalizeAssistantMessage } from './finalizeMessage';
 import { isUpstreamHint, type StructuredError } from '@/utils/rateLimitError';
 import { applyAnnotationArtifact } from '@/pages/MarketView/stores/chartAnnotationStore';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 import { CREDIT_STOP_ERROR_TYPE } from '@/types/sse';
 import { setStoredThreadId } from '../../hooks/utils/threadStorage';
 import { createAssistantMessage, appendMessage, updateMessage } from '../../hooks/utils/messageHelpers';
@@ -15,7 +15,7 @@ import type { HtmlWidgetData } from '../../hooks/utils/types';
 import {
   ZERO_USAGE, extractTokenUsageDelta, accumulateTokenUsage,
 } from '../../utils/tokenUsage';
-import { computeSteeringBoundary, shouldSkipSteeringRollback } from './steeringRollback';
+import { computeSteeringBoundary, keepSegmentsThrough, shouldSkipSteeringRollback } from './steeringRollback';
 import {
   buildModelFallbackSegment, appendNotificationSegmentOnce,
   isOnboardingRelatedToolSuccess, mapToolCallIdToAgentId,
@@ -31,10 +31,10 @@ import {
   handleSubagentToolCalls, handleSubagentToolCallResult, handleTaskSteeringAccepted,
   handleWorkflowLifecycle,
 } from '../subagents/liveEventHandlers';
-import { getOrCreateTaskRefs } from '../streamRefs';
+import { getOrCreateTaskRefs, type UpdateSubagentCard } from '../streamRefs';
 import { handleMarketWatchUpdate, type MarketWatchState } from '../marketWatchEvents';
 import type {
-  MessageRecord, SSEEvent, HistoryInterruptInfo, StreamProcessorRefs, ModelOptions, ModelStatus,
+  SSEEvent, HistoryInterruptInfo, StreamProcessorRefs, ModelOptions, ModelStatus,
 } from '../types';
 import { PROPOSAL_INTERRUPT_TYPES, PROPOSAL_DATA_KEY_MAP } from '../interrupts/buckets';
 import { projectLiveInterrupt } from '../interrupts/fromLiveEvent';
@@ -72,7 +72,15 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
   const setMessagesForHandlers = rt.setMessages as unknown as (
     updater: (prev: Record<string, unknown>[]) => Record<string, unknown>[]
   ) => void;
-  const queueMessagesForHandlers = rt.queueMessages as unknown as typeof setMessagesForHandlers;
+  const queueMessages = rt.queueMessages as unknown as typeof setMessagesForHandlers;
+  // A streamed chunk waits for the next frame. A reconnect's backlog skips the
+  // wait: it replays in one task, so the reconnected turn appears in a single
+  // render, already typed. Read per call: the bag goes live once the backlog
+  // is applied, and a mux frame can flip it for its own dispatch.
+  const queueMessagesForHandlers: typeof setMessagesForHandlers = (update) =>
+    refs.isReconnect ? setMessagesForHandlers(update) : queueMessages(update);
+  const queueCardForHandlers: UpdateSubagentCard = (taskId, patch) =>
+    rt.updateSubagentCard?.(taskId, patch, { nextFrame: !refs.isReconnect });
   // Snapshot of the old assistant message's content order at the time the user
   // sent a steering message.  Used to roll back any content that leaked into the
   // old bubble due to stream-mode multiplexing (custom events can arrive after
@@ -81,7 +89,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
 
   // FIFO queue for matching Task tool call IDs to artifact 'spawned' events.
   // Populated by the tool_calls handler, drained by the artifact/spawned handler.
-  // This ensures toolCallIdToTaskIdMapRef is populated before tool_call_result.
+  // This ensures the tool-call index is populated before tool_call_result.
   const pendingTaskToolCallIds: string[] = [];
 
   // Append a notification segment to a task card's latest assistant message
@@ -256,10 +264,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
 
           // Keep only segments at or before the steering point. Guard
           // already proved boundary is a positive finite number.
-          const boundary = effectiveSteeringAtOrder as number;
-          const keptSegments = (aMsg.contentSegments || []).filter(
-            (s) => s.order <= boundary
-          );
+          const keptSegments = keepSegmentsThrough(aMsg.contentSegments || [], effectiveSteeringAtOrder as number);
 
           // Rebuild plain-text content from kept text segments
           const keptContent = keptSegments
@@ -328,7 +333,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
         // Reconnect path: create user bubbles from event payload
         const steeringMsgs = (event.messages || []).filter((qMsg) => qMsg.content);
         if (steeringMsgs.length === 0) return prev;
-        const newUserMessages: MessageRecord[] = steeringMsgs.map((qMsg) => ({
+        const newUserMessages: ChatMessage[] = steeringMsgs.map((qMsg) => ({
           id: `steering-user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           role: 'user' as const,
           content: qMsg.content as string,
@@ -509,7 +514,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
             finishReason: event.finish_reason,
             elapsedMs: typeof event.elapsed_ms === 'number' ? event.elapsed_ms : undefined,
             refs,
-            updateSubagentCard: rt.updateSubagentCard,
+            updateSubagentCard: queueCardForHandlers,
           });
         } else if (eventType === 'tool_call_chunks') {
           handleSubagentToolCallChunks({
@@ -517,7 +522,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
             assistantMessageId: subagentAssistantMessageId,
             chunks: (event.tool_call_chunks || []) as unknown as Record<string, unknown>[],
             refs,
-            updateSubagentCard: rt.updateSubagentCard,
+            updateSubagentCard: queueCardForHandlers,
           });
         } else if (eventType === 'tool_calls') {
           handleSubagentToolCalls({
@@ -635,9 +640,6 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
       deps.clearModelStatus();
       const contentType = event.content_type || 'text';
       const eventId = event._eventId as number | undefined;
-      // A replayed backlog skips the queue: it is applied in one synchronous
-      // pass so the reconnected turn appears in a single render, already typed.
-      const chunkSetter = refs.isReconnect ? setMessagesForHandlers : queueMessagesForHandlers;
 
       // Handle reasoning_signal events
       if (contentType === 'reasoning_signal') {
@@ -660,7 +662,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
           assistantMessageId,
           content: event.content as string,
           refs,
-          setMessages: chunkSetter,
+          setMessages: queueMessagesForHandlers,
         })) {
           return;
         }
@@ -673,7 +675,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
           content: event.content as string,
           finishReason: event.finish_reason,
           refs,
-          setMessages: chunkSetter,
+          setMessages: queueMessagesForHandlers,
           eventId,
           phase: event.phase,
         })) {
@@ -755,7 +757,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
       handleToolCallChunks({
         assistantMessageId,
         chunks: (event.tool_call_chunks || []) as unknown as Record<string, unknown>[],
-        setMessages: refs.isReconnect ? setMessagesForHandlers : queueMessagesForHandlers,
+        setMessages: queueMessagesForHandlers,
       });
       return;
     } else if (eventType === 'artifact') {
@@ -809,7 +811,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
             agentId,
             action,
             pendingTaskToolCallIds,
-            rt.toolCallIdToTaskIdMapRef.current,
+            rt.subagentHistory.toolCalls,
           );
           pendingTaskToolCallIds.length = 0;
           pendingTaskToolCallIds.push(...updated);
@@ -859,17 +861,14 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
           // one alone is undone by the other. The ledger agrees on the next
           // reload, where the task's latest run is the resumed one and carries
           // no failure at all.
-          const resumedEntry = rt.subagentHistoryRef.current?.[agentId];
-          if (resumedEntry) {
-            resumedEntry.error = undefined;
-            resumedEntry.errorType = undefined;
-          }
+          rt.subagentHistory.patchEntry(agentId, { error: undefined, errorType: undefined });
           if (rt.updateSubagentCard) {
             // Prefer preserving the original spawn description (already on the card).
             // But after reconnect the card may have been wiped + recreated without a
-            // description, so fall back to subagentHistoryRef as a safety net.
-            const historyDesc = rt.subagentHistoryRef.current?.[agentId]?.description;
-            const historyPrompt = rt.subagentHistoryRef.current?.[agentId]?.prompt;
+            // description, so fall back to the history entry as a safety net.
+            const historyEntry = rt.subagentHistory.get().entries[agentId];
+            const historyDesc = historyEntry?.description;
+            const historyPrompt = historyEntry?.prompt;
             rt.updateSubagentCard(agentId, {
               agentId,
               displayId: `Task-${task_id}`,
@@ -981,7 +980,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
       // Build toolCallId → agentId mapping from Task tool artifact
       if (event.artifact?.task_id && toolCallId) {
         const agentId = `task:${event.artifact.task_id}`;
-        rt.toolCallIdToTaskIdMapRef.current.set(toolCallId, agentId);
+        rt.subagentHistory.toolCalls.set(toolCallId, agentId);
       }
 
       handleToolCallResult({

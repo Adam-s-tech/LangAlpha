@@ -16,7 +16,7 @@
  * turn is still running, which is what a missing `run_id` says.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 
 const api = vi.hoisted(() => ({ replayThreadHistory: vi.fn() }));
 
@@ -25,7 +25,6 @@ vi.mock('../../../utils/api', () => ({
 }));
 
 import { loadConversationHistory } from '../replayHistory';
-import type { MessageRecord } from '../../types';
 import { buildRuntime, makeDeps, replayOf } from './replayHarness';
 
 const OPENING_TURN = {
@@ -62,7 +61,7 @@ async function replayTailInterrupt(
   return { rt, read };
 }
 
-function cardOn(messages: MessageRecord[], bucket: string) {
+function cardOn(messages: ChatMessage[], bucket: string) {
   const bubble = messages.find((m) => m.id === 'history-assistant-0') as unknown as AssistantMessage;
   return (bubble as unknown as Record<string, Record<string, Record<string, unknown>>>)?.[bucket]?.['int-1'];
 }

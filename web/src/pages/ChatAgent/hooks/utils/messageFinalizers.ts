@@ -7,7 +7,7 @@
 import type { ChatMessage, AssistantMessage, NotificationSegment } from '@/types/chat';
 import type { TodoItem } from '@/types/sse';
 import { INTERRUPT_CARD_BUCKETS } from '../../session/interrupts/buckets';
-import type { MessageRecord } from '../../session/types';
+import type { ToolCallAgentIndex } from '../../session/subagents/historyStore';
 
 /** Collects the interrupt_ids of every HITL card rendered on the given messages. */
 function collectRenderedInterruptIds(messages: ChatMessage[]): Set<string> {
@@ -107,9 +107,9 @@ function isOnboardingRelatedToolSuccess(resultContent: unknown): boolean {
  * @param targetMessageId - If provided, only finalize the specific message; otherwise finalize all
  */
 export function finalizeTodoListProcessesInMessages(
-  messages: MessageRecord[],
+  messages: ChatMessage[],
   targetMessageId?: string
-): MessageRecord[] {
+): ChatMessage[] {
   let anyChanged = false;
   const updated = messages.map((m) => {
     if (m.role !== 'assistant') return m;
@@ -156,7 +156,7 @@ export function mapToolCallIdToAgentId(
   agentId: string,
   action: string,
   pendingToolCallIds: string[],
-  toolCallIdMap: Map<string, string>,
+  toolCallIdMap: Pick<ToolCallAgentIndex, 'has' | 'set'>,
 ): string[] {
   if (eventToolCallId) {
     toolCallIdMap.set(eventToolCallId, agentId);

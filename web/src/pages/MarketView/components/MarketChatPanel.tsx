@@ -10,12 +10,14 @@ import LogoLoading from '@/components/ui/logo-loading';
 import ChatInput, { type ChatInputHandle } from '@/components/ui/chat-input';
 import { useStableHandler } from '@/hooks/useStableHandler';
 import { useWorkspace } from '@/hooks/useWorkspace';
-import MessageList from '../../ChatAgent/components/MessageList';
+import { LiveMessageList } from '../../ChatAgent/components/MessageList';
 import { MessageActionsProvider, type MessageActions } from '../../ChatAgent/components/messageList/MessageActionsContext';
 import { SubagentTelemetryContext } from '../../ChatAgent/components/SubagentTelemetryContext';
 import { ChartSurfaceContext, type ChartSurface } from '../../ChatAgent/contexts/ChartSurfaceContext';
 import { WorkspaceProvider } from '../../ChatAgent/contexts/WorkspaceContext';
 import { useChatMessages } from '../../ChatAgent/hooks/useChatMessages';
+import { DispatchStatusProvider } from '../../ChatAgent/hooks/usePTCDispatchStatus';
+import { useStreamFollow } from '../../ChatAgent/components/chatView/streamFollow';
 import { useActiveThreadPublisher } from '@/lib/threadLifecycle/useActiveThreadPublisher';
 import { flashWorkspaceQuery } from '@/hooks/useFlashWorkspace';
 import { appendPathSuffix, getPreviewUrl, summarizeThread, offloadThread } from '../../ChatAgent/utils/api';
@@ -403,6 +405,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
 
   const {
     messages,
+    liveMessages,
     isLoading,
     isLoadingHistory,
     messageError,
@@ -616,33 +619,9 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     }
   }, [threadId, setIsCompacting, insertNotification, t]);
 
-  // Track whether the user is currently parked near the bottom of the
-  // message list. Auto-scroll only fires while this is true, so a user
-  // who has scrolled up to read earlier content during an active stream
-  // isn't yanked back down on every SSE chunk.
-  const isNearBottomRef = useRef(true);
-  useEffect(() => {
-    const el = messagesContainerRef.current;
-    if (!el) return;
-    const onScroll = () => {
-      const threshold = 120;
-      isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-    };
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
-  }, []);
-
-  // Auto-scroll to bottom on new messages / streaming — only when the
-  // user is already near the bottom (see isNearBottomRef above).
-  useEffect(() => {
-    if (!isNearBottomRef.current) return;
-    const el = messagesContainerRef.current;
-    if (!el || messages.length === 0) return;
-    const id = setTimeout(() => {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-    }, 80);
-    return () => clearTimeout(id);
-  }, [messages]);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const showTranscript = messages.length > 0 || isLoading || isLoadingHistory;
+  useStreamFollow(messagesContainerRef, transcriptRef, showTranscript, isLoading || isLoadingHistory);
 
   // Subagent navigation — chips deep-link to ChatAgent for full subagent view.
   const handleOpenSubagentTask = useCallback((info: SubagentInfo) => {
@@ -847,7 +826,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
         ref={messagesContainerRef}
         style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}
       >
-        {messages.length === 0 && !isLoading && !isLoadingHistory ? (
+        {!showTranscript ? (
           <div className="market-chat-empty-state" style={{ height: '100%' }}>
             <LogoLoading size={60} color="var(--color-accent-overlay)" />
             <p className="market-chat-empty-text" style={{ marginTop: 16 }}>
@@ -860,19 +839,21 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
             )}
           </div>
         ) : (
-          <div style={{ padding: '16px 24px', maxWidth: '100%' }}>
+          <div ref={transcriptRef} style={{ padding: '16px 24px', maxWidth: '100%' }}>
             <ChartSurfaceContext value={chartSurface}>
               <SubagentTelemetryContext value={resolveSubagentTelemetry}>
                 <MessageActionsProvider actions={messageActions}>
-                  <MessageList
-                    messages={messages as never[]}
-                    isLoading={isLoading}
-                    isLoadingHistory={isLoadingHistory}
-                    feedbackByTurn={feedbackByTurn}
-                    flashContext={flashContext}
-                    workspaceDirName={workspaceDirName}
-                    previousDirNames={previousDirNames}
-                  />
+                  <DispatchStatusProvider>
+                    <LiveMessageList
+                      store={liveMessages}
+                      isLoading={isLoading}
+                      isLoadingHistory={isLoadingHistory}
+                      feedbackByTurn={feedbackByTurn}
+                      flashContext={flashContext}
+                      workspaceDirName={workspaceDirName}
+                      previousDirNames={previousDirNames}
+                    />
+                  </DispatchStatusProvider>
                 </MessageActionsProvider>
               </SubagentTelemetryContext>
             </ChartSurfaceContext>

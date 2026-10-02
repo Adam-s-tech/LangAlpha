@@ -20,7 +20,6 @@ from .links import swap_link
 from .protocol import GENERATIONS, MOUNT
 
 START_TIMEOUT_S = 10
-RETIRE_AFTER_S = 30
 
 _PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -56,15 +55,15 @@ class Paths:
     #: The link every served path goes through.
     mount: str = MOUNT
     #: Each start mounts a fresh directory here and repoints ``mount`` at it,
-    #: so a restart never touches the links and nothing ever has to be
-    #: unmounted. Some runtimes refuse to unmount a FUSE mount from inside
-    #: the sandbox (Sysbox answers ENOENT); there a replaced daemon's mount
-    #: stays, unreachable, until the sandbox restarts.
+    #: so a restart never touches the links. A generation is a small tmpfs
+    #: with the daemon's mount inside it: Sysbox refuses to unmount a FUSE
+    #: mount made inside the sandbox (it answers ENOENT) but not the tmpfs,
+    #: and a lazy unmount of the tmpfs takes the FUSE mount with it.
     generations: str = GENERATIONS
-    #: The token, the state naming what root may unmount, kill and unlink,
-    #: the lock and the log: root's alone. In a directory the sandbox's own
-    #: user can write, a planted symlink or a forged state file would turn
-    #: the daemon's root operations into theirs.
+    #: The token, the state naming the links root may remove, the lock and
+    #: the log: root's alone. In a directory the sandbox's own user can
+    #: write, a planted symlink or a forged state file would turn the
+    #: daemon's root operations into theirs.
     private: str = "/var/lib/livefs"
 
     @property
@@ -122,7 +121,7 @@ def healthy(path: str) -> bool:
 # save rules rely on its open carrying O_TRUNC.
 LIBFUSE = "fuse3"
 #: Tried first: ``find_library`` runs ``ldconfig -p`` to answer.
-_SONAMES = ("libfuse3.so.3", "libfuse3.so")
+_SONAMES = ("libfuse3.so.3", "libfuse3.so.4", "libfuse3.so")
 
 _INSTALL_RETRY_S = 600
 _APT_LOCK_WAIT = "-o DPkg::Lock::Timeout=120"
@@ -272,49 +271,34 @@ def rebase(base_url: str | None, paths: Paths) -> bool:
 # --- the daemon ---------------------------------------------------------
 
 
-def _is_daemon(pid: object) -> bool:
-    if not isinstance(pid, int):
-        return False
-    try:
-        with open(f"/proc/{pid}/cmdline", "rb") as f:
-            return f"-m\0{__package__}\0serve\0".encode() in f.read()
-    except OSError:
-        return False
-
-
-def retire(state: dict) -> None:
-    """Stop the daemon a new one replaced. Where its mount can be unmounted,
-    that is enough: the daemon exits once the requests open against it
-    finish. Elsewhere it is stopped after ``RETIRE_AFTER_S``, for the same
-    reason."""
-    old, pid = state.get("mount"), state.get("pid")
-    if old and mounted(old):
-        subprocess.run(["umount", "-l", old], check=False, capture_output=True)
-        if not mounted(old):
-            return
-    if not _is_daemon(pid):
-        return
-    # Checked again when the grace ends: the pid may belong to another
-    # process by then.
-    marker = f"-m {__package__} serve"
-    subprocess.Popen(
-        [
-            "sh",
-            "-c",
-            f"sleep {RETIRE_AFTER_S}; tr '\\0' ' ' < /proc/{pid}/cmdline 2>/dev/null"
-            f" | grep -qF -- '{marker}' && kill {pid}",
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        cwd="/",
-        start_new_session=True,
-        close_fds=True,
+def _envelop(generation: str) -> str:
+    """Make ``generation`` a tmpfs and return where its daemon mounts, inside it."""
+    os.makedirs(generation)
+    options = "size=4k,mode=0755,nosuid,nodev,noexec"
+    made = subprocess.run(
+        ["mount", "-t", "tmpfs", "-o", options, "livefs", generation],
+        capture_output=True,
+        text=True,
     )
+    if made.returncode:
+        with contextlib.suppress(OSError):
+            os.rmdir(generation)
+        raise OSError(f"could not mount {generation}: {made.stderr.strip()}")
+    served = os.path.join(generation, "fs")
+    os.mkdir(served)
+    return served
+
+
+def _detach(generation: str) -> None:
+    subprocess.run(["umount", "-l", generation], check=False, capture_output=True)
+    with contextlib.suppress(OSError):
+        os.rmdir(generation)
 
 
 def sweep(keep: str, paths: Paths) -> None:
-    """Remove the generation directories nothing is mounted on any more."""
+    """Unmount every generation but ``keep``. A replaced daemon exits once
+    the requests open against it finish, and a dead one's mount stops
+    answering ENOTCONN to walks of the whole tree, like ``df``."""
     try:
         names = os.listdir(paths.generations)
     except OSError:
@@ -322,7 +306,11 @@ def sweep(keep: str, paths: Paths) -> None:
     live = set(_mounts())
     for name in names:
         path = os.path.join(paths.generations, name)
-        if path != keep and path not in live:
+        if path == keep:
+            continue
+        if path in live:
+            _detach(path)
+        else:
             with contextlib.suppress(OSError):
                 os.rmdir(path)
 
@@ -361,9 +349,12 @@ def start(
     # shipped package.
     home = os.path.dirname(_PACKAGE_DIR)
     generation = os.path.join(paths.generations, f"{time.time_ns():x}")
-    os.makedirs(generation)
+    try:
+        served = _envelop(generation)
+    except OSError as exc:
+        return False, str(exc)
     log = open(paths.log, "ab")
-    command = [sys.executable, "-m", __package__, "serve", "--root", args.root, "--mount", generation]
+    command = [sys.executable, "-m", __package__, "serve", "--root", args.root, "--mount", served]
     child = subprocess.Popen(
         [*command, "--gated"] if gate else command,
         stdin=subprocess.PIPE if gate else subprocess.DEVNULL,
@@ -381,23 +372,23 @@ def start(
                 child.stdin.write(b"go\n")
             child.stdin.close()
         if refused:
-            with contextlib.suppress(OSError):
-                os.rmdir(generation)
+            _detach(generation)
             return False, None
     deadline = time.monotonic() + START_TIMEOUT_S
-    while not healthy(generation):
+    while not healthy(served):
         if child.poll() is not None or time.monotonic() > deadline:
             if child.poll() is None:
                 child.kill()
+            _detach(generation)
             return True, f"the mount did not come up; see {paths.log}"
         time.sleep(0.05)
     try:
-        point(generation, paths)
+        point(served, paths)
     except OSError as exc:
         child.kill()
+        _detach(generation)
         return True, f"could not point {paths.mount} at the new mount: {exc}"
-    retire(state)
     sweep(generation, paths)
     _drop_copies(code, paths)
-    state.update(pid=child.pid, code=code, mount=generation)
+    state["code"] = code
     return True, None

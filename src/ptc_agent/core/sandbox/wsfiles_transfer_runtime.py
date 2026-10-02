@@ -1514,6 +1514,7 @@ def pack(spec: dict[str, Any]) -> dict[str, Any]:
     # longer than a transfer is allowed to take.
     os.makedirs(base, exist_ok=True)
     _sweep_stale(base, _PACK_STALE_S)
+    _release(root, spec)
     out_dir = tempfile.mkdtemp(prefix="op-", dir=base)
 
     chunks: list[dict[str, Any]] = []
@@ -1551,44 +1552,73 @@ def pack(spec: dict[str, Any]) -> dict[str, Any]:
         )
         current = None
 
-    for member in members:
-        rel = member["path"]
-        expected_size = int(member["size"])
-        expected_sha = member.get("sha256")
-        abs_path = _resolve_under_root(root, rel)
-        if abs_path is None:
-            changed.append(rel)
-            continue
-        # Small by contract, so the whole member is read before anything is
-        # written: a member that fails to verify must leave no bytes behind.
-        try:
-            with open(abs_path, "rb") as f:
-                data = f.read(expected_size + 1)
-        except OSError:
-            changed.append(rel)
-            continue
-        if len(data) != expected_size or (expected_sha is not None and hashlib.sha256(data).hexdigest() != expected_sha):
-            changed.append(rel)
-            continue
-        if current is not None and current["members"] and current["size"] + expected_size > max_bytes:
-            close_chunk()
-        if current is None:
-            current = open_chunk()
-        current["file"].write(data)
-        current["hash"].update(data)
-        current["members"].append(
-            {
-                "path": rel,
-                "offset": current["size"],
-                "size": expected_size,
-                "sha256": expected_sha or hashlib.sha256(data).hexdigest(),
-            }
-        )
-        current["size"] += expected_size
-    close_chunk()
+    try:
+        for member in members:
+            rel = member["path"]
+            expected_size = int(member["size"])
+            expected_sha = member.get("sha256")
+            abs_path = _resolve_under_root(root, rel)
+            if abs_path is None:
+                changed.append(rel)
+                continue
+            # Small by contract, so the whole member is read before anything is
+            # written: a member that fails to verify must leave no bytes behind.
+            try:
+                with open(abs_path, "rb") as f:
+                    data = f.read(expected_size + 1)
+            except OSError:
+                changed.append(rel)
+                continue
+            if len(data) != expected_size or (expected_sha is not None and hashlib.sha256(data).hexdigest() != expected_sha):
+                changed.append(rel)
+                continue
+            if current is not None and current["members"] and current["size"] + expected_size > max_bytes:
+                close_chunk()
+            if current is None:
+                current = open_chunk()
+            current["file"].write(data)
+            current["hash"].update(data)
+            current["members"].append(
+                {
+                    "path": rel,
+                    "offset": current["size"],
+                    "size": expected_size,
+                    "sha256": expected_sha or hashlib.sha256(data).hexdigest(),
+                }
+            )
+            current["size"] += expected_size
+        close_chunk()
+    except BaseException:
+        # A pack that dies part way, a full disk being the usual cause, would
+        # leave every chunk it wrote until the age sweep. That is the room
+        # the next backup needs, so a disk that filled once stayed full.
+        if current is not None:
+            with contextlib.suppress(OSError):
+                current["file"].close()
+        _rmtree_quiet(out_dir)
+        raise
     if not chunks:
         _rmtree_quiet(out_dir)
     return {"chunks": chunks, "changed": changed}
+
+
+def _release(root: str, spec: dict[str, Any]) -> None:
+    """Remove ``release``, the previous run's chunks, or refuse to pack at all.
+
+    A backup stages its pack set a run at a time, each run in the room the
+    last one held. The push and unlink ops remove chunks quietly, so a chunk
+    they missed is caught here, before the next run is written beside it.
+    """
+    pack_base = _pack_base(spec, root)
+    kept = 0
+    for rel in spec.get("release") or []:
+        path = _resolve_item(root, pack_base, rel)
+        if path is None:
+            continue
+        _unlink_quiet(path)
+        kept += os.path.lexists(path)
+    if kept:
+        raise OSError(f"{kept} chunk(s) from the previous run could not be removed")
 
 
 def _sweep_stale(base: str, max_age_s: float) -> None:

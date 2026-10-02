@@ -132,6 +132,11 @@ PACK_CUTOFF = 256 * 1024
 #: early: raising this past the threshold would drop the sandbox's only copy
 #: of a chunk whose parts the server has yet to assemble.
 PACK_MAX_BYTES = 32 * 1024 * 1024
+#: What a backup stages on the sandbox's disk at once: the pack set is packed
+#: and pushed a run of whole chunks at a time, each run's chunks gone before
+#: the next is written. Staged whole, a backup needed free disk equal to every
+#: small file in the workspace, so a nearly full disk could never back up.
+PACK_STAGE_MAX_BYTES = 2 * PACK_MAX_BYTES
 PACK_DIR = SandboxLayout.PACKS_DIR
 
 # What one transfer may hold in memory at once on the paths that move bytes
@@ -714,13 +719,19 @@ async def pull_direct(
 
 
 async def pack_direct(
-    sandbox: Any, members: list[dict[str, Any]], *, layout: WorkspaceLayout
+    sandbox: Any,
+    members: list[dict[str, Any]],
+    *,
+    layout: WorkspaceLayout,
+    release: list[str] | None = None,
 ) -> dict[str, Any]:
     """Concatenate ``members`` (path, sha256, size) into chunk files in the sandbox.
 
     Returns ``{"chunks": [{path, sha256, size, members: [{path, offset, size,
     sha256}]}], "changed": [path, ...]}``. The chunks are then pushed like any
     other file; ``changed`` lists members whose bytes no longer matched.
+    ``release`` names chunks that must be off the disk first; the op removes
+    them and fails rather than pack beside one it could not.
     """
     if not members:
         return {"chunks": [], "changed": []}
@@ -731,6 +742,7 @@ async def pack_direct(
         "out_dir": PACK_DIR,
         "max_bytes": PACK_MAX_BYTES,
         "members": members,
+        "release": release or [],
     }
     out = await run_transfer_op(
         sandbox, "pack", spec, timeout_s=transfer_timeout_s(total)

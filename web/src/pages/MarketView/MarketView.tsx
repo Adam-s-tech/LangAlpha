@@ -175,9 +175,12 @@ function MarketViewInner() {
     refetchOnMount: 'always',
   });
   const workspaces = workspacesData?.workspaces ?? EMPTY_WORKSPACES;
-  const { selectedWorkspaceId, pending: workspacePending, select: selectWorkspace } = useRestoredWorkspace({
+  const {
+    selectedWorkspaceId, pending: workspacePending, select: selectWorkspace, workspaces: selectableWorkspaces,
+  } = useRestoredWorkspace({
     linkedId: openingRoute.workspaceId,
     workspaces,
+    total: workspacesData?.total,
     isFetchedAfterMount,
     isSuccess,
     onDropped: () => setMode('fast'),
@@ -655,7 +658,7 @@ function MarketViewInner() {
               isLoading={isLoading}
               mode={mode}
               onModeChange={setMode as any}
-              workspaces={workspaces}
+              workspaces={selectableWorkspaces}
               selectedWorkspaceId={selectedWorkspaceId}
               onWorkspaceChange={selectWorkspace}
               onCaptureChart={handleCaptureChartForContext}
@@ -665,8 +668,8 @@ function MarketViewInner() {
               onClearPrefill={() => setPrefillMessage('')}
               hasExternalContext={hasChartSelectionForChart}
               placeholder={t('marketView.chatPanel.askStockPlaceholder')}
-              // The desktop panel waits out the same check: until the list
-              // confirms the restored workspace there is none to send to, and
+              // The desktop panel waits out the same check: until it confirms
+              // the restored workspace there is none to send to, and
               // a send would clear the draft into the no-workspace toast.
               disabled={mode === 'ptc' && workspacePending}
             />
@@ -788,7 +791,7 @@ function MarketViewInner() {
                   interval={selectedInterval}
                   mode={mode}
                   onModeChange={setMode}
-                  workspaces={workspaces}
+                  workspaces={selectableWorkspaces}
                   selectedWorkspaceId={selectedWorkspaceId}
                   workspacePending={workspacePending}
                   onWorkspaceChange={selectWorkspace}

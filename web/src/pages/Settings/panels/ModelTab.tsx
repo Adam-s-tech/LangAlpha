@@ -11,13 +11,15 @@ import { ModelSelector } from '@/components/model/ModelSelector';
 import { FallbackModelsPicker } from '@/components/model/FallbackModelsPicker';
 import { PerModelMatrix } from '@/components/model/PerModelMatrix';
 import { AccountTuningDefaults } from '@/components/model/AccountTuningDefaults';
+import { DefaultModelScopeChoice } from '@/components/model/DefaultModelScopeChoice';
+import { useDefaultModelChange } from '@/hooks/useDefaultModelChange';
 import { useAllModels } from '@/hooks/useAllModels';
 import { modelLabel, modelMatches } from '@/lib/modelLabel';
 import { isPlatformMode } from '@/config/hostMode';
 import { useTranslation } from 'react-i18next';
 import { ConnectedAccounts } from './ConnectedAccounts';
-import { modelPrefs, splitPreferenceWrite } from '@/lib/modelPreferences';
-import type { PreferencePatch, PreferencesLike } from '@/lib/modelPreferences';
+import { FLASH_AUTO, flashDefaultChoice, modelPrefs, readDefaultModelScope, splitPreferenceWrite } from '@/lib/modelPreferences';
+import type { ComposerMode, DefaultModelScope, PreferencePatch, PreferencesLike } from '@/lib/modelPreferences';
 
 type ModelTabMode = 'simple' | 'advanced';
 
@@ -67,6 +69,18 @@ export function ModelTab() {
     [mutate],
   );
 
+  // The two defaults change through the flow the chat banner uses, which may
+  // ask about the threads on the old default before it writes. ModelTierConfig
+  // stays a plain controlled pair because Setup shares it, and a first-run
+  // pick has no threads to ask about.
+  const label = useCallback((model: string) => modelLabel(model, modelMetadata), [modelMetadata]);
+  const {
+    question: defaultQuestion,
+    draft: draftDefaults,
+    request: requestDefault,
+    clear: clearDefault,
+  } = useDefaultModelChange(label);
+
   const [mode, setMode] = useState<ModelTabMode>(readStoredMode);
   const isAdvanced = mode === 'advanced';
   const changeMode = (next: ModelTabMode) => {
@@ -100,6 +114,25 @@ export function ModelTab() {
     ? storedFallbacks
     : storedFallbacks.filter((m) => catalogNames.has(m));
   const setStarred = (next: string[]) => write({ starred_models: next.length > 0 ? next : null });
+
+  // While the question is open each select shows the model the answer would
+  // write, and a cancel puts both back on the saved ones.
+  const shownDefault = (agent: ComposerMode) => draftDefaults?.[agent]
+    ?? (agent === 'fast' ? flashDefaultChoice(mPref) : mPref.preferred_model ?? '');
+  const setDefault = (agent: ComposerMode) => (model: string) => {
+    if (model === FLASH_AUTO) clearDefault(agent, 'deployment');
+    else if (model) requestDefault({ [agent]: model });
+    else clearDefault(agent);
+  };
+  // What each slot runs on Auto. A deployment with no flash model runs flash
+  // on its primary one.
+  const deploymentPrimary = hookSystemDefaults?.default_model || undefined;
+  const deploymentFlash = hookSystemDefaults?.flash_model || deploymentPrimary;
+  const autoModels = {
+    primary: deploymentPrimary && label(deploymentPrimary),
+    flash: deploymentFlash && label(deploymentFlash),
+  };
+  const defaultModelScope = readDefaultModelScope(prefsData);
 
   // Close starred-model picker on click outside
   useEffect(() => {
@@ -187,12 +220,32 @@ export function ModelTab() {
           <ModelTierConfig
             models={visibleModels}
             metadata={modelMetadata}
-            primaryModel={mPref.preferred_model ?? ''}
-            onPrimaryModelChange={(v) => write({ preferred_model: v || null })}
-            flashModel={mPref.preferred_flash_model ?? ''}
-            onFlashModelChange={(v) => write({ preferred_flash_model: v || null })}
+            primaryModel={shownDefault('ptc')}
+            onPrimaryModelChange={setDefault('ptc')}
+            flashModel={shownDefault('fast')}
+            onFlashModelChange={setDefault('fast')}
             modelAccess={modelAccessMap}
+            auto={autoModels}
           />
+          {defaultQuestion && <DefaultModelScopeChoice className="mt-4" {...defaultQuestion} />}
+
+          <div className="flex flex-col gap-1.5" style={{ marginTop: '16px' }}>
+            <label htmlFor="default-model-scope" className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+              {t('settings.defaultModelChange.scopeLabel')}
+            </label>
+            <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+              {t('settings.defaultModelChange.scopeDesc')}
+            </p>
+            <Select
+              id="default-model-scope"
+              value={defaultModelScope}
+              onChange={(e) => write({ default_model_scope: e.target.value as DefaultModelScope })}
+            >
+              <option value="ask">{t('settings.defaultModelChange.scopeAsk')}</option>
+              <option value="new_threads">{t('settings.defaultModelChange.newThreads')}</option>
+              <option value="existing_threads">{t('settings.defaultModelChange.scopeExistingThreads')}</option>
+            </Select>
+          </div>
 
           {/* Quick-access models — compact strip */}
           <div ref={modelPickerRef} style={{ marginTop: '16px' }}>

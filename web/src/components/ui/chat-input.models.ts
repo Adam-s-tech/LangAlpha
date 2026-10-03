@@ -15,6 +15,28 @@ export function isModelAvailable(model: string, validModelNames: Set<string>): b
   return validModelNames.size === 0 || validModelNames.has(model);
 }
 
+/**
+ * The model a composer opens on: the thread's own while the catalog still
+ * carries it, else the mode's default.
+ *
+ * `retired` names a thread model the catalog dropped, so the host can say why
+ * the composer moved off it instead of switching silently. A send then names
+ * the default, which is also what the server runs for a dead model. Judged on
+ * the catalog, not on reach: a model behind a lapsed connection is still the
+ * thread's, and its send gets the server's own reason it cannot run. An empty
+ * catalog is one not loaded yet, under which nothing is called retired.
+ */
+export function resolveComposerModel(
+  threadModel: string | null | undefined,
+  modeDefault: string | null,
+  catalogModelNames: Set<string>,
+): { seed: string | null; retired: string | null } {
+  if (threadModel && isModelAvailable(threadModel, catalogModelNames)) {
+    return { seed: threadModel, retired: null };
+  }
+  return { seed: modeDefault, retired: threadModel || null };
+}
+
 export interface PrimaryModelsParams {
   selectedModel: string | null;
   /** Models this thread has already used, from replayed turn metadata. */

@@ -19,6 +19,9 @@ Environment Variables:
     STORAGE_MAX_UPLOAD_SIZE   - Max upload size in bytes (default: 10MB)
     STORAGE_CONNECT_TIMEOUT_S - boto3 connect timeout in seconds (default: 5)
     STORAGE_READ_TIMEOUT_S    - boto3 read timeout in seconds (default: 30)
+    STORAGE_RANGE_READ_TIMEOUT_S - read timeout for small ranged reads, which
+                                   fail fast so a dead pooled connection is
+                                   retried quickly (default: 5)
     STORAGE_MAX_POOL_CONNECTIONS - boto3 connection pool size (default: 32)
     STORAGE_ADDRESSING_STYLE  - Bucket addressing: virtual (default) | path | auto
     STORAGE_BROWSER_ENDPOINT_URL - Endpoint browsers reach for signed download
@@ -60,7 +63,12 @@ from typing import Any
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import (
+    ClientError,
+    HTTPClientError,
+    IncompleteReadError,
+)
+from botocore.exceptions import ConnectionError as BotocoreConnectionError
 
 from src.utils.mime import resolve_content_type
 from src.utils.storage.key_prefix import KEY_PREFIX, full_key
@@ -112,6 +120,7 @@ class StorageConfig:
 
     CONNECT_TIMEOUT_S = int(os.getenv("STORAGE_CONNECT_TIMEOUT_S", "5"))
     READ_TIMEOUT_S = int(os.getenv("STORAGE_READ_TIMEOUT_S", "30"))
+    RANGE_READ_TIMEOUT_S = int(os.getenv("STORAGE_RANGE_READ_TIMEOUT_S", "5"))
 
     # botocore defaults this to 10, which workspace-file restore overruns: it
     # fetches blobs under a semaphore of 16, so six of every sixteen requests
@@ -145,40 +154,109 @@ class StorageConfig:
 # Workspace file restore fetches blobs under a semaphore of 16, so on a cold
 # process all 16 threads reach this at once. The lock makes construction
 # happen exactly once; the unlocked fast path keeps the steady state free.
-_CLIENT: Any | None = None
-_RANGE_CLIENT: Any | None = None
 _BROWSER_CLIENT: Any | None = None
 _CLIENT_MU = threading.Lock()
 
 
+# A client older than this is rebuilt. Connections only live inside a client,
+# so none sits idle anywhere near the store's close interval, however traffic
+# is spread across the pool.
+_CLIENT_MAX_AGE_S = 120
+
+
+class _ExpiringClient:
+    """A lazily built client that is replaced once it is old.
+
+    The store closes an idle connection after a fixed interval and the close
+    can be lost on the way, so a pooled connection can look alive after it is
+    dead and the next call waits out the read timeout before the SDK retries.
+    Bounding the client's age bounds every connection's idle time, and costs
+    one handshake per connection each interval. The replaced client is closed
+    shortly after, so a call still running on it finishes.
+    """
+
+    def __init__(self, factory: Callable[[], Any]) -> None:
+        self._factory = factory
+        self._client: Any | None = None
+        self._born = 0.0
+
+    def get(self) -> Any:
+        client = self._client
+        if client is not None and time.monotonic() - self._born <= _CLIENT_MAX_AGE_S:
+            return client
+        with _CLIENT_MU:
+            if (
+                self._client is None
+                or time.monotonic() - self._born > _CLIENT_MAX_AGE_S
+            ):
+                old, self._client = self._client, self._factory()
+                self._born = time.monotonic()
+                _retire(old)
+            return self._client
+
+    def reset(self) -> None:
+        with _CLIENT_MU:
+            old, self._client = self._client, None
+        _retire(old)
+
+
+# A thread can take a client just before it is replaced and reach its pool just
+# after, and a request on a closed pool fails outright. The replaced client is
+# closed once that window has passed; a request already running is unaffected.
+_RETIRED_CLOSE_DELAY_S = 30
+
+
+def _close_quietly(client: Any | None) -> None:
+    if client is None:
+        return
+    try:
+        client.close()
+    except Exception:
+        logger.debug("Closing a replaced storage client failed", exc_info=True)
+
+
+def _retire(client: Any | None) -> None:
+    if client is None:
+        return
+    timer = threading.Timer(_RETIRED_CLOSE_DELAY_S, _close_quietly, args=(client,))
+    timer.daemon = True
+    timer.start()
+
+
+_SHARED = _ExpiringClient(lambda: _build_client())
+# Ranged GETs must not validate response checksums: an object uploaded with a
+# full-object checksum returns that header on a ranged response too, and the
+# SDK then checks the partial body against it and fails every time. Callers
+# reading a range verify the bytes they get by their own means.
+_RANGED = _ExpiringClient(
+    lambda: _build_client(response_checksum_validation="when_required")
+)
+# A small slice that has not started replying within a few seconds is a dead
+# pooled connection, not a slow transfer. Failing fast lets the SDK's retry
+# open a fresh connection instead of waiting out the full read timeout.
+_SLICE = _ExpiringClient(
+    lambda: _build_client(
+        response_checksum_validation="when_required",
+        read_timeout=min(
+            StorageConfig.RANGE_READ_TIMEOUT_S, StorageConfig.READ_TIMEOUT_S
+        ),
+    )
+)
+
+
 def _get_client() -> Any:
-    """Return the lazily-constructed shared S3-compatible client."""
-    global _CLIENT
-    if _CLIENT is not None:
-        return _CLIENT
-    with _CLIENT_MU:
-        if _CLIENT is not None:
-            return _CLIENT
-        _CLIENT = _build_client()
-    return _CLIENT
+    """Return the shared S3-compatible client."""
+    return _SHARED.get()
 
 
 def _get_range_client() -> Any:
-    """The client for ranged GETs, which must not validate response checksums.
+    """Return the client for streamed reads that skip checksum validation."""
+    return _RANGED.get()
 
-    An object uploaded with a full-object checksum comes back with that
-    checksum header on a ranged response too, and the SDK then checks the
-    partial body against it and fails every time. Callers reading a range
-    verify the bytes they get by their own means.
-    """
-    global _RANGE_CLIENT
-    if _RANGE_CLIENT is not None:
-        return _RANGE_CLIENT
-    with _CLIENT_MU:
-        if _RANGE_CLIENT is not None:
-            return _RANGE_CLIENT
-        _RANGE_CLIENT = _build_client(response_checksum_validation="when_required")
-    return _RANGE_CLIENT
+
+def _get_slice_client() -> Any:
+    """Return the fail-fast client for small ranged reads."""
+    return _SLICE.get()
 
 
 def _get_browser_client() -> Any:
@@ -197,6 +275,10 @@ def _get_browser_client() -> Any:
 
 
 def _build_client(*, endpoint_url: str | None = None, **config_overrides: Any) -> Any:
+    config_args: dict[str, Any] = {
+        "read_timeout": StorageConfig.READ_TIMEOUT_S,
+        **config_overrides,
+    }
     kwargs: dict[str, Any] = {
         "aws_access_key_id": StorageConfig.ACCESS_KEY_ID,
         "aws_secret_access_key": StorageConfig.SECRET_ACCESS_KEY,
@@ -206,9 +288,8 @@ def _build_client(*, endpoint_url: str | None = None, **config_overrides: Any) -
             s3={"addressing_style": StorageConfig.ADDRESSING_STYLE},
             retries={"max_attempts": 3, "mode": "standard"},
             connect_timeout=StorageConfig.CONNECT_TIMEOUT_S,
-            read_timeout=StorageConfig.READ_TIMEOUT_S,
             max_pool_connections=StorageConfig.MAX_POOL_CONNECTIONS,
-            **config_overrides,
+            **config_args,
         ),
     }
     if endpoint_url or StorageConfig.ENDPOINT_URL:
@@ -228,10 +309,11 @@ def _prefix_object_key(params: dict[str, Any], **_: Any) -> None:
 
 def _reset_client_for_test() -> None:
     """Drop the cached clients. Test-only — production never re-initializes."""
-    global _CLIENT, _RANGE_CLIENT, _BROWSER_CLIENT
+    global _BROWSER_CLIENT
+    _SHARED.reset()
+    _RANGED.reset()
+    _SLICE.reset()
     with _CLIENT_MU:
-        _CLIENT = None
-        _RANGE_CLIENT = None
         _BROWSER_CLIENT = None
 
 
@@ -326,11 +408,19 @@ def upload_bytes(
         return False
 
 
+def _warn_if_retried(response: dict[str, Any], key: str) -> None:
+    """The SDK retries a dead connection silently; this makes the stall visible."""
+    retries = response.get("ResponseMetadata", {}).get("RetryAttempts", 0)
+    if retries:
+        logger.warning(f"Read of {key} needed {retries} retries")
+
+
 def get_bytes(key: str) -> bytes | None:
     """Download an object's raw bytes. Returns None on failure or missing object."""
     try:
         client = _get_client()
         response = client.get_object(Bucket=StorageConfig.BUCKET_NAME, Key=key)
+        _warn_if_retried(response, key)
         body = response.get("Body")
         if body is None:
             return None
@@ -348,26 +438,41 @@ def get_bytes(key: str) -> bytes | None:
         return None
 
 
+def _read_range(client: Any, key: str, start: int, length: int) -> bytes | None:
+    response = client.get_object(
+        Bucket=StorageConfig.BUCKET_NAME,
+        Key=key,
+        Range=f"bytes={start}-{start + length - 1}",
+    )
+    _warn_if_retried(response, key)
+    body = response.get("Body")
+    if body is None:
+        return None
+    try:
+        data = body.read()
+    finally:
+        body.close()
+    return data if isinstance(data, bytes) else bytes(data)
+
+
 def get_bytes_range(key: str, start: int, length: int) -> bytes | None:
     """Download ``length`` bytes of an object from offset ``start``.
 
     ``None`` on failure or a missing object, like :func:`get_bytes`. A zero
     length returns ``b""`` without a request: an empty HTTP range is invalid.
+
+    The fail-fast client covers a reply that never starts, which the SDK
+    retries. A body that stalls past its short timeout is outside the SDK's
+    retry, so a transport failure is tried once more on the full-timeout client.
     """
     if length <= 0:
         return b""
     try:
-        client = _get_range_client()
-        response = client.get_object(
-            Bucket=StorageConfig.BUCKET_NAME,
-            Key=key,
-            Range=f"bytes={start}-{start + length - 1}",
-        )
-        body = response.get("Body")
-        if body is None:
-            return None
-        data = body.read()
-        return data if isinstance(data, bytes) else bytes(data)
+        try:
+            return _read_range(_get_slice_client(), key, start, length)
+        except (HTTPClientError, BotocoreConnectionError, IncompleteReadError):
+            logger.warning(f"Ranged read of {key} failed, retrying with the full timeout")
+            return _read_range(_get_range_client(), key, start, length)
     except ClientError as e:
         code = e.response.get("Error", {}).get("Code")
         if code in {"NoSuchKey", "404"}:

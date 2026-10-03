@@ -1,11 +1,10 @@
 import type { TFunction } from 'i18next';
-import { createDateFormatter } from '@/lib/format';
+import { clockTime, createDateFormatter, weekdayMonthDay } from '@/lib/format';
 import { formatTook } from '@/lib/elapsed';
 
 // The locale, and for `formatUpcoming` the time, come in as arguments rather
 // than being read here; lib/format says why.
 const dateTime = createDateFormatter({ month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
-const clock = createDateFormatter({ hour: 'numeric', minute: '2-digit' });
 
 /** A formatter that reads the reader's own clock, or the clock of the zone
  *  it is given: a one-time run shows in the zone it was set in. */
@@ -29,7 +28,6 @@ const zonedClock = zonedFormatter({ hour: 'numeric', minute: '2-digit' });
 // two-digit hour ("周五07:00") where every other time here reads "7:00".
 const weekdayClock = (d: Date, locale: string, timeZone?: string) =>
   `${weekdayShort(d, locale, timeZone)} ${zonedClock(d, locale, timeZone)}`;
-const dayHeading = createDateFormatter({ weekday: 'long', month: 'short', day: 'numeric' });
 const weekdayInitial = createDateFormatter({ weekday: 'narrow' });
 const moment = zonedFormatter({ weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
@@ -56,7 +54,7 @@ export function formatDateTimeShort(date: DateInput, locale: string, timeZone?: 
 
 export function formatClock(date: DateInput, locale: string): string {
   const d = toDate(date);
-  return d ? clock(d, locale) : '';
+  return d ? clockTime(d, locale) : '';
 }
 
 /** A time within the coming week reads by weekday ("Fri 7:00 AM"); anything
@@ -68,7 +66,7 @@ export function formatUpcoming(date: DateInput, locale: string, now: number, tim
 }
 
 export function formatDayHeading(date: Date, locale: string): string {
-  return dayHeading(date, locale);
+  return weekdayMonthDay(date, locale);
 }
 
 /** "Wed, Oct 28, 2:15 PM": one moment, with the weekday that makes it
@@ -92,7 +90,7 @@ export function weekdayNames(locale: string): string[] {
 
 /** A wall-clock time with no date attached, in the reader's clock format. */
 export function formatTimeOfDay(hour: number, minute: number, locale: string): string {
-  return clock(new Date(2024, 0, 1, hour, minute), locale);
+  return clockTime(new Date(2024, 0, 1, hour, minute), locale);
 }
 
 /** Local calendar day, for grouping a feed by the day the reader lived it. */

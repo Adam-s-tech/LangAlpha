@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '../../../components/ui/dropdown-menu';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '../../../components/ui/hover-card';
-import { createDateFormatter, relativeTime } from '@/lib/format';
+import { mediumDate, relativeTime } from '@/lib/format';
 import { Loader } from '@/components/ui/loader';
 import { useTitleFade } from '@/hooks/useTitleFade';
 import { useLocale } from '@/hooks/useLocale';
@@ -123,7 +123,6 @@ function ThreadRowGlyph({ tid, isCurrentThread }: { tid: string; isCurrentThread
   );
 }
 
-const threadMetaDate = createDateFormatter({ dateStyle: 'medium' });
 
 // Compact metadata card shown after hovering a thread row: full title plus
 // the cheap facts the list row already carries. Metadata-only, so it never
@@ -150,7 +149,7 @@ function ThreadMetaRows({ thread, t }: { thread: ThreadEntry; t: (key: string) =
   const now = useNow();
   const rows: Array<[string, string]> = [];
   if (thread.updated_at) rows.push([t('nav.threadUpdated'), relativeTime(thread.updated_at, locale, now)]);
-  if (thread.created_at) rows.push([t('nav.threadCreated'), threadMetaDate(new Date(thread.created_at), locale)]);
+  if (thread.created_at) rows.push([t('nav.threadCreated'), mediumDate(new Date(thread.created_at), locale)]);
   if (typeof thread.turn_count === 'number') rows.push([t('nav.threadTurns'), String(thread.turn_count)]);
   if (rows.length === 0) return null;
   return (

@@ -4,11 +4,10 @@ import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useLocale } from '@/hooks/useLocale';
 import { useTitleFade } from '@/hooks/useTitleFade';
-import { createDateFormatter } from '@/lib/format';
+import { shortMonthDay } from '@/lib/format';
 import { useThreadFlags } from '@/lib/threadLifecycle/store';
 import { cn } from '@/lib/utils';
 
-const updatedOn = createDateFormatter({ month: 'short', day: 'numeric' });
 
 interface ThreadCardProps {
   thread: Record<string, unknown>;
@@ -107,7 +106,7 @@ function ThreadCard({ thread, onClick, onDelete, onRename, onArchive, onUnarchiv
         </h3>
         {!!thread.updated_at && (
           <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-tertiary)' }}>
-            {updatedOn(new Date(thread.updated_at as string), locale)}
+            {shortMonthDay(new Date(thread.updated_at as string), locale)}
           </p>
         )}
       </div>

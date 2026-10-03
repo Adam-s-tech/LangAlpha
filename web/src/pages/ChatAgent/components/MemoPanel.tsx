@@ -38,7 +38,7 @@ import {
 import { useWorkspaces } from '../../../hooks/useWorkspaces';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
-import { createDateFormatter, formatBytes } from '@/lib/format';
+import { createDateFormatter, formatBytes, paddedClockTime, shortMonthDay } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
 import {
@@ -77,8 +77,6 @@ const ACCEPT_ATTR = '.md,.txt,.csv,.json,.pdf,text/markdown,text/plain,text/csv,
 
 // --- Helpers ---------------------------------------------------------------
 
-const clockTime = createDateFormatter({ hour: '2-digit', minute: '2-digit' });
-const monthDay = createDateFormatter({ month: 'short', day: 'numeric' });
 const monthDayYear = createDateFormatter({ year: 'numeric', month: 'short', day: 'numeric' });
 
 function formatDate(iso: string | null, now: number, locale: string): string {
@@ -86,8 +84,8 @@ function formatDate(iso: string | null, now: number, locale: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   const today = new Date(now);
-  if (d.toDateString() === today.toDateString()) return clockTime(d, locale);
-  return d.getFullYear() === today.getFullYear() ? monthDay(d, locale) : monthDayYear(d, locale);
+  if (d.toDateString() === today.toDateString()) return paddedClockTime(d, locale);
+  return d.getFullYear() === today.getFullYear() ? shortMonthDay(d, locale) : monthDayYear(d, locale);
 }
 
 function mimeToLabel(mime: string | null | undefined, key: string): string {

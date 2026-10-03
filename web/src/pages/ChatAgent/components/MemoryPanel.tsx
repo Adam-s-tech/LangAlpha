@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, useMemo } from 'react';
 import { ArrowLeft, BookMarked, FileText, RefreshCw, X } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
-import { createDateFormatter, formatBytes } from '@/lib/format';
+import { formatBytes, paddedClockTime, shortMonthDay } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
 import { useTranslation } from 'react-i18next';
@@ -32,15 +32,13 @@ interface MemoryPanelProps {
   onOpenFile?: OpenFileHandler;
 }
 
-const clockTime = createDateFormatter({ hour: '2-digit', minute: '2-digit' });
-const monthDay = createDateFormatter({ month: 'short', day: 'numeric' });
 
 function formatTime(iso: string | null, now: number, locale: string): string {
   if (!iso) return '';
   try {
     const d = new Date(iso);
     const sameDay = d.toDateString() === new Date(now).toDateString();
-    return sameDay ? clockTime(d, locale) : monthDay(d, locale);
+    return sameDay ? paddedClockTime(d, locale) : shortMonthDay(d, locale);
   } catch {
     return '';
   }

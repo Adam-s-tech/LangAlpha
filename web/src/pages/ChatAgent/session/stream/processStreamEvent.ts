@@ -34,7 +34,7 @@ import {
 import { getOrCreateTaskRefs, type UpdateSubagentCard } from '../streamRefs';
 import { handleMarketWatchUpdate, type MarketWatchState } from '../marketWatchEvents';
 import type {
-  SSEEvent, HistoryInterruptInfo, StreamProcessorRefs, ModelOptions, ModelStatus,
+  SSEEvent, HistoryInterruptInfo, StreamProcessorRefs, ModelStatus,
 } from '../types';
 import { PROPOSAL_INTERRUPT_TYPES, PROPOSAL_DATA_KEY_MAP } from '../interrupts/buckets';
 import { projectLiveInterrupt } from '../interrupts/fromLiveEvent';
@@ -45,10 +45,7 @@ export interface StreamRouterDeps {
   applyFallbackSuggestion: (event: Record<string, unknown>) => void;
   applyModelStatus: (status: ModelStatus) => void;
   clearModelStatus: () => void;
-  /** Steering re-entry for queued sends (demotion path re-dispatch). */
-  handleSendSteering: (message: string, planMode?: boolean, additionalContext?: Record<string, unknown>[] | null, attachmentMeta?: Record<string, unknown>[] | null, modelOptions?: ModelOptions) => Promise<void>;
   insertNotification: (text: string, variant?: 'info' | 'success' | 'warning', detail?: string) => void;
-  loadConversationHistory: () => Promise<boolean>;
   releaseStreamOwnership: () => void;
   attachSubagentMux: (tid: string, processEvent: (event: SSEEvent) => void, snapshotAtMs?: number) => void;
   setMarketWatch: React.Dispatch<React.SetStateAction<MarketWatchState | null>>;
@@ -58,15 +55,13 @@ export interface StreamRouterDeps {
 }
 
 /**
- * Creates a stream event processor that handles SSE events from the backend.
- * Used by both handleSendMessage (live) and reconnectToStream (reconnection).
- *
- * @param {string} assistantMessageId - The assistant message ID to update
- * @param {Object} refs - Refs for event handlers (contentOrderCounterRef, etc.)
- * @param {Function} getTaskIdFromEvent - Helper to route subagent events
- * @returns {Function} Event handler: (event) => void
+ * The handler for one turn's SSE events, shared by a live send and a
+ * reconnect so both fold events into the transcript the same way.
+ * `assistantMessageId` is only where the turn starts writing: a delivered
+ * steer moves it to a new bubble. `wasInterruptedRef` is set when the turn
+ * stops on an interrupt, so the caller finalizes the bubble as paused rather
+ * than completed.
  */
-// TODO: type properly — refs should use a proper interface matching StreamRefs from streamEventHandlers
 export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouterDeps, assistantMessageId: string, refs: StreamProcessorRefs, getTaskIdFromEvent: (event: SSEEvent) => string | null, wasInterruptedRef: { current: boolean } | null = null) => {
   const reconnectOrigin = refs.isReconnect === true;
   const setMessagesForHandlers = rt.setMessages as unknown as (

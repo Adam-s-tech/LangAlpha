@@ -1,14 +1,13 @@
 import type { ReactElement, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocale } from '@/hooks/useLocale';
-import { createDateFormatter } from '@/lib/format';
+import { mediumTime } from '@/lib/format';
 import PulseDot from '@/components/ui/pulse-dot';
 import type { MarketWatchState } from '../hooks/utils/streamEventHandlers';
 
 const TERTIARY = { color: 'var(--color-text-tertiary)' as const };
 
 // Locale-aware clock (matches the prior `toLocaleTimeString()` shape: h:m:s).
-const formatWatchTime = createDateFormatter({ timeStyle: 'medium' });
 
 /** A titled panel section. Phase 1 renders only the market-watch section; later
  *  status sections (todos, skills, background tasks) append as siblings. */
@@ -82,7 +81,7 @@ export default function StatusPanel({ marketWatch }: StatusPanelProps): ReactEle
   const updatedCaption =
     timestamp != null
       ? t('chat.marketWatch.panelUpdated', {
-          time: formatWatchTime(timestamp * 1000, locale),
+          time: mediumTime(timestamp * 1000, locale),
           defaultValue: 'Updated {{time}}',
         })
       : undefined;

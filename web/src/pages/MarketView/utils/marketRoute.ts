@@ -5,6 +5,8 @@
  * `MarketChatPanel.tsx`, so the two sides share one set of param names.
  * Older Dashboard call sites still spell `/market?symbol=` by hand.
  */
+import { inAppPath } from '@/lib/inAppPath';
+
 export interface MarketViewRoute {
   symbol: string;
   timeframe?: string;
@@ -54,39 +56,6 @@ export function buildMarketViewUrl({ symbol, timeframe, workspaceId, threadId, r
   if (threadId && threadId !== DEFAULT_MARKET_THREAD) sp.set(PARAM.threadId, threadId);
   if (returnTo) sp.set(PARAM.returnTo, returnTo);
   return `/market?${sp.toString()}`;
-}
-
-/** Stands in for the app's origin, so the check below needs no `window`. */
-const IN_APP_BASE = 'http://in-app.invalid';
-
-/**
- * `returnTo` as a path inside this app, or null for anything that would leave it.
- *
- * The param arrives in a URL anyone can craft, and "Return to chat" navigates to
- * it, so it is an open redirect unless it resolves to the same origin. The
- * resolve catches schemes, hosts, and the tabs and newlines a browser strips.
- * The path it yields is checked after it, because dot segments collapse during
- * the resolve: `/..//host` comes out as `//host`, which a browser reads as
- * another host, as it does `/\host`. A consumer that decodes once would do the
- * same with `/%2F%2Fhost`.
- */
-function inAppPath(raw: string | null): string | null {
-  if (!raw || !raw.startsWith('/')) return null;
-  let url: URL;
-  try {
-    url = new URL(raw, IN_APP_BASE);
-  } catch {
-    return null;
-  }
-  if (url.origin !== IN_APP_BASE) return null;
-  const path = url.pathname + url.search + url.hash;
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(path);
-  } catch {
-    return null;
-  }
-  return /^\/[\\/]/.test(path) || /^\/[\\/]/.test(decoded) ? null : path;
 }
 
 export function readMarketViewRoute(searchParams: URLSearchParams): MarketViewRouteParams {

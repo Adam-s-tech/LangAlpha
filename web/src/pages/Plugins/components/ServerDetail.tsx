@@ -16,7 +16,7 @@ import {
 } from '@/hooks/useMcpServers';
 import { brokerageArt, mcpServerArt } from '@/lib/brandArt';
 import { brokerageForUrl, settledGrant, type Brokerage } from '../brokerages';
-import { createDateFormatter } from '@/lib/format';
+import { mediumDate } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import {
   formatApiErrorDetail,
@@ -57,7 +57,6 @@ export type ServerDetailData =
   | McpServerDetailData
   | { origin: 'brokerage'; brokerage: Brokerage; server: CatalogServer | null };
 
-const formatDate = createDateFormatter({ dateStyle: 'medium' });
 
 /**
  * Which control asked for a binding write. A change to many tools at once is
@@ -382,7 +381,7 @@ export function ServerDetail({
                   style={{ color: 'var(--color-text-quaternary)' }}
                 >
                   {t('plugins.detail.discovered', {
-                    date: formatDate(new Date(toolsQuery.data.discovered_at), locale),
+                    date: mediumDate(new Date(toolsQuery.data.discovered_at), locale),
                   })}
                 </span>
               )}
@@ -444,12 +443,12 @@ export function ServerDetail({
           <div className="flex flex-col gap-1.5">
             {catalog.created_at && (
               <DetailField label={t('plugins.detail.created')}>
-                {formatDate(new Date(catalog.created_at), locale)}
+                {mediumDate(new Date(catalog.created_at), locale)}
               </DetailField>
             )}
             {catalog.updated_at && (
               <DetailField label={t('plugins.detail.updated')}>
-                {formatDate(new Date(catalog.updated_at), locale)}
+                {mediumDate(new Date(catalog.updated_at), locale)}
               </DetailField>
             )}
           </div>

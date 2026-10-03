@@ -3,7 +3,7 @@ import { Share2, Copy, Check, Link2, Lock, FileText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from '@/components/ui/use-toast';
-import { createDateFormatter } from '@/lib/format';
+import { shortMonthDay } from '@/lib/format';
 import { useCopyShareLink } from '@/hooks/useCopyShareLink';
 import { useLocale } from '@/hooks/useLocale';
 import { useSharedLinks, useShareLinkMutations } from '@/hooks/useShareLink';
@@ -18,7 +18,6 @@ interface ShareButtonProps {
   workspaceId?: string | null;
 }
 
-const sharedOn = createDateFormatter({ month: 'short', day: 'numeric' });
 
 function sharedLinkName(link: ShareLink): string {
   return link.title || link.path?.split('/').pop() || link.code;
@@ -65,7 +64,7 @@ function SharedInWorkspace({ workspaceId }: { workspaceId: string }) {
               </p>
               {link.shared_at && (
                 <p className="text-[0.6875rem]" style={{ color: 'var(--color-text-tertiary)' }}>
-                  {t('share.sharedOn', { date: sharedOn(new Date(link.shared_at), locale) })}
+                  {t('share.sharedOn', { date: shortMonthDay(new Date(link.shared_at), locale) })}
                 </p>
               )}
             </div>

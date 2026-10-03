@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
-import { AT_BOTTOM_PX, NEAR_BOTTOM_PX, isNearBottom } from '../../utils/scrollHelpers';
+import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
+import { AT_BOTTOM_PX, NEAR_BOTTOM_PX, createSettleWindow, isNearBottom } from '../../utils/scrollHelpers';
+import { anchorTop } from '../../utils/scrollDom';
 
 /**
  * Following a streaming transcript. A reader near the bottom is moved to the
@@ -49,48 +50,131 @@ export function createStreamFollow(c: HTMLElement, following: { current: boolean
   };
 }
 
+/** What the follow policy (useTranscriptFollow) asks of a scroll engine. */
+export interface StreamFollowControls {
+  /** Follows again from the bottom wherever the reader was, for a turn the
+   *  reader starts. */
+  rejoin(): void;
+  /** Brings the start of reply bubble `id` under the viewport top, for a turn
+   *  that finished under the 'reply_start' preference. */
+  landOnReply(id: string, behavior: 'auto' | 'smooth'): void;
+}
+
+// What a reader does to scroll: a wheel or trackpad, a touch, the scrollbar or
+// a click, a key. A landing's own scrolls cannot be told from the reader's by
+// position (a smooth one passes through any), so one of these ends the hold.
+export const INTENT_EVENTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+
 /**
  * The follow for a scroller that keeps no position to restore, so the first
  * observation follows too and a thread opens at its end. `shown` re-attaches
  * it when the content mounts. Later growth is followed only while `active`:
  * in a settled transcript it is the reader's own doing, a row opened, and
- * stays where they put it.
+ * stays where they put it. `landOnReply` moves only a reader the follow was
+ * carrying and stops following, and a reply that fits on screen moves nothing.
  */
 export function useStreamFollow(
   scroller: RefObject<HTMLElement | null>,
   content: RefObject<HTMLElement | null>,
   shown: boolean,
   active: boolean,
-): void {
+): StreamFollowControls {
   const activeRef = useRef(active);
-  const streamRef = useRef<StreamFollow | null>(null);
+  const attachedRef = useRef<(StreamFollowControls & { settled(): void }) | null>(null);
   // The commit that ends a turn or a history load carries its last growth,
   // and the observer reports it only after this has marked the transcript
-  // settled. Followed here instead, where layout already measures it.
+  // settled. Followed here instead, where layout already measures it, and
+  // for one settle window after, while the typewriter types out what it still
+  // held and late media lands.
   useLayoutEffect(() => {
-    if (activeRef.current && !active) streamRef.current?.follow();
+    if (activeRef.current && !active) attachedRef.current?.settled();
     activeRef.current = active;
   }, [active]);
   useEffect(() => {
     const c = scroller.current;
     const el = content.current;
     if (!c || !el) return;
-    const stream = createStreamFollow(c, { current: true });
-    streamRef.current = stream;
+    const following = { current: true };
+    const stream = createStreamFollow(c, following);
+    // A landed reply is held under the viewport top through the main chat's
+    // settle window, re-measured on every resize: the settled turn folds its
+    // work away above the reply right after it lands.
+    let held: { id: string; top: number } | null = null;
+    const settle = createSettleWindow(() => {
+      held = null;
+    });
+    // After a turn ends, its growth is still followed until the transcript
+    // has been quiet for the settle window or the reader does anything.
+    let tail = false;
+    const tailWindow = createSettleWindow(() => {
+      tail = false;
+    });
+    const release = () => {
+      held = null;
+      settle.clear();
+      tail = false;
+      tailWindow.clear();
+    };
     let lastHeight = -1;
     const ro = new ResizeObserver((entries) => {
       const height = entries[0]?.contentRect.height ?? lastHeight;
-      const follow = lastHeight < 0 || (height > lastHeight && activeRef.current);
+      const follow = lastHeight < 0 || (height > lastHeight && (activeRef.current || tail));
       lastHeight = height;
-      if (follow) stream.follow();
+      if (held) {
+        const top = anchorTop(c, held.id, 'reply');
+        if (top == null) {
+          release();
+          return;
+        }
+        // Growth below the reply moves nothing, and leaves a smooth landing
+        // still under way alone.
+        if (Math.abs(top - held.top) >= 1) {
+          held.top = top;
+          c.scrollTo({ top });
+        }
+        settle.arm();
+      } else if (follow) {
+        stream.follow();
+        if (tail) tailWindow.arm();
+      }
     });
-    const onScroll = () => { stream.scrolled(); };
+    const onScroll = () => { stream.scrolled(!held); };
     c.addEventListener('scroll', onScroll, { passive: true });
+    for (const type of INTENT_EVENTS) c.addEventListener(type, release, { passive: true });
     ro.observe(el);
+    attachedRef.current = {
+      settled() {
+        tail = true;
+        tailWindow.arm();
+        stream.follow();
+      },
+      rejoin() {
+        release();
+        following.current = true;
+        stream.follow();
+      },
+      landOnReply(id, behavior) {
+        if (!following.current) return;
+        const top = anchorTop(c, id, 'reply');
+        if (top == null || top >= c.scrollHeight - c.clientHeight - 1) return;
+        following.current = false;
+        held = { id, top };
+        c.scrollTo({ top, behavior });
+        settle.arm();
+      },
+    };
     return () => {
-      streamRef.current = null;
+      release();
+      attachedRef.current = null;
       c.removeEventListener('scroll', onScroll);
+      for (const type of INTENT_EVENTS) c.removeEventListener(type, release);
       ro.disconnect();
     };
   }, [scroller, content, shown]);
+  const rejoin = useCallback(() => attachedRef.current?.rejoin(), []);
+  const landOnReply = useCallback(
+    (id: string, behavior: 'auto' | 'smooth') => attachedRef.current?.landOnReply(id, behavior),
+    [],
+  );
+  return { rejoin, landOnReply };
 }

@@ -14,6 +14,7 @@ import {
   handleSubagentToolCalls,
   handleSubagentToolCallResult,
   handleTaskSteeringAccepted,
+  type DeliveredInstruction,
 } from './liveEventHandlers';
 import { countToolCalls } from './subagentMetrics';
 import {
@@ -142,6 +143,7 @@ export function projectSubagentHistory(
           handleTaskSteeringAccepted({
             taskId,
             content: event.content as string,
+            entries: event.entries as DeliveredInstruction[] | undefined,
             refs: tempRefs,
             updateSubagentCard: historyUpdateSubagentCard,
           });

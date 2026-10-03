@@ -105,12 +105,14 @@ async def _return_unconsumed_steering(
     ``steering_returned`` events — accepted input a run never consumed is
     surfaced, not left for a later resume or a silent TTL death.
 
-    Read → surface → delete, in that order: the queue is erased only after
-    every entry made it into the event archive, so a spill failure (or a
-    crash) between the two leaves the entries in Redis until TTL instead of
-    silently destroying acknowledged input. No producer can slip in behind
-    the read — the post-push verify sees the terminal meta (written before
-    this sweep) and reclaims its own entry."""
+    Read → surface → remove, in that order: an entry leaves the queue only
+    after it made it into the event archive, so a spill failure (or a crash)
+    between the two leaves the entries in Redis until TTL instead of
+    silently destroying acknowledged input. Only the entries read are
+    removed, one by one, never the key: a producer that pushes behind the
+    read sees the terminal meta (written before this sweep) on its
+    post-push verify and reclaims its own entry, and it reads an entry gone
+    from the queue as one the run settled."""
     try:
         from src.utils.cache.redis_cache import get_cache_client
 
@@ -119,7 +121,7 @@ async def _return_unconsumed_steering(
             return
         if task.redis_write_failed or registry is None:
             # Torn transport: appends would no-op against the open circuit
-            # and the delete would erase input nothing surfaced.
+            # and the removal would erase input nothing surfaced.
             return
         key = steering_queue_key(task.tool_call_id, task.task_run_id)
         raw_messages = await cache.client.lrange(key, 0, -1) or []
@@ -152,8 +154,8 @@ async def _return_unconsumed_steering(
                 # A kill seals the task's streams; the returned-input record
                 # is unwind bookkeeping that must land regardless — without
                 # it the accepted instruction is neither delivered nor
-                # returned anywhere durable, and the queue delete below
-                # erases the last copy.
+                # returned anywhere durable, and the removal below erases
+                # the last copy.
                 terminal=True,
             )
         if task.redis_write_failed:
@@ -170,7 +172,8 @@ async def _return_unconsumed_steering(
                 pending=appended,
             )
             return
-        await cache.client.delete(key)
+        for raw in raw_messages:
+            await cache.client.lrem(key, 1, raw)
         logger.info(
             "returned unconsumed steering input",
             task_id=task.task_id,

@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import type { TFunction } from 'i18next';
 import i18n from '@/i18n';
 import { toast } from '@/components/ui/use-toast';
-import { registerAuthReset } from '@/lib/authResets';
+import { authSessionCheck, registerAuthReset } from '@/lib/authResets';
 import { DownloadProgress, DownloadStarted } from '../components/filePanel/DownloadProgress';
 
 // Below this a save feels instant and a notice would only flash.
@@ -22,13 +22,11 @@ const listeners = new Set<() => void>();
 // Each running save's notice teardown. A save can stall past sign-out, and its
 // pending timer would otherwise open a notice naming the previous account's file.
 const notices = new Set<() => void>();
-// Bumped on sign-out. A save still running then belongs to the previous
-// account: it must not hand that account's file to the browser, toast, or
-// put its state back after the reset cleared it.
-let session = 0;
 
+// A save still running at sign-out belongs to the previous account: it must
+// not hand that account's file to the browser, toast, or put its state back
+// after this cleared it, so each one checks its session as it lands.
 registerAuthReset(() => {
-  session += 1;
   inFlight.clear();
   started.forEach((timer) => clearTimeout(timer));
   started.clear();
@@ -79,10 +77,10 @@ export function trackPending(key: string, run: () => Promise<boolean>): Promise<
   const running = inFlight.get(key);
   if (running) return running;
   if (started.has(key)) return Promise.resolve(true);
-  const mine = session;
+  const current = authSessionCheck();
   const tracked: Promise<boolean> = run()
     .then((handedOff) => {
-      if (handedOff && mine === session) markStarted(key);
+      if (handedOff && current()) markStarted(key);
       return handedOff;
     })
     .finally(() => {
@@ -134,8 +132,7 @@ export function withDownloadNotice(
   save: (report: DownloadProgressReport, current: () => boolean) => Promise<void>,
 ): Promise<void> {
   return trackPending(key, async () => {
-    const mine = session;
-    const current = () => mine === session;
+    const current = authSessionCheck();
     const notice: { current: ReturnType<typeof toast> | null } = { current: null };
     let fraction: number | null = null;
     let slow = false;

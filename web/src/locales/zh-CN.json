@@ -126,7 +126,8 @@
     "expand": "展开侧边栏",
     "resize": "调整侧边栏宽度",
     "plugins": "插件",
-    "orders": "订单"
+    "orders": "订单",
+    "menu": "菜单"
   },
   "account": {
     "menuLabel": "账号菜单"
@@ -382,6 +383,15 @@
       "compactionModel": "上下文压缩模型",
       "compactionModelDesc": "用于压缩过长的对话上下文。",
       "defaultsToFlash": "默认使用快速模型"
+    },
+    "manageProvidersDesc": "添加或移除 API 密钥、自定义提供商和模型",
+    "selectModel": "选择模型…",
+    "noModelsAvailable": "暂无可用模型",
+    "modelAccess": {
+      "platform": "平台",
+      "byok": "BYOK",
+      "oauth": "OAuth",
+      "locked": "未解锁"
     }
   },
   "dashboard": {
@@ -467,8 +477,6 @@
         "tipBody": "点击小组件即可放入仪表板的下一个空位。",
         "totalCount": "共 {{count}} 个小组件",
         "noMatches": "没有匹配的小组件。",
-        "hintClickToSelect": "点击选择 · 双击或按",
-        "hintToAdd": "添加",
         "hintAddSentence": "点击选择 · 双击或按 <enter/> 添加",
         "cancel": "取消",
         "addWidget": "添加小组件",
@@ -848,7 +856,9 @@
       },
       "marketsOverview": {
         "title": "市场概览",
-        "description": "主要指数实时磁贴，附缩略走势图。"
+        "description": "主要指数实时磁贴，附缩略走势图。",
+        "noChartData": "暂无图表数据",
+        "showIndex": "显示 {{name}}"
       },
       "insightBrief": {
         "title": "AI 每日简报",
@@ -998,6 +1008,10 @@
         "flash": "Flash",
         "empty": "暂无近期对话",
         "emptyHint": "开始一段对话，记录会出现在这里。"
+      },
+      "contextPreview": {
+        "empty": "（空）",
+        "noContent": "（无预览内容）"
       }
     },
     "classic": {
@@ -1319,6 +1333,35 @@
       "criticalBody": "只剩 {{free}}。这台计算机上的所有工作区都将无法保存文件或运行代码。",
       "openBreakdown": "查看存储明细",
       "dismiss": "关闭"
+    },
+    "overview": {
+      "state": {
+        "archiving": "归档中",
+        "archived": "已归档",
+        "restoring": "还原中",
+        "resizing": "调整规格中",
+        "destroying": "销毁中",
+        "destroyed": "已销毁",
+        "pausing": "暂停中",
+        "paused": "已暂停",
+        "resuming": "恢复中",
+        "snapshotting": "创建快照中",
+        "forking": "复制中",
+        "build_failed": "构建失败",
+        "pending_build": "等待构建",
+        "building_snapshot": "构建快照中",
+        "pulling_snapshot": "拉取快照中",
+        "unknown": "未知"
+      },
+      "memory": "内存",
+      "disk": "磁盘",
+      "transition": "{{state}}",
+      "created": "创建于 {{date}}",
+      "autoStop": "自动停止：{{minutes}} 分钟",
+      "refreshAria": "刷新沙箱状态",
+      "refresh": "刷新状态",
+      "archive": "归档",
+      "sandboxId": "沙箱 ID："
     }
   },
   "thread": {
@@ -1437,9 +1480,9 @@
     "agentNotFound": "未找到 Agent",
     "planFeedbackHint": "输入您的反馈意见来修改计划，然后发送。",
     "stoppedChip": "已停止",
-    "workingFor": "已工作 {{duration}}",
-    "workedFor": "工作了 {{duration}}",
-    "worked": "已工作",
+    "workingFor": "工作中 {{duration}}",
+    "workedFor": "已工作 {{duration}}",
+    "worked": "工作过程",
     "thinking": "思考中",
     "stopFailed": "无法停止本次运行，它可能仍在运行。",
     "errorUpstreamHeadline": "模型提供商返回错误",
@@ -1592,7 +1635,7 @@
       "statusCompleted": "已完成",
       "statusFailed": "已失败",
       "statusStopped": "已停止",
-      "hintProvisioning": "正在配置沙盒…",
+      "hintProvisioning": "正在配置沙箱…",
       "hintWorking": "正在后台运行",
       "hintFailed": "运行未完成便已停止",
       "hintStopped": "运行已停止",
@@ -1626,11 +1669,11 @@
     "workspaceStarting": "正在启动工作区...",
     "workspaceRestoring": "正在从存档恢复工作区，约需 60 秒...",
     "workspaceStateHelp": "为什么需要等待？",
-    "workspaceStateStartingTitle": "正在启动沙盒",
-    "workspaceStateStartingBody": "沙盒正在重新连接，通常只需几秒钟。您的文件和对话历史都已保留。",
+    "workspaceStateStartingTitle": "正在启动沙箱",
+    "workspaceStateStartingBody": "沙箱正在重新连接，通常只需几秒钟。您的文件和对话历史都已保留。",
     "workspaceStateArchivedTitle": "正在从冷存储中恢复",
-    "workspaceStateArchivedBody": "闲置超过 7 天的沙盒会被归档以释放算力。唤回时需要下载快照并重启容器，通常需要 60 至 90 秒。",
-    "workspaceStateArchivedFootnote": "您的文件、工具和对话状态都完好无损——沙盒就绪后即可继续对话。",
+    "workspaceStateArchivedBody": "闲置超过 7 天的沙箱会被归档以释放算力。唤回时需要下载快照并重启容器，通常需要 60 至 90 秒。",
+    "workspaceStateArchivedFootnote": "您的文件、工具和对话状态都完好无损，沙箱就绪后即可继续对话。",
     "archiveConfirm": {
       "title": "该对话仍在运行，确定归档？",
       "body": "此对话还有任务正在运行。归档只是把它从列表中隐藏，任务会继续跑完——之后可在“已归档”中找到它和运行结果。",
@@ -1681,6 +1724,7 @@
     "taskErrorNotification": "子任务运行失败",
     "taskStoppedNotification": "子任务运行已停止",
     "taskSteeringReturnedNotification": "引导消息已退回 · 运行在送达前已结束",
+    "taskSteeringNotSentNotification": "引导消息未发送",
     "viewSummary": "查看摘要",
     "hideSummary": "隐藏摘要",
     "offloadedArgsNotification": "工具参数已转存 · {{count}} 个工具",
@@ -3037,7 +3081,9 @@
         "unavailable": "不可用",
         "reconnecting": "重连中",
         "disconnected": "已断开"
-      }
+      },
+      "range52w": "52 周区间",
+      "marketCap": "市值"
     },
     "symbolSearch": {
       "switchSymbol": "切换标的，当前为 {{symbol}}",
@@ -3066,13 +3112,39 @@
       "startConversation": "在下方输入消息开始对话",
       "defaultPlaceholder": "你想了解什么？",
       "returnToChat": "返回对话",
-      "openInChat": "在对话中打开"
+      "openInChat": "在对话中打开",
+      "noWorkspaceToast": "请先创建工作区，再使用 PTC 模式。",
+      "ptcSetupFailed": "无法启动 PTC 模式，请重试。",
+      "askStockPlaceholder": "询问这只股票…"
     },
     "chart": {
       "clearAnnotations": "清除",
       "clearAnnotationsTitle": "从图表中清除标注（已保留在对话中，点击该结果可恢复）",
       "modeLabel": "模式",
-      "newsEventAria": "新闻事件：{{title}}"
+      "newsEventAria": "新闻事件：{{title}}",
+      "overlay": "叠加",
+      "toolPercentScale": "百分比刻度",
+      "toolMagnet": "磁吸模式",
+      "toolBaseline": "与昨收对比的基准线",
+      "toolAnnotations": "显示或隐藏标注",
+      "toolLogScale": "对数刻度",
+      "toolZoomIn": "放大",
+      "toolZoomOut": "缩小",
+      "toolAutoFit": "自动适配",
+      "toolFitAll": "显示全部数据",
+      "toolScrollLatest": "滚动到最新",
+      "indicators": "指标",
+      "tools": "工具",
+      "view": "视图",
+      "chartTools": "图表工具",
+      "chartSettings": "图表设置",
+      "chartAria": "K 线图",
+      "loadingHistory": "正在加载历史数据",
+      "loadingData": "正在获取实时行情…",
+      "errorTitle": "数据加载失败",
+      "errorIntraday": "暂无日内数据，市场可能已休市。请尝试 1D 周期。",
+      "errorNotFound": "未找到该股票的数据",
+      "errorLoad": "加载数据失败"
     },
     "selection": {
       "toolTooltip": "选择一个区域或价格水平，向 Agent 提问",
@@ -3105,6 +3177,31 @@
       "chipRegion": "区域 · {{symbol}} {{timeframe}}",
       "chipPriceLevel": "价格 ${{price}} · {{symbol}} {{timeframe}}",
       "removeChip": "移除选择"
+    },
+    "overview": {
+      "noData": "暂无数据"
+    },
+    "sidebar": {
+      "remove": "移除",
+      "show": "显示自选股和持仓",
+      "collapse": "收起",
+      "portfolio": "持仓",
+      "livePrices": "实时价格",
+      "addToWatchlist": "添加到自选股",
+      "addHolding": "添加持仓",
+      "emptyWatchlist": "自选股里还没有股票，点击 + 添加。",
+      "emptyPortfolio": "持仓里还没有标的，点击 + 添加。",
+      "viewAll": "查看全部"
+    },
+    "quickQuery": {
+      "q1": "分析 {{symbol}} 的技术形态",
+      "q2": "{{symbol}} 的关键支撑位和阻力位在哪里？",
+      "q3": "总结 {{symbol}} 的趋势和动量指标",
+      "q4": "{{symbol}} 的均线给出了什么信号？",
+      "q5": "分析 {{symbol}} 的 RSI 和成交量形态",
+      "q6": "{{symbol}} 上有哪些正在形成的图表形态？",
+      "q7": "{{symbol}} 相对 52 周区间表现如何？",
+      "q8": "{{symbol}} 的 MACD 交叉状态如何？"
     }
   },
   "onboarding": {
@@ -3134,7 +3231,7 @@
           },
           "create": {
             "title": "为正式任务创建 PTC 工作区",
-            "body": "涉及数据处理或需要产出交付物的任务，建议交给 PTC 工作区完成，而不是全部留在 Flash。点击“新建工作区”并按任务命名，Agent 会启动专属沙盒，以完整能力执行。"
+            "body": "涉及数据处理或需要产出交付物的任务，建议交给 PTC 工作区完成，而不是全部留在 Flash。点击“新建工作区”并按任务命名，Agent 会启动专属沙箱，以完整能力执行。"
           }
         }
       },
@@ -3193,7 +3290,7 @@
         },
         "createWorkspace": {
           "title": "创建第一个工作区",
-          "desc": "新建一个专属 PTC 工作区，Agent 将在完整沙盒中执行正式分析任务。"
+          "desc": "新建一个专属 PTC 工作区，Agent 将在完整沙箱中执行正式分析任务。"
         },
         "firstChat": {
           "title": "开始第一次分析",

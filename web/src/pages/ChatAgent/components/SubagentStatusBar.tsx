@@ -6,7 +6,6 @@ import { cn } from '../../../lib/utils';
 import iconRobo from '../../../assets/img/icon-robo.png';
 import iconRoboSing from '../../../assets/img/icon-robo-sing.png';
 import Markdown from './Markdown';
-import { sendSubagentMessage } from '../utils/api';
 import { deriveSubagentStatus } from '../session/subagents/subagentStatus';
 import { SubagentStatusIcon } from './taskStatusUi';
 import './NavigationPanel.css';
@@ -33,8 +32,8 @@ interface Agent {
 
 interface SubagentStatusBarProps {
   agent: Agent | null;
-  threadId: string;
-  onInstructionSent?: (text: string) => void;
+  /** Shows the instruction pending, sends it, and takes it back if the send fails. */
+  onSendInstruction?: (text: string) => Promise<void>;
 }
 
 /**
@@ -44,7 +43,7 @@ interface SubagentStatusBarProps {
  * Shows agent avatar, name, description, status, and current tool.
  * Includes an expandable input for sending instructions to running subagents.
  */
-function SubagentStatusBar({ agent, threadId, onInstructionSent }: SubagentStatusBarProps): React.ReactElement | null {
+function SubagentStatusBar({ agent, onSendInstruction }: SubagentStatusBarProps): React.ReactElement | null {
   const { t } = useTranslation();
   const [inputOpen, setInputOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
@@ -53,26 +52,20 @@ function SubagentStatusBar({ agent, threadId, onInstructionSent }: SubagentStatu
 
   const handleSend = useCallback(async (): Promise<void> => {
     const text = inputValue.trim();
-    const tId = agent?.name?.replace('Task-', '') || null;
     // 'completed', 'cancelled' and 'error' are all terminal — no steering a
     // settled task (an optimistic instruction would render before the
     // backend rejects it).
-    if (!text || sending || !threadId || !tId || agent?.status === 'completed' || agent?.status === 'cancelled' || agent?.status === 'error') return;
-
-    // Immediately show pending message in the subagent view
-    onInstructionSent?.(text);
+    if (!text || sending || agent?.status === 'completed' || agent?.status === 'cancelled' || agent?.status === 'error') return;
 
     setSending(true);
     setInputValue('');
     setInputOpen(false);
     try {
-      await sendSubagentMessage(threadId, tId, text);
-    } catch (err) {
-      console.error('[SubagentStatusBar] Failed to send message:', err);
+      await onSendInstruction?.(text);
     } finally {
       setSending(false);
     }
-  }, [inputValue, sending, threadId, agent?.name, agent?.status, onInstructionSent]);
+  }, [inputValue, sending, agent?.status, onSendInstruction]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -109,11 +102,8 @@ function SubagentStatusBar({ agent, threadId, onInstructionSent }: SubagentStatu
   const isError = effectiveStatus === 'error';
   const isTerminal = isCompleted || isCancelled || isError;
 
-  // Extract task ID from display ID (e.g. "Task-k7Xm2p" -> "k7Xm2p")
-  const taskId = agent.name?.replace('Task-', '') || null;
-
-  // Can send: subagent is not terminal (running/initializing), with thread + task.
-  const canSend = !isTerminal && threadId && taskId != null;
+  // Can send: subagent is not terminal (running/initializing).
+  const canSend = !isTerminal;
 
   // Terminal outcome wins over the derived current tool: a task reaped
   // mid-tool-call leaves that call forever "in progress", but the run is

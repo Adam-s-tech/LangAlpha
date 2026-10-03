@@ -1,5 +1,11 @@
 // DOM lookups the transcript scroll code shares (the scroll controller and
-// the minimap must agree on what "the viewport" is).
+// the minimap must agree on what "the viewport" is, and both chat surfaces on
+// where a reply starts).
+
+// Gap left above a bubble the transcript is pinned to.
+const ANCHOR_OFFSET_PX = 16;
+
+export type AnchorPart = 'reply';
 
 /** The ScrollArea wrapper is outer (overflow-hidden) > inner (overflow-auto); the inner div is the element that actually scrolls. */
 export function resolveScrollViewport(root: HTMLElement | null): HTMLElement | null {
@@ -25,4 +31,17 @@ export function findMessageElement(viewport: HTMLElement, id: string): HTMLEleme
     if (el.dataset.messageId === id) return el;
   }
   return null;
+}
+
+/** scrollTop that puts bubble `id` just under the viewport top, or `delta` px
+ *  into it, or null once it is no longer in the transcript. */
+export function anchorTop(c: HTMLElement, id: string, part?: AnchorPart, delta?: number): number | null {
+  const msg = findMessageElement(c, id);
+  if (!msg) return null;
+  // The reply part is the bubble's last prose block, so a turn that opened with
+  // commentary and tool rows lands on the answer; a bubble without prose is
+  // its own start.
+  const el = (part === 'reply' && msg.querySelector<HTMLElement>('[data-reply-start]')) || msg;
+  const gap = delta == null ? ANCHOR_OFFSET_PX : -delta;
+  return Math.max(0, c.scrollTop + el.getBoundingClientRect().top - c.getBoundingClientRect().top - gap);
 }

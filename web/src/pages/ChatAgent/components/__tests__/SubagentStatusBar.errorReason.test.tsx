@@ -14,9 +14,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
-// The bar imports the api layer (raw fetch) and a Markdown renderer; neither
-// is under test here.
-vi.mock('../../utils/api', () => ({ sendSubagentMessage: vi.fn() }));
+// The bar imports a Markdown renderer, which is not under test here.
 vi.mock('../Markdown', () => ({
   default: ({ content }: { content: string }) => <span>{content}</span>,
 }));
@@ -35,7 +33,6 @@ describe('SubagentStatusBar — failure reason banner', () => {
     render(
       <SubagentStatusBar
         agent={{ ...baseAgent, status: 'error', error: 'transport_lost: subagent event spill failed' }}
-        threadId="t-1"
       />,
     );
     expect(screen.getByText('This agent stopped with an error')).toBeInTheDocument();
@@ -43,7 +40,7 @@ describe('SubagentStatusBar — failure reason banner', () => {
   });
 
   it('shows the banner headline even when no ledger reason is available', () => {
-    render(<SubagentStatusBar agent={{ ...baseAgent, status: 'error' }} threadId="t-1" />);
+    render(<SubagentStatusBar agent={{ ...baseAgent, status: 'error' }} />);
     expect(screen.getByText('This agent stopped with an error')).toBeInTheDocument();
   });
 
@@ -52,7 +49,6 @@ describe('SubagentStatusBar — failure reason banner', () => {
     render(
       <SubagentStatusBar
         agent={{ ...baseAgent, status: 'cancelled', error: denial }}
-        threadId="t-1"
       />,
     );
     expect(screen.getByText('This agent stopped')).toBeInTheDocument();
@@ -62,13 +58,13 @@ describe('SubagentStatusBar — failure reason banner', () => {
   });
 
   it('renders no banner for a plain cancel, which carries no reason', () => {
-    render(<SubagentStatusBar agent={{ ...baseAgent, status: 'cancelled' }} threadId="t-1" />);
+    render(<SubagentStatusBar agent={{ ...baseAgent, status: 'cancelled' }} />);
     expect(screen.queryByText('This agent stopped')).toBeNull();
     expect(screen.queryByText('This agent stopped with an error')).toBeNull();
   });
 
   it('renders no error banner for a completed task', () => {
-    render(<SubagentStatusBar agent={{ ...baseAgent, status: 'completed' }} threadId="t-1" />);
+    render(<SubagentStatusBar agent={{ ...baseAgent, status: 'completed' }} />);
     expect(screen.queryByText('This agent stopped with an error')).toBeNull();
   });
 
@@ -79,7 +75,6 @@ describe('SubagentStatusBar — failure reason banner', () => {
     const { container } = render(
       <SubagentStatusBar
         agent={{ ...baseAgent, status: 'error', error: 'worker_lost: no live executor', currentTool: 'WebFetch' }}
-        threadId="t-1"
       />,
     );
     expect(screen.getByText('Failed')).toBeInTheDocument();

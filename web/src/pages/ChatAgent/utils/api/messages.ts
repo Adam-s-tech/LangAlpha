@@ -497,14 +497,15 @@ export async function openThreadMuxStream(
  * @param {string} threadId - The thread ID
  * @param {string} taskId - The subagent task ID (e.g., 'k7Xm2p')
  * @param {string} content - The instruction to send
- * @returns {Promise<Object>} { success, tool_call_id, display_id, queue_position }
+ * @param {string} inputId - The caller's id for it, echoed by the frame that delivers or returns it
+ * @returns {Promise<Object>} { success, tool_call_id, display_id, queue_position, input_id }
  */
-export async function sendSubagentMessage(threadId: string, taskId: string, content: string) {
+export async function sendSubagentMessage(threadId: string, taskId: string, content: string, inputId: string) {
   if (!threadId) throw new Error('Thread ID is required');
   if (!taskId) throw new Error('Task ID is required');
   const { data } = await api.post(
     `/api/v1/threads/${threadId}/tasks/${taskId}/messages`,
-    { content }
+    { content, input_id: inputId }
   );
   return data;
 }

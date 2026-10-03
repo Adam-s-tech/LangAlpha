@@ -10,6 +10,8 @@ import LogoLoading from '@/components/ui/logo-loading';
 import ChatInput, { type ChatInputHandle } from '@/components/ui/chat-input';
 import { useStableHandler } from '@/hooks/useStableHandler';
 import { useWorkspace } from '@/hooks/useWorkspace';
+import { usePreferences } from '@/hooks/usePreferences';
+import { readTurnEndScroll } from '@/lib/turnEndScroll';
 import { LiveMessageList } from '../../ChatAgent/components/MessageList';
 import { MessageActionsProvider, type MessageActions } from '../../ChatAgent/components/messageList/MessageActionsContext';
 import { SubagentTelemetryContext } from '../../ChatAgent/components/SubagentTelemetryContext';
@@ -18,6 +20,7 @@ import { WorkspaceProvider } from '../../ChatAgent/contexts/WorkspaceContext';
 import { useChatMessages } from '../../ChatAgent/hooks/useChatMessages';
 import { DispatchStatusProvider } from '../../ChatAgent/hooks/usePTCDispatchStatus';
 import { useStreamFollow } from '../../ChatAgent/components/chatView/streamFollow';
+import { useTranscriptFollow } from '../../ChatAgent/components/chatView/useTranscriptFollow';
 import { useActiveThreadPublisher } from '@/lib/threadLifecycle/useActiveThreadPublisher';
 import { flashWorkspaceQuery } from '@/hooks/useFlashWorkspace';
 import { appendPathSuffix, getPreviewUrl, summarizeThread, offloadThread } from '../../ChatAgent/utils/api';
@@ -296,6 +299,7 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { preferences } = usePreferences();
   const [, setSearchParams] = useSearchParams();
   const [dialogPayload, setDialogPayload] = useState<DialogPayload | null>(null);
   // Port of the preview currently shown — guards against a late URL resolution
@@ -411,7 +415,6 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     messageError,
     threadId,
     threadModels,
-    handleSendMessage,
     stopWorkflow,
     getSubagentHistory,
     // HITL handlers — plan approval, ask-user questions, workspace/PTC/secretary
@@ -442,10 +445,8 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     setIsCompacting,
     tokenUsage,
     insertNotification,
-    // Message-level actions — edit, regenerate, retry, and feedback thumbs.
-    handleEditMessage,
-    handleRegenerate,
-    handleRetry,
+    // Feedback thumbs. Send, edit, regenerate and retry come from
+    // useTranscriptFollow below.
     handleThumbUp,
     handleThumbDown,
     feedbackByTurn,
@@ -476,6 +477,16 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
     }, { replace: true });
     queryClient.invalidateQueries({ queryKey: queryKeys.threads.byWorkspace(activeWorkspaceId) });
   }, [threadId, symbol, activeWorkspaceId, setSearchParams, queryClient]);
+
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const showTranscript = messages.length > 0 || isLoading || isLoadingHistory;
+  const follow = useStreamFollow(messagesContainerRef, transcriptRef, showTranscript, isLoading || isLoadingHistory);
+  const { handleSendMessage, handleEditMessage, handleRegenerate, handleRetry } = useTranscriptFollow(
+    chat,
+    follow,
+    () => messagesContainerRef.current,
+    readTurnEndScroll(preferences),
+  );
 
   // Send: shape attachments + chart screenshot like ChatAgent does.
   const handleSend = useCallback(
@@ -618,10 +629,6 @@ function ChatBody(props: ChatBodyProps): React.ReactElement {
         .catch((err: unknown) => { surfaceActionError(err, 'chat.compactionError', 'chat.offloadBusy'); setIsCompacting?.(false); });
     }
   }, [threadId, setIsCompacting, insertNotification, t]);
-
-  const transcriptRef = useRef<HTMLDivElement | null>(null);
-  const showTranscript = messages.length > 0 || isLoading || isLoadingHistory;
-  useStreamFollow(messagesContainerRef, transcriptRef, showTranscript, isLoading || isLoadingHistory);
 
   // Subagent navigation — chips deep-link to ChatAgent for full subagent view.
   const handleOpenSubagentTask = useCallback((info: SubagentInfo) => {

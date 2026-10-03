@@ -388,3 +388,17 @@ class TestSubagentMessageRequest:
     def test_content_required(self):
         with pytest.raises(ValidationError):
             SubagentMessageRequest()
+
+    def test_input_id_is_optional(self):
+        assert SubagentMessageRequest(content="Do X").input_id is None
+
+    def test_input_id_accepts_a_client_token(self):
+        req = SubagentMessageRequest(
+            content="Do X", input_id="1b4e28ba-2fa1-41d2-883f-0016d3cca427"
+        )
+        assert req.input_id == "1b4e28ba-2fa1-41d2-883f-0016d3cca427"
+
+    @pytest.mark.parametrize("input_id", ["", "a b", "../queue", "x" * 65, "id\n"])
+    def test_input_id_rejects_anything_but_a_short_safe_token(self, input_id):
+        with pytest.raises(ValidationError):
+            SubagentMessageRequest(content="Do X", input_id=input_id)

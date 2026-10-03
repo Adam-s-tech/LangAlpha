@@ -37,6 +37,7 @@ const h = vi.hoisted(() => ({
   isLoading: false, // set per-test while a turn streams
   threadId: 'thread-xyz', // mutated per-test to exercise the new-chat case
   pendingInterrupt: null as unknown, // mutated per-test to exercise input gating
+  preferences: null as unknown, // the user's preferences, set per-test
 }));
 
 // API spies — compaction calls straight into the ChatAgent api module. (Stop is
@@ -54,6 +55,10 @@ const ml = vi.hoisted(() => ({
   actions: null as Record<string, unknown> | null,
 }));
 const ci = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
+
+vi.mock('@/hooks/usePreferences', () => ({
+  usePreferences: () => ({ preferences: h.preferences, isLoading: false }),
+}));
 
 vi.mock('@/pages/ChatAgent/hooks/useChatMessages', () => ({
   useChatMessages: () => ({
@@ -104,7 +109,17 @@ vi.mock('@/pages/ChatAgent/components/MessageList', async () => {
   function MessageListStub(props: Record<string, unknown>) {
     ml.props = props;
     ml.actions = useMessageActions() as unknown as Record<string, unknown>;
-    return <div data-testid="message-list" />;
+    // Bubbles carry the markers a turn-end landing looks for.
+    const messages = (props.messages ?? []) as Array<{ id: string; role: string }>;
+    return (
+      <div data-testid="message-list">
+        {messages.map((m) => (
+          <div key={m.id} data-message-id={m.id}>
+            {m.role === 'assistant' && <p data-reply-start="" />}
+          </div>
+        ))}
+      </div>
+    );
   }
   function LiveMessageListStub({ store, ...props }: { store: { get: () => unknown } } & Record<string, unknown>) {
     return <MessageListStub messages={store.get()} {...props} />;
@@ -192,11 +207,68 @@ function renderPanel(override: Partial<PanelProps> = {}, entry = '/market') {
   return { ...view, rerender };
 }
 
+// The transcript's scroll geometry. jsdom has no layout, so the panel's
+// scroller reads a 400px viewport over `layout`, and the content's
+// ResizeObserver fires when a test grows it.
+const observers: { cb: ResizeObserverCallback; targets: Element[] }[] = [];
+const scrollTo = vi.fn();
+
+class CapturingResizeObserver {
+  targets: Element[] = [];
+  constructor(cb: ResizeObserverCallback) {
+    observers.push({ cb, targets: this.targets });
+  }
+  observe(el: Element) {
+    this.targets.push(el);
+  }
+  unobserve() {}
+  disconnect() {}
+}
+
+function renderTranscript(override: Partial<PanelProps> = {}) {
+  const view = renderPanel(override);
+  const transcript = screen.getByTestId('message-list').parentElement!;
+  const container = transcript.parentElement!;
+  const observer = observers.find((o) => o.targets.includes(transcript))!;
+  const layout = { top: 0, height: 0 };
+  Object.defineProperties(container, {
+    scrollTop: { get: () => layout.top, configurable: true },
+    scrollHeight: { get: () => layout.height, configurable: true },
+    clientHeight: { get: () => 400, configurable: true },
+  });
+  // A follow moves at once; its scroll event comes with the next frame.
+  scrollTo.mockImplementation(({ top: to }: ScrollToOptions) => {
+    layout.top = to!;
+  });
+  const grow = (to: number) => {
+    layout.height = to;
+    observer.cb([{ contentRect: { height: to } } as ResizeObserverEntry], {} as ResizeObserver);
+  };
+  const nextFrame = () => fireEvent.scroll(container);
+  const userScroll = (to: number) => {
+    layout.top = to;
+    fireEvent.scroll(container);
+  };
+  return { ...view, container, layout, grow, nextFrame, userScroll };
+}
+
+/** A settled thread opened at its end, which the reader scrolls up to reread. */
+function scrolledUpReader() {
+  const kit = renderTranscript();
+  kit.grow(1000);
+  kit.nextFrame();
+  kit.userScroll(200);
+  scrollTo.mockClear();
+  return kit;
+}
+
 describe('MarketChatPanel', () => {
   beforeEach(() => {
     h.threadId = 'thread-xyz';
     h.pendingInterrupt = null;
     h.isLoading = false;
+    h.messages = [{ id: 'm1', role: 'assistant' }];
+    h.preferences = null;
     ml.props = null;
     ml.actions = null;
     ci.props = null;
@@ -204,48 +276,21 @@ describe('MarketChatPanel', () => {
   });
   afterEach(() => vi.clearAllMocks());
 
-  it('follows a streaming reply, lets a reader scroll away from it, and stops when the turn ends', () => {
-    h.isLoading = true;
-    const observers: { cb: ResizeObserverCallback; targets: Element[] }[] = [];
-    vi.stubGlobal('ResizeObserver', class {
-      targets: Element[] = [];
-      constructor(cb: ResizeObserverCallback) {
-        observers.push({ cb, targets: this.targets });
-      }
-      observe(el: Element) {
-        this.targets.push(el);
-      }
-      unobserve() {}
-      disconnect() {}
+  describe('transcript scrolling', () => {
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    beforeEach(() => {
+      observers.length = 0;
+      vi.stubGlobal('ResizeObserver', CapturingResizeObserver);
+      HTMLElement.prototype.scrollTo = scrollTo as HTMLElement['scrollTo'];
     });
-    const original = HTMLElement.prototype.scrollTo;
-    const scrollTo = vi.fn();
-    HTMLElement.prototype.scrollTo = scrollTo as HTMLElement['scrollTo'];
-    try {
-      const { rerender } = renderPanel();
-      const transcript = screen.getByTestId('message-list').parentElement!;
-      const container = transcript.parentElement!;
-      const observer = observers.find((o) => o.targets.includes(transcript))!;
-      let top = 0;
-      let height = 0;
-      Object.defineProperties(container, {
-        scrollTop: { get: () => top, configurable: true },
-        scrollHeight: { get: () => height, configurable: true },
-        clientHeight: { get: () => 400, configurable: true },
-      });
-      // A follow moves at once; its scroll event comes with the next frame.
-      scrollTo.mockImplementation(({ top: to }: ScrollToOptions) => {
-        top = to!;
-      });
-      const grow = (to: number) => {
-        height = to;
-        observer.cb([{ contentRect: { height: to } } as ResizeObserverEntry], {} as ResizeObserver);
-      };
-      const nextFrame = () => fireEvent.scroll(container);
-      const userScroll = (to: number) => {
-        top = to;
-        fireEvent.scroll(container);
-      };
+    afterEach(() => {
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+      vi.unstubAllGlobals();
+    });
+
+    it('follows a streaming reply, lets a reader scroll away from it, and stops when the turn ends', () => {
+      h.isLoading = true;
+      const { rerender, container, layout, grow, nextFrame, userScroll } = renderTranscript();
 
       grow(1000);
       expect(scrollTo).toHaveBeenLastCalledWith({ top: 600 });
@@ -253,7 +298,7 @@ describe('MarketChatPanel', () => {
 
       // A chart lands between a follow and its scroll event.
       grow(1100);
-      height = 1400;
+      layout.height = 1400;
       nextFrame();
       grow(1400);
       expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 });
@@ -278,21 +323,198 @@ describe('MarketChatPanel', () => {
       // Back at the end, the turn settles with one more line, followed in
       // the commit that ends it.
       userScroll(1300);
-      height = 1750;
+      layout.height = 1750;
       h.isLoading = false;
       rerender({ quickQueries: [] });
       expect(scrollTo).toHaveBeenLastCalledWith({ top: 1350 });
       nextFrame();
 
-      // A row opened at the end of the settled turn stays where it opened.
-      scrollTo.mockClear();
+      // The reply's actions and the text the typewriter still held land
+      // after the turn has ended, and are followed too.
       grow(1750);
+      grow(1800);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 1400 });
+      nextFrame();
+
+      // A row the reader opens at the end of the settled turn stays where it
+      // opened.
+      scrollTo.mockClear();
+      fireEvent.pointerDown(container);
       grow(2000);
       expect(scrollTo).not.toHaveBeenCalled();
-    } finally {
-      HTMLElement.prototype.scrollTo = original;
-      vi.unstubAllGlobals();
-    }
+    });
+
+    it('stops following the end of a turn once the transcript has been quiet', () => {
+      vi.useFakeTimers();
+      try {
+        h.isLoading = true;
+        const { rerender, layout, grow, nextFrame } = renderTranscript();
+        grow(1000);
+        nextFrame();
+        layout.height = 1100;
+        h.isLoading = false;
+        rerender({ quickQueries: [] });
+        nextFrame();
+
+        scrollTo.mockClear();
+        act(() => { vi.advanceTimersByTime(1600); });
+        grow(1100);
+        grow(1300);
+        expect(scrollTo).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('takes a reader who scrolled up to the end when they send, and follows the reply', () => {
+      const { rerender, grow, nextFrame, userScroll } = scrolledUpReader();
+
+      h.handleSendMessage.mockImplementationOnce(() => {
+        h.isLoading = true;
+      });
+      const onSend = ci.props!.onSend as (
+        m: string, plan: boolean, att: unknown[], cmds: unknown[], opts: unknown,
+      ) => void;
+      act(() => onSend('and the next quarter?', false, [], [], {}));
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 600 });
+      nextFrame();
+
+      // Their message lands, then the reply grows under it.
+      rerender({});
+      grow(1150);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 750 });
+      nextFrame();
+      grow(1400);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 });
+      nextFrame();
+
+      // The follow keeps its rules: a scroll up leaves it again.
+      scrollTo.mockClear();
+      userScroll(800);
+      grow(1500);
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['an edit', 'onEditMessage', ['m1', 'edited']],
+      ['a regenerate', 'onRegenerate', ['m1']],
+      ['a retry', 'onRetry', []],
+    ])('takes a reader who scrolled up to the end on %s', (_name, action, args) => {
+      scrolledUpReader();
+      act(() => (ml.actions![action] as (...a: unknown[]) => void)(...args));
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 600 });
+    });
+
+    describe('when a reply finishes', () => {
+      const REPLY_START = { other_preference: { turn_end_scroll: 'reply_start' } };
+
+      /** A reader at the end of a thread while a turn streams a reply under
+       *  them. The viewport is 400px; the reply's first line sits `replyAt` px
+       *  down the transcript. */
+      function streamTurn() {
+        h.messages = [{ id: 'u1', role: 'user' }, { id: 'a1', role: 'assistant' }];
+        const { rerender, container, grow, nextFrame, userScroll, ...kit } = renderTranscript();
+        const layout = Object.assign(kit.layout, { replyAt: 0 });
+        const setLoading = (loading: boolean) => {
+          h.isLoading = loading;
+          rerender({});
+        };
+
+        grow(1000);
+        nextFrame();
+        h.messages = [...h.messages, { id: 'u2', role: 'user' }, { id: 'a2', role: 'assistant' }];
+        setLoading(true);
+        // jsdom has no layout: the scroller's own top is 0.
+        container.querySelector<HTMLElement>('[data-message-id="a2"] [data-reply-start]')!.getBoundingClientRect =
+          () => ({ top: layout.replyAt - layout.top }) as DOMRect;
+        grow(1600);
+        expect(scrollTo).toHaveBeenLastCalledWith({ top: 1200 });
+        nextFrame();
+        scrollTo.mockClear();
+        return { container, layout, grow, nextFrame, userScroll, setLoading };
+      }
+
+      it('brings the start of the reply under the viewport top and stops following', () => {
+        h.preferences = REPLY_START;
+        const { container, layout, grow, nextFrame, setLoading } = streamTurn();
+        layout.replyAt = 900;
+        setLoading(false);
+        expect(scrollTo).toHaveBeenLastCalledWith({ top: 884, behavior: 'smooth' });
+        nextFrame();
+
+        // The settled turn folds its work away above the reply: the line is held
+        // under the viewport top as it moves.
+        layout.replyAt = 700;
+        grow(1400);
+        expect(scrollTo).toHaveBeenLastCalledWith({ top: 684 });
+        nextFrame();
+
+        // Once the reader takes over, a turn they did not start here (an
+        // answered approval resuming, a reconnect) grows under them without
+        // carrying them off the reply.
+        fireEvent.wheel(container);
+        scrollTo.mockClear();
+        setLoading(true);
+        grow(1500);
+        expect(scrollTo).not.toHaveBeenCalled();
+      });
+
+      it('follows the next turn when the reader sends while the reply is held', () => {
+        h.preferences = REPLY_START;
+        const { layout, grow, nextFrame, setLoading } = streamTurn();
+        layout.replyAt = 900;
+        setLoading(false);
+        nextFrame();
+        h.handleSendMessage.mockImplementationOnce(() => {
+          h.isLoading = true;
+        });
+        const onSend = ci.props!.onSend as (
+          m: string, plan: boolean, att: unknown[], cmds: unknown[], opts: unknown,
+        ) => void;
+        act(() => onSend('and the next quarter?', false, [], [], {}));
+        expect(scrollTo).toHaveBeenLastCalledWith({ top: 1200 });
+        nextFrame();
+        setLoading(true);
+        grow(1700);
+        expect(scrollTo).toHaveBeenLastCalledWith({ top: 1300 });
+      });
+
+      it('lands at once for a reader who prefers reduced motion', () => {
+        vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce'), media: q, addEventListener() {}, removeEventListener() {} }));
+        h.preferences = REPLY_START;
+        const { layout, setLoading } = streamTurn();
+        layout.replyAt = 900;
+        setLoading(false);
+        expect(scrollTo).toHaveBeenLastCalledWith({ top: 884, behavior: 'auto' });
+      });
+
+      it('moves nothing when the reply fits on screen', () => {
+        h.preferences = REPLY_START;
+        const { layout, setLoading } = streamTurn();
+        layout.replyAt = 1300;
+        setLoading(false);
+        expect(scrollTo).not.toHaveBeenCalled();
+        expect(layout.top).toBe(1200);
+      });
+
+      it('stays at the end under the default preference', () => {
+        const { layout, setLoading } = streamTurn();
+        layout.replyAt = 900;
+        setLoading(false);
+        expect(scrollTo).not.toHaveBeenCalled();
+        expect(layout.top).toBe(1200);
+      });
+
+      it('leaves a reader who scrolled up where they were', () => {
+        h.preferences = REPLY_START;
+        const { layout, userScroll, setLoading } = streamTurn();
+        layout.replyAt = 900;
+        userScroll(800);
+        setLoading(false);
+        expect(scrollTo).not.toHaveBeenCalled();
+        expect(layout.top).toBe(800);
+      });
+    });
   });
 
   it('reads the PTC folder from the workspace detail, which a turn re-reads after a settle', async () => {

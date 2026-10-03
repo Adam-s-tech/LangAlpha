@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/dialog';
 import { provenanceDisplayKey, countDedupedSources, type ProvenanceRecord } from '@/types/chat';
 import type { ProvenanceSourceType } from '@/types/sse';
-import { createDateFormatter, formatBytes } from '@/lib/format';
+import { formatBytes, formatTimestamp } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import { AnimatedTabs } from '@/components/ui/animated-tabs';
 import { workspaceRelativePath } from '@/pages/ChatAgent/utils/agentPaths';
@@ -145,18 +145,6 @@ function urlPath(url: string): string {
 function shortSha(sha?: string): string {
   if (!sha) return '';
   return sha.length > 12 ? sha.slice(0, 12) : sha;
-}
-
-// The fields Date#toLocaleString() prints by default.
-const dateTime = createDateFormatter({
-  year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric',
-});
-
-function formatTimestamp(locale: string, ts?: string): string {
-  if (!ts) return '';
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return ts;
-  return dateTime(d, locale);
 }
 
 /** "mcp_tool" → "Mcp Tool": humanize an unmapped enum for the i18n fallback. */
@@ -935,7 +923,7 @@ function FingerprintRows({ record }: { record: ProvenanceRecord }): React.ReactE
   const meta: { label: string; value: string; mono?: boolean; icon?: React.ReactNode }[] = [];
   if (record.provider) meta.push({ label: t('chat.sources.fingerprint.provider'), value: record.provider });
   if (record.agent) meta.push({ label: t('chat.sources.fingerprint.agent'), value: record.agent, mono: true });
-  if (record.timestamp) meta.push({ label: t('chat.sources.fingerprint.timestamp'), value: formatTimestamp(locale, record.timestamp) });
+  if (record.timestamp) meta.push({ label: t('chat.sources.fingerprint.timestamp'), value: formatTimestamp(record.timestamp, locale) });
   if (record.result_sha256)
     meta.push({
       label: t('chat.sources.fingerprint.checksum'),

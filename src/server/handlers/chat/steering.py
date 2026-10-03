@@ -203,6 +203,7 @@ async def steer_subagent(
     task_id: str,
     content: str,
     user_id: str,
+    input_id: str | None = None,
 ) -> dict:
     """Steer a running subagent by injecting a user message via Redis.
 
@@ -213,6 +214,8 @@ async def steer_subagent(
         task_id: The subagent task ID (e.g., 'k7Xm2p')
         content: The message text to send
         user_id: User identifier
+        input_id: The caller's id for this message, carried on the delivery
+            or return that settles it; generated when not given
 
     Returns:
         Dict with success status and queue position
@@ -283,7 +286,7 @@ async def steer_subagent(
             steering_queue_key,
         )
 
-        input_id = uuid.uuid4().hex
+        input_id = input_id or uuid.uuid4().hex
         key = steering_queue_key(tool_call_id, expected_task_run_id)
         payload = json.dumps(
             {
@@ -330,8 +333,11 @@ async def steer_subagent(
             # The arbitration is best-effort: an unreadable authority keeps
             # the pre-push admission rather than failing an accepted input.
             still_live = True
-        if not still_live:
-            await cache.client.lrem(key, 0, payload)
+        # The newest equal entry only: the client names the input, so a resend
+        # of an accepted one can queue the same payload twice. Finding none
+        # means the drain delivered it or the sweep returned it, and that
+        # frame settles it, so a refusal here would settle it twice.
+        if not still_live and await cache.client.lrem(key, -1, payload):
             raise HTTPException(
                 status_code=409,
                 detail=(

@@ -88,7 +88,7 @@ import { useToolCallAnnouncer } from './chatView/useToolCallAnnouncer';
 import { useNavPanel } from './chatView/useNavPanel';
 import { MobileNavDrawer } from './chatView/MobileNavDrawer';
 import { useChatScroll } from './chatView/useChatScroll';
-import { useTurnEndScroll } from './chatView/useTurnEndScroll';
+import { isTurnOpen, useTranscriptFollow } from './chatView/useTranscriptFollow';
 import { useSubagentTabs } from './chatView/useSubagentTabs';
 import { publishSidebarAgents, clearSidebarAgents } from './sidebarAgentsBridge';
 import { useRightPanel } from './chatView/useRightPanel';
@@ -257,7 +257,9 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     openPreviewRef.current(data);
   }, []);
 
-  // Chat messages management - receives updateTodoListCard and updateSubagentCard from floating cards hook
+  // Chat messages management - receives updateTodoListCard and updateSubagentCard from floating cards hook.
+  // Send, edit, regenerate and retry come from useTranscriptFollow below.
+  const chat = useChatMessages(workspaceId, threadId, updateTodoListCard as (todoData: Record<string, unknown>) => void, updateSubagentCard, finalizePendingTodos, handleOnboardingRelatedToolComplete, handleFileArtifact, handleOpenPreviewFromStream, agentMode, clearSubagentCards, handleWorkspaceCreated, 'web');
   const {
     messages,
     liveMessages,
@@ -278,7 +280,6 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     messageError,
     returnedSteering,
     clearReturnedSteering,
-    handleSendMessage,
     stopWorkflow,
     stopCompaction,
     pendingInterrupt,
@@ -304,9 +305,6 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     marketWatch,
     isShared: threadIsShared,
     insertNotification,
-    handleEditMessage,
-    handleRegenerate,
-    handleRetry,
     handleThumbUp,
     handleThumbDown,
     feedbackByTurn,
@@ -315,7 +313,8 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     getSubagentHistory,
     resolveSubagentIdToAgentId,
     hydrateTaskTranscript,
-  } = useChatMessages(workspaceId, threadId, updateTodoListCard as (todoData: Record<string, unknown>) => void, updateSubagentCard, finalizePendingTodos, handleOnboardingRelatedToolComplete, handleFileArtifact, handleOpenPreviewFromStream, agentMode, clearSubagentCards, handleWorkspaceCreated, 'web');
+    sendSubagentInstruction,
+  } = chat;
 
   // Fallback-suggestion pill action: adopt the model that actually answered —
   // immediately for this thread's next send (chat input selection) and
@@ -372,10 +371,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   // current one without closing over it.
   const resolvedThreadIdRef = useLatestRef(currentThreadId || threadId);
 
-  // A pending interrupt or rejection clears isLoading but the turn is still
-  // open: the reply resumes once the reader answers, so the follow keeps its
-  // claim and the turn-end landing waits.
-  const isStreaming = isLoading || !!pendingInterrupt || !!pendingRejection;
+  const isStreaming = isTurnOpen(chat);
   // Chat transcript scroll controller + tab scroll memory (chatView/useChatScroll).
   const scroll = useChatScroll({
     activeAgentId,
@@ -406,7 +402,12 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     revealFiles,
     pinTargetRef,
   } = scroll;
-  useTurnEndScroll(scroll, { messages, isStreaming, isActiveRef, turnEndScroll: readTurnEndScroll(preferences) });
+  const { handleSendMessage, handleEditMessage, handleRegenerate, handleRetry } = useTranscriptFollow(
+    chat,
+    scroll.follow,
+    () => getScrollContainer(scrollAreaRef),
+    readTurnEndScroll(preferences),
+  );
 
   // One value for both transcripts below (main thread and subagent tab), so a
   // flip in Settings reaches them together and neither re-renders on the other's
@@ -435,6 +436,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     setActiveAgentId,
     cards,
     updateSubagentCard,
+    sendSubagentInstruction,
     getSubagentHistory,
     resolveSubagentIdToAgentId,
     hydrateTaskTranscript,
@@ -1297,7 +1299,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                 onClick={handleNavExpand}
                 className="p-2 rounded-md transition-colors shrink-0"
                 style={{ color: 'var(--color-text-primary)' }}
-                title="Menu"
+                title={t('sidebar.menu')}
               >
                 <Menu className="h-5 w-5" />
               </button>
@@ -1686,7 +1688,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                 ) : activeAgent && activeAgent.type !== WORKFLOW_TASK_TYPE ? (
                   // Workflow runs are script-driven and take no steering input —
                   // the run detail above is their whole surface.
-                  <SubagentStatusBar agent={activeAgent} threadId={threadId} onInstructionSent={handleSubagentInstruction} />
+                  <SubagentStatusBar agent={activeAgent} onSendInstruction={handleSubagentInstruction} />
                 ) : null}
               </div>
             </div>

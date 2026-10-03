@@ -60,7 +60,7 @@ export function nextArrivalSeq(msg: { arrivalSeq?: unknown }): number {
  * @param {string} taskId - Task ID (e.g., "task:k7Xm2p")
  * @returns {Object} The task refs ({ contentOrderCounterRef, currentReasoningIdRef, currentToolCallIdRef, messages })
  */
-export function getOrCreateTaskRefs(refs: StreamRefs, taskId: string): TaskRefs {
+export function getOrCreateTaskRefs(refs: Pick<StreamRefs, 'subagentStateRefs'>, taskId: string): TaskRefs {
   const subagentStateRefs = refs.subagentStateRefs || {};
   if (!subagentStateRefs[taskId]) {
     subagentStateRefs[taskId] = {

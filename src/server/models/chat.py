@@ -514,5 +514,15 @@ class SubagentMessageRequest(BaseModel):
     """Request model for sending a message to a running subagent."""
 
     content: str = Field(..., description="The instruction/message to send to the subagent")
+    input_id: Optional[str] = Field(
+        None,
+        pattern=r"^[A-Za-z0-9_-]{1,64}$",
+        description=(
+            "Client-chosen id for this instruction, echoed on the "
+            "steering_delivered entry or steering_returned frame that settles "
+            "it. The delivery can arrive before this request answers, so the "
+            "client names the instruction up front. Generated when omitted."
+        ),
+    )
 
 

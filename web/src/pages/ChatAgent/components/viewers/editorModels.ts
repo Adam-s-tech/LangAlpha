@@ -1,4 +1,5 @@
 import type * as MonacoApi from 'monaco-editor';
+import { registerAuthReset } from '@/lib/authResets';
 
 // An edit session owns one Monaco model, named by the path minted here. The
 // model outlives the editor that shows it, which is what keeps a tab's undo
@@ -9,8 +10,9 @@ let monaco: typeof MonacoApi | null = null;
 let seq = 0;
 // Keyed by the model each state was read from. The editor library would keep
 // its own copy in a module map that nothing can empty, so CodeEditor turns its
-// copy off.
+// copy off. This one empties with the rest of the account's state on sign-out.
 const viewStates = new Map<string, MonacoApi.editor.ICodeEditorViewState>();
+registerAuthReset(() => viewStates.clear());
 
 export function rememberMonaco(instance: typeof MonacoApi): void {
   if (monaco === instance) return;

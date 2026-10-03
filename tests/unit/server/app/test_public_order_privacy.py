@@ -5,8 +5,10 @@ the owner's brokerage account and the orders placed on it: the ``provenance``
 event of a direct tool call, an order call's own arguments, the ``order_receipt``
 stamped on that call's tool artifact, the vendor's own answer to an order call,
 and the verdict the owner's resume recorded against the order it answered. All
-are stripped server-side here, so the owner-only rule does not depend on a
-client choosing not to render them.
+are stripped server-side, so the owner-only rule does not depend on a client
+choosing not to render them. The rule itself is pinned in
+``tests/unit/server/services/test_share_redaction.py``; these run it through
+the route, across turns and onto the wire.
 """
 
 from __future__ import annotations
@@ -131,19 +133,6 @@ def _call(name: str, args: dict, message_id: str | None = "msg-1") -> dict:
     return {"event": "tool_calls", "data": data}
 
 
-def _replayed_call(events: list[dict]) -> dict:
-    return next(e for e in events if e["event"] == "tool_calls")["data"]["tool_calls"][0]
-
-
-def _replayed_calls(events: list[dict]) -> list[dict]:
-    return [
-        call
-        for e in events
-        if e["event"] == "tool_calls"
-        for call in e["data"]["tool_calls"]
-    ]
-
-
 @pytest_asyncio.fixture
 async def client():
     from src.server.app.public import router
@@ -160,6 +149,7 @@ async def _replay(
     sse_events: list[dict] | None = None,
     later_events: list[dict] | None = None,
     later_metadata: dict | None = None,
+    later_query: dict | None = None,
 ) -> tuple[str, list[dict]]:
     thread = {
         "conversation_thread_id": _THREAD_ID,
@@ -180,6 +170,7 @@ async def _replay(
                 "turn_index": 1,
                 "content": "approve",
                 "metadata": later_metadata if later_metadata is not None else {},
+                **(later_query or {}),
             }
         )
         responses.append(
@@ -211,77 +202,22 @@ async def _replay(
     return body, events
 
 
-async def test_replay_drops_provenance_events(client):
+async def test_replay_carries_no_identifier_of_the_order(client):
     body, events = await _replay(client)
-    assert [e["event"] for e in events if e["event"] == "provenance"] == []
-    assert "acc_id" not in body
-
-
-async def test_replay_strips_the_order_receipt_from_the_tool_artifact(client):
-    body, events = await _replay(client)
-    result = next(e for e in events if e["event"] == "tool_call_result")
-    artifact = result["data"]["artifact"]
-    assert "order_receipt" not in artifact
-    assert "provenance" not in artifact
-    # The vendor's own names still travel: the receipt is what is private,
-    # not the fact that a direct tool ran.
-    assert artifact["direct_mcp"] == {
-        "server": "moomoo",
-        "tool": "sim_trade_input_order",
-    }
-    assert "1234567" not in body
-    assert "900104" not in body
-
-
-async def test_replay_drops_the_order_interrupt_and_the_vendor_answer(client):
-    body, events = await _replay(client)
-    assert [e["event"] for e in events if e["event"] == "interrupt"] == []
+    kinds = {e["event"] for e in events}
+    assert not kinds & {"provenance", "tool_call_chunks", "interrupt"}
     result = next(e for e in events if e["event"] == "tool_call_result")
     assert result["data"]["content"] == ""
-    assert "attempt_id" not in body
-    assert "acc_id" not in body
-
-
-async def test_replay_blanks_an_order_answer_the_ledger_never_receipted(client):
-    """A ledger write that failed leaves no receipt; the stamp still names an order."""
-    stamp = {
-        "server": "moomoo",
-        "tool": "sim_trade_input_order",
-        "order": {"action": "place", "mode": "paper"},
-    }
-    body, events = await _replay(
-        client,
-        [_tool_result(stamp, "{\"order_id\": \"900104\", \"acc_id\": \"1234567\"}")],
-    )
-    result = next(e for e in events if e["event"] == "tool_call_result")
-    assert result["data"]["content"] == ""
-    assert "1234567" not in body
-    assert "900104" not in body
-
-
-async def test_replay_keeps_the_answer_of_a_direct_tool_that_is_not_an_order(client):
-    stamp = {"server": "moomoo", "tool": "get_market_snapshot", "order": None}
-    _, events = await _replay(
-        client, [_tool_result(stamp, "{\"last_price\": \"318.62\"}")]
-    )
-    result = next(e for e in events if e["event"] == "tool_call_result")
-    assert "318.62" in result["data"]["content"]
-
-
-async def test_replay_empties_the_arguments_of_an_order_call(client):
-    body, events = await _replay(client)
+    assert "order_receipt" not in result["data"]["artifact"]
     calls = {
-        call["id"]: call
+        call["id"]: call["args"]
         for e in events
         if e["event"] == "tool_calls"
         for call in e["data"]["tool_calls"]
     }
-    assert calls["call_abc"]["args"] == {}
-    assert calls["call_abc"]["name"] == "moomoo__sim_trade_input_order"
-    # A call that is not an order keeps what it asked for.
-    assert calls["call_quote"]["args"] == {"code_list": ["US.AAPL"]}
-    assert [e for e in events if e["event"] == "tool_call_chunks"] == []
-    assert "1234567" not in body
+    assert calls == {"call_abc": {}, "call_quote": {"code_list": ["US.AAPL"]}}
+    for value in ("1234567", "900104", "attempt_id", "acc_id"):
+        assert value not in body
 
 
 async def test_replay_empties_an_order_call_whose_result_lands_in_a_later_turn(client):
@@ -310,132 +246,6 @@ async def test_replay_empties_an_order_call_whose_result_lands_in_a_later_turn(c
     replayed = next(e for e in events if e["event"] == "tool_calls")
     assert replayed["data"]["tool_calls"][0]["args"] == {}
     assert "1234567" not in body
-
-
-@pytest.mark.parametrize("later", [False, True], ids=["same_turn", "later_turn"])
-async def test_replay_keeps_the_arguments_of_a_direct_call_answered_as_no_order(
-    client, later
-):
-    """An answer stamped with no order is the one proof a direct call was not one."""
-    call = _call("mcp__moomoo__get_market_snapshot", {"code_list": ["US.AAPL"]})
-    stamp = {"server": "moomoo", "tool": "get_market_snapshot", "order": None}
-    answer = _tool_result(stamp, "{\"last_price\": \"318.62\"}")
-    if later:
-        _, events = await _replay(client, [call], later_events=[answer])
-    else:
-        _, events = await _replay(client, [call, answer])
-    assert _replayed_call(events)["args"] == {"code_list": ["US.AAPL"]}
-
-
-async def test_replay_empties_a_direct_call_that_was_never_answered(client):
-    """A Stop or a lost worker leaves an order with no answer and no approval card."""
-    name = "mcp__moomoo__sim_trade_input_order"
-    first = {
-        "event": "tool_call_chunks",
-        "data": {
-            "id": "msg-1",
-            "tool_call_chunks": [
-                {"name": name, "args": "", "id": "call_abc", "index": 0}
-            ],
-        },
-    }
-    # Later fragments carry only the index, so no name or id to match them by.
-    rest = {
-        "event": "tool_call_chunks",
-        "data": {
-            "id": "msg-1",
-            "tool_call_chunks": [
-                {"name": None, "args": "{\"acc_id\": \"1234567\"}", "id": None, "index": 0}
-            ],
-        },
-    }
-    call = _call(name, {"acc_id": "1234567", "code": "US.AAPL", "qty": 5})
-    body, events = await _replay(client, [first, rest, call])
-    replayed = _replayed_call(events)
-    assert replayed["args"] == {}
-    assert replayed["name"] == name
-    assert [e for e in events if e["event"] == "tool_call_chunks"] == []
-    assert "1234567" not in body
-
-
-@pytest.mark.parametrize("later", [False, True], ids=["same_turn", "later_turn"])
-async def test_replay_empties_an_order_call_that_reuses_a_cleared_call_id(
-    client, later
-):
-    """A provider may repeat a call id, so an answer clears only the message that made it.
-
-    The order was stopped before any approval card or answer, with approval off
-    for its mode, so nothing else marks it.
-    """
-    quote = _call("mcp__moomoo__get_market_snapshot", {"code_list": ["US.AAPL"]}, "msg-1")
-    stamp = {"server": "moomoo", "tool": "get_market_snapshot", "order": None}
-    answer = _tool_result(stamp, "{\"last_price\": \"318.62\"}")
-    order = _call(
-        "mcp__moomoo__sim_trade_input_order",
-        {"acc_id": "1234567", "code": "US.AAPL", "qty": 5, "price": 190.5},
-        "msg-2",
-    )
-    if later:
-        body, events = await _replay(client, [quote, answer], later_events=[order])
-    else:
-        body, events = await _replay(client, [quote, answer, order])
-    replayed_quote, replayed_order = _replayed_calls(events)
-    assert replayed_quote["args"] == {"code_list": ["US.AAPL"]}
-    assert replayed_order["args"] == {}
-    assert replayed_order["id"] == "call_abc"
-    assert "1234567" not in body
-
-
-async def test_replay_keeps_each_call_that_reuses_an_id_when_each_is_answered(client):
-    stamp = {"server": "moomoo", "tool": "get_market_snapshot", "order": None}
-    answer = _tool_result(stamp, "{\"last_price\": \"318.62\"}")
-    first = _call("mcp__moomoo__get_market_snapshot", {"code_list": ["US.AAPL"]}, "msg-1")
-    second = _call("mcp__moomoo__get_market_snapshot", {"code_list": ["US.MSFT"]}, "msg-2")
-    _, events = await _replay(client, [first, answer], later_events=[second, answer])
-    assert [call["args"] for call in _replayed_calls(events)] == [
-        {"code_list": ["US.AAPL"]},
-        {"code_list": ["US.MSFT"]},
-    ]
-
-
-@pytest.mark.parametrize("message_id", [None, "unknown"], ids=["missing", "unknown"])
-async def test_replay_empties_a_direct_call_whose_message_has_no_id(client, message_id):
-    """Without a message id an answer cannot be tied to one call, so it clears none.
-
-    ``unknown`` is what the stream writes for a message that came with no id.
-    """
-    call = _call(
-        "mcp__moomoo__get_market_snapshot", {"code_list": ["US.AAPL"]}, message_id
-    )
-    stamp = {"server": "moomoo", "tool": "get_market_snapshot", "order": None}
-    _, events = await _replay(
-        client, [call, _tool_result(stamp, "{\"last_price\": \"318.62\"}")]
-    )
-    assert _replayed_call(events)["args"] == {}
-
-
-async def test_replay_empties_a_direct_call_whose_answer_carries_no_stamp(client):
-    """An answer without the binder's stamp says nothing about what the call did."""
-    call = _call("mcp__moomoo__get_market_snapshot", {"code_list": ["US.AAPL"]})
-    error = {
-        "event": "tool_call_result",
-        "data": {
-            "tool_call_id": "call_abc",
-            "content": "Error: the relay timed out",
-            "status": "error",
-        },
-    }
-    _, events = await _replay(client, [call, error])
-    assert _replayed_call(events)["args"] == {}
-
-
-async def test_replay_keeps_the_arguments_of_an_unanswered_call_that_is_not_direct(
-    client,
-):
-    """Only a direct call can place an order, so the rule stops at the prefix."""
-    call = _call("web_search", {"query": "AAPL earnings date"})
-    _, events = await _replay(client, [call])
-    assert _replayed_call(events)["args"] == {"query": "AAPL earnings date"}
 
 
 async def test_replay_strips_the_order_verdicts_the_owners_resume_recorded(client):
@@ -479,3 +289,41 @@ async def test_replay_still_carries_the_rest_of_the_turn(client):
     message = next(e for e in events if e["event"] == "message")
     assert message["data"]["content"] == "Placed."
     assert "workspace_id" not in message["data"]
+
+
+@pytest.mark.parametrize(
+    "request_",
+    [
+        {
+            "type": "ask_user_question",
+            "question": "Which account should I use?",
+            "options": ["IRA", "Brokerage"],
+            "allow_multiple": False,
+        },
+        {"type": "credit_pause", "message": "You have used this month's credits."},
+    ],
+    ids=["question", "credit_pause"],
+)
+async def test_replay_drops_every_interrupt(client, request_):
+    """An interrupt asks the owner, and no share renders or answers one."""
+    interrupt = {
+        "event": "interrupt",
+        "data": {
+            "interrupt_id": "int-2",
+            "action_requests": [request_],
+            "role": "assistant",
+            "finish_reason": "interrupt",
+        },
+    }
+    before = {"event": "message", "data": {"content": "Checking."}}
+    after = {"event": "message", "data": {"content": "Done."}}
+    body, events = await _replay(client, [before, interrupt, after])
+    assert [e["event"] for e in events] == [
+        "user_message",
+        "message",
+        "message",
+        "replay_done",
+    ]
+    assert request_["type"] not in body
+    ids = [line[len("id: ") :] for line in body.splitlines() if line.startswith("id: ")]
+    assert ids == ["1", "2", "3", "4"]

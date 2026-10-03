@@ -29,6 +29,7 @@ const measureRow = (el: HTMLElement | null) => {
 };
 
 let resize: (height: number) => void = () => {};
+let scroll: ReturnType<typeof useChatScroll>;
 
 function Harness() {
   const api = useChatScroll({
@@ -42,6 +43,7 @@ function Harness() {
     currentThreadId: 't1',
     threadId: 't1',
   });
+  React.useEffect(() => { scroll = api; });
   return (
     <div ref={api.scrollAreaRef}>
       <div data-radix-scroll-area-viewport ref={measureViewport}>
@@ -117,6 +119,31 @@ describe('a disclosure opened near the bottom of a streaming turn', () => {
     contentH += 20;
     act(() => { resize(contentH); });
 
+    expect(viewport().scrollTop).toBe(contentH - VIEW_H);
+  });
+
+  it('lets a send right after the toggle take the reader to the end', async () => {
+    render(<Harness />);
+    act(() => { scrollTo(contentH - VIEW_H); });
+    act(() => { resize(contentH); });
+
+    // Scrolled up, the reader opens a row in view and sends straight away.
+    act(() => {
+      viewport().dispatchEvent(new Event('wheel'));
+      scrollTo(800);
+    });
+    const row = document.querySelector<HTMLElement>('[data-row]')!;
+    row.getBoundingClientRect = () => rect(1100 - viewport().scrollTop, 24);
+    act(() => { announceAnchoredToggle(row); });
+    act(() => { scroll.follow.rejoin(); });
+    contentH += 100;
+    act(() => { resize(contentH); });
+    expect(viewport().scrollTop).toBe(contentH - VIEW_H);
+
+    // The reply's first token lands after both the hold and the settle window.
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    contentH += 40;
+    act(() => { resize(contentH); });
     expect(viewport().scrollTop).toBe(contentH - VIEW_H);
   });
 });

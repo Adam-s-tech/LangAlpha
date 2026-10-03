@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
+import { runAuthResets } from '@/lib/authResets';
 import WorkspaceImage from '../WorkspaceImage';
 import { WorkspaceProvider } from '../../contexts/WorkspaceContext';
 
@@ -98,5 +99,66 @@ describe('WorkspaceImage reads a destination the way a link does', () => {
     await waitFor(() =>
       expect(screen.getByText('broken.png could not be loaded')).toBeInTheDocument(),
     );
+  });
+});
+
+describe('WorkspaceImage forgets the account on sign-out', () => {
+  let revokeUrl: typeof URL.revokeObjectURL;
+  beforeEach(() => {
+    downloadWorkspaceFile.mockClear();
+    revokeUrl = URL.revokeObjectURL;
+    URL.revokeObjectURL = vi.fn();
+  });
+  afterEach(() => {
+    URL.revokeObjectURL = revokeUrl;
+  });
+
+  // Regression: the cache outlived the account. The next account to render the
+  // same key was shown the last one's image with no request, and the bytes
+  // stayed in the tab until it closed.
+  it('revokes what it cached and fetches again', async () => {
+    downloadWorkspaceFile.mockResolvedValueOnce('blob:first-account');
+    const first = renderInWorkspace('charts/signout.png', { workspaceId: 'ws-1', downloadFile: null });
+    await waitFor(() => expect(screen.getByAltText('chart')).toHaveAttribute('src', 'blob:first-account'));
+    first.unmount();
+
+    runAuthResets();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:first-account');
+
+    downloadWorkspaceFile.mockResolvedValueOnce('blob:next-account');
+    renderInWorkspace('charts/signout.png', { workspaceId: 'ws-1', downloadFile: null });
+    await waitFor(() => expect(screen.getByAltText('chart')).toHaveAttribute('src', 'blob:next-account'));
+    expect(downloadWorkspaceFile).toHaveBeenCalledTimes(2);
+  });
+
+  // A load still running at sign-out lands with the last account's file.
+  it('keeps a load that finishes after the sign-out out of the cache', async () => {
+    let finish!: (url: string) => void;
+    downloadWorkspaceFile.mockReturnValueOnce(new Promise<string>((resolve) => { finish = resolve; }));
+    renderInWorkspace('charts/inflight.png', { workspaceId: 'ws-1', downloadFile: null });
+    await waitFor(() => expect(downloadWorkspaceFile).toHaveBeenCalledTimes(1));
+
+    runAuthResets();
+    await act(async () => finish('blob:previous-account'));
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:previous-account');
+
+    renderInWorkspace('charts/inflight.png', { workspaceId: 'ws-1', downloadFile: null });
+    await waitFor(() => expect(downloadWorkspaceFile).toHaveBeenCalledTimes(2));
+  });
+
+  // One chart referenced twice fetches twice; the copy that lands second would
+  // have replaced the first in the cache and left it past the sign-out.
+  it('shows the cached copy when a second load of the file lands', async () => {
+    downloadWorkspaceFile.mockResolvedValueOnce('blob:first').mockResolvedValueOnce('blob:second');
+    renderInWorkspace('charts/twice.png', { workspaceId: 'ws-1', downloadFile: null });
+    renderInWorkspace('charts/twice.png', { workspaceId: 'ws-1', downloadFile: null });
+    await waitFor(() => expect(downloadWorkspaceFile).toHaveBeenCalledTimes(2));
+
+    await waitFor(() =>
+      expect(screen.getAllByAltText('chart').map((img) => img.getAttribute('src'))).toEqual(['blob:first', 'blob:first']),
+    );
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:second');
+    runAuthResets();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:first');
   });
 });

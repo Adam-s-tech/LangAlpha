@@ -52,10 +52,6 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import type { MessageRecord, SetMessages } from '../ChatAgent/hooks/utils/types';
 
 
-function updateMessage(messages: MessageRecord[], messageId: string, updater: (m: MessageRecord) => MessageRecord): MessageRecord[] {
-  return messages.map((m) => (m.id === messageId ? updater(m) : m));
-}
-
 /** The divider's bounds: a floor any tab fits, and a share of the window the thread keeps. */
 const PANEL_MIN_WIDTH = 280;
 const PANEL_MAX_RATIO = 0.6;
@@ -323,42 +319,6 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
           // accessed. Replaying them here would leak that into a public share.
           // Sources are owner-only by design; do not add a `provenance` branch
           // without a redaction story for the public surface.
-
-          // interrupt — show plan approval as already-resolved
-          if (eventType === 'interrupt' && hasPairIndex) {
-            const pairIndex = event.turn_index as number;
-            const currentAssistantMessageId = assistantMessagesByPair.get(pairIndex);
-            const pairState = pairStateByPair.get(pairIndex);
-            if (!currentAssistantMessageId || !pairState) return;
-
-            const interrupts = (event.interrupts as Array<Record<string, unknown>>) || [];
-            interrupts.forEach((interrupt) => {
-              const actionRequest = interrupt.action_request as Record<string, unknown> | undefined;
-              if (interrupt.type === 'plan_approval' || actionRequest?.action === 'SubmitPlan') {
-                const planData = (actionRequest?.args as Record<string, unknown>) || (interrupt.data as Record<string, unknown>) || {};
-                const planId = `plan-${pairIndex}-${interrupt.id || 'default'}`;
-                pairState.contentOrderCounter = (pairState.contentOrderCounter || 0) + 1;
-                setMessages((prev) =>
-                  updateMessage(prev, currentAssistantMessageId, (msg) => ({
-                    ...msg,
-                    contentSegments: [
-                      ...((msg.contentSegments as Array<Record<string, unknown>>) || []),
-                      { type: 'plan_approval', planApprovalId: planId, order: pairState.contentOrderCounter },
-                    ],
-                    planApprovals: {
-                      ...((msg.planApprovals as Record<string, unknown>) || {}),
-                      [planId]: {
-                        ...planData,
-                        interruptId: interrupt.id,
-                        status: 'approved',
-                      },
-                    },
-                  }))
-                );
-              }
-            });
-            return;
-          }
         });
 
         // Mark all messages as done streaming

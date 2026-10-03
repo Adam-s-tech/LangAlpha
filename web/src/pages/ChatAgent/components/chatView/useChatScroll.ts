@@ -1,36 +1,18 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AT_BOTTOM_PX, NEAR_BOTTOM_PX, isNearBottom } from '../../utils/scrollHelpers';
-import { createStreamFollow } from './streamFollow';
-import { findMessageElement, resolveScrollContent, resolveScrollViewport } from '../../utils/scrollDom';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AT_BOTTOM_PX, NEAR_BOTTOM_PX, createSettleWindow, isNearBottom, type SettleWindow } from '../../utils/scrollHelpers';
+import { INTENT_EVENTS, createStreamFollow, type StreamFollowControls } from './streamFollow';
+import { anchorTop, findMessageElement, resolveScrollContent, resolveScrollViewport, type AnchorPart } from '../../utils/scrollDom';
 import { scrollMemory } from '@/lib/scrollMemory';
 import { ANCHORED_TOGGLE_EVENT } from '../../utils/anchoredToggle';
 import { useLatestRef } from '@/hooks/useLatestRef';
 
-// Scroll/pin tuning: settle window the pin re-applies through as async media
-// expands; fallback for engines without a `scrollend` event.
-const SETTLE_QUIET_MS = 1500;
-const SETTLE_HARD_CAP_MS = 8000;
+// Fallback for engines without a `scrollend` event.
 const SCROLLEND_FALLBACK_MS = 600;
-// Gap left above a bubble the transcript is pinned to.
-const ANCHOR_OFFSET_PX = 16;
 // How long a toggled row is held in place while its disclosure animates open
 // or shut; longer than the fold spring, shorter than the next streamed chunk.
 const TOGGLE_HOLD_MS = 1000;
 // Breathing room left under a deliverables deck brought into view.
 const REVEAL_GAP_PX = 12;
-
-/** scrollTop that puts bubble `id` just under the viewport top, or `delta` px
- *  into it, or null once it is no longer in the transcript. */
-function anchorTop(c: HTMLElement, id: string, part?: AnchorPart, delta?: number): number | null {
-  const msg = findMessageElement(c, id);
-  if (!msg) return null;
-  // The reply part is the bubble's last prose block, so a turn that opened with
-  // commentary and tool rows lands on the answer; a bubble without prose is
-  // its own start.
-  const el = (part === 'reply' && msg.querySelector<HTMLElement>('[data-reply-start]')) || msg;
-  const gap = delta == null ? ANCHOR_OFFSET_PX : -delta;
-  return Math.max(0, c.scrollTop + el.getBoundingClientRect().top - c.getBoundingClientRect().top - gap);
-}
 
 /** The bubble at the viewport top and how far into it the view starts. */
 function readPlace(c: HTMLElement): { id: string; delta: number } | null {
@@ -84,7 +66,6 @@ function revealTop(c: HTMLElement, id: string): number | null {
  * the bubble), re-measured on every re-apply so media above it finishing layout
  * can't shift the landing.
  */
-export type AnchorPart = 'reply';
 export type PinTarget =
   | { mode: 'bottom' }
   | { mode: 'offset'; top: number }
@@ -193,8 +174,7 @@ export function useChatScroll({
   // Detaches the pending release of the current programmatic scroll (see
   // withProgrammaticScroll); null when no release is pending.
   const programmaticReleaseRef = useRef<(() => void) | null>(null);
-  const settleQuietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const settleHardCapRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settleRef = useRef<SettleWindow | null>(null);
   const restoredForThreadRef = useRef<string | null>(null);
   // Where a mid-thread reader was, by bubble, for a reload of the thread on
   // screen: the replay drops the bubbles in the render that starts it, so the
@@ -212,11 +192,28 @@ export function useChatScroll({
     () => !memoryTidRef.current || restoredForThreadRef.current === memoryTidRef.current,
     [memoryTidRef],
   );
-  /** A turn is streaming, nothing else owns the scroll and the reader is
-   *  riding the end. Growth in a settled transcript is the reader's own doing
-   *  (a block opened, a panel rewrapping the text) and is left where it is. */
+  // The follow outlasts the stream by one settle window. The commit that ends
+  // a turn adds the reply's actions, then the typewriter types out what it
+  // still held and late media lands, all after isStreaming has gone false.
+  const followTailRef = useRef(false);
+  const tailWindowRef = useRef<SettleWindow | null>(null);
+  const wasStreamingRef = useRef(isStreaming);
+  useLayoutEffect(() => {
+    const ended = wasStreamingRef.current && !isStreaming;
+    wasStreamingRef.current = isStreaming;
+    tailWindowRef.current ??= createSettleWindow(() => {
+      followTailRef.current = false;
+    });
+    followTailRef.current = ended;
+    if (ended) tailWindowRef.current.arm();
+    else tailWindowRef.current.clear();
+  }, [isStreaming]);
+  /** A turn is streaming or just ended, nothing else owns the scroll and the
+   *  reader is riding the end. Growth in a settled transcript is the reader's
+   *  own doing (a block opened, a panel rewrapping the text) and is left where
+   *  it is. */
   const isFollowing = useCallback(
-    () => isStreamingRef.current && !pinTargetRef.current && isNearBottomRef.current && entryRestoreSettled(),
+    () => (isStreamingRef.current || followTailRef.current) && !pinTargetRef.current && isNearBottomRef.current && entryRestoreSettled(),
     [entryRestoreSettled, isStreamingRef],
   );
 
@@ -294,42 +291,16 @@ export function useChatScroll({
   // that is what the ResizeObserver must watch.
   const getScrollContent = useCallback((c: HTMLElement): HTMLElement => resolveScrollContent(c), []);
 
-  const clearSettleTimers = useCallback(() => {
-    if (settleQuietTimerRef.current) {
-      clearTimeout(settleQuietTimerRef.current);
-      settleQuietTimerRef.current = null;
-    }
-    if (settleHardCapRef.current) {
-      clearTimeout(settleHardCapRef.current);
-      settleHardCapRef.current = null;
-    }
-  }, []);
+  const clearSettleTimers = useCallback(() => settleRef.current?.clear(), []);
 
-  // Arm the settle window: re-pin while content keeps growing, give up after a
-  // 1.5s quiet window (reset on each settle resize) or an 8s hard cap.
+  // Arm the settle window: re-pin while content keeps growing (re-armed on each
+  // settle resize), and drop the pin once it lapses. Created on first use, not
+  // in render, which must not hand it the pin ref.
   const armSettleTimers = useCallback(() => {
-    if (settleQuietTimerRef.current) clearTimeout(settleQuietTimerRef.current);
-    settleQuietTimerRef.current = setTimeout(() => {
-      // Quiet window elapsed — the settle session is over. Tear down BOTH timers
-      // so the next pin session arms a fresh hard cap; otherwise it inherits this
-      // session's stale (shortened or already-elapsed) one and gives up early.
+    settleRef.current ??= createSettleWindow(() => {
       pinTargetRef.current = null;
-      settleQuietTimerRef.current = null;
-      if (settleHardCapRef.current) {
-        clearTimeout(settleHardCapRef.current);
-        settleHardCapRef.current = null;
-      }
-    }, SETTLE_QUIET_MS);
-    if (!settleHardCapRef.current) {
-      settleHardCapRef.current = setTimeout(() => {
-        pinTargetRef.current = null;
-        settleHardCapRef.current = null;
-        if (settleQuietTimerRef.current) {
-          clearTimeout(settleQuietTimerRef.current);
-          settleQuietTimerRef.current = null;
-        }
-      }, SETTLE_HARD_CAP_MS);
-    }
+    });
+    settleRef.current.arm();
   }, []);
 
   const pinToBottom = useCallback(
@@ -345,6 +316,16 @@ export function useChatScroll({
     },
     [getScrollContainer, withProgrammaticScroll, armSettleTimers, setPillState, messagesLenRef],
   );
+
+  // For a turn the reader starts: their message and the reply land at the
+  // end, so a reader scrolled up is taken there and followed again, as the jump
+  // pill does. Instant, since the growth of their own bubble re-applies the pin
+  // instantly before the next paint and would cut a smooth scroll short anyway.
+  // A turn the main transcript is not on screen for leaves its place alone.
+  const rejoin = useCallback(() => {
+    if (activeAgentIdRef.current !== 'main' || !isActiveRef.current) return;
+    pinToBottom('auto');
+  }, [activeAgentIdRef, isActiveRef, pinToBottom]);
 
   // Re-apply the pin target; called by the ResizeObserver each time content
   // settles, so async media finishing layout can't strand the user mid-thread
@@ -396,6 +377,26 @@ export function useChatScroll({
     },
     [getScrollContainer, withProgrammaticScroll, armSettleTimers, setPillState, messagesLenRef],
   );
+
+  // For a turn that finished under 'reply_start': the first line of the reply
+  // under the viewport top, and the follow stops. Only a reader the follow was
+  // carrying is moved; one who scrolled up keeps their place. pinToMessage
+  // decides the rest: a reply shorter than the viewport clamps to the bottom
+  // and nothing moves, and its settle window re-measures the anchor as late
+  // media lands.
+  const landOnReply = useCallback(
+    (id: string, behavior: 'auto' | 'smooth') => {
+      if (activeAgentIdRef.current !== 'main' || !isActiveRef.current) return;
+      // A bottom pin is the follow inside its settle window (thread entry, the
+      // jump pill) and hands over; an offset or anchor pin holds a place the
+      // reader chose.
+      if (pinTargetRef.current && pinTargetRef.current.mode !== 'bottom') return;
+      if (!isNearBottomRef.current || !entryRestoreSettled()) return;
+      pinToMessage(id, behavior, true, 'reply');
+    },
+    [activeAgentIdRef, isActiveRef, entryRestoreSettled, pinToMessage],
+  );
+  const follow = useMemo<StreamFollowControls>(() => ({ rejoin, landOnReply }), [rejoin, landOnReply]);
 
   // Bring a turn's deliverables deck into view as it unfolds. The deck cannot
   // do this for itself: its height animates over 260ms, and the observer below
@@ -488,13 +489,15 @@ export function useChatScroll({
     };
     c.addEventListener('scroll', handleScroll, { passive: true });
 
-    // A real user gesture (wheel / touch) reclaims scroll control even mid
-    // programmatic smooth-scroll. Without this, those scroll events are flagged
-    // programmatic and ignored above, so the pin keeps yanking against the user.
     // A disclosure toggle: hold the toggled row at the viewport position it had
     // when clicked, for as long as its animation resizes the transcript. The
     // bottom pin is released too, since the reader has just chosen a place.
     let toggleAnchor: { el: HTMLElement; top: number; until: number } | null = null;
+    // A real user gesture (a wheel, a touch, a press on the scrollbar or the
+    // transcript, a key) reclaims scroll control even mid programmatic scroll.
+    // Without this, those scroll events are flagged programmatic and ignored
+    // above, so the pin keeps yanking against the user: a bottom pin re-applied
+    // on every growth frame of a reply keeps that flag set for the whole turn.
     const handleUserIntent = () => {
       if (!isMain) return;
       programmaticScrollRef.current = false;
@@ -507,8 +510,7 @@ export function useChatScroll({
         entryRestoreRafRef.current = null;
       }
     };
-    c.addEventListener('wheel', handleUserIntent, { passive: true });
-    c.addEventListener('touchstart', handleUserIntent, { passive: true });
+    for (const type of INTENT_EVENTS) c.addEventListener(type, handleUserIntent, { passive: true });
 
     const handleAnchoredToggle = (e: Event) => {
       if (!isMain) return;
@@ -538,6 +540,14 @@ export function useChatScroll({
         const grew = lastHeight >= 0 && height > lastHeight;
         const growth = grew ? height - lastHeight : 0;
         lastHeight = height;
+        if (pinTargetRef.current) {
+          // A toggle clears every pin, so one set since (a send, the jump pill)
+          // has placed the reader anew and ends the toggle's hold: holding the
+          // row would scroll them back to it.
+          toggleAnchor = null;
+          reapplyPin();
+          return;
+        }
         if (toggleAnchor) {
           if (performance.now() > toggleAnchor.until || !c.contains(toggleAnchor.el)) {
             toggleAnchor = null;
@@ -557,11 +567,10 @@ export function useChatScroll({
             return;
           }
         }
-        if (pinTargetRef.current) {
-          reapplyPin();
-          return;
+        if (grew && isFollowing()) {
+          stream.follow();
+          if (followTailRef.current) tailWindowRef.current?.arm();
         }
-        if (grew && isFollowing()) stream.follow();
       });
       ro.observe(getScrollContent(c));
     }
@@ -589,8 +598,7 @@ export function useChatScroll({
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       c.removeEventListener('scroll', handleScroll);
-      c.removeEventListener('wheel', handleUserIntent);
-      c.removeEventListener('touchstart', handleUserIntent);
+      for (const type of INTENT_EVENTS) c.removeEventListener(type, handleUserIntent);
       c.removeEventListener(ANCHORED_TOGGLE_EVENT, handleAnchoredToggle);
       document.removeEventListener('visibilitychange', handleVisibility);
       if (visibilityRafRef.current != null) {
@@ -709,11 +717,11 @@ export function useChatScroll({
     };
   }, [isActive, isLoadingHistory, historyLoadFailed, currentThreadId, threadId, pinToBottom, reapplyPin, isActiveRef, getScrollContainer, withProgrammaticScroll, armSettleTimers, setPillState, messagesLenRef]);
 
-  // Cleanup pending scroll timers/rAF on unmount.
+  // Cancel pending settle timers and the entry-restore frame on unmount.
   useEffect(() => {
     return () => {
-      if (settleQuietTimerRef.current) clearTimeout(settleQuietTimerRef.current);
-      if (settleHardCapRef.current) clearTimeout(settleHardCapRef.current);
+      settleRef.current?.clear();
+      tailWindowRef.current?.clear();
       if (entryRestoreRafRef.current != null) cancelAnimationFrame(entryRestoreRafRef.current);
     };
   }, []);
@@ -724,6 +732,7 @@ export function useChatScroll({
     getScrollContainer,
     withProgrammaticScroll,
     pinToBottom,
+    follow,
     pinToMessage,
     revealFiles,
     pinTargetRef,
@@ -735,6 +744,5 @@ export function useChatScroll({
     isNearBottomRef,
     isSubagentNearBottomRef,
     restoredForThreadRef,
-    entryRestoreSettled,
   };
 }

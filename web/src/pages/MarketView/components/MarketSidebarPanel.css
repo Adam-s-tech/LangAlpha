@@ -105,6 +105,11 @@
   color: var(--color-text-secondary);
 }
 
+/* Tracking spaces Latin capitals; it only pulls Chinese characters apart. */
+:lang(zh) .market-sidebar-section-title {
+  letter-spacing: normal;
+}
+
 /* Live dot next to section title */
 .market-sidebar-live-dot {
   display: inline-block;

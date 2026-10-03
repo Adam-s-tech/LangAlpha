@@ -29,7 +29,7 @@ import {
 import {
   isSubagentEvent, handleSubagentMessageChunk, handleSubagentToolCallChunks,
   handleSubagentToolCalls, handleSubagentToolCallResult, handleTaskSteeringAccepted,
-  handleWorkflowLifecycle,
+  handleWorkflowLifecycle, pushTaskNotice, returnTaskInstruction, type DeliveredInstruction,
 } from '../subagents/liveEventHandlers';
 import { getOrCreateTaskRefs, type UpdateSubagentCard } from '../streamRefs';
 import { handleMarketWatchUpdate, type MarketWatchState } from '../marketWatchEvents';
@@ -110,12 +110,8 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
     rt.updateSubagentCard(taskId, { messages: updatedMessages });
   };
 
-  // Append a standalone assistant notice message to a task card (terminal
-  // notices: steering returned, run error). A new message rather than a
-  // segment on the last assistant message: the card may hold an optimistic
-  // pending-instruction bubble that taskRefs.messages doesn't (useCardState
-  // keeps the longer array), and a failed task may have no assistant
-  // message at all — a pushed message survives both.
+  // Append a standalone assistant notice message to a task card (the run
+  // error notice).
   //
   // `card` rides the same write rather than taking one of its own: by the time
   // a terminal notice arrives the card is usually already inactive, and a write
@@ -129,18 +125,8 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
   ): void => {
     if (!rt.updateSubagentCard) return;
     const taskRefs = getOrCreateTaskRefs(refs, taskId);
-    const order = ++taskRefs.contentOrderCounterRef.current;
-    const updatedMessages = [...taskRefs.messages] as Record<string, unknown>[];
-    updatedMessages.push({
-      id: `task-notice-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-      role: 'assistant',
-      content: '',
-      contentSegments: [{ type: 'notification', content: text, order, detail }],
-      reasoningProcesses: {},
-      toolCallProcesses: {},
-    });
-    taskRefs.messages = updatedMessages;
-    rt.updateSubagentCard(taskId, { ...card, messages: updatedMessages });
+    pushTaskNotice(taskRefs, text, detail);
+    rt.updateSubagentCard(taskId, { ...card, messages: taskRefs.messages });
   };
 
   const dispatch = (event: SSEEvent): void => {
@@ -581,6 +567,7 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
             handleTaskSteeringAccepted({
               taskId,
               content: event.content as string,
+              entries: event.entries as DeliveredInstruction[] | undefined,
               refs,
               updateSubagentCard: rt.updateSubagentCard,
             });
@@ -606,7 +593,14 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
             || ((event.messages || []) as Array<{ content?: string }>)
               .map((m) => m.content || '').filter(Boolean).join('\n');
           if (returnedContent) {
-            appendTaskNoticeMessage(taskId, rt.t('chat.taskSteeringReturnedNotification'), returnedContent);
+            // The notice goes up whether or not a bubble here was pending: the
+            // frame is the server's word, and another tab may have sent it.
+            returnTaskInstruction(
+              taskRefs,
+              { inputId: event.input_id as string | undefined, content: returnedContent },
+              rt.t('chat.taskSteeringReturnedNotification'),
+            );
+            rt.updateSubagentCard(taskId, { messages: taskRefs.messages });
           }
         } else if (eventType === 'error' || event.error) {
           // chan_close carries only the terminal status; the failure reason

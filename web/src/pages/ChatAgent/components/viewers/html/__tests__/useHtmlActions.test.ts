@@ -107,6 +107,9 @@ describe('useHtmlActions — widget mode', () => {
   });
 
   afterEach(() => {
+    // Here rather than at the end of the test that spies: a failed assertion
+    // skips the rest of its body, and the spy would outlive the test.
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
@@ -129,7 +132,7 @@ describe('useHtmlActions — widget mode', () => {
   it('downloads a blob via an anchor', () => {
     const click = vi.fn();
     const realCreate = document.createElement.bind(document);
-    const createSpy = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
       const el = realCreate(tag);
       if (tag === 'a') el.click = click;
       return el;
@@ -141,7 +144,6 @@ describe('useHtmlActions — widget mode', () => {
     expect(createObjectURL).toHaveBeenCalled();
     expect(click).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:widget-url');
-    createSpy.mockRestore();
   });
 
   it('opens a blob tab WITHOUT noopener so auto-print fires for PDF', async () => {

@@ -76,10 +76,16 @@ export async function fetchStockData(
 
     const { data } = await api.get(url, { params, signal });
 
-    const dataPoints = data?.data || [];
+    const dataPoints = data?.data;
 
-    if (!Array.isArray(dataPoints) || dataPoints.length === 0) {
+    // A body with no bars array (an HTML page answering in the backend's
+    // place, which the client hands over as text) is a failure, not an answer.
+    if (!Array.isArray(dataPoints)) {
       return { data: [], error: 'No data available' };
+    }
+    // No bars is an answer, not a failure: each caller words its own empty state.
+    if (dataPoints.length === 0) {
+      return { data: [] };
     }
 
     // Backend returns { time: <unix_ms>, open, high, low, close, volume } →

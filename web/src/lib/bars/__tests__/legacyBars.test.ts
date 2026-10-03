@@ -86,10 +86,20 @@ describe('fetchStockData — metadata passthrough', () => {
     expect(res.meta?.displayDecimals).toBe(4);
   });
 
-  it('omits meta on the error path (no data)', async () => {
+  it('answers no bars with an empty series and no meta, not an error', async () => {
     apiMock.get.mockResolvedValueOnce({ data: { data: [] } });
     const res = await fetchStockData('AAPL', '1min', undefined, undefined);
-    expect(res.error).toBeTruthy();
-    expect(res.meta).toBeUndefined();
+    expect(res).toEqual({ data: [] });
+  });
+
+  it('keeps a body with no bars array a failure, so it is never cached as an empty series', async () => {
+    apiMock.get.mockResolvedValueOnce({ data: '<!doctype html><html></html>' });
+    const page = await fetchStockData('AAPL', '1min', undefined, undefined);
+    expect(page.data).toEqual([]);
+    expect(page.error).toBeTruthy();
+
+    apiMock.get.mockResolvedValueOnce({ data: { detail: 'upstream' } });
+    const noBars = await fetchStockData('AAPL', '1day', undefined, undefined);
+    expect(noBars.error).toBeTruthy();
   });
 });

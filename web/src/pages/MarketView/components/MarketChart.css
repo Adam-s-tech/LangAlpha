@@ -498,6 +498,12 @@
   letter-spacing: 0.5px;
   color: var(--color-text-tertiary);
 }
+
+/* Tracking spaces Latin capitals; it only pulls Chinese characters apart. */
+:lang(zh) .indicator-toggles-label,
+:lang(zh) .compact-menu-section-label {
+  letter-spacing: normal;
+}
 .compact-menu-divider {
   height: 1px;
   background: var(--color-border-default);

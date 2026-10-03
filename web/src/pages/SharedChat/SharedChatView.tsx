@@ -544,7 +544,7 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
       canDownload={canDownload}
       workspaceId=""
       apiAdapter={fileApiAdapter}
-      // No files to browse means no tree, and the panel goes with its last tab.
+      // No files to browse means no tree.
       singleFileMode={!canBrowseFiles}
       onActiveTabKindChange={setPanelTabKind}
       onClose={() => setShowFilePanel(false)}

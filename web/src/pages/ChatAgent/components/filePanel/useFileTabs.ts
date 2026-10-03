@@ -250,6 +250,27 @@ function toPersisted({ id: _id, ...body }: PersistableTab): PersistedTab {
   return file;
 }
 
+function serialize({ tabs, activeId }: StripBody): string {
+  const named = tabs.filter((t): t is PersistableTab => t.kind !== 'empty' && !(EPHEMERAL_KINDS as readonly string[]).includes(t.kind));
+  // -1 when the empty tab is active, so the strip comes back parked on it.
+  // A tab that is not stored comes back on the stored one before it, else
+  // the first, else parked: what it showed is gone with the transcript.
+  let active = named.findIndex((t) => t.id === activeId);
+  if (active < 0 && named.length && !tabs.some((t) => t.id === activeId && t.kind === 'empty')) {
+    const at = tabs.findIndex((t) => t.id === activeId);
+    active = Math.max(0, named.filter((t) => tabs.indexOf(t) < at).length - 1);
+  }
+  return JSON.stringify({ tabs: named.map(toPersisted), active });
+}
+
+/** The seed is whatever strip was shown last, in whichever thread, so it is written with every strip. */
+function writeStrip(store: string, seedStore: string | null, json: string): void {
+  try {
+    userLocalStorage.setItem(store, json);
+    if (seedStore && seedStore !== store) userLocalStorage.setItem(seedStore, json);
+  } catch { /* a full or blocked store is not worth failing a render over */ }
+}
+
 /**
  * The strip a key holds, or null when it holds nothing readable. A key that
  * parses to no tabs is a strip the reader emptied on purpose, and comes back
@@ -321,7 +342,11 @@ function place(
   return { ...state, tabs, activeId: fresh.id };
 }
 
-/** Closing the last tab leaves the empty one rather than a panel with no way back. */
+/**
+ * A strip is never empty: closing its last tab leaves the empty one. The
+ * reader closing it from the strip takes the panel instead (`closeOut`);
+ * this is every other close, such as a deleted file's tab.
+ */
 function closeIn(state: TabsState, id: string): TabsState {
   const at = state.tabs.findIndex((t) => t.id === id);
   if (at < 0) return state;
@@ -396,22 +421,21 @@ export function useFileTabs(
   // render between a key change and the switch above still holds the old strip.
   useEffect(() => {
     if (!store || !onScreen || state.key !== key) return;
-    const named = state.tabs.filter((t): t is PersistableTab => t.kind !== 'empty' && !(EPHEMERAL_KINDS as readonly string[]).includes(t.kind));
-    // -1 when the empty tab is active, so the strip comes back parked on it.
-    // A tab that is not stored comes back on the stored one before it, else
-    // the first, else parked: what it showed is gone with the transcript.
-    let active = named.findIndex((t) => t.id === state.activeId);
-    if (active < 0 && named.length && !state.tabs.some((t) => t.id === state.activeId && t.kind === 'empty')) {
-      const at = state.tabs.findIndex((t) => t.id === state.activeId);
-      active = Math.max(0, named.filter((t) => state.tabs.indexOf(t) < at).length - 1);
-    }
-    const json = JSON.stringify({ tabs: named.map(toPersisted), active });
-    try {
-      userLocalStorage.setItem(store, json);
-      // The seed is whatever strip was shown last, in whichever thread.
-      if (seedStore && seedStore !== store) userLocalStorage.setItem(seedStore, json);
-    } catch { /* a full or blocked store is not worth failing a render over */ }
+    writeStrip(store, seedStore, serialize(state));
   }, [state, key, store, seedStore, onScreen]);
+
+  /**
+   * Close the last tab along with the panel. The emptied strip is written
+   * here as well as set: the host can unmount the panel in the same update,
+   * and the effect above never runs for a panel that is gone. It is set too,
+   * because a host animating the panel out keeps this mount, and a reopen
+   * inside that window gets it back.
+   */
+  const closeOut = useCallback(() => {
+    const blank = blankStrip();
+    setState((prev) => ({ ...blank, key: prev.key }));
+    if (store && onScreen) writeStrip(store, seedStore, serialize(blank));
+  }, [store, seedStore, onScreen]);
 
   const activate = useCallback((id: string) => {
     setState((prev) => (prev.activeId === id ? prev : { ...prev, activeId: id }));
@@ -601,6 +625,7 @@ export function useFileTabs(
     openFile,
     pinTab,
     closeTab,
+    closeOut,
     newTab,
     showListing,
     openSettings,
@@ -617,7 +642,7 @@ export function useFileTabs(
     clearLocation,
   }), [
     state.tabs, activeTab, openPaths,
-    activate, openFile, pinTab, closeTab, newTab, showListing, openSettings, openMemory, openMemo, openStatus,
+    activate, openFile, pinTab, closeTab, closeOut, newTab, showListing, openSettings, openMemory, openMemo, openStatus,
     openPreview, openChart, retargetChart, openTool, openPlan, openSources, patchTab, clearLocation,
   ]);
 }

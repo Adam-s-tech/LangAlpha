@@ -152,12 +152,13 @@ export function TabStrip({
   /**
    * A tab closed from the keyboard hands the focus to the tab that takes its
    * place; a tab closed with the mouse does not, because the pointer is where
-   * the reader already is. Same rule the card deck follows.
+   * the reader already is. Same rule the card deck follows. The last tab
+   * takes the panel with it, which leaves nothing in the strip to hand to.
    */
   const closeFrom = useCallback((id: string, keyboard: boolean) => {
     const index = tabs.findIndex((tab) => tab.id === id);
     onClose(id);
-    if (!keyboard) return;
+    if (!keyboard || tabs.length <= 1) return;
     requestAnimationFrame(() => {
       const remaining = listRef.current?.querySelectorAll<HTMLElement>('[role="tab"]');
       if (!remaining?.length) return;

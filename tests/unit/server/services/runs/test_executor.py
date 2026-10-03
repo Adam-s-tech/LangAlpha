@@ -1738,6 +1738,110 @@ class TestStartWorkflowHandoffCancelIntent:
                     await ti.task
 
 
+class TestHandoffUnderCallerCancellation:
+    """The caller is a chat stream task that a client disconnect cancels at
+    every await (an AnyIO scope). Once start_run has registered the run, the
+    run is the executor's: a cancel landing on start_run's own awaits must not
+    hand it back to the stream's death path, skip the session-loss abort, or
+    lose a Stop that arrived before registration."""
+
+    @staticmethod
+    async def _start_cancelled(btm, run_handle, row, scope=None):
+        async def gen():
+            await asyncio.Event().wait()
+            yield {}
+
+        async def _get_run(_run_id):
+            await asyncio.sleep(0)
+            return row
+
+        import anyio
+
+        # Instance-level, so the workflow's own teardown in _stop stays mocked.
+        btm._finalize_run = AsyncMock()
+        with patch(
+            "src.server.database.runs.lifecycle.get_run", side_effect=_get_run
+        ):
+            with anyio.CancelScope() as cancel:
+                cancel.cancel()
+                try:
+                    await btm.start_run(
+                        thread_id="t-1",
+                        run_id="run-1",
+                        workflow_generator=gen(),
+                        metadata={"user_id": "u-1", "run_handle": run_handle},
+                        on_registered=(
+                            scope.transfer_to_executor if scope is not None else None
+                        ),
+                    )
+                except asyncio.CancelledError:
+                    # The chat handlers' death path.
+                    if scope is not None and scope.slot_owned:
+                        await scope.fail_open("client disconnected during setup")
+                    raise
+            for _ in range(5):
+                await asyncio.sleep(0)
+        return btm.executions[("t-1", "run-1")]
+
+    @staticmethod
+    async def _stop(ti):
+        ti.task.cancel()
+        with suppress(asyncio.CancelledError):
+            await ti.task
+
+    @pytest.mark.asyncio
+    async def test_a_registered_run_is_not_settled_by_the_stream_death_path(self):
+        from src.server.services.runs.admission import RunScope
+
+        btm = _make_btm()
+        run_handle = MagicMock(run_id="run-1", guard=None)
+        scope = RunScope(user_id="u-1", burst_slot_id="s-1")
+        scope.attach_run(run_handle)
+        coordinator = MagicMock(fail_open_run=AsyncMock())
+        row = {"status": "in_progress", "cancel_requested_at": None}
+
+        with patch(
+            "src.server.services.runs.coordinator.RunCoordinator.get_instance",
+            return_value=coordinator,
+        ), patch(
+            "src.server.dependencies.usage_limits.release_burst_slot",
+            new=AsyncMock(),
+        ) as release:
+            ti = await self._start_cancelled(btm, run_handle, row, scope)
+        try:
+            assert ti.task is not None and not ti.task.done()
+            coordinator.fail_open_run.assert_not_awaited()
+            release.assert_not_awaited()
+            assert not scope.slot_owned
+        finally:
+            await self._stop(ti)
+
+    @pytest.mark.asyncio
+    async def test_a_stop_found_at_handoff_survives_the_callers_cancel(self):
+        btm = _make_btm()
+        run_handle = MagicMock(run_id="run-1", guard=None)
+        row = {"status": "in_progress", "cancel_requested_at": "2026-01-01T00:00:00Z"}
+
+        ti = await self._start_cancelled(btm, run_handle, row)
+        try:
+            assert ti.cancel_event.is_set()
+            assert ti.user_stop is True
+        finally:
+            await self._stop(ti)
+
+    @pytest.mark.asyncio
+    async def test_session_loss_abort_is_wired_before_the_first_await(self):
+        btm = _make_btm()
+        run_handle = MagicMock(run_id="run-1")
+        row = {"status": "in_progress", "cancel_requested_at": None}
+
+        ti = await self._start_cancelled(btm, run_handle, row)
+        try:
+            run_handle.guard.attach_abort.assert_called_once()
+        finally:
+            await self._stop(ti)
+
+
 # ---------------------------------------------------------------------------
 # Compaction admission guard
 # ---------------------------------------------------------------------------

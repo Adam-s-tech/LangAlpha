@@ -101,7 +101,7 @@ interface FilePanelProps {
    *  `allow_files` without `allow_download`, and the download endpoint refuses
    *  what `allow_files` alone opened, so an offered save fails after the click. */
   canDownload?: boolean;
-  /** Lock to one file: no tree, and closing the last tab closes the panel. */
+  /** Lock to one file: no tree. */
   singleFileMode?: boolean;
   /** False keeps the strip in memory only: a panel browsing beside a gallery
    *  must not write over the strip the workspace's conversations seed from. */
@@ -348,7 +348,7 @@ function FilePanel({
     setScopeDir(null);
   }, [showMatches, tabs, setTreeOpen]);
 
-  const { openFileAt, openFileRef, retryOpen, cancelPending } = useFileRefOpen({
+  const { openFileAt, openFileRef, retryOpen, cancelPending, isLookingUp } = useFileRefOpen({
     tabs,
     cache,
     hasChanged,
@@ -493,22 +493,35 @@ function FilePanel({
   // away with the draft left no way back.
   const closePanel = useCallback(() => { guardLeave(onClose); }, [guardLeave, onClose]);
 
+  // Reads the strip as it is when the close runs, which the discard question
+  // can put off while tabs come and go underneath it.
+  const closeTabNow = useStableHandler((id: string) => {
+    const tab = tabs.tabs.find((x) => x.id === id);
+    if (!tab) return;
+    forgetTab(id);
+    if (tab.kind === 'file') {
+      // The marker is what forces a re-read on reopen; the cached bytes must
+      // not outlive it, or a rewrite lands inside the body's fresh window.
+      if (hasChanged(tab.path)) cache.invalidate(tab.path);
+      forgetChanged(tab.path);
+    }
+    // The last tab takes the panel with it, and the panel reopens on the
+    // empty tab rather than on the one just closed. A file still being looked
+    // up has no tab yet, so the panel stays for it to land in. Anything else
+    // still pending is the closed tab's own, and is dropped.
+    if (tabs.tabs.length <= 1 && !isLookingUp()) {
+      cancelPending();
+      tabs.closeOut();
+      onClose();
+      return;
+    }
+    tabs.closeTab(id);
+  });
+
   const closeTab = useCallback((id: string) => {
-    const close = () => {
-      forgetTab(id);
-      const tab = tabs.tabs.find((x) => x.id === id);
-      if (tab?.kind === 'file') {
-        // The marker is what forces a re-read on reopen; the cached bytes must
-        // not outlive it, or a rewrite lands inside the body's fresh window.
-        if (hasChanged(tab.path)) cache.invalidate(tab.path);
-        forgetChanged(tab.path);
-      }
-      if (singleFileMode && tabs.tabs.length <= 1) return onClose();
-      tabs.closeTab(id);
-    };
-    if (tabHasUnsavedChanges(id)) askDiscard(close);
-    else close();
-  }, [forgetTab, tabHasUnsavedChanges, tabs, hasChanged, forgetChanged, cache, singleFileMode, onClose, askDiscard]);
+    if (tabHasUnsavedChanges(id)) askDiscard(() => closeTabNow(id));
+    else closeTabNow(id);
+  }, [tabHasUnsavedChanges, askDiscard, closeTabNow]);
 
   const handleViewerLink = useStableHandler((path: string, linkWorkspaceId?: string, location?: FileLocation, opts?: { rooted?: boolean; pin?: boolean }) => {
     const rooted = !!opts?.rooted;

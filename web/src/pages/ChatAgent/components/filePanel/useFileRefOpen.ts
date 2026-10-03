@@ -44,6 +44,9 @@ export function useFileRefOpen({
   // after the reader has already opened something else: whatever asked last
   // holds the ticket, and a reference checks it after every await.
   const refSeq = useRef(0);
+  // The ticket of a reference waiting on the server's lookup. It has no tab
+  // until the answer comes back, so an empty strip does not mean nothing is coming.
+  const lookupSeq = useRef(0);
   // The reference a lookup could not answer, kept against the tab it landed in
   // so only that tab's retry re-asks it; another tab's retry re-reads its own file.
   const unresolved = useRef<{ path: string; rawRef: string; fromFile: string | null; location: FileLocation | null } | null>(null);
@@ -81,6 +84,9 @@ export function useFileRefOpen({
   const cancelPending = useCallback(() => {
     refSeq.current += 1;
   }, []);
+
+  /** A reference the reader asked for is still being looked up, and will open a tab when it answers. */
+  const isLookingUp = useCallback(() => lookupSeq.current !== 0 && lookupSeq.current === refSeq.current, []);
 
   const openFileRef = useCallback(async (
     rawRef: string,
@@ -128,11 +134,13 @@ export function useFileRefOpen({
     }
 
     let result: FileRefResolution | null = null;
+    lookupSeq.current = seq;
     try {
       result = await resolveFileFn(candidates, writes);
     } catch (err) {
       console.error('[FilePanel] File reference lookup failed:', err);
     }
+    if (lookupSeq.current === seq) lookupSeq.current = 0;
     if (!current()) return;
 
     if (!result || result.status === 'unavailable') {
@@ -156,5 +164,5 @@ export function useFileRefOpen({
     refetch();
   }, [openFileRef, refetch]);
 
-  return { openFileAt, openFileRef, retryOpen, cancelPending };
+  return { openFileAt, openFileRef, retryOpen, cancelPending, isLookingUp };
 }

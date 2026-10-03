@@ -25,6 +25,10 @@ WORKDIR /app
 
 # Copy dependency files first for layer caching
 COPY pyproject.toml uv.lock README.md ./
+# Copied but not installed: the CLI is the `cli` extra. uv.lock still lists it
+# as a path source, and every unfrozen `uv run` reads it to check the lock, MCP
+# servers included; they start with a filtered environment, so setting
+# UV_FROZEN here would not reach them.
 COPY libs/ptc-cli/ libs/ptc-cli/
 
 # Install dependencies (frozen = use lockfile exactly).
@@ -46,8 +50,8 @@ COPY src/ src/
 COPY server.py .
 COPY scripts/ scripts/
 RUN chmod +x scripts/docker_entrypoint.sh
-COPY config.yaml .
-COPY agent_config.yaml .
+COPY config*.yaml ./
+COPY agent_config*.yaml ./
 COPY mcp_servers/ mcp_servers/
 COPY plugins/ plugins/
 COPY workflows/ workflows/

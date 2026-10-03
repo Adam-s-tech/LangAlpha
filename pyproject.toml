@@ -94,7 +94,6 @@ dependencies = [
     "boto3>=1.42.28",
     "tavily-python>=0.7.18",
     "PyJWT[crypto]>=2.8",
-    "langalpha-cli",
     "certifi>=2026.1.4",
     "requests>=2.32.5",
     "croniter>=2.0.0",
@@ -116,6 +115,11 @@ dependencies = [
 langalpha-cli = { path = "libs/ptc-cli", editable = true }
 
 [project.optional-dependencies]
+# The interactive TUI (libs/ptc-cli). An extra, not a runtime dependency: the
+# server imports nothing from it, and as a main dependency it inverted the
+# package graph. langalpha-cli depends on langalpha-core, so the root project
+# depending back on it formed a cycle every backend install had to build.
+cli = ["langalpha-cli"]
 dev = [
     "ruff",
     "black>=24.2.0",

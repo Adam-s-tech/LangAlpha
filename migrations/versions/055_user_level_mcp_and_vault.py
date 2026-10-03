@@ -823,7 +823,31 @@ def _agent_config() -> Any:
         p / "agent_config.yaml" for p in (cwd, root, Path.home() / ".ptc-agent")
     ]
     path = next((p for p in candidates if p.is_file()), None)
-    return _substituted(yaml.safe_load(path.read_text())) if path else None
+    if path is None:
+        return None
+    return _substituted(_with_overlay(path, yaml.safe_load(path.read_text())))
+
+
+def _with_overlay(path: Path, config: Any) -> Any:
+    # The runtime layers <stem>.<APP_ENV><suffix> over the file it found before
+    # substituting, so an overlay's ``enabled`` is the one the backend acted on.
+    app_env = os.getenv("APP_ENV", "").strip()
+    overlay = path.with_name(f"{path.stem}.{app_env}{path.suffix}")
+    if not app_env or not overlay.is_file():
+        return config
+    return _merged(config, yaml.safe_load(overlay.read_text()) or {})
+
+
+def _merged(base: Any, overlay: Any) -> Any:
+    # Maps merge, anything else (``mcp.servers`` included) replaces, and a null
+    # sets nothing at any depth.
+    if not isinstance(overlay, Mapping):
+        return overlay
+    merged = dict(base) if isinstance(base, Mapping) else {}
+    for key, value in overlay.items():
+        if value is not None:
+            merged[key] = _merged(merged.get(key), value)
+    return merged
 
 
 _TRUE_WORDS = frozenset({"1", "on", "t", "true", "y", "yes"})

@@ -45,7 +45,8 @@ from psycopg.rows import dict_row
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # Every one of these is import-clean: _db reads os.environ, blob_keys imports
-# only `re`, and src.utils.storage only os + yaml + the provider SDK.
+# only `re`, and src.utils.storage only the provider SDK and ptc_agent's config
+# loader, which reads the YAML files but never .env.
 # Deliberately NOT src.server.database.workspace_file_blobs, which pulls
 # database/pool -> src.config.env -> load_dotenv() and would silently retarget
 # a mutating operator script at whatever .env happens to be on disk.

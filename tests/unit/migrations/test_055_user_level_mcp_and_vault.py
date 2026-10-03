@@ -923,6 +923,18 @@ def test_an_enabled_the_backend_refuses_stops_the_upgrade(
     m._move_to_user_tier(bind)
 
 
+def test_an_app_env_overlay_decides_which_servers_ran(m, tmp_path, monkeypatch):
+    """The backend read the overlay over the base, and its server list replaced
+    the base's outright."""
+    _config_server(tmp_path, "false", name="price_data")
+    (tmp_path / "agent_config.prod.yaml").write_text(
+        "mcp:\n  servers:\n    - name: parked\n      enabled: false\n"
+    )
+    monkeypatch.setenv("APP_ENV", "prod")
+    runs = m._builtin_servers()
+    assert runs["price_data"] is True and runs["parked"] is False
+
+
 def test_without_a_config_file_every_bundled_server_ran(m, tmp_path, monkeypatch):
     """A PTC_CONFIG_FILE that does not exist is passed over, as the runtime
     passes over it."""

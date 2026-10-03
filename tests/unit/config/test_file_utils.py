@@ -7,7 +7,8 @@ Covers:
 - get_default_config_dir()
 - get_config_search_paths() with SDK vs CLI contexts
 - find_config_file() search order
-- load_yaml_config() with env var substitution
+- load_yaml_config() with env var substitution and APP_ENV overlays
+- load_agent_config()
 - substitute_env_vars()
 """
 
@@ -15,14 +16,17 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 
 from ptc_agent.config.file_utils import (
     AGENT_CONFIG_FILE,
+    clear_config_cache,
     ConfigContext,
     find_config_file,
     find_project_root,
     get_config_search_paths,
     get_default_config_dir,
+    load_agent_config,
     load_yaml_config,
     substitute_env_vars,
 )
@@ -155,6 +159,87 @@ class TestLoadYamlConfig:
         with patch.dict(os.environ, {"TEST_API_KEY": "secret-123"}):
             result = load_yaml_config(str(config_file))
         assert result["api_key"] == "secret-123"
+
+
+# ---------------------------------------------------------------------------
+# APP_ENV overlays
+# ---------------------------------------------------------------------------
+
+
+class TestAppEnvOverlay:
+    BASE = "llm:\n  name: base\n  flash: base-flash\n  fallback: [one, two]\nsearch_api: tavily\n"
+
+    def _write(self, tmp_path, overlay=None):
+        clear_config_cache()
+        (tmp_path / AGENT_CONFIG_FILE).write_text(self.BASE)
+        if overlay is not None:
+            (tmp_path / "agent_config.production.yaml").write_text(overlay)
+        return str(tmp_path / AGENT_CONFIG_FILE)
+
+    def test_overlay_wins_and_leaves_other_keys_alone(self, tmp_path):
+        base = self._write(tmp_path, "llm:\n  name: overlaid\nsearch_api: serper\n")
+
+        with patch.dict(os.environ, {"APP_ENV": "production"}):
+            result = load_yaml_config(base)
+
+        assert result["search_api"] == "serper"
+        assert result["llm"] == {"name": "overlaid", "flash": "base-flash", "fallback": ["one", "two"]}
+
+    def test_overlay_lists_replace_rather_than_concatenate(self, tmp_path):
+        base = self._write(tmp_path, "llm:\n  fallback: [three]\n")
+
+        with patch.dict(os.environ, {"APP_ENV": "production"}):
+            assert load_yaml_config(base)["llm"]["fallback"] == ["three"]
+
+    def test_unset_app_env_ignores_a_present_overlay(self, tmp_path):
+        base = self._write(tmp_path, "search_api: serper\n")
+
+        with patch.dict(os.environ, {}, clear=True):
+            assert load_yaml_config(base)["search_api"] == "tavily"
+
+    def test_app_env_without_a_matching_overlay_falls_back_to_the_base(self, tmp_path):
+        base = self._write(tmp_path)
+
+        with patch.dict(os.environ, {"APP_ENV": "production"}):
+            assert load_yaml_config(base)["search_api"] == "tavily"
+
+    def test_cache_does_not_leak_across_app_envs(self, tmp_path):
+        base = self._write(tmp_path, "search_api: serper\n")
+
+        with patch.dict(os.environ, {"APP_ENV": "production"}):
+            assert load_yaml_config(base)["search_api"] == "serper"
+        with patch.dict(os.environ, {}, clear=True):
+            assert load_yaml_config(base)["search_api"] == "tavily"
+
+    def test_a_section_with_every_key_commented_out_keeps_the_base(self, tmp_path):
+        base = self._write(tmp_path, "llm:\n  # name: overlaid\ncrawler:\n  queue:\n    # depth: 2\n")
+
+        with patch.dict(os.environ, {"APP_ENV": "production"}):
+            result = load_yaml_config(base)
+        assert result["llm"]["name"] == "base"
+        assert result["crawler"] == {}
+
+    @pytest.mark.parametrize("overlay", ["- one\n", "[]\n", "false\n"])
+    def test_an_overlay_that_is_not_a_mapping_is_refused(self, tmp_path, overlay):
+        base = self._write(tmp_path, overlay)
+
+        with patch.dict(os.environ, {"APP_ENV": "production"}), pytest.raises(ValueError, match="mapping"):
+            load_yaml_config(base)
+
+
+# ---------------------------------------------------------------------------
+# load_agent_config()
+# ---------------------------------------------------------------------------
+
+
+class TestLoadAgentConfig:
+    def test_ptc_config_file_wins_over_the_search_paths(self, tmp_path):
+        clear_config_cache()
+        pointed = tmp_path / "elsewhere.yaml"
+        pointed.write_text("search_api: serper\n")
+
+        with patch.dict(os.environ, {"PTC_CONFIG_FILE": str(pointed)}):
+            assert load_agent_config()["search_api"] == "serper"
 
 
 # ---------------------------------------------------------------------------

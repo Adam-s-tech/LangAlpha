@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useMemo } from 'react';
+import React, { createContext, useContext, useState, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkCjkFriendly from 'remark-cjk-friendly';
@@ -17,6 +17,7 @@ import { normalizeFileRefs } from '../utils/normalizeFileRefs';
 import { splitFileLocation, type OpenFileHandler } from '../utils/fileLocation';
 import { mapOutsideCode, mapOutsideMultilineCode } from '../utils/markdownSegments';
 import { splitMarkdownBlocks, scanStreamingBlock } from '../utils/markdownBlocks';
+import { blockFreshKeys, rehypeFreshText, useRevealFade } from '../utils/revealFade';
 import CitationBubble from './CitationBubble';
 
 // Sanitize schema: extends GitHub-style defaults to allow KaTeX output,
@@ -204,6 +205,15 @@ function tryFormatJson(code: string): { formatted: string; language: string } | 
   } catch {
     return null;
   }
+}
+
+// The text of rendered children, for an attribute. A link label is split into
+// fade spans while it is fresh (utils/revealFade), and can hold emphasis.
+function textOf(node: React.ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join('');
+  if (React.isValidElement<{ children?: React.ReactNode }>(node)) return textOf(node.props.children);
+  return '';
 }
 
 // --- Helper to extract code info from a <pre> element ---
@@ -698,19 +708,28 @@ type MarkdownVariant = 'chat' | 'panel' | 'compact';
 const REMARK_PLUGINS: React.ComponentProps<typeof ReactMarkdown>['remarkPlugins'] = [
   [remarkGfm, { singleTilde: false }], remarkCjkFriendly, remarkMath,
 ];
-const REHYPE_PLUGINS: React.ComponentProps<typeof ReactMarkdown>['rehypePlugins'] = [
+type RehypePlugins = NonNullable<React.ComponentProps<typeof ReactMarkdown>['rehypePlugins']>;
+const REHYPE_PLUGINS: RehypePlugins = [
   [rehypeKatex, { strict: false }], rehypeRaw, [rehypeSanitize, sanitizeSchema],
 ];
+
+// The fade pass runs after the sanitizer: it only wraps text the sanitizer
+// already passed, in spans carrying a mark id.
+const withFreshText = (fresh: string): RehypePlugins =>
+  fresh ? [...REHYPE_PLUGINS, [rehypeFreshText, fresh] as RehypePlugins[number]] : REHYPE_PLUGINS;
 
 interface MarkdownBlockProps {
   source: string;
   components: React.ComponentProps<typeof ReactMarkdown>['components'];
   /** The block text is still arriving. */
   live: boolean;
+  /** The reveals still fading in over this block (`blockFreshKeys`), '' for none. */
+  fresh: string;
 }
 
-// One parsed block. Memoized on its source, so a streaming reply only re-parses
-// the block still receiving text; the blocks above it keep their DOM, and a
+// One parsed block. Memoized on its source and its fresh key, so a streaming
+// reply only re-parses the block still receiving text, and the one before it
+// once more as its last reveals settle; the blocks above keep their DOM, and a
 // fence in them is highlighted once. The tree is keyed on the block's line
 // count so the block being streamed remounts on each newline, which clears a
 // stale inline-emphasis node React otherwise leaves behind mid-stream.
@@ -720,11 +739,12 @@ interface MarkdownBlockProps {
 // rebuild every highlighted token on each new line. Closing the fence counts
 // its lines at once, one remount per fence. While the block is live, that
 // fence highlights only its typing line per tick (CodeBlock).
-const MarkdownBlock = React.memo(function MarkdownBlock({ source, components, live }: MarkdownBlockProps) {
+const MarkdownBlock = React.memo(function MarkdownBlock({ source, components, live, fresh }: MarkdownBlockProps) {
   const { lineKey, openFence } = useMemo(() => scanStreamingBlock(source), [source]);
+  const rehypePlugins = useMemo(() => withFreshText(fresh), [fresh]);
   return (
     <LiveFence.Provider value={live ? openFence : -1}>
-      <ReactMarkdown key={lineKey} remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={components}>
+      <ReactMarkdown key={lineKey} remarkPlugins={REMARK_PLUGINS} rehypePlugins={rehypePlugins} components={components}>
         {source}
       </ReactMarkdown>
     </LiveFence.Provider>
@@ -769,6 +789,12 @@ function Markdown({ content, variant = 'panel', className = '', style, onOpenFil
   }, [content]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(processed), [processed]);
+
+  // What each typewriter tick added fades in (utils/revealFade). Tracked in
+  // the processed source, the text the parser positions its nodes in.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const marks = useRevealFade(rootRef, processed, streaming);
+  const freshKeys = useMemo(() => blockFreshKeys(blocks, marks), [blocks, marks]);
 
   const components = useMemo(() => {
     let result = config.components;
@@ -834,7 +860,7 @@ function Markdown({ content, variant = 'panel', className = '', style, onOpenFil
         // The destination goes over raw: WorkspaceImage reads it the same way
         // this link does, and normalizing here would decode it twice.
         if (isImagePath(href)) {
-          return <WorkspaceImage src={href} alt={typeof children === 'string' ? children : ''} />;
+          return <WorkspaceImage src={href} alt={textOf(children)} />;
         }
         if (onOpenFile) {
           const wsRef = parseWsPath(href);
@@ -862,6 +888,7 @@ function Markdown({ content, variant = 'panel', className = '', style, onOpenFil
   // (transcript, detail panels, memos, plans) gets the content face here.
   return (
     <div
+      ref={rootRef}
       className={`font-content ${config.className} ${className}`.trim()}
       style={{ ...config.style, ...style }}
     >
@@ -870,7 +897,7 @@ function Markdown({ content, variant = 'panel', className = '', style, onOpenFil
           {/* mdast-to-hast puts a newline text node between top-level siblings;
               keep the DOM identical to a whole-document render. */}
           {i > 0 && '\n'}
-          <MarkdownBlock source={block} components={components} live={streaming && i === blocks.length - 1} />
+          <MarkdownBlock source={block} components={components} live={streaming && i === blocks.length - 1} fresh={freshKeys[i]} />
         </React.Fragment>
       ))}
     </div>

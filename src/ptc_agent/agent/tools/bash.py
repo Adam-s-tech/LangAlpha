@@ -97,7 +97,7 @@ def create_execute_bash_tool(
             memory_error=_MEMORY_ROUTE_ERROR,
             files_error=_FILES_ROUTE_ERROR,
             blocked_event="Blocked bash command touching a store-backed path",
-            command=command[:100],
+            command_length=len(command),
         )
 
     async def _run(
@@ -110,7 +110,7 @@ def create_execute_bash_tool(
         try:
             logger.debug(
                 "Executing bash command",
-                command=command[:100],
+                command_length=len(command),
                 working_dir=working_dir,
                 timeout=timeout,
                 background=run_in_background,
@@ -147,14 +147,14 @@ def create_execute_bash_tool(
                 if output:
                     logger.debug(
                         "Bash command executed successfully",
-                        command=command[:50],
+                        command_length=len(command),
                         output_length=len(output),
                     )
                     return output, artifact
                 # Command succeeded but no output (e.g., mkdir)
                 logger.debug(
                     "Bash command executed successfully (no output)",
-                    command=command[:50],
+                    command_length=len(command),
                 )
                 return "Command completed successfully", artifact
 
@@ -166,7 +166,7 @@ def create_execute_bash_tool(
 
             logger.warning(
                 "Bash command failed",
-                command=command[:50],
+                command_length=len(command),
                 exit_code=exit_code,
                 output_length=len(error_output),
             )
@@ -180,7 +180,7 @@ def create_execute_bash_tool(
             error_msg = f"Failed to execute bash command: {e!s}"
             logger.error(
                 error_msg,
-                command=command[:50],
+                command_length=len(command),
                 error=str(e),
                 exc_info=True,
             )

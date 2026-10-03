@@ -24,8 +24,10 @@ GENERATIONS = "/mnt/.livefs"
 PREFIX = "/api/v1/livefs"
 
 #: A new token for ``start``, in the environment of the root command that
-#: runs it: the sandbox user can neither read nor replace it there, as they
-#: could a file.
+#: runs it, never on a command line. Agent code running as another user
+#: (Docker) can neither read nor replace it there, as it could a file; where
+#: agent code runs as root (Daytona) it can read the token, which reaches
+#: only this user's files and only until it runs out.
 CONFIG_ENV = "LIVEFS_CONFIG"
 
 #: The tool puts its call id here, which is how a save reaches the result of

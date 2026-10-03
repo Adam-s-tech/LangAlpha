@@ -87,7 +87,7 @@ class CompositeFilesystemBackend:
         # `..` on a mounted path could normalize into the sandbox FS and
         # silently bypass the store. Reject at the perimeter.
         if self._escapes_a_mount(path):
-            raise ValueError(f"Path traversal not allowed on mounted paths: {path!r}")
+            raise ValueError("Path traversal (..) is not allowed on mounted paths")
         return self._sandbox.normalize_path(path)
 
     def virtualize_path(self, path: str) -> str:

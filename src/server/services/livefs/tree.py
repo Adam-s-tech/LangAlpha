@@ -25,7 +25,7 @@ from ptc_agent.agent.filesystem_routes import (
     build_filesystem_backend,
     resolve_identity_gates,
 )
-from ptc_agent.core.paths import USER_DATA_DIRS, SandboxLayout, WorkspaceLayout
+from ptc_agent.core.paths import USER_DATA_DIRS, SandboxLayout, WorkspaceLayout, logged_path
 from ptc_agent.core.sandbox.livefs_mount import CallContext
 from ptc_agent.core.sandbox.livefs_runtime.protocol import (
     INLINE_LISTING_MAX_BYTES,
@@ -35,6 +35,7 @@ from ptc_agent.core.sandbox.livefs_runtime.protocol import (
     Refusal,
     etag_version,
 )
+from src.observability.private_errors import failure
 from src.server.database import workspace as workspace_db
 from src.server.database.workspace_folders import is_top_level
 from src.server.services import transcripts
@@ -141,6 +142,15 @@ def _is_directory(path: str) -> LivefsError:
     return LivefsError(Refusal.IS_DIRECTORY, f"{path} is a directory", path)
 
 
+def _log_failure(level: int, message: str, path: str, exc: Exception) -> None:
+    fields, trace = failure(exc)
+    fields = {"path": logged_path(path), **fields}
+    # In the message too: the log format prints no extras, and without the
+    # traceback the line would not name the error.
+    details = " ".join(f"{k}={v}" for k, v in fields.items())
+    logger.log(level, "%s: %s", message, details, extra=fields, exc_info=trace)
+
+
 @contextmanager
 def _answering(path: str) -> Iterator[None]:
     """Any failure but a refusal, as one the daemon answers with a retry."""
@@ -149,7 +159,7 @@ def _answering(path: str) -> Iterator[None]:
     except LivefsError:
         raise
     except Exception as exc:
-        logger.exception("livefs request failed", extra={"path": path})
+        _log_failure(logging.ERROR, "livefs request failed", path, exc)
         raise LivefsError(
             Refusal.UNAVAILABLE, f"{path} could not be reached; retry", path
         ) from exc
@@ -441,6 +451,14 @@ class LivefsTree:
                 raise LivefsError(
                     Refusal.INVALID, f"{node.path}: these files hold UTF-8 text", node.path
                 ) from None
+            if "\x00" in content:
+                # Postgres would refuse it, and the save would answer as an
+                # outage to retry.
+                raise LivefsError(
+                    Refusal.INVALID,
+                    f"{node.path}: binary content (NUL bytes) cannot be saved here",
+                    node.path,
+                )
             if if_none_match == "*":
                 version = None
             elif (version := etag_version(if_match)) is None:
@@ -519,7 +537,5 @@ class LivefsTree:
                 await target.route.write(target.path, replaced[0], left)
             elif left is not None:
                 await target.route.delete(target.path, left)
-        except Exception:
-            logger.warning(
-                "livefs move left its copy", extra={"path": target.path}, exc_info=True
-            )
+        except Exception as exc:
+            _log_failure(logging.WARNING, "livefs move left its copy", target.path, exc)

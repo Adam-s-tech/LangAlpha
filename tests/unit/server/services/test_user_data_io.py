@@ -98,6 +98,13 @@ class TestPortfolioParseAndDiff:
         assert exc.value.error_type == "parse_error"
         assert "nested more than 64 levels deep" in exc.value.hint
 
+    def test_a_nul_escape_is_a_parse_error(self):
+        """Postgres stores no NUL in text, and its refusal quotes the row."""
+        with pytest.raises(UserDataValidationError) as exc:
+            _diff_portfolio('{"holdings": [{"symbol": "A\\u0000"}]}', [])
+        assert exc.value.error_type == "parse_error"
+        assert "NUL character" in exc.value.hint
+
     def test_missing_version_accepted(self):
         """Agent JSON no longer carries __version__; the backend tracks the
         version server-side, so parsing a payload without __version__ must

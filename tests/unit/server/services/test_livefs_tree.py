@@ -17,11 +17,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock
 
+import psycopg
 import pytest
 from langgraph.store.memory import InMemoryStore
 
@@ -1016,3 +1018,21 @@ async def test_a_save_takes_its_defaults_from_the_commands_context(store, automa
     # A program sends no copy of what it read (None), so the rows stand for it.
     automations.parse.assert_awaited_once_with(USER, context or CallContext(), ANY, None)
     assert automations.plan.call_args.args[0] == (context or CallContext())
+
+
+def test_a_failure_line_names_the_error_without_quoting_the_row(caplog):
+    """The log format prints the message alone, so the line itself says what
+    failed once the traceback, which would quote the row, is left out."""
+    from src.server.services.livefs import tree
+
+    refused = psycopg.errors.CheckViolation("Failing row contains (Sell all TSLA).")
+    with caplog.at_level(logging.ERROR, logger=tree.logger.name):
+        tree._log_failure(
+            logging.ERROR, "livefs request failed", "/mnt/livefs/user/automations/sell-tsla.json", refused
+        )
+
+    (record,) = caplog.records
+    assert record.getMessage() == (
+        "livefs request failed: path=/mnt/livefs/user/automations error_type=CheckViolation sqlstate=23514"
+    )
+    assert record.exc_info is None

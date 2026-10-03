@@ -218,8 +218,9 @@ async def start(
     serving current code.
 
     ``config`` is a new token to install; None keeps the one the sandbox
-    has. It travels in the root command's environment, which the sandbox
-    user cannot read, and the daemon keeps it where only root can read it.
+    has. It travels in the root command's environment and the daemon keeps
+    it where only root can read it, which hides it from agent code only where
+    that code runs as another user (see ``protocol.CONFIG_ENV``).
     """
     return await _run(sandbox, "start", ["--base-url", base_url], config)
 

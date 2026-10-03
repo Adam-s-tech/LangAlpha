@@ -19,6 +19,11 @@ if TYPE_CHECKING:
 
 REQUEST_TIMEOUT_S = 20
 
+#: Sent on every request, as the sandbox's market-data client does: http.client
+#: sends no User-Agent, and edge bot mitigation can challenge a request without
+#: one, which the daemon would only see as the mount going away.
+USER_AGENT = "langalpha-sandbox/1.0"
+
 #: Kept-alive connections at most, one per libfuse worker thread (libfuse 3
 #: runs 10 by default); a burst past it closes the extra ones after use.
 POOL_SIZE = 10
@@ -276,7 +281,11 @@ class Remote:
                 conn = self._open(base)
             else:
                 conn = self._lease(base, IDLE_S if method == "GET" else WRITE_REUSE_S)
-            sent = {"Authorization": f"Bearer {config['token']}", **(headers or {})}
+            sent = {
+                "Authorization": f"Bearer {config['token']}",
+                "User-Agent": USER_AGENT,
+                **(headers or {}),
+            }
             if call:
                 sent[CALL_HEADER] = call
             url = f"{conn.prefix}{PREFIX}/{action}?{urllib.parse.urlencode(params)}"

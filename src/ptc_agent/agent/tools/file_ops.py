@@ -9,7 +9,12 @@ from typing import Any, Callable
 import structlog
 from langchain_core.tools import tool
 
-from ptc_agent.agent.backends import FilesystemBackend, ReadOnlyStoreError
+from ptc_agent.agent.backends import (
+    FilesystemBackend,
+    ReadOnlyStoreError,
+    StoreContentInvalidError,
+    StoreContentTooLargeError,
+)
 from ptc_agent.agent.backends.read_window import DEFAULT_READ_LINES, MAX_READ_CHARS, format_cat_n
 from ptc_agent.agent.tools.context_file_policy import (
     CappedFile,
@@ -17,8 +22,9 @@ from ptc_agent.agent.tools.context_file_policy import (
     fill_note,
     over_cap_refusal,
 )
-from ptc_agent.core.paths import MEMO_USER_DIR
+from ptc_agent.core.paths import MEMO_USER_DIR, logged_path
 from ptc_agent.agent.backends.db_json_route import UserDataValidationError
+from src.observability.private_errors import failure
 
 logger = structlog.get_logger(__name__)
 
@@ -114,11 +120,15 @@ def create_filesystem_tools(
             if suffix in VISUAL_EXTENSIONS and not is_memo_text_path(file_path):
                 # Validate the path exists before returning acknowledgment
                 normalized_path = backend.normalize_path(file_path)
-                logger.info("Loading image file", file_path=file_path, normalized_path=normalized_path)
+                logger.info(
+                    "Loading image file",
+                    file_path=logged_path(file_path),
+                    normalized_path=logged_path(normalized_path),
+                )
 
                 if backend.filesystem_config.enable_path_validation and not backend.validate_path(file_path):
                     error_msg = f"Access denied: {file_path} is not in allowed directories"
-                    logger.error(error_msg, file_path=file_path)
+                    logger.error("Access denied: path outside the allowed directories", file_path=logged_path(file_path))
                     return f"ERROR: {error_msg}"
 
                 file_type = "image" if suffix in IMAGE_EXTENSIONS else "document"
@@ -126,11 +136,17 @@ def create_filesystem_tools(
 
             # Standard text file handling
             normalized_path = backend.normalize_path(file_path)
-            logger.info("Reading file", file_path=file_path, normalized_path=normalized_path, offset=offset, limit=limit)
+            logger.info(
+                "Reading file",
+                file_path=logged_path(file_path),
+                normalized_path=logged_path(normalized_path),
+                offset=offset,
+                limit=limit,
+            )
 
             if backend.filesystem_config.enable_path_validation and not backend.validate_path(file_path):
                 error_msg = f"Access denied: {file_path} is not in allowed directories"
-                logger.error(error_msg, file_path=file_path)
+                logger.error("Access denied: path outside the allowed directories", file_path=logged_path(file_path))
                 return f"ERROR: {error_msg}"
 
             start_offset = offset or 0
@@ -140,7 +156,7 @@ def create_filesystem_tools(
 
             if content is None:
                 error_msg = f"File not found: {file_path}"
-                logger.warning(error_msg, file_path=file_path)
+                logger.warning("File not found", file_path=logged_path(file_path))
                 return f"ERROR: {error_msg}"
 
             # Visual extensions (.png, .pdf, etc) routed above. This catches
@@ -154,7 +170,7 @@ def create_filesystem_tools(
                     f"to identify the type, or `xxd '{file_path}' | head` "
                     f"to inspect as hex."
                 )
-                logger.info("Binary file rejected", file_path=file_path)
+                logger.info("Binary file rejected", file_path=logged_path(file_path))
                 return f"ERROR: {error_msg}"
 
             lines = content.splitlines()
@@ -231,7 +247,8 @@ def create_filesystem_tools(
 
         except Exception as e:
             error_msg = f"Failed to read file: {e!s}"
-            logger.exception(error_msg, file_path=file_path)
+            fields, trace = failure(e)
+            logger.error("Failed to read file", file_path=logged_path(file_path), exc_info=trace, **fields)
             return f"ERROR: {error_msg}"
 
     @tool("Write")
@@ -245,11 +262,16 @@ def create_filesystem_tools(
         """
         try:
             normalized_path = backend.normalize_path(file_path)
-            logger.info("Writing file", file_path=file_path, normalized_path=normalized_path, size=len(content))
+            logger.info(
+                "Writing file",
+                file_path=logged_path(file_path),
+                normalized_path=logged_path(normalized_path),
+                size=len(content),
+            )
 
             if backend.filesystem_config.enable_path_validation and not backend.validate_path(file_path):
                 error_msg = f"Access denied: {file_path} is not in allowed directories"
-                logger.error(error_msg, file_path=file_path)
+                logger.error("Access denied: path outside the allowed directories", file_path=logged_path(file_path))
                 return f"ERROR: {error_msg}"
 
             capped = _capped(normalized_path)
@@ -258,7 +280,7 @@ def create_filesystem_tools(
                 if refusal is not None:
                     logger.info(
                         "Write refused past its context cap",
-                        file_path=file_path,
+                        file_path=logged_path(file_path),
                         size=len(content),
                         cap=capped.cap,
                     )
@@ -269,11 +291,24 @@ def create_filesystem_tools(
             except ReadOnlyStoreError as exc:
                 logger.info(
                     "write rejected on read-only path",
-                    file_path=file_path,
+                    file_path=logged_path(file_path),
+                )
+                return f"ERROR: {exc}"
+            except (StoreContentTooLargeError, StoreContentInvalidError) as exc:
+                logger.info(
+                    "store write refused",
+                    file_path=logged_path(file_path),
+                    error_type=type(exc).__name__,
                 )
                 return f"ERROR: {exc}"
             except UserDataValidationError as exc:
-                logger.info("user-data write rejected", file_path=file_path, error=str(exc))
+                # The refusal's text quotes what it refused (a holding, an
+                # automation's name or status), so the log keeps its type.
+                logger.info(
+                    "user-data write rejected",
+                    file_path=logged_path(file_path),
+                    error_type=exc.error_type,
+                )
                 return f"ERROR: {exc}"
             if not result:
                 return "ERROR: Write operation failed"
@@ -301,7 +336,8 @@ def create_filesystem_tools(
 
         except Exception as e:
             error_msg = f"Failed to write file: {e!s}"
-            logger.error(error_msg, file_path=file_path, error=str(e), exc_info=True)
+            fields, trace = failure(e)
+            logger.error("Failed to write file", file_path=logged_path(file_path), exc_info=trace, **fields)
             return f"ERROR: {error_msg}"
 
     @tool("Edit")
@@ -320,15 +356,15 @@ def create_filesystem_tools(
             normalized_path = backend.normalize_path(file_path)
             logger.info(
                 "Editing file",
-                file_path=file_path,
-                normalized_path=normalized_path,
-                old_string_preview=old_string[:50],
+                file_path=logged_path(file_path),
+                normalized_path=logged_path(normalized_path),
+                old_string_length=len(old_string),
                 replace_all=replace_all,
             )
 
             if backend.filesystem_config.enable_path_validation and not backend.validate_path(file_path):
                 error_msg = f"Access denied: {file_path} is not in allowed directories"
-                logger.error(error_msg, file_path=file_path)
+                logger.error("Access denied: path outside the allowed directories", file_path=logged_path(file_path))
                 return f"ERROR: {error_msg}"
 
             result = await backend.aedit_text(normalized_path, old_string, new_string, replace_all=replace_all)
@@ -363,7 +399,8 @@ def create_filesystem_tools(
 
         except Exception as e:
             error_msg = f"Failed to edit file: {e!s}"
-            logger.error(error_msg, file_path=file_path, error=str(e), exc_info=True)
+            fields, trace = failure(e)
+            logger.error("Failed to edit file", file_path=logged_path(file_path), exc_info=trace, **fields)
             return f"ERROR: {error_msg}"
 
     return read_file, write_file, edit_file

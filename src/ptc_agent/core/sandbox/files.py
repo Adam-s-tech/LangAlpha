@@ -25,7 +25,7 @@ from src.observability import (
     workspace_fs_bytes,
 )
 
-from ptc_agent.core.paths import AGENT_HISTORY_DIRS, ALWAYS_HIDDEN_DIR_NAMES
+from ptc_agent.core.paths import AGENT_HISTORY_DIRS, ALWAYS_HIDDEN_DIR_NAMES, logged_path
 from ptc_agent.core.sandbox import path_locks as _path_locks
 from ptc_agent.core.sandbox.grep_render import render_grep_json
 from ptc_agent.core.sandbox.livefs_runtime.protocol import MOUNT
@@ -858,7 +858,7 @@ async def aglob_files(
 
     except Exception as e:
         await _raise_normalized(sandbox, e, op="glob", path=path)
-        logger.warning("Async glob failed", pattern=pattern, path=path, error=str(e))
+        logger.warning("Async glob failed", pattern_length=len(pattern), path=logged_path(path), error_type=type(e).__name__)
         return []
 
 
@@ -992,5 +992,5 @@ async def agrep_content(
 
     except Exception as e:
         await _raise_normalized(sandbox, e, op="grep", path=path)
-        logger.warning("Async grep failed", pattern=pattern, path=path, error=str(e))
+        logger.warning("Async grep failed", pattern_length=len(pattern), path=logged_path(path), error_type=type(e).__name__)
         return []

@@ -18,6 +18,7 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.config.settings import HOST_MODE, LOCAL_DEV_USER_ID
+from src.observability.private_errors import failure
 from src.server.auth.jwt_bearer import _decode_token
 
 # Type variable for generic return type preservation
@@ -226,7 +227,11 @@ def handle_api_exceptions(
                     raise HTTPException(status_code=409, detail=str(e))
                 raise
             except Exception as e:
-                logger.exception(f"Error {action}: {e}")
+                fields, trace = failure(e)
+                if trace is None:
+                    logger.error(f"Error {action}: {fields['error_type']} (sqlstate {fields['sqlstate']})")
+                else:
+                    logger.exception(f"Error {action}: {e}")
                 raise HTTPException(
                     status_code=500,
                     detail=f"Failed to {action}",

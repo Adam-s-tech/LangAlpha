@@ -29,6 +29,8 @@ from ptc_agent.agent.backends.db_json_route import Plan
 from ptc_agent.agent.backends.langgraph_store import MAX_CONTENT_BYTES
 from ptc_agent.core.sandbox.livefs_mount import CallContext
 from ptc_agent.core.sandbox.livefs_runtime.protocol import MAX_FILE_BYTES
+from src.config import logging_config
+from src.observability.private_query import drop_span_query
 from src.server.app import livefs as livefs_app
 from src.server.app import setup as setup_mod
 from src.server.database import user as user_db
@@ -264,6 +266,109 @@ def test_gzip_leaves_the_file_mount_and_downloads_alone(path, exempt):
     assert setup_mod._gzip_exempt(path) is exempt
 
 
+# -- what a request's URL leaves in logs and spans ------------------------------------
+# The daemon names files in the query, and an automation's file name is its name.
+
+
+@pytest.fixture
+def access_logger(monkeypatch) -> logging.Logger:
+    """uvicorn's access logger as the app's logging setup leaves it, without
+    touching the root logger's handlers or any level."""
+    monkeypatch.setattr(logging_config, "_logging_configured", False)
+    monkeypatch.setattr(logging_config, "get_module_log_levels", lambda: {})
+    monkeypatch.setattr(logging_config, "is_sse_event_log_enabled", lambda: False)
+    monkeypatch.setattr(logging, "basicConfig", lambda **_: None)
+    access = logging.getLogger("uvicorn.access")
+    for logger in (access, logging.getLogger("uvicorn.error")):
+        monkeypatch.setattr(logger, "filters", list(logger.filters))
+    logging_config.configure_logging()
+    return access
+
+
+@pytest.mark.parametrize(
+    ("target", "logged"),
+    [
+        ("/api/v1/livefs/read?path=user%2Fautomations%2Fbrief.json", "/api/v1/livefs/read"),
+        ("/api/v1/livefs/rename?path=a.md&to=b.md", "/api/v1/livefs/rename"),
+        (
+            "/api/v1/workspaces/w1/files/read?path=.agents%2Fuser%2F.%2Fautomations%2Fbrief.json",
+            "/api/v1/workspaces/w1/files/read",
+        ),
+        ("/api/v1/workspaces/w1/files/read?path=.agents%5Cuser%5Cautomations%5Cbrief.json", "/api/v1/workspaces/w1/files/read"),
+        (
+            "/api/v1/workspaces/w1/files/read?path=file%3A%2F%2F%2Fhome%2Fworkspace%2F.agents%252Fuser%252Fautomations%252Fbrief.json",
+            "/api/v1/workspaces/w1/files/read",
+        ),
+        ("/api/v1/workspaces/w1/files/read?path=report.md", "/api/v1/workspaces/w1/files/read?path=report.md"),
+        ("/api/v1/threads?limit=5", "/api/v1/threads?limit=5"),
+    ],
+    ids=["mount", "mount-rename", "panel-automation", "panel-backslashes", "panel-file-url", "panel-file", "elsewhere"],
+)
+def test_the_access_log_keeps_a_mount_request_to_its_path(access_logger, target, logged):
+    # The record as uvicorn logs a request.
+    record = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 0, '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1:50000", "GET", target, "1.1", 200), None,
+    )
+
+    assert access_logger.filter(record)
+    assert record.getMessage() == f'127.0.0.1:50000 - "GET {logged} HTTP/1.1" 200'
+
+
+def test_the_access_log_drops_the_query_wherever_the_target_sits(access_logger):
+    # A later uvicorn may log other arguments; the query goes all the same.
+    record = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 0, '"%s %s" %s',
+        ("GET", "/api/v1/livefs/read?path=user%2Fautomations%2Fbrief.json", 200), None,
+    )
+
+    assert access_logger.filter(record)
+    assert record.getMessage() == '"GET /api/v1/livefs/read" 200'
+
+
+def test_an_uncaught_database_error_is_logged_by_its_sqlstate(access_logger):
+    import psycopg
+
+    refused = psycopg.errors.CheckViolation("Failing row contains (Sell all TSLA).")
+    record = logging.LogRecord(
+        "uvicorn.error", logging.ERROR, __file__, 0, "Exception in ASGI application\n", (),
+        (type(refused), refused, None),
+    )
+
+    assert logging.getLogger("uvicorn.error").filter(record)
+    assert record.exc_info is None
+    assert record.getMessage() == "Exception in ASGI application (CheckViolation, sqlstate 23514)"
+
+
+class _Span:
+    def __init__(self, attributes: dict[str, str]) -> None:
+        self.attributes = attributes
+
+    def is_recording(self) -> bool:
+        return True
+
+    def set_attribute(self, key: str, value: str) -> None:
+        self.attributes[key] = value
+
+
+@pytest.mark.parametrize(
+    ("path", "query", "private"),
+    [
+        ("/api/v1/livefs/write", "path=a.md", True),
+        ("/api/v1/workspaces/w1/files/read", "path=.agents%2Fuser%2Fautomations%2Fbrief.json", True),
+        ("/api/v1/workspaces/w1/files/read", "path=report.md", False),
+    ],
+    ids=["mount", "panel-automation", "panel-file"],
+)
+def test_a_private_requests_span_keeps_its_url_without_the_query(path, query, private):
+    sent = {"http.url": f"http://test{path}?{query}", "url.query": query}
+    span = _Span(dict(sent))
+
+    drop_span_query(span, {"path": path, "query_string": query.encode()})
+
+    assert span.attributes == ({"http.url": f"http://test{path}", "url.query": ""} if private else sent)
+
+
 @pytest.mark.asyncio
 async def test_a_write_naming_a_stale_version_is_refused_as_changed(client):
     stale = await _make_stale(client)
@@ -318,6 +423,25 @@ async def test_a_bad_path_body_or_file_name_is_refused_as_invalid(client, path, 
     resp = await _put(client, path, body, **{"If-None-Match": "*"})
 
     assert _refusal(resp) == (422, "invalid")
+
+
+@pytest.mark.asyncio
+async def test_a_save_holding_a_nul_is_refused_with_why_and_logged_by_code(
+    client, reported, caplog
+):
+    """Postgres refuses a NUL in text, which would answer as an outage to
+    retry and quote the text in its error."""
+    caplog.set_level(logging.INFO, logger=livefs_app.logger.name)
+
+    resp = await _put(client, NOTES, b"private\x00text", **{"If-None-Match": "*"})
+
+    assert _refusal(resp) == (422, "invalid")
+    told = outcomes.describe([o for _, o in reported])
+    assert "NOT SAVED" in told and "binary content (NUL bytes)" in told
+    (logged,) = [r for r in caplog.records if r.getMessage() == "livefs write"]
+    assert (logged.ok, logged.code) == (False, "invalid")
+    # The refusal's text quotes what it refused; the tool result carries it.
+    assert not hasattr(logged, "error")
 
 
 @pytest.mark.asyncio
@@ -442,7 +566,7 @@ async def test_a_save_the_server_failed_on_is_reported_not_saved(
     with pytest.raises(RuntimeError):
         await _put(client, NOTES, b"x", **headers)
 
-    failed = {"op": "write", "path": f"/mnt/livefs/{NOTES}", "ok": False, "error": "the server failed; retry"}
+    failed = {"op": "write", "path": f"/mnt/livefs/{NOTES}", "ok": False, "code": "unavailable", "error": "the server failed; retry"}
     assert reported == ([] if provisional else [(CALL, failed)])
 
 

@@ -31,13 +31,16 @@ from collections.abc import AsyncIterator, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, NamedTuple
 
+import psycopg
 import structlog
 
 from ptc_agent.agent.backends.langgraph_store import ReadOnlyStoreError, grep_texts, lock_for_namespace
 from ptc_agent.agent.backends.read_window import shows_whole_file
 from ptc_agent.agent.backends.results import EditTextResult, WriteTextResult
 from ptc_agent.agent.backends.sandbox import SandboxBackend
+from ptc_agent.core.paths import logged_path
 from ptc_agent.core.sandbox.livefs_mount import CallContext
+from src.observability.private_errors import failure
 from src.server.database.pool import get_db_connection
 
 logger = structlog.get_logger(__name__)
@@ -112,6 +115,8 @@ def load_json(content: str, **kwargs: Any) -> Any:
     reads alike. ``JSONDecodeError`` and a hook's own non-``ValueError`` pass
     through; the rest is ``UnreadableJsonError``, whose text is a hint."""
     too_deep = UnreadableJsonError(f"nested more than {_MAX_JSON_DEPTH} levels deep")
+    # A ``\u0000`` escape decodes to a NUL, which the database cannot store.
+    has_nul = UnreadableJsonError("a string holds a NUL character (\\u0000), which cannot be saved")
     try:
         value = json.loads(content, **kwargs)
     except json.JSONDecodeError:
@@ -127,10 +132,18 @@ def load_json(content: str, **kwargs: Any) -> Any:
     stack = [(value, 0)]
     while stack:
         node, depth = stack.pop()
-        if isinstance(node, (dict, list)):
+        if isinstance(node, str):
+            if "\x00" in node:
+                raise has_nul
+        elif isinstance(node, (dict, list)):
             if depth == _MAX_JSON_DEPTH:
                 raise too_deep
-            stack.extend((child, depth + 1) for child in (node.values() if isinstance(node, dict) else node))
+            if isinstance(node, dict):
+                if any("\x00" in key for key in node):
+                    raise has_nul
+                stack.extend((child, depth + 1) for child in node.values())
+            else:
+                stack.extend((child, depth + 1) for child in node)
     return value
 
 
@@ -454,8 +467,22 @@ class DbJsonRoute:
                 self._invalidate(filename)
             exc.readme = exc.readme or self._absolute(README_FILE)
             raise
+        except psycopg.DataError as exc:
+            # A value the column cannot hold: the content's fault, not an
+            # outage to retry.
+            raise self._refusal(
+                "schema_error",
+                filename,
+                f"a value is too long or out of range for its column ({type(exc).__name__}).",
+            ) from exc
         except Exception as exc:
-            logger.exception("db json route write failed", path=self._absolute(filename))
+            fields, trace = failure(exc)
+            logger.error(
+                "db json route write failed",
+                path=logged_path(self._absolute(filename)),
+                exc_info=trace,
+                **fields,
+            )
             raise self._refusal("server_error", filename, _SERVER_FAILURE) from exc
 
     def _exists(self, filename: str) -> UserDataValidationError:
@@ -555,7 +582,7 @@ class DbJsonRoute:
         try:
             live = await self._live(filename)
         except Exception:
-            logger.exception("db json route read failed", path=file_path)
+            logger.exception("db json route read failed", path=logged_path(file_path))
             return None
         return live.content if live else None
 
@@ -571,7 +598,7 @@ class DbJsonRoute:
             try:
                 live = await self._live(filename)
             except Exception:
-                logger.exception("db json route read failed", path=file_path)
+                logger.exception("db json route read failed", path=logged_path(file_path))
                 return None
             if live is None:
                 # Gone since an earlier Read, which a Write must not update.

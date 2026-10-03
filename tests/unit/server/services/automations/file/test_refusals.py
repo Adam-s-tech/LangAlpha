@@ -67,6 +67,9 @@ class TestMisreadValues:
             # Read by every Python, so only the route's own bound refuses it.
             ('{"name": "A", "metadata": {"a": ' + "[" * 64 + "]" * 64 + "}}", "nested more than 64"),
             ('{"name": "A", "max_failures": ' + "9" * 5_000 + "}", "a number has too many digits"),
+            # Postgres stores no NUL in text, and its refusal quotes the row.
+            ('{"name": "A", "instruction": "buy\\u0000sell"}', "NUL character"),
+            ('{"name": "A", "metadata": {"k\\u0000": 1}}', "NUL character"),
         ],
     )
     @pytest.mark.asyncio

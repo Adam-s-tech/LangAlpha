@@ -1260,6 +1260,7 @@ class _Endpoint(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         self.rfile.read(length)
         self.server.seen.append((self.command, self.client_address[1]))
+        self.server.user_agents.append(self.headers.get("User-Agent"))
         status, headers, delay = self.server.answer(self.command, len(self.server.seen))
         time.sleep(delay)
         if status is None:  # taken, and the connection lost before the answer
@@ -1295,6 +1296,7 @@ def endpoint(tmp_path):
     method and client port."""
     server = _Loopback(("127.0.0.1", 0), _Endpoint)
     server.seen = []
+    server.user_agents = []
     server.answer = lambda method, nth: (200, {}, 0)
     server.hang_up = False
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -1306,6 +1308,15 @@ def endpoint(tmp_path):
     yield SimpleNamespace(server=server, config=str(config))
     server.shutdown()
     server.server_close()
+
+
+@pytest.mark.enable_socket
+def test_every_request_names_the_sandbox_as_its_user_agent(endpoint):
+    # http.client sends none, and edge bot mitigation can challenge a request
+    # without one, which the daemon would only see as the mount going away.
+    remote.Remote(endpoint.config).request("GET", "list", {"path": ""})
+
+    assert endpoint.server.user_agents == ["langalpha-sandbox/1.0"]
 
 
 @pytest.mark.enable_socket

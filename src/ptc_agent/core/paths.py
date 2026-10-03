@@ -470,6 +470,21 @@ USER_DATA_FILES: dict[str, tuple[str, ...]] = {
 USER_DATA_DIRS: tuple[str, ...] = (SandboxLayout.USER_PROFILE_DIR, SandboxLayout.AUTOMATIONS_DIR)
 AUTOMATION_FILE_NAME = r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.json"
 
+# The automations folder's tail, the same in a sandbox path and a mount path.
+_AUTOMATIONS_TAIL = SandboxLayout.AUTOMATIONS_DIR.removeprefix(SandboxLayout.AGENTS_DIR)
+
+
+def logged_path(path: str) -> str:
+    """``path`` as an operator log keeps it. An automation's file is named
+    after the automation, which the logs leave out, so a path in that folder
+    keeps the folder alone."""
+    # Normalized first, so ``user/./automations/`` and ``//`` spellings fold
+    # too, and a ``..`` that walks out of the folder keeps no name either.
+    normalized = posixpath.normpath(path)
+    folder, marker, _ = normalized.partition(_AUTOMATIONS_TAIL + "/")
+    return folder + _AUTOMATIONS_TAIL if marker else normalized
+
+
 HIDDEN_DIR_NAMES: frozenset[str] = frozenset({SandboxLayout.INTERNAL_DIR})
 
 # Match segments at any depth so nested dependencies also stay hidden and unsynced.

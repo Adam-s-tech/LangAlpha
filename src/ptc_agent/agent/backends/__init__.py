@@ -13,6 +13,7 @@ from typing import Union
 from .composite import CompositeFilesystemBackend
 from .langgraph_store import (
     InvalidStoreKeyError,
+    StoreContentInvalidError,
     StoreContentTooLargeError,
     NamespaceFactory,
     ReadOnlyStoreError,
@@ -40,6 +41,7 @@ __all__ = [
     "DaytonaBackend",
     "FilesystemBackend",
     "InvalidStoreKeyError",
+    "StoreContentInvalidError",
     "StoreContentTooLargeError",
     "NamespaceFactory",
     "PREBUILT_READ_ONLY_ERROR",

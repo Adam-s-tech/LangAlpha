@@ -216,8 +216,8 @@ async def create_automation(
                     raise
                 continue
             logger.info(
-                f"[automation_db] create_automation user_id={user_id} "
-                f"name={name} trigger_type={trigger_type}"
+                f"[automation_db] create_automation automation_id={automation_id} "
+                f"user_id={user_id} trigger_type={trigger_type}"
             )
             return dict(result)
 

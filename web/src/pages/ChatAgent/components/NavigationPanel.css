@@ -76,10 +76,13 @@
   border-radius: 0 8px 8px 0;
 }
 
-/* Focus and an open menu keep the actions up too: the menu is portaled, so
-   hovering it ends the row's :hover, and a keyboard user is never hovering. */
+/* Keyboard focus and an open menu keep the actions up too: the menu is
+   portaled, so hovering it ends the row's :hover, and a keyboard user is never
+   hovering. Focus counts only when a key placed it (lib/inputModality.ts): the
+   workspace row is itself a tab stop, as is every action button, so a click
+   lands focus in the row and would hold the actions up after the pointer left. */
 .nav-panel-row:hover .nav-panel-row-actions,
-.nav-panel-row:focus-within .nav-panel-row-actions,
+:root:not([data-pointer-focus]) .nav-panel-row:focus-within .nav-panel-row-actions,
 .nav-panel-row:has([data-state='open']) .nav-panel-row-actions {
   opacity: 1;
   pointer-events: auto;

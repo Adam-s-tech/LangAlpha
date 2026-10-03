@@ -541,6 +541,8 @@ async def astream_flash_workflow(
                     ),
                 },
                 graph=flash_graph,
+                # Manager owns burst slot release from registration on
+                on_registered=scope.transfer_to_executor,
             )
         except RuntimeError:
             # Race condition: another request registered first -- queue the
@@ -583,7 +585,6 @@ async def astream_flash_workflow(
                 status_code=409, detail=admission_conflict_detail("running")
             )
         else:
-            scope.transfer_to_executor()  # Manager owns burst slot release from here
             # Admission complete — release the lock so subsequent POSTs
             # can see the new RUNNING LocalRunExecution via wait_or_steer.
             scope.release_admission()
@@ -604,11 +605,11 @@ async def astream_flash_workflow(
 
     except (asyncio.CancelledError, GeneratorExit):
         if scope.slot_owned:
-            await scope.fail_open("client disconnected during setup")
             logger.warning(
                 f"[FLASH_CHAT] Generator cancelled before workflow started: "
                 f"thread_id={thread_id}"
             )
+            await scope.fail_open("client disconnected during setup")
         else:
             logger.warning(
                 f"[FLASH_CHAT] Generator cancelled (client disconnect?): "

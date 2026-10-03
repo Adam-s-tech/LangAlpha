@@ -928,8 +928,9 @@ async def astream_ptc_workflow(
             },
             completion_callback=on_background_workflow_complete,
             graph=ptc_graph,
+            # Manager owns burst slot release from registration on
+            on_registered=scope.transfer_to_executor,
         )
-        scope.transfer_to_executor()  # Manager owns burst slot release from here
         # Admission complete — release the lock so concurrent POSTs can
         # see the new RUNNING LocalRunExecution via ``wait_or_steer`` and route
         # to steering instead of contending here.
@@ -982,11 +983,11 @@ async def astream_ptc_workflow(
 
     except (asyncio.CancelledError, GeneratorExit):
         if scope.slot_owned:
-            await scope.fail_open("client disconnected during setup")
             logger.warning(
                 f"[PTC_CHAT] Generator cancelled before workflow started: "
                 f"thread_id={thread_id} workspace_id={workspace_id}"
             )
+            await scope.fail_open("client disconnected during setup")
         else:
             logger.warning(
                 f"[PTC_CHAT] Generator cancelled (client disconnect?): "

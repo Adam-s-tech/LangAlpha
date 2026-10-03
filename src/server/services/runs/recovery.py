@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import random
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import get_recovery_scan_interval
@@ -38,6 +39,13 @@ SALVAGE_MAX_EVENTS = 5000
 STOP_GRACE = 30.0
 
 
+# A healthy stop settles within admission's teardown wait (the checkpoint
+# flush timeout plus a margin, seconds). A run still fenced this long after
+# its stop request has a wedged owner, and every new turn on its thread gets
+# a 409 until it settles: worth a warning, where a live turn's skip is not.
+STUCK_STOP_AFTER = timedelta(minutes=2)
+
+
 # Scans between billing-settle sweeps. The sweep's own grace window is 30
 # minutes, so anything short of that is timely; this keeps an idle fleet from
 # issuing two table-wide UPDATEs per worker every scan interval.
@@ -51,6 +59,7 @@ class RecoveryScanner:
         self._loop_task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
         self._sweep_tick = 0
+        self._warned_stuck: set[str] = set()
 
     @classmethod
     def get_instance(cls) -> "RecoveryScanner":
@@ -195,6 +204,7 @@ class RecoveryScanner:
         from src.server.services import writer_guard as wg
 
         recovered = 0
+        self._warned_stuck &= {str(r["conversation_response_id"]) for r in open_runs}
         for run in open_runs:
             if self._stop_event.is_set():
                 # Shutting down: current run finished cleanly; leave the
@@ -217,10 +227,7 @@ class RecoveryScanner:
                     )
                     continue
                 if not acquired:
-                    logger.debug(
-                        f"[RecoveryScanner] run {run_id} fenced by a live "
-                        "owner; skipping"
-                    )
+                    self._note_fenced(run, run_id, thread_id)
                     continue
             inner = asyncio.ensure_future(
                 self._recover_run(run, run_id, thread_id)
@@ -252,6 +259,24 @@ class RecoveryScanner:
                     except Exception:
                         pass
         return recovered
+
+    def _note_fenced(self, run: Dict[str, Any], run_id: str, thread_id: str) -> None:
+        requested = run.get("cancel_requested_at")
+        if (
+            requested is None
+            or run_id in self._warned_stuck
+            or datetime.now(timezone.utc) - requested < STUCK_STOP_AFTER
+        ):
+            logger.debug(
+                f"[RecoveryScanner] run {run_id} fenced by a live owner; skipping"
+            )
+            return
+        self._warned_stuck.add(run_id)
+        logger.warning(
+            f"[RecoveryScanner] run {run_id} (thread={thread_id}) is still "
+            f"fenced {datetime.now(timezone.utc) - requested} after its stop "
+            f"request; skipping it as live, and its thread refuses new turns"
+        )
 
     async def _scan_task_runs(
         self, open_task_runs: List[Dict[str, Any]], lock_conn

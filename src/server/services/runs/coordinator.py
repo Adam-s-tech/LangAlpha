@@ -60,6 +60,14 @@ def _reap_protected(task: asyncio.Task) -> None:
         )
 
 
+def spawn_protected(coro: Coroutine, name: str) -> asyncio.Task:
+    """Run ``coro`` detached, strongly referenced until it finishes."""
+    task = asyncio.create_task(coro, name=name)
+    _protected_tasks.add(task)
+    task.add_done_callback(_reap_protected)
+    return task
+
+
 async def protected_finalize(coro: Coroutine, label: str):
     """Run a finalize coroutine immune to the awaiting task's cancellation.
 
@@ -70,10 +78,7 @@ async def protected_finalize(coro: Coroutine, label: str):
     CancelledError still propagates to it, but the finalize completes
     detached.
     """
-    task = asyncio.create_task(coro, name=f"turn-finalize-{label}")
-    _protected_tasks.add(task)
-    task.add_done_callback(_reap_protected)
-    return await asyncio.shield(task)
+    return await asyncio.shield(spawn_protected(coro, f"turn-finalize-{label}"))
 
 
 @dataclass
@@ -206,6 +211,8 @@ class RunCoordinator:
                 started_at=row["created_at"],
                 guard=guard,
             )
+            if guard is not None:
+                guard.bind_owner(handle)
             # Two independent post-commit announcements, in parallel:
             # - control lane: an attached mux admits the main-lane channel
             #   push-style. Unbounded — the mux has no root-run recovery scan
@@ -279,6 +286,12 @@ class RunCoordinator:
         background-subagent writers outlive the turn (their saver IS this
         session).
         """
+        # Finalize owns the guard from its first line, since every exit tears
+        # it down. Not later: the cycle collector clears the handle's weakref
+        # before an abandoned stream generator's death path gets here, and a
+        # settle can outlast the monitor's one tick of grace.
+        if handle.guard is not None:
+            handle.guard.bind_owner(None)
         try:
             checkpoint_id = await self._latest_checkpoint_id(handle)
 
@@ -561,11 +574,7 @@ class RunCoordinator:
             finally:
                 await guard.release(discard=must_discard)
 
-        task = asyncio.create_task(
-            _run(), name=f"writer-guard-teardown-{handle.run_id[:8]}"
-        )
-        _protected_tasks.add(task)
-        task.add_done_callback(_reap_protected)
+        spawn_protected(_run(), f"writer-guard-teardown-{handle.run_id[:8]}")
 
     # ------------------------------------------------------------------ utils
 

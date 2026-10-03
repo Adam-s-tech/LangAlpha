@@ -15,6 +15,7 @@ import { useLocale } from './hooks/useLocale';
 import { useSetupGate } from './hooks/useSetupGate';
 import { isPlatformMode, APP_ENTRY_PATH } from './config/hostMode';
 import { AUTH_BROADCAST_CHANNEL, type AuthBroadcastMessage } from './lib/oauthPopup';
+import { inAppPath } from './lib/inAppPath';
 import { OnboardingProvider, OnboardingHostGate } from './pages/Onboarding';
 import { ThreadLifecycleFeed } from './lib/threadLifecycle/ThreadLifecycleFeed';
 import { markBooted, watchStaleBuild } from './lib/staleBuild';
@@ -108,9 +109,8 @@ function AuthCallback() {
       return;
     }
 
-    const params = new URLSearchParams(window.location.search);
-    const redirectTo = params.get('redirect');
-    if (redirectTo && isSafeRedirect(redirectTo)) {
+    const redirectTo = inAppPath(new URLSearchParams(window.location.search).get('redirect'));
+    if (redirectTo) {
       window.location.href = redirectTo;
       return;
     }
@@ -173,23 +173,10 @@ function CallbackRoute() {
   return <AuthCallback />;
 }
 
-// Rejects protocol-relative URLs (`//evil.com/x`) and cross-origin absolutes —
-// both would let `?redirect=` be weaponized for phishing after OAuth.
-function isSafeRedirect(target: string): boolean {
-  // Resolving against the current origin normalizes backslash tricks
-  // (`/\evil.com` -> `//evil.com`) that a prefix test would admit.
-  try {
-    return new URL(target, window.location.origin).origin === window.location.origin;
-  } catch {
-    return false;
-  }
-}
-
 /** Redirects to dashboard or a ?redirect= target after login. */
 function RootRedirect() {
-  const params = new URLSearchParams(window.location.search);
-  const redirectTo = params.get('redirect');
-  if (redirectTo && isSafeRedirect(redirectTo)) {
+  const redirectTo = inAppPath(new URLSearchParams(window.location.search).get('redirect'));
+  if (redirectTo) {
     window.location.href = redirectTo;
     return null;
   }

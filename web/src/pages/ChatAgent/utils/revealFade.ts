@@ -62,16 +62,18 @@ export function initialReveal(text: string, live: boolean): RevealState {
 
 /**
  * Tracks while streaming, plus the one read that ends it: the typewriter's
- * last tick and `streaming` turning off arrive in the same render. `hold`
- * keeps every mark: dropping one unwraps its spans, which loses a selection
- * anchored in them.
+ * last tick and `streaming` turning off arrive in the same render. `hold` is
+ * the newest reveal a selection in the reply could be anchored in. Marks up to
+ * it stay, since dropping one unwraps its spans and loses the selection; the
+ * ones after it are still pruned, so a selection left standing through a long
+ * reply does not keep a mark for every tick.
  *
  * A source that is not a plain extension was re-shaped at its tail by a pass
  * that rewrites prose (a currency escape, a padded table row). Its marks keep
  * their positions, so the error is bounded by the length of that rewrite and
  * mostly lands on text already mid-fade.
  */
-export function nextReveal(prev: RevealState, text: string, streaming: boolean, hold = false): RevealState {
+export function nextReveal(prev: RevealState, text: string, streaming: boolean, hold: number | null = null): RevealState {
   if (!streaming && !prev.live) {
     return { text, live: false, marks: text === prev.text ? prev.marks : NO_MARKS, seq: prev.seq };
   }
@@ -81,7 +83,8 @@ export function nextReveal(prev: RevealState, text: string, streaming: boolean, 
     if (text.length > prev.text.length) {
       seq += 1;
       marks = [...marks, { from: freshFrom(prev.text.length, text), to: text.length, id: seq }];
-      if (marks.length > MAX_MARKS && !hold) marks = marks.slice(-KEEP_MARKS);
+      const held = hold === null ? 0 : marks.filter((m) => m.id <= hold).length;
+      if (marks.length - held > MAX_MARKS) marks = [...marks.slice(0, held), ...marks.slice(-KEEP_MARKS)];
     }
   }
   return { text, live: streaming, marks, seq };
@@ -307,10 +310,19 @@ export function rehypeFreshText(key: string) {
 // style on every call.
 const anchored = new WeakMap<Element, { id: number; fade?: Animation }>();
 
-function selectionWithin(root: HTMLElement | null): boolean {
-  if (!root) return false;
+/**
+ * While a selection reaches into the reply, the newest reveal on screen there:
+ * the selection can only be anchored in text up to it. Null without one.
+ */
+function heldReveal(root: HTMLElement | null): number | null {
   const selection = document.getSelection();
-  return !!selection && !selection.isCollapsed && selection.getRangeAt(0).intersectsNode(root);
+  // WebKit reports a selection that runs into a shadow tree as uncollapsed
+  // with no range, and getRangeAt(0) throws on it.
+  if (!root || !selection || selection.isCollapsed || !selection.rangeCount) return null;
+  if (!selection.getRangeAt(0).intersectsNode(root)) return null;
+  let newest = 0;
+  for (const el of root.querySelectorAll<HTMLElement>('[data-fresh]')) newest = Math.max(newest, Number(el.dataset.fresh));
+  return newest;
 }
 
 /**
@@ -325,13 +337,13 @@ export function useRevealFade(
   streaming: boolean,
 ): readonly RevealMark[] {
   const [reveal, setReveal] = useState(() => initialReveal(text, streaming));
-  // A selection reaching into the reply holds the marks, mid-stream and at the
-  // settle: dropping one unwraps its spans, which replaces the text nodes the
-  // selection is anchored in.
-  const [selecting, setSelecting] = useState(false);
+  // A selection reaching into the reply holds the marks it could be anchored
+  // in, mid-stream and at the settle: dropping one unwraps its spans, which
+  // replaces the text nodes the selection is anchored in.
+  const [hold, setHold] = useState<number | null>(null);
   let current = reveal;
   if (reveal.text !== text || reveal.live !== streaming) {
-    current = nextReveal(reveal, text, streaming, selecting);
+    current = nextReveal(reveal, text, streaming, hold);
     setReveal(current);
   }
   // Read once per reply: no spans at all rather than spans that never fade.
@@ -373,22 +385,22 @@ export function useRevealFade(
     }
   });
 
-  const tracking = reveal.marks.length > 0;
+  const tracking = marks.length > 0;
   useEffect(() => {
     if (!tracking) return;
-    const sync = () => setSelecting(selectionWithin(rootRef.current));
+    const sync = () => setHold(heldReveal(rootRef.current));
     document.addEventListener('selectionchange', sync);
     return () => {
       document.removeEventListener('selectionchange', sync);
-      setSelecting(false);
+      setHold(null);
     };
   }, [tracking, rootRef]);
 
   useEffect(() => {
-    if (reveal.live || !reveal.marks.length || selecting) return;
+    if (reveal.live || !reveal.marks.length || hold !== null) return;
     const timer = setTimeout(() => setReveal((r) => (r.live ? r : { ...r, marks: NO_MARKS })), REVEAL_SETTLE_MS);
     return () => clearTimeout(timer);
-  }, [reveal, selecting]);
+  }, [reveal, hold]);
 
   return marks;
 }

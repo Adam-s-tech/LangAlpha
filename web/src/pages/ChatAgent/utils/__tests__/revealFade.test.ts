@@ -69,14 +69,22 @@ describe('nextReveal', () => {
   });
 
   // Dropping a mark unwraps its spans, and with them a selection anchored there.
-  it('keeps every mark while held, and prunes on the next growth after', () => {
+  it('keeps the marks a selection holds and still prunes the ones after it', () => {
     let state = initialReveal('', true);
     let text = '';
-    for (let i = 0; i < MAX_MARKS + 5; i++) {
+    const grow = (hold: number | null) => {
       text += 'a';
-      state = nextReveal(state, text, true, true);
+      state = nextReveal(state, text, true, hold);
+    };
+    for (let i = 0; i < 10; i++) grow(null);
+    const held = state.marks;
+    const counts: number[] = [];
+    for (let i = 0; i < 3 * MAX_MARKS; i++) {
+      grow(held.at(-1)!.id);
+      counts.push(state.marks.length);
     }
-    expect(state.marks).toHaveLength(MAX_MARKS + 5);
+    expect(state.marks.slice(0, held.length)).toEqual(held);
+    expect(Math.max(...counts)).toBe(held.length + MAX_MARKS);
     expect(nextReveal(state, text + 'a', true).marks).toHaveLength(KEEP_MARKS);
   });
 

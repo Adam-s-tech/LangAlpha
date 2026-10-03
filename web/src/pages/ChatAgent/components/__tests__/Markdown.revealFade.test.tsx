@@ -261,18 +261,50 @@ describe('Markdown reveal fade', () => {
       selection.selectAllChildren(first);
       document.dispatchEvent(new Event('selectionchange'));
     });
-    for (let i = 1; i <= MAX_MARKS; i++) {
+    for (let i = 1; i <= 3 * MAX_MARKS; i++) {
       text += ` w${i}`;
       act(() => view.rerender(md(text)));
     }
     expect(anchor.isConnected).toBe(true);
+    // The reveals after the selection still go, so a long reply stays bounded.
+    expect(freshSpans(view.container).length).toBeLessThanOrEqual(MAX_MARKS + 2);
 
     act(() => {
       selection.removeAllRanges();
       document.dispatchEvent(new Event('selectionchange'));
     });
-    act(() => view.rerender(md(text + ' end')));
+    // Released, it goes with the next batch.
+    for (let i = 0; i <= MAX_MARKS && anchor.isConnected; i++) {
+      text += ' x';
+      act(() => view.rerender(md(text)));
+    }
     expect(anchor.isConnected).toBe(false);
+  });
+
+  // WebKit reports a selection that runs into a shadow tree as uncollapsed
+  // with no range, and getRangeAt(0) throws on it.
+  it('reads a selection with no range as none', () => {
+    vi.useFakeTimers();
+    const view = stream(['Hello', 'Hello world']);
+    act(() => view.rerender(md('Hello world', false)));
+    act(() => {
+      document.getSelection()!.selectAllChildren(view.container.querySelector('p')!);
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+    vi.spyOn(document, 'getSelection').mockReturnValue({
+      isCollapsed: false,
+      rangeCount: 0,
+      getRangeAt: () => {
+        throw new DOMException('The index is not in the allowed range.', 'IndexSizeError');
+      },
+    } as unknown as Selection);
+    act(() => {
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+    act(() => {
+      vi.advanceTimersByTime(REVEAL_SETTLE_MS);
+    });
+    expect(freshSpans(view.container)).toEqual([]);
   });
 
   it('holds the settle while a selection reaches into the reply', () => {

@@ -71,11 +71,21 @@ class RunScope:
             self._admission_lock = None
 
     async def release_slot(self) -> None:
-        """Release the burst lease at most once from in-process paths."""
+        """Release the burst lease at most once from in-process paths.
+
+        Detached and never suspending: error paths release first and settle
+        after, often on a stream task a disconnect is cancelling, so this
+        must give that cancellation no await to land on. The release itself
+        still lands, since the lease spans the user's every thread."""
         if not self._slot_owned:
             return
         self._slot_owned = False
-        await usage_limits.release_burst_slot(self._user_id, self._burst_slot_id)
+        from src.server.services.runs.coordinator import spawn_protected
+
+        spawn_protected(
+            usage_limits.release_burst_slot(self._user_id, self._burst_slot_id),
+            "burst-slot-release",
+        )
 
     def transfer_to_executor(self) -> None:
         """Executor's done-callback is armed — it owns cleanup from here."""
@@ -84,8 +94,12 @@ class RunScope:
     async def fail_open(self, reason: str, *, status: str = "cancelled") -> None:
         """Death-path teardown: release the lease and settle the open run.
 
-        fail_open_run shields its write internally, so a second cancel on an
-        already-cancelled stream task cannot abort it.
+        The caller is usually a stream task a client disconnect cancelled,
+        and that cancellation is level-triggered: every await in its handler
+        is cancelled again at once. So both steps start before the first
+        suspension, side by side: the release never suspends, and
+        ``fail_open_run`` settles in a protected task. A run left unsettled
+        here keeps its thread's fence and 409s every later turn.
         """
         run_handle = self.owned_run_handle
         await self.release_slot()

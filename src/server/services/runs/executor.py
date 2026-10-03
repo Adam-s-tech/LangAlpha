@@ -497,8 +497,15 @@ class LocalRunExecutor:
         metadata: Optional[Dict[str, Any]] = None,
         completion_callback: Optional[Callable[["LocalRunExecution"], Coroutine[Any, Any, None]]] = None,
         graph: Optional[Any] = None,
+        on_registered: Optional[Callable[[], None]] = None,
     ) -> LocalRunExecution:
-        """Start a workflow as a background task."""
+        """Start a workflow as a background task.
+
+        The executor owns the run's cleanup from the moment it is registered,
+        and ``on_registered`` runs right then, before this method's first
+        await: a caller cancelled on a later await must not settle the run
+        from its own death path while the workflow is already running.
+        """
         key = (thread_id, run_id)
         async with self.task_lock:
             if key in self.executions:
@@ -538,6 +545,8 @@ class LocalRunExecutor:
             task_info.started_at = datetime.now()
 
             self.executions[key] = task_info
+            if on_registered is not None:
+                on_registered()
 
             logger.info(
                 f"[LocalRunExecutor] Started workflow thread_id={thread_id} "
@@ -548,38 +557,10 @@ class LocalRunExecutor:
 
         run_handle = (metadata or {}).get("run_handle")
 
-        # Handoff intent recheck: a /cancel between START and this registration
-        # stamped durable intent on the row but found no LocalRunExecution to signal
-        # (the QUEUED placeholder that used to fill this gap is gone — the
-        # in_progress row committed by priming is the only pre-registration
-        # identity). The row is the authority — re-derive the local signal
-        # from it now that a task exists.
-        if run_handle is not None:
-            from src.server.database.runs import lifecycle as tl_db
-
-            run_row = None
-            try:
-                run_row = await tl_db.get_run(run_handle.run_id)
-            except Exception:
-                logger.warning(
-                    f"[LocalRunExecutor] handoff cancel-intent recheck "
-                    f"failed for {key}",
-                    exc_info=True,
-                )
-            if (
-                run_row
-                and run_row.get("cancel_requested_at")
-                and run_row.get("status") == "in_progress"
-            ):
-                logger.info(
-                    f"[LocalRunExecutor] durable cancel intent found at "
-                    f"handoff for {key}; signalling cancel"
-                )
-                await self.signal_cancel(thread_id, run_id)
-
         # I2: the guard monitor aborts the run on session loss before it can
         # act on a stale view — same force path as a user stop (cooperative
         # event + inner-task cancel), classified by the guard-lost downgrade.
+        # Wired before the first await, so a cancelled caller cannot skip it.
         if (
             started is not None
             and run_handle is not None
@@ -595,6 +576,42 @@ class LocalRunExecutor:
                     info.inner_task.cancel()
 
             run_handle.guard.attach_abort(_abort_on_session_loss)
+
+        # Handoff intent recheck: a /cancel between START and this registration
+        # stamped durable intent on the row but found no LocalRunExecution to signal
+        # (the QUEUED placeholder that used to fill this gap is gone — the
+        # in_progress row committed by priming is the only pre-registration
+        # identity). The row is the authority — re-derive the local signal
+        # from it now that a task exists. Detached: a Stop click also drops
+        # the stream, whose cancellation must not take the Stop down with it.
+        if run_handle is not None:
+            from src.server.database.runs import lifecycle as tl_db
+            from src.server.services.runs.coordinator import protected_finalize
+
+            async def _recheck_cancel_intent() -> None:
+                run_row = None
+                try:
+                    run_row = await tl_db.get_run(run_handle.run_id)
+                except Exception:
+                    logger.warning(
+                        f"[LocalRunExecutor] handoff cancel-intent recheck "
+                        f"failed for {key}",
+                        exc_info=True,
+                    )
+                if (
+                    run_row
+                    and run_row.get("cancel_requested_at")
+                    and run_row.get("status") == "in_progress"
+                ):
+                    logger.info(
+                        f"[LocalRunExecutor] durable cancel intent found at "
+                        f"handoff for {key}; signalling cancel"
+                    )
+                    await self.signal_cancel(thread_id, run_id)
+
+            await protected_finalize(
+                _recheck_cancel_intent(), label=f"handoff-{run_id}"
+            )
         return started
 
     async def _run_workflow(

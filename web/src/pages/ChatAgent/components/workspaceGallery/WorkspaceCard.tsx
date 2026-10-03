@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useLocale } from '@/hooks/useLocale';
-import { createDateFormatter } from '@/lib/format';
+import { shortMonthDay } from '@/lib/format';
 import type { Computer } from '@/types/api';
 
 import { ComputerStatusIndicator } from '../computerStatusUi';
@@ -15,11 +15,10 @@ import { WorkspaceMenuItems } from '../workspaceActions';
 import { WORKSPACE_CARD_HEIGHT } from './cardMetrics';
 import type { WorkspaceRecord } from './types';
 
-const shortDay = createDateFormatter({ month: 'short', day: 'numeric' });
 // A formatter throws on an Invalid Date, so an unreadable timestamp reads as no timestamp.
 const updatedDay = (iso: string | null | undefined, locale: string) => {
   const d = iso ? new Date(iso) : null;
-  return d && !Number.isNaN(d.getTime()) ? shortDay(d, locale) : null;
+  return d && !Number.isNaN(d.getTime()) ? shortMonthDay(d, locale) : null;
 };
 
 interface CardMenuProps {

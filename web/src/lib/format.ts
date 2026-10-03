@@ -43,6 +43,15 @@ export function createDateFormatter(
   return (d, locale) => format(locale).format(d);
 }
 
+// Option sets shared by several components.
+export const shortMonthDay = createDateFormatter({ month: 'short', day: 'numeric' });
+export const clockTime = createDateFormatter({ hour: 'numeric', minute: '2-digit' });
+export const paddedClockTime = createDateFormatter({ hour: '2-digit', minute: '2-digit' });
+export const mediumDate = createDateFormatter({ dateStyle: 'medium' });
+export const mediumTime = createDateFormatter({ timeStyle: 'medium' });
+export const shortWeekday = createDateFormatter({ weekday: 'short' });
+export const weekdayMonthDay = createDateFormatter({ weekday: 'long', month: 'short', day: 'numeric' });
+
 // The fields Date#toLocaleString() prints by default.
 const dateTime = createDateFormatter({
   year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric',

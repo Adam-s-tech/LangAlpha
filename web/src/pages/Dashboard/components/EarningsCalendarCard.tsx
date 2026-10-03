@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from '@/lib/framer';
 import { useBackdropDismiss } from '@/hooks/useDialogA11y';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
-import { createDateFormatter } from '@/lib/format';
+import { createDateFormatter, shortMonthDay, shortWeekday } from '@/lib/format';
 import { localDateStr } from '@/lib/utils';
 import { getEarningsCalendar } from '../utils/api';
 
@@ -58,14 +58,12 @@ function LogoFallback({ symbol }: LogoFallbackProps) {
   );
 }
 
-const shortDay = createDateFormatter({ month: 'short', day: 'numeric' });
-const shortWeekday = createDateFormatter({ weekday: 'short' });
 const shortMonth = createDateFormatter({ month: 'short' });
 
 function formatDate(dateStr: string | undefined, locale: string): string {
   if (!dateStr) return '';
   const d = new Date(dateStr + 'T00:00:00');
-  return Number.isNaN(d.getTime()) ? '' : shortDay(d, locale);
+  return Number.isNaN(d.getTime()) ? '' : shortMonthDay(d, locale);
 }
 
 function EarningsItem({ item, index: _index, isPast }: EarningsItemProps) {

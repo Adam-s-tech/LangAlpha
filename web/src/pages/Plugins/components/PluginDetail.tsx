@@ -15,7 +15,7 @@ import {
   useUpdatePlugin,
   useUpdatePluginFromZip,
 } from '@/hooks/usePlugins';
-import { createDateFormatter } from '@/lib/format';
+import { mediumDate } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import {
   formatApiErrorDetail,
@@ -33,7 +33,6 @@ import { validatePluginZip } from '../utils/pluginSchemas';
 import { webLink } from '../utils/webLink';
 import { PluginOutcome } from './PluginOutcome';
 
-const formatDate = createDateFormatter({ dateStyle: 'medium' });
 
 /**
  * A plugin's detail overlay. The lifecycle verbs (Update, Export, Uninstall)
@@ -348,12 +347,12 @@ export function PluginDetail({
             )}
             {plugin.installed_at && (
               <DetailField label={t('plugins.detail.installed')}>
-                {formatDate(new Date(plugin.installed_at), locale)}
+                {mediumDate(new Date(plugin.installed_at), locale)}
               </DetailField>
             )}
             {plugin.updated_at && (
               <DetailField label={t('plugins.detail.updated')}>
-                {formatDate(new Date(plugin.updated_at), locale)}
+                {mediumDate(new Date(plugin.updated_at), locale)}
               </DetailField>
             )}
           </div>

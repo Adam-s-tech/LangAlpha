@@ -6,7 +6,7 @@ import {
   TagBadge,
 } from '@/components/mcp/McpPrimitives';
 import { useSkillContent } from '@/hooks/useSkills';
-import { createDateFormatter, formatBytes } from '@/lib/format';
+import { formatBytes, mediumDate } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import type { SkillInfo } from '@/pages/ChatAgent/utils/api';
 import {
@@ -23,7 +23,6 @@ import { PluginOriginBadge, PluginSuppressedBadge } from './PluginBadges';
  * write. Rows stay to one description line; everything else lives here.
  */
 
-const formatDate = createDateFormatter({ dateStyle: 'medium' });
 
 export function SkillDetail({
   skill,
@@ -145,7 +144,7 @@ export function SkillDetail({
           )}
           {skill.updated_at && (
             <DetailField label={t('plugins.detail.updated')}>
-              {formatDate(new Date(skill.updated_at), locale)}
+              {mediumDate(new Date(skill.updated_at), locale)}
             </DetailField>
           )}
         </div>

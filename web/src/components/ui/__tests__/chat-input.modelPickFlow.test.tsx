@@ -37,6 +37,8 @@ vi.mock('@/hooks/usePreferences', () => ({
 
 vi.mock('@/hooks/useAllModels', () => ({
   useAllModels: () => ({
+    models: {},
+    modelAccessMap: undefined,
     validModelNames: mocks.validModelNames,
     metadata: { 'model-default': { reasoning_efforts: ['low', 'high'], reasoning_effort_default: 'high' } },
     isLoading: mocks.modelsLoading,

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo, useImperativeHandle } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useImperativeHandle } from 'react';
 import {
   Plus, ArrowUp, X, FileText, Archive, Square, ClipboardList,
   ChartCandlestick, TextSelect, MoreHorizontal, Mic, MicOff,
@@ -15,7 +15,7 @@ import { useEffectiveTuning, useModelProfileWriter } from '@/hooks/useModelProfi
 import { useFeatureEnabled } from '@/hooks/useFeatures';
 import { useAllModels } from '@/hooks/useAllModels';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { deriveQuickAccessModels } from './chat-input.models';
+import { useQuickAccessModels } from '@/hooks/useQuickAccessModels';
 import { useSeededModel } from '@/hooks/useSeededModel';
 import { ChatInputRegistry, ContextBus } from '@/lib/contextBus';
 import type { WidgetContextSnapshot } from '@/pages/Dashboard/widgets/framework/contextSnapshot';
@@ -36,7 +36,7 @@ import { useMentions } from './chat-input.useMentions';
 import { useSlashCommands } from './chat-input.useSlashCommands';
 import { speechSupported, useVoiceInput } from './chat-input.useVoiceInput';
 import { useFileAttachments } from './chat-input.useFileAttachments';
-import { modelPrefs, modelProfile } from '@/lib/modelPreferences';
+import { modelProfile } from '@/lib/modelPreferences';
 import { formatContextBlock } from './chat-input.contextBlocks';
 
 /** Autosize cap for the composer textarea; past this the box scrolls. */
@@ -153,14 +153,6 @@ function ChatInput({
   const marketWatchEnabled = useFeatureEnabled('market_watch');
   const { validModelNames, metadata: modelMetadata, isLoading: modelsLoading } = useAllModels();
   const otherPref = (preferences as Record<string, Record<string, unknown>> | null)?.other_preference;
-  const starredModels = Array.isArray(otherPref?.starred_models)
-    ? (otherPref.starred_models as unknown[]).filter((m): m is string => typeof m === 'string')
-    : [];
-  // Model routing moved to its own bucket; starred_models above did not,
-  // so the two reads deliberately differ.
-  const mPref = modelPrefs(preferences);
-  const preferredModel = mPref.preferred_model || null;
-  const preferredFlashModel = mPref.preferred_flash_model || null;
   const [message, setMessage] = useState('');
   const { attachedFiles, setAttachedFiles, isDragging, handleFiles, removeFile, onDragOver, onDragLeave, onDrop, handlePaste } = useFileAttachments({ mode });
   const [planMode, setPlanMode] = useState(false);
@@ -598,14 +590,10 @@ function ChatInput({
   const inlineItems = toolbarItems.filter((i) => fold.inline.has(i.id));
   const foldedItems = toolbarItems.filter((i) => fold.folded.includes(i.id));
 
-  /** Quick-access models for both the desktop submenu and mobile inline expand */
-  const moreModelsItems = useMemo(
-    () => deriveQuickAccessModels({
-      preferredModel, preferredFlashModel, starredModels, validModelNames,
-      // Don't repeat models already shown in the primary (selected + thread) section.
-      excludeModels: [pillModel, ...threadModelsProp].filter((m): m is string => !!m),
-    }),
-    [preferredModel, preferredFlashModel, starredModels, validModelNames, pillModel, threadModelsProp],
+  /** Quick-access models for both the desktop submenu and mobile inline expand.
+   *  Models already in the primary (selected + thread) section are not repeated. */
+  const { models: moreModelsItems, starred: starredModels } = useQuickAccessModels(
+    [pillModel, ...threadModelsProp].filter((m): m is string => !!m),
   );
 
   return (

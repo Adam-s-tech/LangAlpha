@@ -14,6 +14,7 @@ import { AccountTuningDefaults } from '@/components/model/AccountTuningDefaults'
 import { DefaultModelScopeChoice } from '@/components/model/DefaultModelScopeChoice';
 import { useDefaultModelChange } from '@/hooks/useDefaultModelChange';
 import { useAllModels } from '@/hooks/useAllModels';
+import { useQuickAccessModels } from '@/hooks/useQuickAccessModels';
 import { modelLabel, modelMatches } from '@/lib/modelLabel';
 import { isPlatformMode } from '@/config/hostMode';
 import { useTranslation } from 'react-i18next';
@@ -92,11 +93,11 @@ export function ModelTab() {
   const [modelPickerSearch, setModelPickerSearch] = useState('');
   const modelPickerRef = useRef<HTMLDivElement>(null);
 
-  // Model routing/tuning lives in model_preference; starred_models and the
-  // search prefs below stayed in other_preference.
+  // Model routing/tuning lives in model_preference; the search prefs below
+  // stayed in other_preference.
   const mPref = modelPrefs(prefsData);
   const otherPref = (prefsData as PreferencesLike | null)?.other_preference ?? {};
-  const starredModels = Array.isArray(otherPref.starred_models) ? otherPref.starred_models as string[] : [];
+  const quickAccess = useQuickAccessModels();
   // Every name the catalog still carries, access aside. A fallback the user
   // temporarily cannot reach is still configured; one the manifest dropped is
   // not, and _resolve_fallback_clients skips it without saying so, leaving the
@@ -113,7 +114,6 @@ export function ModelTab() {
   const fallbackModels = modelsLoading || catalogNames.size === 0
     ? storedFallbacks
     : storedFallbacks.filter((m) => catalogNames.has(m));
-  const setStarred = (next: string[]) => write({ starred_models: next.length > 0 ? next : null });
 
   // While the question is open each select shows the model the answer would
   // write, and a cancel puts both back on the saved ones.
@@ -257,7 +257,7 @@ export function ModelTab() {
               {t('settings.starredModelsDesc')}
             </p>
             <div className="flex flex-wrap items-center gap-1.5">
-              {starredModels.filter(m => validModelNames.has(m)).map((key) => (
+              {quickAccess.models.map((key) => (
                 <span
                   key={key}
                   className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs"
@@ -270,7 +270,7 @@ export function ModelTab() {
                   {modelLabel(key, modelMetadata)}
                   <button
                     type="button"
-                    onClick={() => setStarred(starredModels.filter(k => k !== key))}
+                    onClick={() => quickAccess.remove(key)}
                     className="ml-0.5 hover:opacity-70"
                     style={{ color: 'var(--color-text-tertiary)' }}
                     aria-label={t('settings.removeModel', { model: modelLabel(key, modelMetadata) })}
@@ -332,14 +332,12 @@ export function ModelTab() {
                         {displayName}
                       </div>
                       {filtered.map((m) => {
-                        const isStarred = starredModels.includes(m);
+                        const isStarred = quickAccess.models.includes(m);
                         return (
                           <button
                             key={m}
                             type="button"
-                            onClick={() => setStarred(
-                              isStarred ? starredModels.filter(k => k !== m) : [...starredModels, m]
-                            )}
+                            onClick={() => (isStarred ? quickAccess.remove(m) : quickAccess.add(m))}
                             className="w-full flex items-center justify-between px-2 py-1.5 rounded-md text-xs transition-colors"
                             style={{
                               color: isStarred ? 'var(--color-accent-light)' : 'var(--color-text-primary)',

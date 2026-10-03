@@ -332,7 +332,7 @@
     "claudeConnectFailed": "启动 Claude OAuth 失败",
     "claudeOpenAgain": "重新打开授权页面",
     "starredModels": "快速切换模型",
-    "starredModelsDesc": "标星的模型会显示在聊天输入框中方便快速切换",
+    "starredModelsDesc": "显示在聊天输入框中，方便快速切换。你的默认模型，以及你自己的 API 密钥和已连接账户的模型会自动加入，不需要的可以移除。",
     "fallbackModels": "备用模型",
     "fallbackModelsDesc": "当主模型或快速模型不可用时，按顺序依次尝试。请只添加你有权访问的模型。未选择时不使用备用模型。",
     "fallbackModelsEmpty": "未找到模型",

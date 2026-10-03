@@ -334,7 +334,7 @@
     "claudeConnectFailed": "Failed to initiate Claude OAuth",
     "claudeOpenAgain": "Open authorize page again",
     "starredModels": "Quick-access models",
-    "starredModelsDesc": "Starred models appear in the chat input for quick switching",
+    "starredModelsDesc": "Shown in the chat input for quick switching. Your default models and the models of your own API keys and connected accounts are added for you; remove any you don't use.",
     "fallbackModels": "Fallback models",
     "fallbackModelsDesc": "Tried in order when your primary or flash model is unavailable. Only add models you have access to. With none selected, no fallback is used.",
     "fallbackModelsEmpty": "No models found",

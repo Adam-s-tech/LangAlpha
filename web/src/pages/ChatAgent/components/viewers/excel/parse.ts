@@ -6,6 +6,7 @@
 import ExcelJS from 'exceljs';
 import type { CSSProperties } from 'react';
 import { inBox, parseRange, type CellBox } from '@/pages/ChatAgent/utils/a1';
+import { countDrawings, type DrawingCount } from './drawings';
 import { formatCellValue, type DateSystem } from './numFmt';
 
 /** The window the viewer draws. A workbook past it is still reported in full. */
@@ -60,9 +61,13 @@ export interface SheetData {
   totalCols: number;
   /** Formulas carrying no cached value, across the whole preview window. */
   uncalculated: number;
+  /** On the sheet but not in the grid, which draws cells only. */
+  charts: number;
+  pictures: number;
 }
 
 const EMPTY_CELL: GridCell = { text: '', calculated: true, kind: 'empty', isText: false, style: {} };
+const NO_DRAWINGS: DrawingCount = { charts: 0, pictures: 0 };
 
 /** A formula as the bar and the grid print it; ExcelJS stores it without the `=`. */
 export function withEquals(formula: string): string {
@@ -218,7 +223,7 @@ function mergeRanges(ws: ExcelJS.Worksheet): string[] {
   return Object.values(own).map((m) => m?.range).filter((r): r is string => !!r);
 }
 
-function readSheet(ws: ExcelJS.Worksheet, system: DateSystem, locale: string): SheetData {
+function readSheet(ws: ExcelJS.Worksheet, system: DateSystem, locale: string, drawings: DrawingCount): SheetData {
   const totalCols = ws.columnCount;
   const totalRows = ws.rowCount;
   const colCount = Math.min(totalCols, MAX_PREVIEW_COLS);
@@ -261,12 +266,23 @@ function readSheet(ws: ExcelJS.Worksheet, system: DateSystem, locale: string): S
     rows.push(cells);
   }
 
-  return { name: ws.name, rows, colCount, totalRows, totalCols, uncalculated };
+  return { name: ws.name, rows, colCount, totalRows, totalCols, uncalculated, ...drawings };
 }
 
 export async function parseWorkbook(buffer: ArrayBuffer, locale: string): Promise<SheetData[]> {
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
+  // The grid draws cells, never charts or pictures, so drawings are not read at
+  // all. exceljs matches the `xdr:` prefix literally, and openpyxl, which writes
+  // the agent's workbooks, declares that namespace as the default instead: a
+  // sheet with any chart or picture parses its drawing to nothing and the load
+  // throws for the whole file.
+  // Skipping the part and the sheet's pointer to it keeps both halves away.
+  const reader = wb.xlsx as unknown as { _processDrawingEntry: () => Promise<void> };
+  reader._processDrawingEntry = async () => {};
+  const [, drawings] = await Promise.all([
+    wb.xlsx.load(buffer, { ignoreNodes: ['drawing'] }),
+    countDrawings(buffer),
+  ]);
   const system: DateSystem = { date1904: wb.properties?.date1904 === true };
-  return wb.worksheets.map((ws) => readSheet(ws, system, locale));
+  return wb.worksheets.map((ws) => readSheet(ws, system, locale, drawings.get(ws.id) ?? NO_DRAWINGS));
 }

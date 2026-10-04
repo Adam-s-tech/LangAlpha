@@ -152,6 +152,7 @@ export function FileViewer(props: FileViewerProps): React.ReactElement {
             onAddContext={props.onAddContext ?? undefined}
             focusCell={focus.focusCell}
             focusSeq={focus.seq ?? undefined}
+            canDownload={!!props.onDownload}
           />
         </DocumentErrorBoundary>
       </Suspense>

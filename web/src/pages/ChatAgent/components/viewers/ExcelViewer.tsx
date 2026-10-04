@@ -87,6 +87,8 @@ export interface ExcelViewerProps {
   /** Bumped to replay the same `focusCell`, the way PdfViewer replays a page. */
   focusSeq?: number;
   onAddContext?: (payload: ContextPayload) => void;
+  /** The page around the viewer offers this file as a download, so a note can send the reader there. */
+  canDownload?: boolean;
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -114,7 +116,7 @@ function resolveBox(sheet: SheetData, box: CellBox): CellBox {
   return boxOf(master, master);
 }
 
-export default function ExcelViewer({ data, filePath, focusCell, focusSeq, onAddContext }: ExcelViewerProps) {
+export default function ExcelViewer({ data, filePath, focusCell, focusSeq, onAddContext, canDownload = false }: ExcelViewerProps) {
   // Cell text is formatted once in parseWorkbook, in the locale of that
   // moment, and re-parsed only when `data` changes; a language switch reaches
   // the chrome around the grid, not the cells, so it cannot reset the sheet
@@ -347,6 +349,16 @@ export default function ExcelViewer({ data, filePath, focusCell, focusSeq, onAdd
   if (sheet.uncalculated > 0) {
     notes.push(t('excelViewer.uncalculated', { count: sheet.uncalculated, n: integer(sheet.uncalculated, locale) }));
   }
+  // The grid draws cells only. Said nowhere, a chart the agent made reads as
+  // one it never made.
+  if (sheet.charts + sheet.pictures > 0) {
+    const charts = sheet.charts > 0 ? t('excelViewer.charts', { count: sheet.charts, n: integer(sheet.charts, locale) }) : '';
+    const pictures = sheet.pictures > 0 ? t('excelViewer.pictures', { count: sheet.pictures, n: integer(sheet.pictures, locale) }) : '';
+    const items = charts && pictures ? t('excelViewer.chartsAndPictures', { charts, pictures }) : charts || pictures;
+    const count = sheet.charts + sheet.pictures;
+    notes.push(canDownload ? t('excelViewer.notShown', { count, items }) : t('excelViewer.notShownNoDownload', { items }));
+  }
+  const note = notes.join(' · ');
 
   return (
     <div className="excel-viewer clips-focus-ring">
@@ -481,7 +493,7 @@ export default function ExcelViewer({ data, filePath, focusCell, focusSeq, onAdd
             ))}
           </div>
         )}
-        {notes.length > 0 && <div className="excel-footer-note">{notes.join(' · ')}</div>}
+        {note && <div className="excel-footer-note">{note}</div>}
       </div>
     </div>
   );

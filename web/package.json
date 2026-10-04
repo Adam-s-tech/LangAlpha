@@ -37,6 +37,7 @@
     "framer-motion": "^13.4.4",
     "html2canvas": "^1.4.1",
     "i18next": "^26.4.2",
+    "jszip": "^3.10.2",
     "katex": "^0.18.9",
     "lightweight-charts": "^5.2.1",
     "lucide-react": "^1.48.0",

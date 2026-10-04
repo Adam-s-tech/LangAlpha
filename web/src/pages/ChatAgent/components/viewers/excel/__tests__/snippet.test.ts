@@ -19,7 +19,7 @@ function sheetOf(name: string, grid: Record<string, { text: string; formula?: st
     }
     data.push(line);
   }
-  return { name, rows: data, colCount: cols, totalRows: rows, totalCols: cols, uncalculated: 0 };
+  return { name, rows: data, colCount: cols, totalRows: rows, totalCols: cols, uncalculated: 0, charts: 0, pictures: 0 };
 }
 
 describe('buildRangeSnippet', () => {

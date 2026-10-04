@@ -852,30 +852,10 @@ class LocalRunExecutor:
 
     # ========== Subagent collection ==========
 
-    async def _delete_task_keys_if_owned(
-        self,
-        cache,
-        thread_id: str,
-        task_id: str,
-        response_id: str,
-        task_run_id: Optional[str] = None,
-    ) -> None:
-        await subagent_collection.delete_task_keys_if_owned(
-            cache, thread_id, task_id, response_id, task_run_id=task_run_id
-        )
-
-    async def _replay_owned_task_events(
-        self, thread_id: str, task, response_id: str, out: list[dict]
-    ) -> bool:
-        return await subagent_collection.replay_owned_task_events(
-            thread_id, task, response_id, out
-        )
-
     async def _collect_subagent_results_for_turn(
         self,
         thread_id: str,
         response_id: str,
-        original_chunks: list[dict[str, Any]],
         tasks: list,
         workspace_id: str,
         user_id: str,
@@ -884,51 +864,10 @@ class LocalRunExecutor:
         sandbox=None,
     ) -> None:
         await subagent_collection.collect_subagent_results_for_turn(
-            thread_id, response_id, original_chunks, tasks,
+            thread_id, response_id, tasks,
             workspace_id, user_id, timeout=timeout, is_byok=is_byok,
             sandbox=sandbox,
             track_orphan_collector=self._track_orphan_collector,
-        )
-
-    async def _publish_settled_wake(self, thread_id: str) -> None:
-        await subagent_collection.publish_settled_wake(thread_id)
-
-    async def _await_drain_and_cleanup_tasks(
-        self,
-        tasks: list,
-        thread_id: str,
-        response_id: str,
-        timeout: float | None = None,
-        *,
-        retire_streams: bool = True,
-    ) -> None:
-        await subagent_collection.await_drain_and_cleanup_tasks(
-            tasks, thread_id, response_id, timeout=timeout,
-            retire_streams=retire_streams,
-        )
-
-    async def _collect_orphaned_subagent_results(
-        self,
-        thread_id: str,
-        response_id: str,
-        main_chunks: list[dict[str, Any]],
-        prior_subagent_events: list[dict],
-        tasks: list,
-        workspace_id: str,
-        user_id: str,
-        is_byok: bool = False,
-        sandbox=None,
-    ) -> None:
-        await subagent_collection.collect_orphaned_subagent_results(
-            thread_id=thread_id,
-            response_id=response_id,
-            main_chunks=main_chunks,
-            prior_subagent_events=prior_subagent_events,
-            tasks=tasks,
-            workspace_id=workspace_id,
-            user_id=user_id,
-            is_byok=is_byok,
-            sandbox=sandbox,
         )
 
     # ========== Terminal handlers ==========
@@ -1292,21 +1231,6 @@ class LocalRunExecutor:
                 f"thread_id={thread_id} run_id={run_id} after {timeout}s"
             )
             return False
-
-    async def _persist_collected_events(
-        self,
-        main_chunks: list[dict],
-        subagent_events: list[dict],
-        response_id: str,
-        thread_id: str,
-        workspace_id: str,
-        user_id: str,
-        sandbox=None,
-    ) -> bool:
-        return await subagent_collection.persist_collected_events(
-            main_chunks, subagent_events, response_id,
-            thread_id, workspace_id, user_id, sandbox=sandbox,
-        )
 
     async def _persist_subagent_usage(
         self,

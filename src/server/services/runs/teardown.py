@@ -16,7 +16,11 @@ from src.config.settings import (
     get_checkpoint_flush_timeout,
     get_stop_drain_timeout,
 )
-from src.server.services.runs import subagent_collection
+from src.server.services.runs.subagent_archive import (
+    SubagentArchiveReadError,
+    iter_subagent_events_full,
+    record_to_persist_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -202,15 +206,11 @@ async def drain_killed_subagent_events(
         allowed = (run_id,) if run_id else (None,)
         eligible = 0
         try:
-            async for record in subagent_collection.iter_subagent_events_full(
-                thread_id, task
-            ):
+            async for record in iter_subagent_events_full(thread_id, task):
                 if record.get("run") not in allowed:
                     continue  # another round's record (cross-worker resume)
                 eligible += 1
-                enriched = subagent_collection.record_to_persist_event(
-                    record, thread_id
-                )
+                enriched = record_to_persist_event(record, thread_id)
                 task_events.append(enriched)
                 data = enriched.get("data") or {}
                 if data.get("content_type") == "reasoning_signal":
@@ -219,7 +219,7 @@ async def drain_killed_subagent_events(
                         open_reasoning[rk] = None
                     elif data.get("content") == "complete":
                         open_reasoning.pop(rk, None)
-        except subagent_collection.SubagentArchiveReadError as exc:
+        except SubagentArchiveReadError as exc:
             logger.warning(
                 f"[StopTeardown] Archive read failed for task "
                 f"{getattr(task, 'task_id', '?')}; withholding snapshot: {exc}"

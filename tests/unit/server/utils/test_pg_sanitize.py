@@ -12,6 +12,7 @@ import json
 import time
 
 import pytest
+from psycopg.types.json import JsonbDumper
 
 from src.server.utils.pg_sanitize import (
     SafeJson,
@@ -206,3 +207,30 @@ class TestNormalizeUuid:
     )
     def test_non_uuid_returns_none(self, value):
         assert normalize_uuid(value) is None
+
+
+class TestSafeJsonbArray:
+    @staticmethod
+    def _bound(wrapped) -> bytes:
+        return JsonbDumper(type(wrapped)).dump(wrapped)
+
+    @pytest.mark.asyncio
+    async def test_matches_safe_json_across_slice_boundaries(self, monkeypatch):
+        from src.server.utils import pg_sanitize
+
+        monkeypatch.setattr(pg_sanitize, "_JSON_ARRAY_SLICE", 3)
+        items = [
+            {"i": i, "s": "a\x00b" if i == 2 else "\U0001f600", "f": float("nan") if i == 3 else 1.5}
+            for i in range(8)
+        ]
+
+        bound = self._bound(await pg_sanitize.safe_jsonb_array(items))
+
+        assert bound == SafeJson(items).dumps(items).encode()
+        assert json.loads(bound)[3]["f"] is None
+
+    @pytest.mark.asyncio
+    async def test_empty_list(self):
+        from src.server.utils.pg_sanitize import safe_jsonb_array
+
+        assert self._bound(await safe_jsonb_array([])) == b"[]"

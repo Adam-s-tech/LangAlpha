@@ -28,6 +28,7 @@ from src.server.services.runs.executor import (
     LocalRunExecution,
     LocalRunStatus,
 )
+from src.server.services.runs import subagent_collection
 
 REGISTRY_STORE_MOD = "src.server.services.background_registry_store"
 
@@ -1070,7 +1071,7 @@ class TestDrainReasoningClose:
                 yield r
 
         with patch(
-            "src.server.services.runs.subagent_collection.iter_subagent_events_full",
+            "src.server.services.runs.teardown.iter_subagent_events_full",
             side_effect=fake_iter,
         ):
             merged = await btm._drain_killed_subagent_events(
@@ -1117,7 +1118,7 @@ class TestDrainReasoningClose:
                 yield r
 
         with patch(
-            "src.server.services.runs.subagent_collection.iter_subagent_events_full",
+            "src.server.services.runs.teardown.iter_subagent_events_full",
             side_effect=fake_iter,
         ):
             merged = await btm._drain_killed_subagent_events(
@@ -1145,7 +1146,7 @@ class TestDrainReasoningClose:
             yield  # pragma: no cover
 
         with patch(
-            "src.server.services.runs.subagent_collection.iter_subagent_events_full",
+            "src.server.services.runs.teardown.iter_subagent_events_full",
             side_effect=empty_iter,
         ):
             merged = await btm._drain_killed_subagent_events(
@@ -1173,7 +1174,7 @@ class TestDrainReasoningClose:
                 yield r
 
         with patch(
-            "src.server.services.runs.subagent_collection.iter_subagent_events_full",
+            "src.server.services.runs.teardown.iter_subagent_events_full",
             side_effect=fake_iter,
         ):
             merged = await btm._drain_killed_subagent_events(
@@ -1200,7 +1201,7 @@ class TestDrainReasoningClose:
                 "content": "x", "content_type": "text"}}
 
         with patch(
-            "src.server.services.runs.subagent_collection.iter_subagent_events_full",
+            "src.server.services.runs.teardown.iter_subagent_events_full",
             side_effect=fake_iter,
         ):
             merged = await btm._drain_killed_subagent_events("t-x", [task])
@@ -1227,7 +1228,7 @@ class TestDrainReasoningClose:
                 yield r
 
         with patch(
-            "src.server.services.runs.subagent_collection.iter_subagent_events_full",
+            "src.server.services.runs.teardown.iter_subagent_events_full",
             side_effect=fake_iter,
         ):
             merged = await btm._drain_killed_subagent_events(
@@ -1235,68 +1236,6 @@ class TestDrainReasoningClose:
             )
 
         assert merged == []
-
-
-class TestPersistCollectedEvents:
-
-    @pytest.mark.asyncio
-    async def test_persist_delegates_to_locked_rebase(self):
-        """The archive write goes through the row-locked rebase (concurrent
-        atomic appends serialize on the lock instead of being erased): the
-        collected agents are the strip set, cleaned rows the append set,
-        and the pre-compose main rows the missing-row fallback."""
-        btm = _make_btm()
-        main = [
-            {"event": "message_chunk", "data": {"agent": "ptc", "content": "m"}}
-        ]
-        captured = [
-            {
-                "event": "message_chunk",
-                "data": {"agent": "task:abc", "content": "t"},
-                "ts": 123.0,
-            }
-        ]
-
-        rebase = AsyncMock(return_value=True)
-        with patch(
-            "src.server.database.conversation.rebase_sse_events", new=rebase
-        ):
-            ok = await btm._persist_collected_events(
-                main, captured, "resp-1", "t-x", "ws", "u"
-            )
-
-        assert ok is True
-        rebase.assert_awaited_once()
-        args, kwargs = rebase.await_args
-        assert args == ("resp-1",)
-        assert kwargs["drop_agents"] == {"task:abc"}
-        # ts is stripped before archival.
-        assert kwargs["append_events"] == [
-            {"event": "message_chunk", "data": {"agent": "task:abc", "content": "t"}}
-        ]
-        assert kwargs["fallback_base"] is main
-
-    @pytest.mark.asyncio
-    async def test_double_failure_returns_false(self):
-        """Both write attempts failing returns False so callers skip stream
-        retirement — the Redis capture streams are the only remaining source
-        of the transcript after a failed archive write."""
-        btm = _make_btm()
-
-        with patch(
-            "src.server.database.conversation.rebase_sse_events",
-            new=AsyncMock(side_effect=RuntimeError("db down")),
-        ), patch("asyncio.sleep", new=AsyncMock()):
-            ok = await btm._persist_collected_events(
-                [],
-                [{"event": "message_chunk", "data": {"agent": "task:abc"}}],
-                "resp-1",
-                "t-x",
-                "ws",
-                "u",
-            )
-
-        assert ok is False
 
 
 class TestReplayOwnedTaskEvents:
@@ -1318,7 +1257,6 @@ class TestReplayOwnedTaskEvents:
 
     @pytest.mark.asyncio
     async def test_complete_recovery_appends_and_succeeds(self):
-        btm = _make_btm()
         records = [
             {
                 "event": "message_chunk",
@@ -1336,7 +1274,7 @@ class TestReplayOwnedTaskEvents:
             "src.server.services.runs.subagent_collection.iter_subagent_events_full",
             side_effect=self._iter(records),
         ):
-            ok = await btm._replay_owned_task_events(
+            ok = await subagent_collection.replay_owned_task_events(
                 "t-x", self._task(2), "resp-1", out
             )
         assert ok is True
@@ -1349,7 +1287,6 @@ class TestReplayOwnedTaskEvents:
         NOTHING — a partial archive would clear the replay cache gate and
         freeze an incomplete transcript — and returns False so cleanup
         retains the streams."""
-        btm = _make_btm()
         records = [
             {
                 "event": "message_chunk",
@@ -1362,7 +1299,7 @@ class TestReplayOwnedTaskEvents:
             "src.server.services.runs.subagent_collection.iter_subagent_events_full",
             side_effect=self._iter(records),
         ):
-            ok = await btm._replay_owned_task_events(
+            ok = await subagent_collection.replay_owned_task_events(
                 "t-x", self._task(3), "resp-1", out
             )
         assert ok is False
@@ -1373,13 +1310,12 @@ class TestReplayOwnedTaskEvents:
         """The zero-row XRANGE failure mode: captured events exist but the
         iterator yields nothing — must NOT read as a successful no-op
         (persist would be skipped and cleanup would retire the only copy)."""
-        btm = _make_btm()
         out: list = []
         with patch(
             "src.server.services.runs.subagent_collection.iter_subagent_events_full",
             side_effect=self._iter([]),
         ):
-            ok = await btm._replay_owned_task_events(
+            ok = await subagent_collection.replay_owned_task_events(
                 "t-x", self._task(3), "resp-1", out
             )
         assert ok is False
@@ -1392,7 +1328,6 @@ class TestReplayOwnedTaskEvents:
         ``expected`` records, but all are foreign-stamped. They must not pad
         the completeness tally — round 1's capture is gone and its streams
         must be retained, not retired as safely archived."""
-        btm = _make_btm()
         records = [
             {
                 "event": "message_chunk",
@@ -1410,7 +1345,7 @@ class TestReplayOwnedTaskEvents:
             "src.server.services.runs.subagent_collection.iter_subagent_events_full",
             side_effect=self._iter(records),
         ):
-            ok = await btm._replay_owned_task_events(
+            ok = await subagent_collection.replay_owned_task_events(
                 "t-x", self._task(2), "resp-1", out
             )
         assert ok is False
@@ -1421,7 +1356,6 @@ class TestReplayOwnedTaskEvents:
         """More own-round records than the entry snapshot (a terminal append
         landing mid-replay) also withholds — the snapshot the caller is
         about to vouch for no longer matches what the writer produced."""
-        btm = _make_btm()
         records = [
             {
                 "event": "message_chunk",
@@ -1439,7 +1373,7 @@ class TestReplayOwnedTaskEvents:
             "src.server.services.runs.subagent_collection.iter_subagent_events_full",
             side_effect=self._iter(records),
         ):
-            ok = await btm._replay_owned_task_events(
+            ok = await subagent_collection.replay_owned_task_events(
                 "t-x", self._task(1), "resp-1", out
             )
         assert ok is False
@@ -1452,7 +1386,6 @@ class TestReplayOwnedTaskEvents:
         stream can only be a foreign pre-stamp writer's (rolling-deploy
         resume). It must neither count nor archive, even when the counts
         happen to match."""
-        btm = _make_btm()
         records = [
             {"event": "message_chunk", "data": {"agent": "task:abc", "content": "a"}},
             {"event": "message_chunk", "data": {"agent": "task:abc", "content": "b"}},
@@ -1462,7 +1395,7 @@ class TestReplayOwnedTaskEvents:
             "src.server.services.runs.subagent_collection.iter_subagent_events_full",
             side_effect=self._iter(records),
         ):
-            ok = await btm._replay_owned_task_events(
+            ok = await subagent_collection.replay_owned_task_events(
                 "t-x", self._task(2), "resp-1", out
             )
         assert ok is False
@@ -1472,7 +1405,6 @@ class TestReplayOwnedTaskEvents:
     async def test_unstamped_records_accepted_for_legacy_task(self):
         """A task with no spawned_run_id (pre-stamp writer) legitimately
         produces unstamped records — they still count and archive."""
-        btm = _make_btm()
         task = self._task(1)
         task.spawned_run_id = None
         records = [
@@ -1483,7 +1415,7 @@ class TestReplayOwnedTaskEvents:
             "src.server.services.runs.subagent_collection.iter_subagent_events_full",
             side_effect=self._iter(records),
         ):
-            ok = await btm._replay_owned_task_events("t-x", task, "resp-1", out)
+            ok = await subagent_collection.replay_owned_task_events("t-x", task, "resp-1", out)
         assert ok is True
         assert len(out) == 1
 
@@ -1503,7 +1435,6 @@ class TestCleanupRetireSplit:
         return task
 
     async def _run(self, retire_streams: bool) -> tuple[AsyncMock, AsyncMock]:
-        btm = _make_btm()
         delete_mock = AsyncMock()
         registry = MagicMock()
         registry.remove_task_if_owned = AsyncMock()
@@ -1519,7 +1450,7 @@ class TestCleanupRetireSplit:
             f"{REGISTRY_STORE_MOD}.BackgroundRegistryStore.get_instance",
             return_value=store,
         ):
-            await btm._await_drain_and_cleanup_tasks(
+            await subagent_collection.await_drain_and_cleanup_tasks(
                 [self._task()], "t-x", "resp-1",
                 timeout=0.01, retire_streams=retire_streams,
             )
@@ -2343,7 +2274,7 @@ class TestNoPreFinalizeRunEndOnTerminalFlavors:
 
 
 # ---------------------------------------------------------------------------
-# _await_drain_and_cleanup_tasks — spill-lock-serialized, claim-fenced deletes
+# await_drain_and_cleanup_tasks: spill-lock-serialized, claim-fenced deletes
 # ---------------------------------------------------------------------------
 
 class TestCleanupSpillLockFence:
@@ -2379,7 +2310,6 @@ class TestCleanupSpillLockFence:
 
     @pytest.mark.asyncio
     async def test_steal_while_waiting_on_spill_lock_skips_deletes(self):
-        btm = _make_btm()
         task = self._task("run-old")
         cache = self._cache()
 
@@ -2395,7 +2325,7 @@ class TestCleanupSpillLockFence:
             return_value=fake_store,
         ):
             cleanup = asyncio.create_task(
-                btm._await_drain_and_cleanup_tasks([task], "thread-x", "run-old")
+                subagent_collection.await_drain_and_cleanup_tasks([task], "thread-x", "run-old")
             )
             for _ in range(10):  # let cleanup reach and block on the lock
                 await asyncio.sleep(0)
@@ -2408,7 +2338,6 @@ class TestCleanupSpillLockFence:
 
     @pytest.mark.asyncio
     async def test_owned_task_conditional_delete_under_the_lock(self):
-        btm = _make_btm()
         task = self._task("run-old")
         locked_during_eval: list[bool] = []
 
@@ -2430,7 +2359,7 @@ class TestCleanupSpillLockFence:
             f"{REGISTRY_STORE_MOD}.BackgroundRegistryStore.get_instance",
             return_value=fake_store,
         ):
-            await btm._await_drain_and_cleanup_tasks([task], "thread-x", "run-old")
+            await subagent_collection.await_drain_and_cleanup_tasks([task], "thread-x", "run-old")
 
         assert locked_during_eval == [True]
         # One atomic script call: meta hash checked as owner key, the
@@ -2446,7 +2375,7 @@ class TestCleanupSpillLockFence:
 
 
 # ---------------------------------------------------------------------------
-# _replay_owned_task_events — per-record claim recheck across the XRANGE await
+# replay_owned_task_events: per-record claim recheck across the XRANGE await
 # ---------------------------------------------------------------------------
 
 class TestReplayOwnershipRecheck:
@@ -2460,7 +2389,6 @@ class TestReplayOwnershipRecheck:
             BackgroundTask,
         )
 
-        btm = _make_btm()
         task = BackgroundTask(
             tool_call_id="tc-1",
             task_id="abc123",
@@ -2482,7 +2410,7 @@ class TestReplayOwnershipRecheck:
             "src.server.services.runs.subagent_collection.iter_subagent_events_full",
             side_effect=_iter,
         ):
-            ok = await btm._replay_owned_task_events(
+            ok = await subagent_collection.replay_owned_task_events(
                 "thread-x", task, "run-1", out
             )
 
@@ -2503,7 +2431,6 @@ class TestReplayOwnershipRecheck:
             BackgroundTask,
         )
 
-        btm = _make_btm()
         task = BackgroundTask(
             tool_call_id="tc-1",
             task_id="abc123",
@@ -2536,7 +2463,7 @@ class TestReplayOwnershipRecheck:
             "src.server.services.runs.subagent_collection.iter_subagent_events_full",
             side_effect=_iter,
         ):
-            ok = await btm._replay_owned_task_events(
+            ok = await subagent_collection.replay_owned_task_events(
                 "thread-x", task, "run-1", out
             )
 

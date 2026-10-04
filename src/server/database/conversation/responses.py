@@ -7,7 +7,7 @@ from psycopg.rows import dict_row
 
 from src.server.database import pool
 from src.server.database.conversation import _sql
-from src.server.utils.pg_sanitize import SafeJson
+from src.server.utils.pg_sanitize import SafeJson, safe_jsonb_array
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ async def _sync_provenance_for_response(
     turn_index: int,
     sse_events: Optional[Any],
     strict: bool = False,
+    appended_only: bool = True,
 ) -> None:
     """(Re)derive provenance_records from sse_events on the caller's connection.
 
@@ -37,10 +38,11 @@ async def _sync_provenance_for_response(
     caller (the finalize CAS) aborts instead of committing over a poisoned txn.
     """
     # Most persists carry no provenance (a turn with no external data access, or
-    # a non-provenance event drain). Skip the extract + delete-then-insert when
-    # there's no provenance entry: nothing to (re)write, and within a turn events
-    # only accumulate, so "none now" means "none ever" for this response.
-    if not _sse_has_provenance(sse_events):
+    # a non-provenance event drain). A write that only appends cannot have
+    # removed an entry, so with none present there is nothing to rewrite and the
+    # extract + delete-then-insert is skipped. A write that strips rows can take
+    # the last entry away, and its records must go with it.
+    if appended_only and not _sse_has_provenance(sse_events):
         return
 
     from src.server.database.provenance import sync_provenance_for_response
@@ -55,62 +57,72 @@ async def _sync_provenance_for_response(
     )
 
 
-async def rebase_sse_events(
-    conversation_response_id: str,
-    drop_agents: set,
-    append_events: List[Dict[str, Any]],
-    fallback_base: List[Dict[str, Any]],
-) -> bool:
-    """Replace a set of agents' rows in sse_events, atomically.
+def _event_agents(events: List[Dict[str, Any]]) -> frozenset[str]:
+    """The agents whose rows ``events`` replace: each string ``data.agent``.
 
-    One transaction: the row is read under FOR UPDATE, rows whose
-    ``data.agent`` is in ``drop_agents`` are stripped, ``append_events`` are
-    appended, and the result is written before the lock releases — a
-    concurrent ``append_sse_event`` blocks on the row lock and lands on the
-    new value instead of being erased by it. ``fallback_base`` seeds the
-    blob when the row is missing (the write then updates nothing and this
-    returns False).
+    Matches the filter in ``_REPLACE_AGENT_EVENTS_SQL``, which compares only
+    strings: an event with no agent, or a non-string one, names no rows, so a
+    batch can never strip the turn's agentless rows.
     """
+    agents = set()
+    for event in events:
+        data = event.get("data")
+        agent = data.get("agent") if isinstance(data, dict) else None
+        if isinstance(agent, str):
+            agents.add(agent)
+    return frozenset(agents)
+
+
+# One statement, so the row lock it takes orders it against append_sse_event:
+# under READ COMMITTED a waiting UPDATE re-reads the newest row. The strip is
+# one jsonpath filter over the stored array, so the kept rows are never
+# unnested or sorted, and the blob never leaves Postgres: only its provenance
+# entries come back, read from the written value, for the sync that follows.
+_REPLACE_AGENT_EVENTS_SQL = """
+    UPDATE conversation_responses
+    SET sse_events = jsonb_path_query_array(
+            COALESCE(sse_events, '[]'::jsonb),
+            '$[*] ? (!exists(@.data.agent ? (@ == $drop[*])))',
+            jsonb_build_object('drop', %(drop)s::text[])
+        ) || %(append)s::jsonb
+    WHERE conversation_response_id = %(id)s
+    RETURNING conversation_thread_id, turn_index,
+        jsonb_path_query_array(sse_events, '$[*] ? (@.event == "provenance")')
+            AS provenance
+"""
+
+
+async def replace_agent_events(
+    conversation_response_id: str,
+    events: List[Dict[str, Any]],
+) -> bool:
+    """Replace the rows of every agent ``events`` names with ``events``, atomically.
+
+    A concurrent ``append_sse_event`` waits on the row lock the UPDATE takes
+    and lands on the new value instead of being erased by it. Only ``events``
+    are encoded here: the stored array is filtered in Postgres. Returns False
+    when the row is missing.
+    """
+    appended = await safe_jsonb_array(events)
     async with pool.get_db_connection() as conn:
         async with conn.transaction():
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
-                    """
-                    SELECT sse_events FROM conversation_responses
-                    WHERE conversation_response_id = %s
-                    FOR UPDATE
-                    """,
-                    (conversation_response_id,),
-                )
-                row = await cur.fetchone()
-            base = (
-                (row["sse_events"] or [])
-                if row is not None
-                else list(fallback_base)
-            )
-            updated_chunks = [
-                c
-                for c in base
-                if str((c.get("data") or {}).get("agent", "")) not in drop_agents
-            ] + append_events
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(
-                    """
-                    UPDATE conversation_responses
-                    SET sse_events = %s
-                    WHERE conversation_response_id = %s
-                    RETURNING conversation_thread_id, turn_index
-                    """,
-                    (SafeJson(updated_chunks), conversation_response_id),
+                    _REPLACE_AGENT_EVENTS_SQL,
+                    {
+                        "id": conversation_response_id,
+                        "drop": sorted(_event_agents(events)),
+                        "append": appended,
+                    },
                 )
                 urow = await cur.fetchone()
             if urow is None:
                 logger.warning(
-                    f"[conversation_db] rebase_sse_events: no row found for "
+                    f"[conversation_db] replace_agent_events: no row found for "
                     f"response_id={conversation_response_id}"
                 )
                 return False
-            # Re-derive provenance_records inside the same transaction — this
+            # Re-derive provenance_records inside the same transaction: this
             # is the choke point for the background subagent drain, which
             # bypasses the turn-finalize path.
             await _sync_provenance_for_response(
@@ -118,11 +130,12 @@ async def rebase_sse_events(
                 conversation_response_id=conversation_response_id,
                 conversation_thread_id=str(urow["conversation_thread_id"]),
                 turn_index=urow["turn_index"],
-                sse_events=updated_chunks,
+                sse_events=urow["provenance"],
+                appended_only=False,
             )
             logger.info(
-                f"[conversation_db] rebase_sse_events response_id="
-                f"{conversation_response_id} events={len(updated_chunks)}"
+                f"[conversation_db] replace_agent_events response_id="
+                f"{conversation_response_id} appended={len(events)}"
             )
             return True
 

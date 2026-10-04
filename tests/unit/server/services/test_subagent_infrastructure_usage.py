@@ -167,22 +167,22 @@ async def test_task_with_no_records_and_no_tool_usage_skipped():
 
 @pytest.mark.asyncio
 async def test_cleanup_clears_tool_usage():
-    """_await_drain_and_cleanup_tasks resets tool_usage so a reused task
+    """await_drain_and_cleanup_tasks resets tool_usage so a reused task
     object can't be billed twice."""
-    btm = _make_btm()
+    from src.server.services.runs import subagent_collection
+
     task = _make_task(
         tool_usage={"TavilySearchTool:deep": 1}, collector_response_id="resp-1"
     )
     task.sse_drain_complete.set()
 
-    with patch.object(btm, "_await_drain_and_cleanup_tasks", wraps=btm._await_drain_and_cleanup_tasks), \
-         patch("src.server.services.runs.subagent_collection.get_sse_drain_timeout", return_value=0.1), \
+    with patch("src.server.services.runs.subagent_collection.get_sse_drain_timeout", return_value=0.1), \
          patch("src.server.services.runs.subagent_collection.get_cache_client", side_effect=Exception("no cache")), \
          patch(
              f"{REGISTRY_STORE_MOD}.BackgroundRegistryStore.get_instance"
          ) as mock_store:
         mock_store.return_value.get_registry = AsyncMock(return_value=None)
-        await btm._await_drain_and_cleanup_tasks(
+        await subagent_collection.await_drain_and_cleanup_tasks(
             [task], thread_id="thread-1", response_id="resp-1"
         )
 

@@ -501,9 +501,6 @@ async def _handle_resume(
                 name="Task",
                 status="error",
             )
-        task.task_run_id = admitted or None
-
-        await mw._reset_task_for_resume(task)
 
         # This run owns the writer now: rebind run ownership so its
         # drain/stop teardown and collector account for the resumed
@@ -511,8 +508,12 @@ async def _handle_resume(
         # run — under whose id nothing would ever await it). Stamp
         # unconditionally: None is safe (collectors treat it as
         # claimable-by-any-run), whereas keeping the stale spawner id
-        # detaches the writer from every run's teardown.
-        task.spawned_run_id = resume_run_id
+        # detaches the writer from every run's teardown. The reset rebinds
+        # both ids inside its reclaim, which first takes the usage an earlier
+        # run spent, under the ids that spent it.
+        await mw._reset_task_for_resume(
+            task, task_run_id=admitted or None, spawned_run_id=resume_run_id
+        )
 
         # Set ContextVars for the resumed task
         current_background_tool_call_id.set(task.tool_call_id)

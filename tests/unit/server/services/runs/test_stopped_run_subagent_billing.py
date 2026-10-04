@@ -441,7 +441,9 @@ class TestEveryEndingWithoutACollectorArchivesItsLanes:
 
         with patch(f"{REGISTRY}.CANCEL_UNWIND_TIMEOUT", 0.05):
             async with _stopped(btm, registry, archive):
-                await registry.reclaim_for_resume(tasks["live"])
+                await registry.reclaim_for_resume(
+                    tasks["live"], task_run_id=None, spawned_run_id="run-next"
+                )
                 release.set()
                 await _settled()
 
@@ -460,7 +462,9 @@ class TestTheClaimRidesTheKill:
 
         async def resume_finished():
             finished = tasks["finished"]
-            await registry.reclaim_for_resume(finished)
+            await registry.reclaim_for_resume(
+                finished, task_run_id=finished.task_run_id, spawned_run_id=RUN
+            )
             finished.terminal_status = None
             finished.asyncio_task = resumed_writer
 
@@ -490,9 +494,10 @@ class TestTheClaimRidesTheKill:
 
         async def resume_finished_in_another_run():
             finished = tasks["finished"]
-            await registry.reclaim_for_resume(finished)
+            await registry.reclaim_for_resume(
+                finished, task_run_id=None, spawned_run_id="run-next"
+            )
             finished.terminal_status = None
-            finished.spawned_run_id = "run-next"
 
             async def round_two():
                 return {"success": True}
@@ -513,6 +518,46 @@ class TestTheClaimRidesTheKill:
         assert await registry.claim_run_subagents("run-next", "run-next") == [
             finished
         ]
+
+    @pytest.mark.asyncio
+    async def test_a_late_reaper_leaves_a_round_resumed_after_it_was_scheduled(self):
+        """A killed task kept for an unwinding handler is evicted once that
+        handler settles, unless a resume started a new round on it first:
+        the wrapper is done, so the resume may proceed while the handler
+        still unwinds, and the new round is not the reaper's to remove."""
+        registry = BackgroundTaskRegistry(thread_id=THREAD)
+        task = await _register(registry, "slow")
+        task.task_run_id = "tr-slow-1"
+        release = asyncio.Event()
+
+        async def handler():
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await release.wait()
+
+        async def wrapper():
+            with suppress(asyncio.CancelledError):
+                await asyncio.Event().wait()
+
+        task.handler_task = asyncio.create_task(handler())
+        task.asyncio_task = asyncio.create_task(wrapper())
+        await asyncio.sleep(0)
+        with patch(f"{REGISTRY}.CANCEL_UNWIND_TIMEOUT", 0.05):
+            await registry.cancel_run_tasks(RUN, force=True)
+        assert registry.get_by_tool_call_id("tc-slow") is task
+
+        await registry.reclaim_for_resume(
+            task, task_run_id="tr-slow-2", spawned_run_id="run-next"
+        )
+        task.terminal_status = None
+        task.handler_task = None
+        task.asyncio_task = asyncio.create_task(asyncio.Event().wait())
+        release.set()
+        await asyncio.sleep(0.01)
+
+        assert registry.get_by_tool_call_id("tc-slow") is task
+        task.asyncio_task.cancel()
 
     @pytest.mark.asyncio
     async def test_a_kill_without_a_claim_claims_nothing(self):

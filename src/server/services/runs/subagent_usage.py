@@ -2,14 +2,15 @@
 
 A subagent's calls are billed on their own ``msg_type='task'`` rows under the
 response that owns the task, whichever path owns it: the turn's collector, an
-orphan collector, or a stopped run's teardown. Kept apart from collection so
-the stop path can bill without reaching into the archive machinery.
+orphan collector, a stopped run's kill, or the resume that takes an earlier
+run's round off the task. Every path writes its rows here. Kept apart from
+collection, which drives the first three, so the resume's biller, handed to
+the agent's registry, carries none of the archive machinery.
 """
 
 import logging
 
 logger = logging.getLogger(__name__)
-
 
 async def persist_subagent_usage(
     response_id: str,
@@ -21,14 +22,12 @@ async def persist_subagent_usage(
 ) -> None:
     """Persist each subagent's token usage as a separate row with msg_type='task'."""
     from ptc_agent.agent.middleware.background_subagent.registry import take_task_usage
-    from src.server.services.persistence.usage import UsagePersistenceService
     from src.server.services.background_registry_store import BackgroundRegistryStore
 
     # Snapshot-and-clear usage under the registry lock, gated on still
     # owning the task (collector_response_id == response_id). A resume
-    # clears that field, so a stale collector that re-claimed the same task
-    # at turn-N end skips here while turn-N+1's collector bills the merged
-    # usage exactly once, with no double-persist across the resume window.
+    # clears that field and bills an earlier run's usage itself, so each
+    # round is taken exactly once.
     bg_registry = await BackgroundRegistryStore.get_instance().get_registry(thread_id)
 
     if bg_registry is not None:
@@ -38,13 +37,58 @@ async def persist_subagent_usage(
         # and the take has no awaits, so it is atomic without the lock.
         claimed = take_task_usage(tasks, response_id)
 
+    await _persist_takes(
+        claimed, response_id, thread_id, workspace_id, user_id, is_byok
+    )
+
+
+async def bill_resumed_round(thread_id: str, take) -> None:
+    """Bill a resumed subagent's earlier round under the run that spent it.
+
+    The resume has taken this usage off the task, so it is billed here or
+    not at all, and only when that run's ending bills its subagents: the
+    same rule its own collector or kill applies, read off its settled row.
+    """
+    from src.server.contracts.status import bills_subagents
+    from src.server.database.runs.lifecycle import get_run_ending
+
+    ending = await get_run_ending(take.response_id)
+    if not bills_subagents(ending):
+        logger.info(
+            f"[SubagentUsage] Earlier round of task {take.task.task_id} in "
+            f"thread_id={thread_id} not billed: run {take.response_id} ended "
+            f"{ending.get('status') if ending else 'unknown'}"
+        )
+        return
+    metadata = ending.get("metadata") or {}
+    await _persist_takes(
+        [take],
+        take.response_id,
+        thread_id,
+        str(ending["workspace_id"]),
+        str(ending["user_id"]),
+        bool(metadata.get("is_byok", False)),
+    )
+
+
+async def _persist_takes(
+    claimed: list,
+    response_id: str,
+    thread_id: str,
+    workspace_id: str,
+    user_id: str,
+    is_byok: bool,
+) -> None:
+    from src.server.services.persistence.usage import UsagePersistenceService
+
     if not claimed:
         return
 
     persisted_count = 0
     persisted_records = 0
 
-    for task, records, tool_usage, settle_run_id in claimed:
+    for take in claimed:
+        task, records = take.task, take.records
         try:
             usage_service = UsagePersistenceService(
                 thread_id=thread_id,
@@ -53,8 +97,8 @@ async def persist_subagent_usage(
             )
             await usage_service.track_llm_usage(records)
 
-            if tool_usage:
-                usage_service.record_tool_usage_batch(tool_usage)
+            if take.tool_usage:
+                usage_service.record_tool_usage_batch(take.tool_usage)
 
             # track_llm_usage([]) initializes _token_usage to a zeroed
             # dict, so tool-only tasks still get stamped; None only on its
@@ -73,7 +117,7 @@ async def persist_subagent_usage(
                 msg_type="task",
                 status="completed",
                 is_byok=is_byok,
-                settle_task_run_id=settle_run_id,
+                settle_task_run_id=take.settle_run_id,
             )
             if not persisted:
                 # The records left task memory before this call, so a swallowed

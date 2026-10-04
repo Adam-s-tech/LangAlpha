@@ -598,6 +598,33 @@ async def get_run(run_id: str) -> Optional[Dict[str, Any]]:
             return dict(row) if row else None
 
 
+async def get_run_ending(run_id: str) -> Optional[Dict[str, Any]]:
+    """A run's status and metadata, with the workspace and user it ran for.
+
+    Narrow on purpose: ``get_run`` loads the archived ``sse_events`` too,
+    which a billing read on the resume path has no use for.
+    """
+    run_id = normalize_uuid(run_id)
+    if run_id is None:
+        return None
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT r.status, r.metadata, t.workspace_id,
+                       COALESCE(r.user_id, w.user_id) AS user_id
+                FROM conversation_responses r
+                JOIN conversation_threads t
+                  ON t.conversation_thread_id = r.conversation_thread_id
+                JOIN workspaces w ON w.workspace_id = t.workspace_id
+                WHERE r.conversation_response_id = %s
+                """,
+                (run_id,),
+            )
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
 async def get_active_run(thread_id: str) -> Optional[Dict[str, Any]]:
     """The thread's live run, if any — one row by the slot index."""
     async with pool.get_db_connection() as conn:

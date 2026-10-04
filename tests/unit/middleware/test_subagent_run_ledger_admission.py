@@ -24,6 +24,7 @@ from ptc_agent.agent.middleware.background_subagent.registry import (
     BackgroundTaskRegistry,
     TaskRunRejected,
     TransportLostError,
+    UsageTake,
 )
 from ptc_agent.agent.middleware.credit_gate import CreditStopError
 from src.server.contracts.status import CREDIT_STOP_ERROR_TYPE
@@ -408,7 +409,12 @@ async def test_resume_setup_failure_leaves_the_task_resumable_not_inert():
     mw = _middleware(owner, ledger)
     task = await _register_settled_task(mw)
     task.result_seen = False
-    mw._reset_task_for_resume = AsyncMock()
+
+    async def rebind_only(task, *, task_run_id, spawned_run_id):
+        task.task_run_id = task_run_id
+        task.spawned_run_id = spawned_run_id
+
+    mw._reset_task_for_resume = AsyncMock(side_effect=rebind_only)
     mw.registry.write_task_meta = AsyncMock(side_effect=RuntimeError("redis gone"))
 
     result = await mw.awrap_tool_call(
@@ -454,6 +460,46 @@ async def test_resume_admitted_restamps_identity_and_uses_task_description():
     assert started["description"] == "orig desc"
     await task.asyncio_task
     assert ledger.finalized[-1][:2] == ("run-uuid-next", "completed")
+
+
+@pytest.mark.asyncio
+async def test_resume_bills_an_earlier_runs_round_before_its_own():
+    """A resume takes the usage an earlier run's collector owned but had not
+    billed, and bills it under that run and the ledger run that spent it
+    before the resumed round's writer exists. The task is reminted in the
+    same step, so the take never pairs that usage with the new run id."""
+    owner = FakeOwner()
+    ledger = FakeLedger(admit="run-uuid-next")
+    mw = _middleware(owner, ledger)
+    task = await _register_settled_task(mw)
+    mw.registry.write_task_meta = AsyncMock()
+    task.collector_response_id = "response-prior"
+    task.per_call_records = [{"round": 1}]
+    billed: list = []
+
+    async def bill(thread_id, take):
+        billed.append((thread_id, take, task.asyncio_task, task.task_run_id))
+
+    mw.registry.usage_biller = bill
+
+    await mw.awrap_tool_call(
+        _request(
+            {"action": "resume", "task_id": task.task_id, "prompt": "more"},
+            tool_call_id="tc-2",
+        ),
+        _ok_handler,
+    )
+    await task.asyncio_task
+
+    assert billed == [
+        (
+            mw.registry.thread_id,
+            UsageTake(task, [{"round": 1}], {}, "run-uuid-prev", "response-prior"),
+            None,
+            "run-uuid-next",
+        )
+    ]
+    assert task.collector_response_id is None
 
 
 # ---------------------------------------------------------------------------

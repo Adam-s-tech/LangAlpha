@@ -59,7 +59,9 @@ async def test_reset_for_resume_deletes_stream_and_meta_keys():
         "src.utils.cache.redis_cache.get_cache_client",
         return_value=cache,
     ):
-        await middleware._reset_task_for_resume(task)
+        await middleware._reset_task_for_resume(
+            task, task_run_id=None, spawned_run_id=None
+        )
 
     deleted_keys = [call.args[0] for call in cache.delete.await_args_list]
     assert "subagent:events:meta:thread-x:abc123" in deleted_keys
@@ -90,7 +92,9 @@ async def test_reset_for_resume_resets_seq_counters_after_redis_clear():
         "src.utils.cache.redis_cache.get_cache_client",
         return_value=cache,
     ):
-        await middleware._reset_task_for_resume(task)
+        await middleware._reset_task_for_resume(
+            task, task_run_id=None, spawned_run_id=None
+        )
 
     assert task.completed is False
     assert task.result is None
@@ -122,7 +126,9 @@ async def test_reset_for_resume_unseals_cancelled_task():
         "src.utils.cache.redis_cache.get_cache_client",
         return_value=cache,
     ):
-        await middleware._reset_task_for_resume(task)
+        await middleware._reset_task_for_resume(
+            task, task_run_id=None, spawned_run_id=None
+        )
 
     assert task.cancelled is False
 
@@ -150,7 +156,9 @@ async def test_reset_for_resume_nulls_writer_handles():
         "src.utils.cache.redis_cache.get_cache_client",
         return_value=cache,
     ):
-        await middleware._reset_task_for_resume(task)
+        await middleware._reset_task_for_resume(
+            task, task_run_id=None, spawned_run_id=None
+        )
 
     assert task.asyncio_task is None
     assert task.handler_task is None
@@ -173,7 +181,9 @@ async def test_reset_for_resume_redis_failure_does_not_raise():
         "src.utils.cache.redis_cache.get_cache_client",
         return_value=cache,
     ):
-        await middleware._reset_task_for_resume(task)
+        await middleware._reset_task_for_resume(
+            task, task_run_id=None, spawned_run_id=None
+        )
 
     assert task.completed is False
 
@@ -202,7 +212,9 @@ async def test_unconfirmed_stream_delete_keeps_the_current_epoch():
         "src.utils.cache.redis_cache.get_cache_client",
         return_value=cache,
     ):
-        await middleware._reset_task_for_resume(task)
+        await middleware._reset_task_for_resume(
+            task, task_run_id=None, spawned_run_id=None
+        )
 
     # The resume still proceeds — only the epoch restart is withheld.
     assert task.completed is False
@@ -239,6 +251,8 @@ async def test_reset_for_resume_skips_redis_when_no_thread_id():
         "src.utils.cache.redis_cache.get_cache_client",
         return_value=cache,
     ):
-        await middleware._reset_task_for_resume(task)
+        await middleware._reset_task_for_resume(
+            task, task_run_id=None, spawned_run_id=None
+        )
 
     cache.delete.assert_not_awaited()

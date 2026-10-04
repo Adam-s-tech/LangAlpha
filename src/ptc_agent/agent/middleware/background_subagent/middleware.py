@@ -339,8 +339,15 @@ class BackgroundSubagentMiddleware(AgentMiddleware):
                 exc_info=True,
             )
 
-    async def _reset_task_for_resume(self, task: BackgroundTask) -> None:
-        """Reset a completed task's state so it can be re-run.
+    async def _reset_task_for_resume(
+        self,
+        task: BackgroundTask,
+        *,
+        task_run_id: str | None,
+        spawned_run_id: str | None,
+    ) -> None:
+        """Reset a completed task's state so it can be re-run as the round
+        ``task_run_id`` of run ``spawned_run_id``.
 
         Steal-then-delete ordering is load-bearing: the collector claim is
         cleared (and registry membership restored) BEFORE the awaited Redis
@@ -355,7 +362,9 @@ class BackgroundSubagentMiddleware(AgentMiddleware):
         # Clearing the status also unseals: append_captured_event drops
         # appends while the task reads cancelled (killed streams are final),
         # and the resumed round is a fresh writer that must not inherit it.
-        await self.registry.reclaim_for_resume(task)
+        earlier_round = await self.registry.reclaim_for_resume(
+            task, task_run_id=task_run_id, spawned_run_id=spawned_run_id
+        )
         task.terminal_status = None
         # Drop the prior round's settled handles: until the publish fence
         # installs the new writer this is a STARTING task, and a stale done
@@ -366,13 +375,18 @@ class BackgroundSubagentMiddleware(AgentMiddleware):
         task.result = None
         task.result_seen = False
         task.error = None
-        # tool_usage / per_call_records are intentionally NOT cleared here: if a
-        # collector hasn't billed the prior run yet, the next completion merges
-        # into them so run-1 usage survives the resume. Cleanup drops them only
-        # after a successful persist.
+        # tool_usage / per_call_records are not cleared: an earlier run's
+        # usage left with the reclaim, so what stays is this run's own
+        # earlier round, an unstamped task's, or anything left where no biller
+        # is injected, and the resumed round's completion merges into it and
+        # bills them together.
         task.redis_write_failed = False
         task.sse_drain_complete = asyncio.Event()
         task.sse_consumer_count = 0
+        # Billed before the new round's writer exists: that round's ledger
+        # settle also settles the run this usage spent, so its row lands first.
+        if earlier_round is not None:
+            await self.registry.bill_usage(earlier_round)
         # The spool has to be gone BEFORE the sequence restarts at 1, and the
         # delete has to be known to have happened. A silent failure here leaves
         # the previous epoch resident under the very ids the next writer is

@@ -108,12 +108,16 @@ class BackgroundRegistryStore:
         async with self._lock:
             registry = self._registries.get(thread_id)
             if registry is None:
+                from src.server.services.runs.subagent_usage import (
+                    bill_resumed_round,
+                )
                 from src.server.services.subagent_run_coordinator import SubagentRunCoordinator
 
                 registry = BackgroundTaskRegistry(thread_id=thread_id)
                 registry.result_resolver = resolve_task_result_text
                 registry.archived_result_resolver = resolve_archived_result_text
                 registry.run_ledger = SubagentRunCoordinator(thread_id)
+                registry.usage_biller = bill_resumed_round
                 self._registries[thread_id] = registry
                 logger.debug(
                     "Created background registry",

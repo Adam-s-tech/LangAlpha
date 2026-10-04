@@ -6,6 +6,7 @@ vi.mock('@/contexts/ThemeContext', () => ({
 }));
 
 import Markdown from '../Markdown';
+import { REVEAL_SETTLE_MS } from '../../utils/revealFade';
 
 // A block keeps its tree while lines land in a fence still open at its end
 // (streamingLineKey), so the DOM a stream builds by growing one mounted block
@@ -20,7 +21,20 @@ const DOCS: Record<string, string> = {
 
 // React leaves `style=""` on an element whose style emptied, where a fresh
 // mount writes none. Same pixels, and it happens within a line under any key.
-const markup = (el: Element): string => el.innerHTML.replaceAll(' style=""', '');
+const raw = (el: Element): string => el.innerHTML.replaceAll(' style=""', '');
+
+// What a reveal fades in through (utils/revealFade) depends on how the text
+// arrived, so its spans are unwrapped and its marks on whole elements dropped:
+// what sits under them has to match.
+const markup = (el: Element): string => {
+  const copy = el.cloneNode(true) as Element;
+  for (const fresh of copy.querySelectorAll('[data-fresh]')) {
+    if (fresh.tagName === 'SPAN') fresh.replaceWith(...fresh.childNodes);
+    else fresh.removeAttribute('data-fresh');
+  }
+  copy.normalize();
+  return raw(copy);
+};
 
 function html(content: string, streaming = false): string {
   const { container, unmount } = render(<Markdown variant="chat" content={content} onOpenFile={() => {}} streaming={streaming} />);
@@ -44,6 +58,10 @@ describe('Markdown streaming through a fence', () => {
     await (PrismAsyncLight as unknown as { loadAstGenerator: () => Promise<unknown> }).loadAstGenerator();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   for (const [name, doc] of Object.entries(DOCS)) {
     it(`grows to the DOM a fresh mount draws: ${name}`, () => {
       const view = render(<Markdown variant="chat" content="" onOpenFile={() => {}} />);
@@ -63,6 +81,7 @@ describe('Markdown streaming through a fence', () => {
   // stream has to settle to exactly the markup above.
   for (const [name, doc] of Object.entries(DOCS)) {
     it(`streams the same text and settles to the same DOM: ${name}`, () => {
+      vi.useFakeTimers();
       const view = render(<Markdown variant="chat" content="" onOpenFile={() => {}} streaming />);
       for (let end = 1; end <= doc.length; end += 2) {
         const prefix = doc.slice(0, end);
@@ -71,7 +90,11 @@ describe('Markdown streaming through a fence', () => {
         expect(view.container.textContent, `at ${JSON.stringify(prefix)}`).toBe(text(prefix, false));
       }
       act(() => view.rerender(<Markdown variant="chat" content={doc} onOpenFile={() => {}} />));
-      expect(markup(view.container)).toBe(html(doc));
+      act(() => {
+        vi.advanceTimersByTime(REVEAL_SETTLE_MS);
+      });
+      // Settled, nothing is left to unwrap.
+      expect(raw(view.container)).toBe(html(doc));
       view.unmount();
     });
   }

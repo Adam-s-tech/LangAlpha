@@ -104,6 +104,11 @@ staggered fade-up with `cubic-bezier(0.16, 1, 0.3, 1)`, ≤ 500ms. No ambient or
 looping decoration; motion signals state change only. Respect
 `prefers-reduced-motion`.
 
+Streamed chat text fades in as the typewriter reveals it, on its own gentler
+curve (`EASE_REVEAL`, `DURATION.reveal` in `web/src/lib/motion.ts`): the
+entrance curve is at half opacity a tenth of the way in, which on a word reads
+as a pop.
+
 ## Empty states
 
 Dot-grid texture is reserved for empty states only — never behind content.

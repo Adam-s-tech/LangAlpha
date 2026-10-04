@@ -9,8 +9,10 @@ interface UseAnimatedTextOptions {
 // Text that lands in one update by more than CATCH_UP_CHARS is not a token
 // stream (a reconnect replay applied in one pass): it shows at once with only
 // the last LIVE_TAIL_CHARS left to type.
-const CATCH_UP_CHARS = 600;
-const LIVE_TAIL_CHARS = 320;
+export const CATCH_UP_CHARS = 600;
+export const LIVE_TAIL_CHARS = 320;
+// The shown text updates at most once per TICK_MS.
+export const TICK_MS = 32;
 
 // The reveal paces itself to the model. A slow model is read at BASE_WORDS_PER_SEC,
 // chunk by chunk. A fast one is followed at its own measured pace: each chain
@@ -186,7 +188,7 @@ export function useAnimatedText(text: string, { enabled = false }: UseAnimatedTe
         const idx = Math.max(shown, wordStart(target, Math.round(latest)));
         cursorRef.current = idx;
         const now = Date.now();
-        if (now - lastUpdateTimeRef.current < 32) return;
+        if (now - lastUpdateTimeRef.current < TICK_MS) return;
         lastUpdateTimeRef.current = now;
         setDisplayText(target.slice(0, idx));
       },

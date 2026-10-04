@@ -8,6 +8,13 @@
 /** The entrance curve: fast out, long settle. */
 export const EASE_OUT = [0.16, 1, 0.3, 1] as const;
 
+/**
+ * Streamed text fading in as it is typed. EASE_OUT is at half opacity a tenth
+ * of the way in, which on a word reads as the pop the fade is there to soften;
+ * this cubic is at a quarter.
+ */
+export const EASE_REVEAL = [0.33, 1, 0.68, 1] as const;
+
 export const DURATION = {
   /** A menu or a small element appearing. */
   quick: 0.16,
@@ -17,4 +24,6 @@ export const DURATION = {
   enter: 0.28,
   /** Anything leaving; exits are always shorter than entrances. */
   exit: 0.14,
+  /** Streamed text fading in as it is typed (EASE_REVEAL). */
+  reveal: 0.36,
 } as const;

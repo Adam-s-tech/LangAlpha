@@ -912,12 +912,12 @@ class BackgroundTaskRegistry:
             )
 
     def _cancellable(self, task: "BackgroundTask") -> bool:
-        """Not-completed with a live writer OR no writer handle at all — the
+        """Not-completed with a live writer OR no writer handle at all. The
         latter is a STARTING task (registered, spawn awaits in flight):
         stamping it seals its capture and the publish fence aborts the
         pending writer. A done handle on a not-completed task is a finished
-        writer whose done-callback hasn't settled it yet — leave that to
-        settle as what it actually was."""
+        writer nothing has adopted yet; it settles as what it actually was,
+        never as cancelled."""
         if task.completed:
             return False
         return task.asyncio_task is None or not task.asyncio_task.done()
@@ -1014,11 +1014,13 @@ class BackgroundTaskRegistry:
                 if t.spawned_run_id == run_id and self._cancellable(t)
             ]
         await self.stamp_cancel_intent(intent_targets)
-        scoped: list[str] = []
         async with self._lock:
             cancelled = self._cancel_marked(intent_targets, force=force)
+            # Each task with the writer it has now: a resume can hand a task
+            # to another run's round while this kill waits below, and only
+            # this run's round is the kill's to settle, claim or evict.
             scoped = [
-                tool_call_id
+                (tool_call_id, task, task.asyncio_task)
                 for tool_call_id, task in self._tasks.items()
                 if task.spawned_run_id == run_id
             ]
@@ -1028,10 +1030,7 @@ class BackgroundTaskRegistry:
             # writers THROUGH this registry, so removing a live one would let
             # the run's pinned session release out from under it.
             unwinding = [
-                writer
-                for tool_call_id in scoped
-                if (task := self._tasks.get(tool_call_id)) is not None
-                for writer in task.live_writers
+                writer for _, task, _ in scoped for writer in task.live_writers
             ]
         if unwinding:
             await asyncio.wait(unwinding, timeout=CANCEL_UNWIND_TIMEOUT)
@@ -1042,10 +1041,23 @@ class BackgroundTaskRegistry:
         # a writer that never dies.
         claimed: list[BackgroundTask] = []
         async with self._lock:
-            for tool_call_id in scoped:
-                task = self._tasks.get(tool_call_id)
-                if task is None:
+            for tool_call_id, task, writer in scoped:
+                if (
+                    self._tasks.get(tool_call_id) is not task
+                    or task.spawned_run_id != run_id
+                ):
                     continue
+                if (
+                    not task.completed
+                    and writer is not None
+                    and task.asyncio_task is writer
+                    and writer.done()
+                ):
+                    # Finished before the kill and never adopted, so the kill
+                    # left it uncancelled. Settle it as what it was: this run
+                    # has no collector, so unsettled it would stay registered,
+                    # holding its writer's context, for the thread's lifetime.
+                    task.adopt_writer_outcome(writer)
                 if (
                     claim_for is not None
                     and task.collector_response_id is None

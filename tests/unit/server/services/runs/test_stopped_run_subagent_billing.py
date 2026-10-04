@@ -344,7 +344,11 @@ class TestTheEndingDecidesBilling:
         assert tasks["live"].cancelled
         assert tasks["prior"].per_call_records == [{"call": "prior"}]
         assert tasks["prior"].collector_response_id is None
-        # Nothing of this run is left for a later collector to bill again.
+        # Nothing of this run is left registered, or for a later collector to
+        # bill again.
+        assert [t.tool_call_id for t in await registry.get_all_tasks()] == [
+            "tc-prior"
+        ]
         assert await registry.claim_run_subagents(RUN, "run-later") == []
         if isinstance(ending["finalize"], Exception):
             # The row is still in_progress: the entry stays for recovery.
@@ -474,6 +478,41 @@ class TestTheClaimRidesTheKill:
         assert finished.per_call_records == [{"call": "finished"}]
         assert registry.get_by_tool_call_id("tc-finished") is finished
         assert registry.get_by_tool_call_id("tc-live") is None
+
+    @pytest.mark.asyncio
+    async def test_a_round_another_run_resumes_mid_kill_is_left_to_that_run(self):
+        """A later run can resume a finished task while this run's kill waits
+        on an unwinding sibling, and its round can finish before the kill's
+        last section. That round is the later run's to settle and collect, so
+        the kill neither adopts its writer, claims it nor evicts it."""
+        registry = BackgroundTaskRegistry(thread_id=THREAD)
+        tasks: dict = {}
+
+        async def resume_finished_in_another_run():
+            finished = tasks["finished"]
+            await registry.reclaim_for_resume(finished)
+            finished.terminal_status = None
+            finished.spawned_run_id = "run-next"
+
+            async def round_two():
+                return {"success": True}
+
+            finished.asyncio_task = asyncio.create_task(round_two())
+            await finished.asyncio_task
+
+        tasks.update(
+            await _subagents(registry, on_unwind=resume_finished_in_another_run)
+        )
+        killed = await registry.cancel_run_tasks(RUN, force=True, claim_for=RUN)
+
+        finished, live = tasks["finished"], tasks["live"]
+        assert killed.claimed == [live]
+        assert not finished.completed
+        assert finished.collector_response_id is None
+        assert registry.get_by_tool_call_id("tc-finished") is finished
+        assert await registry.claim_run_subagents("run-next", "run-next") == [
+            finished
+        ]
 
     @pytest.mark.asyncio
     async def test_a_kill_without_a_claim_claims_nothing(self):

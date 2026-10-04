@@ -40,10 +40,11 @@ artifacts (`artifact_type: task` — init/resume/status). Task-lane content (mes
 reasoning chunks, tool calls/results, `context_window`, `provenance`, errors,
 interrupts, steering delivery) is delivered exclusively by the task run's channel.
 
-Transitional exception (until the detail view renders them from the task channel):
-task-attributed `model_retry` / `model_fallback` and ui/artifact events still ride the
-main stream. They are discrete and idempotent (`artifact_id`-keyed), so dual delivery is
-harmless; they migrate at mux-v2 cutover.
+A subagent runs detached from the turn that spawned it, so none of its graph's events
+reach the main stream. Its channel carries a fixed allowlist of side-channel events
+besides its chunks and tool frames: `context_window`, `provenance`, and a `file_operation`
+artifact as a path-only ping. Its `model_retry` / `model_fallback` and other ui/artifact
+events are not forwarded; the client renders model resilience for the main agent only.
 
 ## Causal ordering
 

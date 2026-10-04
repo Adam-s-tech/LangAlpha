@@ -620,15 +620,6 @@ class RunSSEProducer:
                 # Unpack graph event data
                 agent_from_stream, stream_mode, event_data = graph_event
 
-                # Exclusive lane ownership: frames originating inside a
-                # background task's namespace belong to the per-task channel
-                # (spool → task SSE / mux) — the main stream must not
-                # re-deliver them. The two copies carry incomparable ids, so
-                # clients cannot dedup; double delivery rendered every live
-                # task transcript twice and archived the copies into the
-                # turn's stream.
-                task_lane = self._resolve_task_lane(agent_from_stream)
-
                 # Check for timeout (if configured)
                 if self.workflow_timeout > 0:
                     elapsed_time = time.time() - workflow_start_time
@@ -683,19 +674,6 @@ class RunSSEProducer:
                 # inline — exposure waits for the durability barrier after
                 # the stream drains (I8).
                 if isinstance(event_data, dict) and "__interrupt__" in event_data:
-                    if task_lane:
-                        # A task-namespace interrupt must never enter root
-                        # lifecycle: saw_interrupt classifies the TURN's
-                        # outcome, and exposing it as a main interrupt would
-                        # advertise a resume the root checkpoint can't honor.
-                        # Task HITL is unsupported (descoped) — surface
-                        # loudly; the task settles via its own error path.
-                        logger.error(
-                            f"[TASK_INTERRUPT] Unsupported interrupt from "
-                            f"{task_lane} on thread_id={self.thread_id} — "
-                            f"suppressed from root lifecycle"
-                        )
-                        continue
                     self.saw_interrupt = True
                     self._pending_interrupts.append(event_data)
                     continue  # Skip further processing for interrupt events
@@ -740,11 +718,6 @@ class RunSSEProducer:
                                 elif signal in ("complete", "error"):
                                     self._close_compaction_window(ns_key)
 
-                            # Task-lane copies are delivered by the per-task
-                            # channel (forwarder whitelist) — only the window
-                            # bookkeeping above runs for them here.
-                            if task_lane:
-                                continue
                             logger.debug(
                                 f"[CONTEXT_WINDOW] Emitting {action}/{signal} "
                                 f"(thread_id={self.thread_id})"
@@ -754,14 +727,10 @@ class RunSSEProducer:
 
                         # Handle provenance records (data the agent accessed).
                         # The middleware emits agent=None on purpose; resolve it
-                        # here from the LangGraph namespace so subagent records
-                        # get task:{id} attribution. All other fields pass
-                        # through flat to match the frontend's ProvenanceEvent.
+                        # here from the LangGraph namespace. All other fields
+                        # pass through flat to match the frontend's
+                        # ProvenanceEvent.
                         if event_type == "provenance":
-                            # Task-lane copies are delivered by the per-task
-                            # channel (forwarder whitelist).
-                            if task_lane:
-                                continue
                             prov_data = self._resolve_provenance_event(
                                 event_data, agent_from_stream
                             )
@@ -803,10 +772,11 @@ class RunSSEProducer:
                         # is persisted so the transcript note survives replay.
                         if event_type in ("model_retry", "model_fallback"):
                             # Same attribution contract as provenance events
-                            # (`agent` is "main" | "task:{id}"): the main agent
-                            # streams with an empty namespace and the middleware
-                            # payload has no langgraph_node, so pin "main"
-                            # instead of _extract_agent_name's "agent" fallback.
+                            # (a detached subagent's never reach this producer):
+                            # the main agent streams with an empty namespace and
+                            # the middleware payload has no langgraph_node, so
+                            # pin "main" instead of _extract_agent_name's
+                            # "agent" fallback.
                             resilience_data: Dict[str, Any] = {
                                 "thread_id": self.thread_id,
                                 "agent": self._extract_agent_name(
@@ -847,12 +817,7 @@ class RunSSEProducer:
                         # Map onto the existing artifact SSE event so the wire
                         # contract is unchanged.
                         if event_type == "ui":
-                            # Lane ownership beats last-segment resolution: a
-                            # multi-segment task namespace whose leaf UUID was
-                            # never registered must still attribute task:{id}.
-                            ui_agent = task_lane or self._extract_agent_name(
-                                agent_from_stream, {}
-                            )
+                            ui_agent = self._extract_agent_name(agent_from_stream, {})
                             ui_artifact_event = {
                                 "artifact_type": event_data.get("name"),
                                 "artifact_id": event_data.get("id"),
@@ -888,18 +853,7 @@ class RunSSEProducer:
                         artifact_type = event_data.get("artifact_type")
                         if artifact_type:
                             extracted_agent_name = self._extract_agent_name(agent_from_stream, {})
-
-                            # Lane ownership is not the emitter's to claim: a
-                            # payload-supplied agent (TodoWriteMiddleware
-                            # hardcodes "ptc") from inside a task namespace
-                            # would evade the client's task routing and the
-                            # collector's task:* scrub — a subagent's TodoWrite
-                            # would overwrite the root todo list and archive as
-                            # parent output. The namespace decides the lane;
-                            # the payload's agent applies only on main.
-                            agent_name = task_lane or (
-                                event_data.get("agent") or extracted_agent_name
-                            )
+                            agent_name = event_data.get("agent") or extracted_agent_name
                             payload = event_data.get("payload", {})
 
                             # Build artifact event with proper structure
@@ -928,12 +882,6 @@ class RunSSEProducer:
 
                 # Process message chunks (stream_mode="messages")
                 if stream_mode != "messages":
-                    continue
-
-                # Task content (text/reasoning/tool frames) is owned by the
-                # per-task channel; task messages live in the task's own
-                # checkpoint namespace, not the turn transcript.
-                if task_lane:
                     continue
 
                 message_chunk, message_metadata = cast(
@@ -1007,8 +955,6 @@ class RunSSEProducer:
             try:
                 from src.server.services.persistence.usage import UsagePersistenceService
 
-                # Snapshot under the tracker's lock: background subagent writers
-                # can still be appending records as the turn winds down.
                 per_call_records = None
                 if self.token_callback:
                     per_call_records = self.token_callback.get_per_call_records()
@@ -1192,11 +1138,11 @@ class RunSSEProducer:
     ) -> dict:
         """Strip the internal ``type`` and resolve agent attribution.
 
-        Subagent records resolve to ``task:{id}`` from the namespace. The main
-        agent streams with an empty namespace (and the event carries no
+        The main agent streams with an empty namespace (and the event carries no
         ``langgraph_node``), so it is pinned to ``"main"`` rather than the
         ``_extract_agent_name`` fallback, honoring the contract that ``agent`` is
-        ``"main"`` | ``"task:{id}"``.
+        ``"main"`` | ``"task:{id}"``. A subagent's records ride its own task
+        stream, where the forwarder stamps ``task:{id}``.
         """
         if namespace_tuple:
             agent = self._extract_agent_name(namespace_tuple, event_data)
@@ -1208,38 +1154,16 @@ class RunSSEProducer:
         prov_data["agent"] = agent
         return prov_data
 
-    def _resolve_task_lane(self, namespace_tuple: tuple) -> Optional[str]:
-        """Lane owner for a graph event: ``task:{id}`` when any namespace
-        segment belongs to a background task, else None (main lane).
-
-        Every background subagent runs under a literal ``task:{id}``
-        checkpoint namespace stamped at invocation, so the segment needs no
-        registration and frames from the very first model call classify
-        correctly. Any-segment matching (not just the tail) catches
-        multi-segment task namespaces (e.g. per-call model nodes).
-        """
-        if not namespace_tuple:
-            return None
-        for element in namespace_tuple:
-            raw = str(element)
-            if raw.startswith("task:"):
-                return raw
-        return None
-
     def _extract_agent_name(self, namespace_tuple: tuple, message_metadata: dict) -> str:
         """Return the agent identifier for an event.
 
         Priority:
-        1. any ``task:{id}`` segment in `namespace_tuple` (the checkpoint
-           namespace every background subagent runs under)
-        2. `namespace_tuple[-1]` (verbatim)
-        3. `checkpoint_ns` (verbatim)
-        4. `langgraph_node`
+        1. `namespace_tuple[-1]` (verbatim)
+        2. `checkpoint_ns` (verbatim)
+        3. `langgraph_node`
         """
         if namespace_tuple:
-            return self._resolve_task_lane(namespace_tuple) or str(
-                namespace_tuple[-1]
-            )
+            return str(namespace_tuple[-1])
 
         checkpoint_ns = message_metadata.get("checkpoint_ns")
         if checkpoint_ns:

@@ -769,27 +769,6 @@ class TestProvenanceEvent:
         # no nested data envelope
         assert "data" not in parsed
 
-    def test_provenance_event_resolves_subagent_attribution(self):
-        """A task-namespace event yields task:{id} attribution from the
-        checkpoint namespace stamped at invocation — no registration."""
-        handler = self._make_handler()
-        event_data = {
-            "type": "provenance",
-            "record_id": "rec-002",
-            "source_type": "file_read",
-            "identifier": "work/notes.md",
-            "timestamp": "2024-01-01T00:00:00Z",
-            "agent": None,
-        }
-        event_line, parsed = self._dispatch(
-            handler, event_data, agent_from_stream=("task:sub42", "tools:ns-uuid-1")
-        )
-
-        assert event_line == "event: provenance"
-        assert parsed["agent"] == "task:sub42"
-        assert parsed["source_type"] == "file_read"
-        assert parsed["identifier"] == "work/notes.md"
-
 
 # ---------------------------------------------------------------------------
 # RunSSEProducer — event_counter integration
@@ -1836,15 +1815,14 @@ class _MultiModeGraph:
         return _gen()
 
 
-class TestTaskLaneOwnership:
-    """Exclusive lane ownership: task-namespace frames never ride the main
-    stream (their canonical copies live in the per-task channel), and a
-    task-namespace interrupt never enters root lifecycle."""
+class TestInterruptBuffering:
+    """A main-stream interrupt is buffered for the durability barrier, never
+    emitted inline."""
 
     def _make_handler(self):
         from src.server.services.runs.sse_producer import RunSSEProducer
 
-        return RunSSEProducer(thread_id="lane-thread", run_id="r-lane")
+        return RunSSEProducer(thread_id="int-thread", run_id="r-test")
 
     async def _collect(self, handler, events):
         return [
@@ -1854,57 +1832,8 @@ class TestTaskLaneOwnership:
             )
         ]
 
-    def test_resolve_task_lane_literal_namespace_needs_no_registration(self):
-        handler = self._make_handler()
-        assert (
-            handler._resolve_task_lane(("task:e88Ssw", "model:abc"))
-            == "task:e88Ssw"
-        )
-
-    def test_resolve_task_lane_main_namespaces_stay_main(self):
-        handler = self._make_handler()
-        assert handler._resolve_task_lane(()) is None
-        assert handler._resolve_task_lane(("model:uuid-a",)) is None
-        assert handler._resolve_task_lane(("tools:uuid-b", "model:uuid-c")) is None
-
     @pytest.mark.asyncio
-    async def test_task_message_frames_suppressed_from_main(self):
-        from langchain_core.messages import AIMessageChunk
-
-        handler = self._make_handler()
-        events = [
-            (
-                ("task:e88Ssw",),
-                "messages",
-                (AIMessageChunk(content="task text", id="m-task"), {}),
-            ),
-            (
-                ("model:uuid-main",),
-                "messages",
-                (AIMessageChunk(content="main text", id="m-main"), {}),
-            ),
-        ]
-        chunks = await self._collect(handler, events)
-        joined = "".join(chunks)
-        assert "main text" in joined
-        assert "task text" not in joined
-        persisted = handler.get_sse_events() or []
-        assert not any(
-            "task text" in json.dumps(e.get("data", {})) for e in persisted
-        )
-
-    @pytest.mark.asyncio
-    async def test_task_interrupt_never_enters_root_lifecycle(self):
-        handler = self._make_handler()
-        events = [
-            (("task:e88Ssw",), "updates", {"__interrupt__": [object()]}),
-        ]
-        await self._collect(handler, events)
-        assert handler.saw_interrupt is False
-        assert handler._pending_interrupts == []
-
-    @pytest.mark.asyncio
-    async def test_main_interrupt_still_buffers(self):
+    async def test_main_interrupt_buffers(self):
         handler = self._make_handler()
 
         async def _no_verify(_graph):
@@ -1915,51 +1844,3 @@ class TestTaskLaneOwnership:
         await self._collect(handler, events)
         assert handler.saw_interrupt is True
         assert len(handler._pending_interrupts) == 1
-
-    @pytest.mark.asyncio
-    async def test_task_context_window_and_provenance_suppressed(self):
-        handler = self._make_handler()
-        events = [
-            (
-                ("task:e88Ssw",),
-                "custom",
-                {"type": "context_window", "action": "token_usage",
-                 "input_tokens": 10, "total_tokens": 10},
-            ),
-            (
-                ("task:e88Ssw",),
-                "custom",
-                {"type": "provenance", "source": "web", "result_sha256": "x"},
-            ),
-            (
-                (),
-                "custom",
-                {"type": "context_window", "action": "token_usage",
-                 "input_tokens": 5, "total_tokens": 5},
-            ),
-        ]
-        chunks = await self._collect(handler, events)
-        cw = [c for c in chunks if "event: context_window\n" in c]
-        assert len(cw) == 1  # only the main-lane copy
-        assert '"agent": "main"' in cw[0] or '"agent": "agent"' in cw[0]
-        assert not any("event: provenance\n" in c for c in chunks)
-
-    @pytest.mark.asyncio
-    async def test_task_summarize_window_bookkeeping_still_runs(self):
-        # Suppressed from the wire, but the compaction admission window must
-        # still open for task namespaces (the stream-end finally closes it).
-        handler = self._make_handler()
-        runner = MagicMock()
-        runner.open_auto_compaction_window.return_value = True
-        events = [
-            (
-                ("task:e88Ssw",),
-                "custom",
-                {"type": "context_window", "action": "summarize",
-                 "signal": "start"},
-            ),
-        ]
-        with patch(TestCompactionWindowGuard.RUNNER, return_value=runner):
-            chunks = await self._collect(handler, events)
-        runner.open_auto_compaction_window.assert_called_once_with("lane-thread")
-        assert not any("event: context_window\n" in c for c in chunks)

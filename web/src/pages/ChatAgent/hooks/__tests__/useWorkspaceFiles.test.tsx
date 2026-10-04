@@ -60,6 +60,68 @@ describe('useWorkspaceFiles', () => {
     expect(mockListFiles).toHaveBeenCalledWith('ws-1', '.', { autoStart: true, includeSystem: false });
   });
 
+  it('a burst of refreshes shares the fetch in flight plus one trailing fetch', async () => {
+    mockListFiles.mockResolvedValue({ files: [] });
+    const { result } = renderHookWithProviders(() => useWorkspaceFiles('ws-1'));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    mockListFiles.mockClear();
+
+    let release!: () => void;
+    mockListFiles.mockImplementationOnce(
+      () => new Promise((resolve) => { release = () => resolve({ files: ['a.md'] }); }),
+    );
+    mockListFiles.mockResolvedValue({ files: ['a.md', 'b.md'] });
+
+    // A subagent's replayed backlog pings once per write, all in one tick.
+    let burst!: Promise<void[]>;
+    act(() => {
+      burst = Promise.all(Array.from({ length: 20 }, () => result.current.refresh()));
+    });
+    expect(mockListFiles).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      release();
+      await burst;
+    });
+    expect(mockListFiles).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(result.current.files).toEqual(['a.md', 'b.md']));
+  });
+
+  it('a failed fetch lets its refetch land before the trailing fetch writes', async () => {
+    mockListFiles.mockResolvedValue({ files: [] });
+    const { result } = renderHookWithProviders(() => useWorkspaceFiles('ws-1'));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let failFirst!: () => void;
+    let releaseRefetch!: () => void;
+    mockListFiles.mockImplementation((_ws: string, _path: string, opts: { autoStart: boolean }) =>
+      new Promise((resolve, reject) => {
+        if (!opts.autoStart) {
+          // The query's own refetch, started by the failure path, lists the older tree.
+          releaseRefetch = () => resolve({ files: ['a.md'] });
+        } else if (!failFirst) {
+          failFirst = () => reject(new Error('blip'));
+        } else {
+          resolve({ files: ['a.md', 'b.md'] });
+        }
+      }),
+    );
+
+    let burst!: Promise<void[]>;
+    act(() => {
+      burst = Promise.all([result.current.refresh(), result.current.refresh()]);
+    });
+    await act(async () => {
+      failFirst();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      releaseRefetch();
+      await burst;
+    });
+    await waitFor(() => expect(result.current.files).toEqual(['a.md', 'b.md']));
+  });
+
   it('refresh is no-op when workspaceId is null', async () => {
     const { result } = renderHookWithProviders(() => useWorkspaceFiles(null));
 

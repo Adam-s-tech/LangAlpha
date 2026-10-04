@@ -5,6 +5,7 @@ import i18n from '@/i18n';
 import type { ContextPayload } from '../../filePanel/types';
 import ExcelViewer from '../ExcelViewer';
 import type { GridRowProps } from '../excel/GridRow';
+import { openpyxlWorkbook } from '../excel/__tests__/openpyxlFixture';
 
 // Every row render is logged by row number, through the memo boundary the
 // viewer imports, so a test can say which rows an interaction reached.
@@ -45,6 +46,7 @@ async function mergedWorkbook(): Promise<ArrayBuffer> {
 const cell = (ref: string) => document.querySelector<HTMLTableCellElement>(`td[data-ref="${ref}"]`)!;
 const nameBox = () => document.querySelector('.excel-namebox')!.textContent;
 const fx = () => document.querySelector('.excel-fx')!.textContent;
+const note = () => document.querySelector('.excel-footer-note')?.textContent;
 
 describe('ExcelViewer', () => {
   let data: ArrayBuffer;
@@ -318,5 +320,23 @@ describe('ExcelViewer', () => {
     expect(screen.getByRole('button', { name: 'Model' }).className).toContain('active');
     fireEvent.click(screen.getByRole('button', { name: 'Inputs' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Inputs' }).className).toContain('active'));
+  });
+
+  it('says per sheet how many charts and pictures the grid leaves out, and sends the reader to the download', async () => {
+    render(<ExcelViewer data={openpyxlWorkbook()} canDownload />);
+    await screen.findByRole('button', { name: 'Charts' });
+    expect(note()).toBe('1 formula has no cached value · 1 chart and 1 picture not shown here. Download the file to see them');
+    fireEvent.click(screen.getByRole('button', { name: 'Charts' }));
+    expect(note()).toBe('2 charts not shown here. Download the file to see them');
+    fireEvent.click(screen.getByRole('button', { name: 'Notes' }));
+    expect(note()).toBe('1 picture not shown here. Download the file to see it');
+    fireEvent.click(screen.getByRole('button', { name: 'Inputs' }));
+    expect(note()).toBeUndefined();
+  });
+
+  it('points at no download where the page offers none', async () => {
+    render(<ExcelViewer data={openpyxlWorkbook()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Charts' }));
+    expect(note()).toBe('2 charts not shown here');
   });
 });

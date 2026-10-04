@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 import { parseWorkbook, type SheetData } from '../parse';
+import { openpyxlWorkbook } from './openpyxlFixture';
 
 /**
  * A real ExcelJS round-trip, because every bug this locks was invisible to a
@@ -87,5 +89,70 @@ describe('parseWorkbook', () => {
   it('keeps row 1 a data row, addressed from 1', () => {
     expect(model.rows[3][0].text).toBe('Units (M)');
     expect(model.totalRows).toBe(8);
+  });
+});
+
+/** The same workbook as Excel writes it: `xdr:`-prefixed drawings, part names relative to their owner. */
+async function asExcelWrites(buffer: ArrayBuffer): Promise<ArrayBuffer> {
+  const zip = await JSZip.loadAsync(buffer);
+  for (const path of Object.keys(zip.files)) {
+    let xml: string;
+    if (/^xl\/drawings\/drawing\d+\.xml$/.test(path)) {
+      xml = (await zip.file(path)!.async('string'))
+        .replace('xmlns="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"', 'xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"')
+        .replace(/<(\/?)(\w+)(?=[\s/>])/g, '<$1xdr:$2');
+    } else if (path.startsWith('xl/') && path.endsWith('.rels')) {
+      xml = (await zip.file(path)!.async('string'))
+        .replaceAll('Target="/xl/', path.startsWith('xl/_rels/') ? 'Target="' : 'Target="../');
+    } else continue;
+    zip.file(path, xml);
+  }
+  return zip.generateAsync({ type: 'arraybuffer' });
+}
+
+const drawingsOf = (sheets: SheetData[]) => sheets.map(({ name, charts, pictures }) => ({ name, charts, pictures }));
+
+describe('parseWorkbook on a workbook with charts and pictures', () => {
+  it('reads the cells of an openpyxl workbook whose sheets carry drawings', async () => {
+    // Every chart or picture used to fail the whole file: ExcelJS reads only
+    // the `xdr:` spelling, so the drawing parsed to nothing and the load threw.
+    const sheets = await parseWorkbook(openpyxlWorkbook(), 'en-US');
+    expect(sheets.map((s) => s.name)).toEqual(['Model', 'Charts', 'Notes', 'Inputs']);
+    const [model, , notes] = sheets;
+    expect(model.rows[0].map((c) => c.text)).toEqual(['Year', 'Revenue']);
+    expect(model.rows[3][1].text).toBe('150');
+    expect(model.rows[4][1].text).toBe('=SUM(B2:B4)');
+    expect(notes.rows[0][0].text).toBe('Synthetic data');
+  });
+
+  it.each([
+    ['openpyxl spells it, the namespace as the default', async () => openpyxlWorkbook()],
+    ['Excel spells it, with the xdr: prefix', async () => asExcelWrites(openpyxlWorkbook())],
+  ])('counts each sheet\'s charts and pictures as %s', async (_, build) => {
+    const sheets = await parseWorkbook(await build(), 'en-US');
+    expect(drawingsOf(sheets)).toEqual([
+      { name: 'Model', charts: 1, pictures: 1 },
+      { name: 'Charts', charts: 2, pictures: 0 },
+      { name: 'Notes', charts: 0, pictures: 1 },
+      { name: 'Inputs', charts: 0, pictures: 0 },
+    ]);
+    expect(sheets[0].rows[0][0].text).toBe('Year');
+  });
+
+  it('counts none for a drawing it cannot read, and still opens the sheet', async () => {
+    const zip = await JSZip.loadAsync(openpyxlWorkbook());
+    zip.file('xl/drawings/drawing1.xml', '<wsDr');
+    const sheets = await parseWorkbook(await zip.generateAsync({ type: 'arraybuffer' }), 'en-US');
+    expect(drawingsOf(sheets)[0]).toEqual({ name: 'Model', charts: 0, pictures: 0 });
+    expect(drawingsOf(sheets)[1]).toEqual({ name: 'Charts', charts: 2, pictures: 0 });
+    expect(sheets[0].rows[0][0].text).toBe('Year');
+  });
+
+  it('counts nothing on a workbook with no drawings', async () => {
+    const sheets = await parseWorkbook(await buildWorkbook(), 'en-US');
+    expect(drawingsOf(sheets)).toEqual([
+      { name: 'Model', charts: 0, pictures: 0 },
+      { name: 'Inputs', charts: 0, pictures: 0 },
+    ]);
   });
 });

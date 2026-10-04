@@ -12,6 +12,7 @@ import secrets
 import time
 import uuid as uuid_mod
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -30,6 +31,7 @@ __all__ = [
     "CANCEL_UNWIND_TIMEOUT",
     "BackgroundTask",
     "BackgroundTaskRegistry",
+    "RunTasksKilled",
     "TaskRunRejected",
     "TaskWriterLive",
     "TerminalStatus",
@@ -44,6 +46,15 @@ CANCEL_UNWIND_TIMEOUT = 15.0
 # a hung ledger call must not block the user-facing local cancel.
 _CANCEL_INTENT_STAMP_TIMEOUT_S = 2.0
 
+
+
+@dataclass(frozen=True)
+class RunTasksKilled:
+    """What ``cancel_run_tasks`` did: the live tasks it cancelled, and the
+    settled ones it claimed for ``claim_for`` (always empty without one)."""
+
+    cancelled: int
+    claimed: list[BackgroundTask] = field(default_factory=list)
 
 
 class TransportLostError(RuntimeError):
@@ -138,7 +149,10 @@ class BackgroundTaskRegistry:
         self._task_id_to_tool_call_id: dict[str, str] = {}  # task_id -> tool_call_id
         self._lock = asyncio.Lock()
         self._results: dict[str, Any] = {}
-        self._late_removals: set[asyncio.Task] = set()
+        # tool_call_id -> (task, reaper) for entries kept until their
+        # cancelled writers settle; one reaper per entry however many kills
+        # find it unwinding.
+        self._late_removals: dict[str, tuple[BackgroundTask, asyncio.Task]] = {}
         self.current_turn_index: int = 0
         self.current_run_id: str | None = None
         self.thread_id: str = thread_id
@@ -257,11 +271,7 @@ class BackgroundTaskRegistry:
             # registers freely (settle paths stamp completed).
             existing = self._tasks.get(tool_call_id)
             if existing is not None and (
-                not existing.completed
-                or any(
-                    t is not None and not t.done()
-                    for t in (existing.asyncio_task, existing.handler_task)
-                )
+                not existing.completed or existing.live_writers
             ):
                 raise TaskWriterLive(existing)
 
@@ -399,11 +409,8 @@ class BackgroundTaskRegistry:
         async with self._lock:
             writers: list[asyncio.Task] = []
             for task in self._tasks.values():
-                if not predicate(task):
-                    continue
-                for writer in (task.asyncio_task, task.handler_task):
-                    if writer is not None and not writer.done():
-                        writers.append(writer)
+                if predicate(task):
+                    writers.extend(task.live_writers)
             return writers
 
     def _locked_get_by_task_id(self, task_id: str) -> BackgroundTask | None:
@@ -978,14 +985,27 @@ class BackgroundTaskRegistry:
             logger.info("Cancelled background task by request", task_id=task_id)
         return cancelled > 0
 
-    async def cancel_run_tasks(self, run_id: str, *, force: bool = False) -> int:
+    async def cancel_run_tasks(
+        self,
+        run_id: str,
+        *,
+        force: bool = False,
+        claim_for: str | None = None,
+    ) -> RunTasksKilled:
         """Cancel and drop only the tasks spawned by ``run_id``.
 
         Run-scoped teardown for a run that finalized error/cancelled with no
         collector: thread-wide ``cancel_all`` here would abort another turn's
         orphan collector mid-collection. Tasks with an unknown spawned_run_id
-        are left alone — killing work whose owner is ambiguous is the failure
-        mode this exists to prevent.
+        are left alone, since killing work whose owner is ambiguous is the
+        failure mode this exists to prevent.
+
+        ``claim_for`` claims the settled tasks for a caller that bills them,
+        in the same lock section that evicts them: an entry leaves the
+        registry with the usage it holds, so a claim taken any earlier could
+        cover a task the kill then leaves running, and one taken later finds
+        it gone. It claims a task whatever it holds yet, since a writer still
+        unwinding merges its usage only as it settles.
         """
         async with self._lock:
             intent_targets = [
@@ -1005,35 +1025,39 @@ class BackgroundTaskRegistry:
             # Snapshot the writers before dropping entries: a cancelled task
             # keeps unwinding (checkpoint writes in cleanup sections) after
             # cancel() returns, and the writer-guard tail drain discovers
-            # writers THROUGH this registry — removing a live one would let
+            # writers THROUGH this registry, so removing a live one would let
             # the run's pinned session release out from under it.
             unwinding = [
-                t
+                writer
                 for tool_call_id in scoped
                 if (task := self._tasks.get(tool_call_id)) is not None
-                for t in (task.asyncio_task, task.handler_task)
-                if t is not None and not t.done()
+                for writer in task.live_writers
             ]
         if unwinding:
             await asyncio.wait(unwinding, timeout=CANCEL_UNWIND_TIMEOUT)
-        # No collector will ever claim these entries — drop them so the
-        # registry doesn't grow across turns on a long-lived thread. A task
-        # whose writers are STILL alive after the bounded wait stays
-        # registered (drain-visible); the guard drain's own deadline is the
-        # backstop for a writer that never dies.
+        # No collector will ever claim these entries, so drop them or the
+        # registry grows across turns on a long-lived thread. A task whose
+        # writers are STILL alive after the bounded wait stays registered
+        # (drain-visible); the guard drain's own deadline is the backstop for
+        # a writer that never dies.
+        claimed: list[BackgroundTask] = []
         async with self._lock:
             for tool_call_id in scoped:
                 task = self._tasks.get(tool_call_id)
                 if task is None:
                     continue
+                if (
+                    claim_for is not None
+                    and task.collector_response_id is None
+                    and not task.is_pending
+                ):
+                    task.collector_response_id = claim_for
+                    claimed.append(task)
                 if not task.completed:
-                    # Registered during the stamp window — deliberately left
+                    # Registered during the stamp window, deliberately left
                     # uncancelled (no durable intent), so not ours to evict.
                     continue
-                if any(
-                    t is not None and not t.done()
-                    for t in (task.asyncio_task, task.handler_task)
-                ):
+                if task.live_writers:
                     logger.warning(
                         "Cancelled background task still unwinding; left "
                         "registered for the guard drain",
@@ -1054,7 +1078,7 @@ class BackgroundTaskRegistry:
                 count=cancelled,
                 force=force,
             )
-        return cancelled
+        return RunTasksKilled(cancelled=cancelled, claimed=claimed)
 
     async def cancel_owner_children(self, owner_task_id: str, *, reason: str) -> int:
         """Cancel one owner's live children — the teardown a workflow run does
@@ -1136,6 +1160,11 @@ class BackgroundTaskRegistry:
         the registry once its writers finally settle, or a long-lived thread
         leaks one entry per slow unwind. Identity-checked under the lock so
         a re-registration of the same tool_call_id is never removed."""
+        pending = self._late_removals.get(tool_call_id)
+        if pending is not None and pending[0] is task:
+            return
+        if pending is not None:
+            pending[1].cancel()
         writers = [
             t for t in (task.asyncio_task, task.handler_task) if t is not None
         ]
@@ -1152,8 +1181,14 @@ class BackgroundTaskRegistry:
         reaper = asyncio.create_task(
             _late_remove(), name=f"bg-task-late-remove-{tool_call_id[:8]}"
         )
-        self._late_removals.add(reaper)
-        reaper.add_done_callback(self._late_removals.discard)
+        self._late_removals[tool_call_id] = (task, reaper)
+
+        def _forget(done: asyncio.Task) -> None:
+            entry = self._late_removals.get(tool_call_id)
+            if entry is not None and entry[1] is done:
+                del self._late_removals[tool_call_id]
+
+        reaper.add_done_callback(_forget)
 
     def _clear_unlocked(self) -> None:
         """Drop all task/result/lookup state. Caller owns concurrency control."""

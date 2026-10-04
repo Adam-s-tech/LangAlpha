@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.server.contracts.status import is_user_stop
 from src.server.services.history.replay.lanes import MAIN_LANE, agent_lane
 
 
@@ -56,10 +57,7 @@ def stop_close_item(
     Public: the shared replay in ``server/app/public.py`` streams stored
     events itself and needs the same close.
     """
-    if not response or response.get("status") != "cancelled":
-        return None
-    metadata = response.get("metadata")
-    if not (isinstance(metadata, dict) and metadata.get("cancelled_by_user")):
+    if not is_user_stop(response):
         return None
     last: dict[str, Any] | None = None
     closed: set[str] = set()

@@ -10,7 +10,10 @@ import asyncio
 import logging
 from typing import Dict, Optional
 
-from ptc_agent.agent.middleware.background_subagent.registry import BackgroundTaskRegistry
+from ptc_agent.agent.middleware.background_subagent.registry import (
+    BackgroundTaskRegistry,
+    RunTasksKilled,
+)
 from ptc_agent.agent.middleware.background_subagent.workflow.ui_snapshot import (
     read_task_result,
 )
@@ -136,17 +139,24 @@ class BackgroundRegistryStore:
         return await registry.cancel_task(task_id, force=True)
 
     async def cancel_run_tasks(
-        self, thread_id: str, run_id: str, *, force: bool = False
-    ) -> int:
+        self,
+        thread_id: str,
+        run_id: str,
+        *,
+        force: bool = False,
+        claim_for: str | None = None,
+    ) -> RunTasksKilled:
         """Cancel only the tasks spawned by ``run_id``; the registry and any
         prior-turn tasks/claims survive (unlike ``cancel_and_clear``)."""
         async with self._lock:
             registry = self._registries.get(thread_id)
         if registry is None:
-            return 0
+            return RunTasksKilled(cancelled=0)
 
         # registry.cancel_run_tasks logs the cancellation with task detail.
-        return await registry.cancel_run_tasks(run_id, force=force)
+        return await registry.cancel_run_tasks(
+            run_id, force=force, claim_for=claim_for
+        )
 
     async def cancel_and_clear(self, thread_id: str, *, force: bool = False) -> int:
         async with self._lock:

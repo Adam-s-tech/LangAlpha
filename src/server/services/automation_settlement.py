@@ -22,7 +22,7 @@ from enum import StrEnum
 from typing import Any, Dict, Literal, Optional
 
 from src.observability import automation_executions, safe_add
-from src.server.contracts.status import INTERRUPT_REASON_CREDIT_PAUSE
+from src.server.contracts.status import INTERRUPT_REASON_CREDIT_PAUSE, is_user_stop
 from src.server.database import automation as auto_db
 from src.server.database import automation_executions as exec_db
 from src.server.models.automation import (
@@ -198,7 +198,7 @@ def ledger_outcome(run: Optional[Dict[str, Any]]) -> Optional[Outcome]:
         return Outcome.COMPLETED
     metadata = run.get("metadata") or {}
     if status == "cancelled":
-        return Outcome.STOPPED if metadata.get("cancelled_by_user") else Outcome.INTERRUPTED
+        return Outcome.STOPPED if is_user_stop(run) else Outcome.INTERRUPTED
     if status == "interrupted" and run.get("interrupt_reason") == INTERRUPT_REASON_CREDIT_PAUSE:
         return Outcome.LIMITED
     if status == "error":

@@ -100,6 +100,31 @@ def is_live(raw: Any) -> bool:
     return value is not None and str(value) in _LIVE
 
 
+def is_user_stop(row: Optional[dict[str, Any]]) -> bool:
+    """True iff a run or response row ended because the user stopped it.
+
+    A cancelled status alone is not a stop: shutdown and recovery cancel runs
+    too. The finalize records ``cancelled_by_user`` from the user's /cancel,
+    whichever worker took it, so readers check that flag and never
+    ``cancel_requested_at``, which a system cancel stamps as well.
+    """
+    if not row or row.get("status") != "cancelled":
+        return False
+    metadata = row.get("metadata")
+    return isinstance(metadata, dict) and bool(metadata.get("cancelled_by_user"))
+
+
+# Endings whose subagents are collected and billed. A user stop bills them
+# too, killed; any other ending (an error, a timeout, a shutdown) is not the
+# user's doing, so its subagents are killed unbilled.
+COLLECTED_ENDINGS = frozenset({"completed", "interrupted"})
+
+
+def bills_subagents(row: Optional[dict[str, Any]]) -> bool:
+    """True iff a settled run row's ending bills the subagents it spawned."""
+    return bool(row) and (row.get("status") in COLLECTED_ENDINGS or is_user_stop(row))
+
+
 # The credit gate's two wire spellings, declared rather than derived. Both are
 # matched outside Python — the resume query filters on them in SQL and the
 # stream reducer compares the error type in TypeScript — so neither may follow

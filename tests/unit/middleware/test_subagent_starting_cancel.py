@@ -47,9 +47,10 @@ async def test_cancel_run_tasks_stamps_starting_task():
     registry = BackgroundTaskRegistry(thread_id="thread-x")
     task = await _register_starting_task(registry)
 
-    cancelled = await registry.cancel_run_tasks("run-1")
+    killed = await registry.cancel_run_tasks("run-1")
 
-    assert cancelled == 1
+    assert killed.cancelled == 1
+    assert killed.claimed == []
     assert task.cancelled is True
     assert task.completed is True
     assert task.error == "Cancelled"
@@ -361,8 +362,8 @@ async def test_done_writer_pending_callback_is_not_restamped():
     await handle
     task.asyncio_task = handle
 
-    cancelled = await registry.cancel_run_tasks("run-1")
+    killed = await registry.cancel_run_tasks("run-1")
 
-    assert cancelled == 0
+    assert killed.cancelled == 0
     assert task.cancelled is False
     assert task.completed is False

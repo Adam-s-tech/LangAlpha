@@ -34,13 +34,15 @@ from src.utils.cache.redis_cache import get_cache_client
 
 logger = logging.getLogger(__name__)
 
+# v7: on a thread past 1024 checkpoints, v6 entries could hold an early turn
+# projected empty and the next turn holding both (utils/checkpointer.py).
 # v6: a user-stopped turn's last assistant message carries the stop close.
 # v5: a stopped or failed turn's main lane resurrects its uncommitted partial
 # (v4 entries of those turns hold the lossy projection under an unchanged key).
 # v4: user_message items carry run_completed_at (v3 entries predate the field).
 # v3: fingerprinted keys (v1/v2 entries are tail-only, so a v2 hit could
 # serve a projection built before the turn's archive drain landed).
-_KEY_PREFIX = "replay:turn:v6"
+_KEY_PREFIX = "replay:turn:v7"
 # Entries beyond this are pathological (widget-heavy legacy stored events);
 # skip caching rather than bloat Redis — replay just rebuilds those threads.
 _MAX_ENTRY_BYTES = 512 * 1024

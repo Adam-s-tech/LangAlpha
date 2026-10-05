@@ -168,7 +168,7 @@ overrides:
   katex: ^0.18.9
 
 patchedDependencies:
-  exceljs@4.4.0: e876a555c8ffd8559d2802ddcad26342d26110bf41d73cda6dcfa5fe4a670836
+  exceljs@4.4.0: 613a87ee20ab71d710a20e8f90fd685e85642b8fca85760c9a10e232f07266e6
 
 importers:
 
@@ -227,7 +227,7 @@ importers:
         version: 2.1.1
       exceljs:
         specifier: ^4.4.0
-        version: 4.4.0(patch_hash=e876a555c8ffd8559d2802ddcad26342d26110bf41d73cda6dcfa5fe4a670836)
+        version: 4.4.0(patch_hash=613a87ee20ab71d710a20e8f90fd685e85642b8fca85760c9a10e232f07266e6)
       framer-motion:
         specifier: ^13.4.4
         version: 13.4.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -6155,7 +6155,7 @@ snapshots:
 
   eventemitter3@5.0.4: {}
 
-  exceljs@4.4.0(patch_hash=e876a555c8ffd8559d2802ddcad26342d26110bf41d73cda6dcfa5fe4a670836):
+  exceljs@4.4.0(patch_hash=613a87ee20ab71d710a20e8f90fd685e85642b8fca85760c9a10e232f07266e6):
     dependencies:
       archiver: 5.3.2
       dayjs: 1.11.23

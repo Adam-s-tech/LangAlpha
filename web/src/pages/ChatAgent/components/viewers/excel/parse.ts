@@ -182,7 +182,9 @@ function readCell(cell: ExcelJS.Cell, system: DateSystem, locale: string): GridC
     // `cell.formula` is the accessor that slides a shared formula onto this
     // address, so B3 reads `A3*2` rather than the master's `A2*2`.
     const formula = cell.formula || (value as ExcelJS.CellFormulaValue).formula || '';
-    const result = value.result;
+    // Read through the cell. The value object copies only truthy fields, so a
+    // formula that came to 0, FALSE or "" would read as never calculated.
+    const result = cell.result as FormulaValue['result'];
     const calculated = result !== undefined;
     const error = isError(result) ? result.error : undefined;
     const text = error ?? (calculated ? formatCellValue(scalarOf(result), numFmt, system, locale) : withEquals(formula));

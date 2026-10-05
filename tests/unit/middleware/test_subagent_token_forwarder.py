@@ -707,6 +707,64 @@ async def test_forward_custom_drops_non_whitelisted_event_types() -> None:
 
 
 @pytest.mark.asyncio
+async def test_forward_custom_sends_file_operation_as_path_only_artifact() -> None:
+    """A subagent's file write reaches the client only through its own stream,
+    so the forwarder sends it as an ``artifact`` the file panel acts on, with
+    the path but never the written content."""
+    registry = BackgroundTaskRegistry()
+    task = await _register(registry, task_id_override="fo1")
+    fwd = _SubagentTokenForwarder(registry, task.tool_call_id, "task:fo1")
+
+    await fwd.forward_custom(
+        {
+            "artifact_type": "file_operation",
+            "artifact_id": "call-1",
+            "agent": "ptc",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "status": "completed",
+            "payload": {
+                "operation": "Edit",
+                "file_path": "notes/a.md",
+                "sandbox_path": "/home/workspace/notes/a.md",
+                "line_count": 1,
+                "old_string": "a" * 10000,
+                "new_string": "b",
+                "type": "message_chunk",
+            },
+        }
+    )
+    await fwd.forward_custom(
+        {
+            "artifact_type": "file_operation",
+            "artifact_id": "call-2",
+            "status": "failed",
+            "payload": {"operation": "Write", "file_path": "x.md", "error": "denied"},
+        }
+    )
+
+    first, second = task._test_records
+    assert first["event"] == "artifact"
+    assert first["data"] == {
+        "artifact_type": "file_operation",
+        "artifact_id": "call-1",
+        "agent": "task:fo1",
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "status": "completed",
+        "payload": {
+            "operation": "Edit",
+            "file_path": "notes/a.md",
+            "sandbox_path": "/home/workspace/notes/a.md",
+        },
+    }
+    assert second["data"]["status"] == "failed"
+    assert second["data"]["payload"] == {
+        "operation": "Write",
+        "file_path": "x.md",
+        "error": "denied",
+    }
+
+
+@pytest.mark.asyncio
 async def test_atask_pipeline_forwards_custom_events_to_registry(monkeypatch):
     """End-to-end: when the subagent emits a ``custom``-mode payload, the
     Task-tool driver routes it through ``forward_custom`` so the per-task

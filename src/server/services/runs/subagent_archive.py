@@ -1,21 +1,26 @@
-"""Read side of a subagent's captured-event archive.
+"""A subagent's captured-event archive: read back from Redis, written to the turn.
 
 The per-task capture stream is written by the agent-side spill and read back
-here once, post-terminal, to rebuild the subagent's history. Separated from
-the collection lifecycle because it is the one piece with its own failure
-contract: an archive that cannot be read to the end must be refused whole,
-never served as a prefix.
+here once, post-terminal, to rebuild the subagent's history; the collected
+events then land in the turn's ``sse_events``. Separated from the collection
+lifecycle because both halves carry their own failure contract: an archive
+that cannot be read to the end is refused whole, never served as a prefix, and
+the capture streams stay the transcript's copy until every event replayed from
+them has been written.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from typing import AsyncIterator
+from dataclasses import dataclass, field
+from typing import Any, AsyncIterator
 
 from ptc_agent.agent.middleware.background_subagent.redis_stream import (
     task_stream_key,
 )
+from src.server.database.conversation.responses import replace_agent_events
 from src.utils.cache.redis_cache import get_cache_client
 
 logger = logging.getLogger(__name__)
@@ -132,3 +137,99 @@ async def iter_subagent_events_full(
                 "redis_write_failed": bool(getattr(task, "redis_write_failed", False)),
             },
         )
+
+
+def record_to_persist_event(record: dict, thread_id: str) -> dict:
+    """Convert a captured-event record to persistence shape ``{event, data}``."""
+    data = dict(record.get("data") or {})
+    data["thread_id"] = thread_id
+    return {"event": record.get("event"), "data": data}
+
+
+async def persist_collected_events(
+    events: list[dict],
+    response_id: str,
+    thread_id: str,
+    workspace_id: str,
+    sandbox=None,
+) -> bool:
+    """Write subagent events into the turn's sse_events, replacing their agents' rows.
+
+    Returns True once the write landed; callers must not retire the Redis
+    capture streams on False, since they are the only remaining source of the
+    captured transcript.
+    """
+    if sandbox:
+        try:
+            from src.server.services.persistence.image_capture import (
+                capture_and_rewrite_images,
+            )
+
+            await capture_and_rewrite_images(
+                events, sandbox, thread_id=thread_id, workspace_id=workspace_id,
+            )
+        except Exception:
+            logger.warning(
+                "[IMAGE_CAPTURE] Hook B failed", exc_info=True,
+            )
+
+    # One bounded retry: the replay cache gate holds the turn uncacheable
+    # until these rows land, so a transiently failed write must not leave
+    # the turn rebuilding on every read for its lifetime. Each attempt runs
+    # in one row-locked transaction: concurrent atomic appends
+    # (compact/offload context_window) serialize on the lock instead of being
+    # erased, and any rows the turn itself saved for these agents give way to
+    # the full capture rather than duplicate it.
+    for attempt in (1, 2):
+        try:
+            if await replace_agent_events(response_id, events):
+                logger.info(
+                    f"[SubagentCollector] Updated sse_events for "
+                    f"response_id={response_id} (+{len(events)} events)"
+                )
+                return True
+            raise RuntimeError(f"no response row for {response_id}")
+        except Exception as e:
+            if attempt == 1:
+                await asyncio.sleep(2.0)
+                continue
+            logger.error(
+                f"[SubagentCollector] Failed to update sse_events "
+                f"response_id={response_id}: {e}",
+                exc_info=True,
+            )
+    return False
+
+
+@dataclass
+class ArchiveBuffer:
+    """One collection's archive writes: the events not yet landed, and
+    whether a replay was withheld.
+
+    Each task's events arrive in one batch and a write replaces its agents'
+    rows whole, so a landed batch is never sent again and a failed one rides
+    the next write. A withheld replay never entered the buffer, which leaves
+    the capture streams the only copy of that task whatever later writes do.
+    """
+
+    response_id: str
+    thread_id: str
+    workspace_id: str
+    user_id: str
+    sandbox: Any
+    unwritten: list[dict] = field(default_factory=list)
+    withheld: bool = False
+
+    async def flush(self) -> None:
+        """Write the unwritten events, and forget them once they land."""
+        if self.unwritten and await persist_collected_events(
+            self.unwritten, self.response_id, self.thread_id,
+            self.workspace_id, sandbox=self.sandbox,
+        ):
+            self.unwritten.clear()
+
+    @property
+    def complete(self) -> bool:
+        """Every event replayed from the capture streams has landed, so the
+        streams can be retired."""
+        return not self.withheld and not self.unwritten

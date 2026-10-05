@@ -35,6 +35,7 @@ from src.config.settings import (
     get_shutdown_timeout,
     get_wait_for_persistence_timeout,
 )
+from src.server.contracts.status import COLLECTED_ENDINGS
 from src.server.services.runs import (
     admission,
     finalization,
@@ -42,8 +43,10 @@ from src.server.services.runs import (
     subagent_collection,
     teardown,
 )
+from src.server.services.runs.finalization import FinalizeVerdict
 from src.server.services.runs.sse_producer import model_call_failure
 from src.server.services.runs.stream_writer import TransportLostError
+from src.server.services.runs.teardown import StopTeardown
 from src.server.dependencies.usage_limits import release_burst_slot
 
 logger = logging.getLogger(__name__)
@@ -89,6 +92,10 @@ class LocalRunExecution:
     active_connections: int = 0
 
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # Attached as an explicit cancel's teardown starts and filled in place by
+    # it; None for a run no explicit cancel tore down.
+    stop_teardown: Optional[StopTeardown] = None
 
     completion_callback: Optional[Callable[["LocalRunExecution"], Coroutine[Any, Any, None]]] = None
 
@@ -680,22 +687,32 @@ class LocalRunExecutor:
         #   except asyncio.CancelledError (consume_workflow):
         #     1. _flush_checkpoint(thread_id)        # if explicit_cancel
         #     2. cancel this run's orphan collectors # no post-stop mutation
-        #     3. cancel_run_tasks(force=True)        # kill this run's subagents
+        #     3. cancel_run_tasks(force=True,        # kill this run's subagents,
+        #          claim_for=run_id)                 #   claiming the settled ones
         #     4. drain killed-subagent events        # bounded (~stop_drain_timeout)
-        #     5. _finalize_run(kind="cancelled")     # persist merged sse_events + run_end frame
+        #     5. _finalize_run(kind="cancelled")     # persist merged sse_events + run_end frame,
+        #                                            #   bill the claim if the user stopped it
         #     6. raise
         #
         # Steps 2-4 are teardown_subagents_on_stop's own order, and the kill
         # MUST precede the drain: the drain reads its high-water at drain
         # start, so a pre-kill snapshot misses the frames a task emits between
-        # snapshot and kill. The drain must in turn complete before
-        # _finalize_run, so the merged subagent events are in place before
-        # persistence reads them.
+        # snapshot and kill. The claim rides the kill because the kill evicts
+        # the entries that hold the usage, before anyone knows whose ending
+        # this is. The drain must in turn complete before _finalize_run, so
+        # the merged subagent events are in place before persistence reads
+        # them.
         # =====================================================================
         except asyncio.CancelledError:
+            stop = StopTeardown()
             async with self.task_lock:
                 ti = self.executions.get(key)
                 explicit = bool(ti.explicit_cancel) if ti else False
+                # Attached before the teardown starts: a second cancel can
+                # send the finalize in while the kill is still unwinding, and
+                # the stop bills the claim the kill publishes into it.
+                if ti is not None and explicit:
+                    ti.stop_teardown = stop
 
             try:
                 # NB: suppress(Exception) below catches flush/teardown FAILURES
@@ -722,13 +739,13 @@ class LocalRunExecutor:
                     with suppress(Exception):
                         await asyncio.shield(self._flush_checkpoint(thread_id, run_id))
 
-                    # 2-4. Drain killed-subagent events, cancel orphan
-                    #      collectors, then kill subagents + wipe the registry.
-                    #      Merged events are stashed on metadata so
-                    #      _finalize_run persists them.
+                    # 2-4. Cancel orphan collectors, kill and claim the
+                    #      run's subagents, then drain their events. The
+                    #      result fills ``stop_teardown`` for _finalize_run
+                    #      to archive and, on a user stop, bill.
                     with suppress(Exception):
                         await asyncio.shield(
-                            self._teardown_subagents_on_stop(thread_id, run_id)
+                            self._teardown_subagents_on_stop(thread_id, run_id, stop)
                         )
             finally:
                 # 5. Persist the cancellation. In a ``finally`` + ``shield`` so a
@@ -784,22 +801,18 @@ class LocalRunExecutor:
 
         task.add_done_callback(_discard)
 
-    async def _teardown_subagents_on_stop(self, thread_id: str, run_id: str) -> None:
-        """Run the stop teardown, lending it this executor's orphan-collector
-        bucket, then stash the drained events for the finalize to persist."""
-        merged_subagent_events = await teardown.teardown_subagents_on_stop(
+    async def _teardown_subagents_on_stop(
+        self, thread_id: str, run_id: str, stop: StopTeardown
+    ) -> None:
+        """Run the stop teardown into ``stop``, lending it this executor's
+        orphan-collector bucket."""
+        await teardown.teardown_subagents_on_stop(
             thread_id,
             run_id,
+            stop,
             orphan_collectors=self._orphan_collectors.get(thread_id, {}),
             drain=self._drain_killed_subagent_events,
         )
-
-        # Stash merged events for _mark_cancelled to fold into persisted sse_events.
-        if merged_subagent_events:
-            async with self.task_lock:
-                ti = self.executions.get((thread_id, run_id))
-                if ti is not None:
-                    ti.metadata["_stop_subagent_events"] = merged_subagent_events
 
     async def _drain_killed_subagent_events(
         self, thread_id: str, tasks: list
@@ -852,30 +865,10 @@ class LocalRunExecutor:
 
     # ========== Subagent collection ==========
 
-    async def _delete_task_keys_if_owned(
-        self,
-        cache,
-        thread_id: str,
-        task_id: str,
-        response_id: str,
-        task_run_id: Optional[str] = None,
-    ) -> None:
-        await subagent_collection.delete_task_keys_if_owned(
-            cache, thread_id, task_id, response_id, task_run_id=task_run_id
-        )
-
-    async def _replay_owned_task_events(
-        self, thread_id: str, task, response_id: str, out: list[dict]
-    ) -> bool:
-        return await subagent_collection.replay_owned_task_events(
-            thread_id, task, response_id, out
-        )
-
     async def _collect_subagent_results_for_turn(
         self,
         thread_id: str,
         response_id: str,
-        original_chunks: list[dict[str, Any]],
         tasks: list,
         workspace_id: str,
         user_id: str,
@@ -884,51 +877,10 @@ class LocalRunExecutor:
         sandbox=None,
     ) -> None:
         await subagent_collection.collect_subagent_results_for_turn(
-            thread_id, response_id, original_chunks, tasks,
+            thread_id, response_id, tasks,
             workspace_id, user_id, timeout=timeout, is_byok=is_byok,
             sandbox=sandbox,
             track_orphan_collector=self._track_orphan_collector,
-        )
-
-    async def _publish_settled_wake(self, thread_id: str) -> None:
-        await subagent_collection.publish_settled_wake(thread_id)
-
-    async def _await_drain_and_cleanup_tasks(
-        self,
-        tasks: list,
-        thread_id: str,
-        response_id: str,
-        timeout: float | None = None,
-        *,
-        retire_streams: bool = True,
-    ) -> None:
-        await subagent_collection.await_drain_and_cleanup_tasks(
-            tasks, thread_id, response_id, timeout=timeout,
-            retire_streams=retire_streams,
-        )
-
-    async def _collect_orphaned_subagent_results(
-        self,
-        thread_id: str,
-        response_id: str,
-        main_chunks: list[dict[str, Any]],
-        prior_subagent_events: list[dict],
-        tasks: list,
-        workspace_id: str,
-        user_id: str,
-        is_byok: bool = False,
-        sandbox=None,
-    ) -> None:
-        await subagent_collection.collect_orphaned_subagent_results(
-            thread_id=thread_id,
-            response_id=response_id,
-            main_chunks=main_chunks,
-            prior_subagent_events=prior_subagent_events,
-            tasks=tasks,
-            workspace_id=workspace_id,
-            user_id=user_id,
-            is_byok=is_byok,
-            sandbox=sandbox,
         )
 
     # ========== Terminal handlers ==========
@@ -951,6 +903,7 @@ class LocalRunExecutor:
         info.metadata.pop("sandbox", None)
         info.metadata.pop("run_handle", None)
         info.metadata.pop("artifact_hook", None)
+        info.stop_teardown = None
 
     @staticmethod
     def _drop_finished_task(info: LocalRunExecution, task: asyncio.Task) -> None:
@@ -1004,6 +957,7 @@ class LocalRunExecutor:
             cancelled_by_user = bool(task_info.user_stop)
             completion_callback = task_info.completion_callback
             graph = task_info.graph
+            stop = task_info.stop_teardown
 
         handle = metadata.get("run_handle")
         handler = metadata.get("handler")
@@ -1013,6 +967,10 @@ class LocalRunExecutor:
         status, phase, interrupt_reason, error = await finalization.classify_outcome(
             kind, handler=handler, graph=graph, thread_id=thread_id, error=error
         )
+        # The stop drain's events the finalize archives, copied: a teardown a
+        # second cancel left draining still appends after the CAS, and the
+        # lanes it adds then are archived once their writers settle instead.
+        carried_events = list(stop.events) if stop and status == "cancelled" else []
 
         (
             execution_time,
@@ -1029,6 +987,7 @@ class LocalRunExecutor:
             cancelled_by_user=cancelled_by_user,
             workspace_id=workspace_id,
             user_id=user_id,
+            stop_events=carried_events,
         )
         if exc is not None:
             persist_metadata = {
@@ -1044,11 +1003,9 @@ class LocalRunExecutor:
             }
 
         # ---- the single terminal transition ----
-        # finalize_applied gates every terminal business effect below: losers
+        # verdict.applied gates every terminal business effect below: losers
         # of the finalize race (and failed finalizes) do nothing. The
         # handle-less legacy path keeps its local effects so it can't wedge.
-        finalize_applied = True
-        survivor_status: Optional[str] = None
         if handle is not None:
             # I5: terminal hooks (burst release, report-back dispatch,
             # needs-input wake, watch clear) ride the finalize transaction
@@ -1074,25 +1031,27 @@ class LocalRunExecutor:
                 async def tail_drain() -> None:
                     await self._drain_run_subagent_writers(thread_id, run_id, guard)
 
-            finalize_applied, status, survivor_status = (
-                await finalization.drive_finalize_cas(
-                    key, handle, outcome, tail_drain=tail_drain
-                )
+            verdict = await finalization.drive_finalize_cas(
+                key, handle, outcome, tail_drain=tail_drain
             )
         else:
             logger.error(
                 f"[LocalRunExecutor] no run_handle for {key}; durable "
                 f"finalize skipped (legacy path?)"
             )
+            verdict = FinalizeVerdict(
+                applied=True,
+                status=status,
+                stopped_by_user=status == "cancelled" and cancelled_by_user,
+            )
 
         # ---- local terminal mark (after the CAS: a losing finalize adopts
         # the survivor's status instead of relabeling the winner's). A THROWN
         # finalize (applied=False, no survivor) marks nothing: the row is
-        # still in_progress, so the entry must stay RUNNING — with its
-        # run_handle — for cleanup's dead-handle fail_open path. ----
-        finalize_concluded = finalize_applied or survivor_status is not None
-        if finalize_concluded:
-            local_status = survivor_status or status
+        # still in_progress, so the entry must stay RUNNING, with its
+        # run_handle, for cleanup's dead-handle fail_open path. ----
+        if verdict.concluded:
+            local_status = verdict.survivor_status or verdict.status
             async with self.task_lock:
                 task_info.status = {
                     "cancelled": LocalRunStatus.CANCELLED,
@@ -1103,12 +1062,14 @@ class LocalRunExecutor:
                 if error:
                     task_info.error = error
 
-        if finalize_applied:
+        if verdict.applied:
             await self._apply_post_terminal_effects(
                 thread_id,
                 run_id,
+                verdict,
                 kind=kind,
-                status=status,
+                stop=stop,
+                carried_events=carried_events,
                 task_info=task_info,
                 completion_callback=completion_callback,
                 execution_time=execution_time,
@@ -1126,15 +1087,10 @@ class LocalRunExecutor:
 
         # A thrown finalize also withholds persistence_complete: the row is
         # not terminal, so waiters must time out rather than read it as done.
-        if finalize_concluded:
+        if verdict.concluded:
             task_info.persistence_complete.set()
             async with self.task_lock:
                 self._release_terminal_refs(thread_id, run_id)
-
-    # Legit tail subagents (deep research) run 15+ min; this only bounds how
-    # long a HUNG writer can pin a budget slot before the teardown discards
-    # the session out from under it.
-    TAIL_DRAIN_TIMEOUT = 1800.0
 
     async def _drain_run_subagent_writers(
         self, thread_id: str, run_id: str, guard
@@ -1156,7 +1112,7 @@ class LocalRunExecutor:
         )
 
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + self.TAIL_DRAIN_TIMEOUT
+        deadline = loop.time() + subagent_collection.SUBAGENT_TAIL_TIMEOUT
         while True:
             bg_registry = await BackgroundRegistryStore.get_instance().get_registry(
                 thread_id
@@ -1173,7 +1129,7 @@ class LocalRunExecutor:
                 raise TimeoutError(
                     f"tail drain deadline: {len(writers)} subagent writer(s) "
                     f"still running for run={run_id} after "
-                    f"{self.TAIL_DRAIN_TIMEOUT:.0f}s"
+                    f"{subagent_collection.SUBAGENT_TAIL_TIMEOUT:.0f}s"
                 )
             logger.info(
                 f"[LocalRunExecutor] guard tail-drain awaiting "
@@ -1185,9 +1141,11 @@ class LocalRunExecutor:
         self,
         thread_id: str,
         run_id: str,
+        verdict: FinalizeVerdict,
         *,
         kind: Literal["stream_end", "cancelled", "failed"],
-        status: str,
+        stop: Optional[StopTeardown],
+        carried_events: list[dict],
         task_info,
         completion_callback,
         execution_time,
@@ -1201,6 +1159,7 @@ class LocalRunExecutor:
         again). Isolated: a side-effect failure must not propagate back into
         _run_workflow's failure handler and trigger a second finalize."""
         key = (thread_id, run_id)
+        status = verdict.status
         try:
             # Visible run_end AFTER the commit, carrying the adopted
             # status (I6). Attached consumers yield it and close. Losers
@@ -1218,32 +1177,37 @@ class LocalRunExecutor:
                         exc_info=True,
                     )
 
-            # Collection follows the ADOPTED status: only a run that
-            # actually ended completed/interrupted gets a collector. A
-            # terminal error or (adopted) cancel instead kills this run's
-            # still-pending subagents — run-scoped, so prior turns' orphan
-            # collectors and claims survive. No drain: the CAS already
-            # committed this run's sse_events, and a cancelled/errored
-            # run's subagent output is deliberately never billed. (On the
-            # explicit user-stop path the teardown already popped the
-            # whole registry; the scoped call is then a no-op.)
-            if kind == "stream_end" and status in ("completed", "interrupted"):
+            # The run's subagents end by the ADOPTED status. A run that ended
+            # completed/interrupted gets a collector. Any other ending has
+            # them killed, claimed and archived: a lane the finalize did not
+            # carry (no teardown ran, or its drain withheld the lane while a
+            # writer unwound) is archived once its writers settle. Only a
+            # user stop bills them, finished ones included: the stop is the
+            # user's choice, and the subagents' output may already be in use.
+            # A failure, a timeout or a shutdown is not, so its subagents go
+            # unbilled. The kill is run-scoped, so prior turns' orphan
+            # collectors and claims survive.
+            if kind == "stream_end" and status in COLLECTED_ENDINGS:
                 await self._spawn_subagent_collector(
                     thread_id, run_id, metadata, workspace_id, user_id
                 )
             elif status in ("error", "cancelled"):
                 try:
-                    from src.server.services.background_registry_store import (
-                        BackgroundRegistryStore,
-                    )
-
-                    await BackgroundRegistryStore.get_instance().cancel_run_tasks(
-                        thread_id, run_id, force=True
+                    await subagent_collection.end_run_subagents(
+                        thread_id,
+                        run_id,
+                        workspace_id,
+                        user_id,
+                        claimed_at_stop=stop.claimed if stop else [],
+                        carried_events=carried_events,
+                        bill=verdict.stopped_by_user,
+                        is_byok=metadata.get("is_byok", False),
+                        sandbox=metadata.get("sandbox"),
                     )
                 except Exception:
                     logger.warning(
                         f"[LocalRunExecutor] run-scoped subagent "
-                        f"cleanup failed for {key}",
+                        f"teardown failed for {key}",
                         exc_info=True,
                     )
         except Exception:
@@ -1292,35 +1256,6 @@ class LocalRunExecutor:
                 f"thread_id={thread_id} run_id={run_id} after {timeout}s"
             )
             return False
-
-    async def _persist_collected_events(
-        self,
-        main_chunks: list[dict],
-        subagent_events: list[dict],
-        response_id: str,
-        thread_id: str,
-        workspace_id: str,
-        user_id: str,
-        sandbox=None,
-    ) -> bool:
-        return await subagent_collection.persist_collected_events(
-            main_chunks, subagent_events, response_id,
-            thread_id, workspace_id, user_id, sandbox=sandbox,
-        )
-
-    async def _persist_subagent_usage(
-        self,
-        response_id: str,
-        tasks: list,
-        thread_id: str,
-        workspace_id: str,
-        user_id: str,
-        is_byok: bool = False,
-    ) -> None:
-        await subagent_collection.persist_subagent_usage(
-            response_id, tasks, thread_id, workspace_id, user_id,
-            is_byok=is_byok,
-        )
 
     # ---------- status & introspection ----------
 

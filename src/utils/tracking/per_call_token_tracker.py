@@ -108,8 +108,9 @@ class PerCallTokenTracker(BaseCallbackHandler):
         >>> costs = calculate_cost_from_per_call_records(tracker.get_per_call_records())
 
     ``per_call_records`` is the private buffer; ``get_per_call_records()`` is the
-    reader-facing snapshot. Background subagents share one tracker, so anything
-    that iterates the buffer has to go through the accessor.
+    reader-facing snapshot. Under an async run this sync handler's callbacks
+    fire on executor threads, so anything that iterates the buffer has to go
+    through the accessor.
     """
 
     def __init__(self) -> None:
@@ -368,10 +369,11 @@ class PerCallTokenTracker(BaseCallbackHandler):
     def get_per_call_records(self) -> List[Dict[str, Any]]:
         """Snapshot of the per-call records, never the live buffer.
 
-        Background subagents append to the same tracker while a turn winds down, so
-        every reader needs its own copy taken under the lock. In a record
-        ``model_name`` is the billing key and ``served_model`` the raw vendor echo,
-        diagnostic only and never priced; the append site documents the rest.
+        Appends land on executor threads while readers such as the credit gate
+        run on the loop, so every reader needs its own copy taken under the
+        lock. In a record ``model_name`` is the billing key and ``served_model``
+        the raw vendor echo, diagnostic only and never priced; the append site
+        documents the rest.
         """
         with self._lock:
             return self.per_call_records.copy()

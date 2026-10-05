@@ -12,7 +12,8 @@ import secrets
 import time
 import uuid as uuid_mod
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import structlog
 
@@ -30,10 +31,12 @@ __all__ = [
     "CANCEL_UNWIND_TIMEOUT",
     "BackgroundTask",
     "BackgroundTaskRegistry",
+    "RunTasksKilled",
     "TaskRunRejected",
     "TaskWriterLive",
     "TerminalStatus",
     "TransportLostError",
+    "UsageTake",
 ]
 
 # Bounded wait for a cancelled task's unwind before its registry entry drops
@@ -44,6 +47,18 @@ CANCEL_UNWIND_TIMEOUT = 15.0
 # a hung ledger call must not block the user-facing local cancel.
 _CANCEL_INTENT_STAMP_TIMEOUT_S = 2.0
 
+# Strong refs for shielded bills: one a cancelled resume no longer awaits is
+# otherwise eligible for GC mid-flight.
+_in_flight_bills: set[asyncio.Task] = set()
+
+
+@dataclass(frozen=True)
+class RunTasksKilled:
+    """What ``cancel_run_tasks`` did: the live tasks it cancelled, and the
+    settled ones it claimed for ``claim_for`` (always empty without one)."""
+
+    cancelled: int
+    claimed: list[BackgroundTask] = field(default_factory=list)
 
 
 class TransportLostError(RuntimeError):
@@ -84,32 +99,56 @@ class TaskWriterLive(Exception):
         super().__init__(f"live writer already registered for {task.tool_call_id}")
 
 
+class UsageTake(NamedTuple):
+    """Usage taken off a task, billed on its own row under ``response_id``.
+
+    ``settle_run_id`` is the ledger run that spent it, snapshotted with the
+    records for the same reason they are cleared together: a resume remints
+    ``task_run_id``, and the biller reads this only after several awaits.
+    Settling the reminted id would mark the *live* run billed on its
+    predecessor's usage alone, after which its heartbeats bounce off the
+    settle guard and its spend is never seen again.
+    """
+
+    task: BackgroundTask
+    records: list
+    tool_usage: dict
+    settle_run_id: str | None
+    response_id: str
+
+
+class _LateRemoval(NamedTuple):
+    """A cancelled entry's pending removal, for the round it was scheduled in."""
+
+    task: BackgroundTask
+    round: tuple
+    reaper: asyncio.Task
+
+
+def _take_usage(task: BackgroundTask, response_id: str) -> UsageTake | None:
+    if not (task.per_call_records or task.tool_usage):
+        return None
+    records, tool_usage = task.per_call_records, task.tool_usage
+    task.per_call_records = []
+    task.tool_usage = {}
+    return UsageTake(task, records, tool_usage, task.task_run_id or None, response_id)
+
+
 def take_task_usage(
     tasks: list[BackgroundTask], response_id: str
-) -> list[tuple[BackgroundTask, list, dict, str | None]]:
+) -> list[UsageTake]:
     """Snapshot-and-clear the usage records ``response_id`` still owns.
 
     Module-level so a torn-down thread with no registry left to lock can run
     the same body: it has no awaits, so it is atomic either way, and the lock
     only orders it against concurrent registry mutation.
-
-    ``task_run_id`` is snapshotted with the records for the same reason they
-    are cleared together: a resume remints it, and the caller reads it only
-    after several awaits. Settling the reminted id would mark the *live* run
-    billed on its predecessor's usage alone, after which its heartbeats bounce
-    off the settle guard and its spend is never seen again.
     """
-    taken: list[tuple[BackgroundTask, list, dict, str | None]] = []
-    for task in tasks:
-        if task.collector_response_id != response_id:
-            continue
-        if not (task.per_call_records or task.tool_usage):
-            continue
-        records, tool_usage = task.per_call_records, task.tool_usage
-        task.per_call_records = []
-        task.tool_usage = {}
-        taken.append((task, records, tool_usage, task.task_run_id or None))
-    return taken
+    return [
+        take
+        for task in tasks
+        if task.collector_response_id == response_id
+        and (take := _take_usage(task, response_id)) is not None
+    ]
 
 
 def _estimate_record_bytes(record: dict[str, Any]) -> int:
@@ -138,7 +177,9 @@ class BackgroundTaskRegistry:
         self._task_id_to_tool_call_id: dict[str, str] = {}  # task_id -> tool_call_id
         self._lock = asyncio.Lock()
         self._results: dict[str, Any] = {}
-        self._late_removals: set[asyncio.Task] = set()
+        # Entries kept until their cancelled writers settle; one reaper per
+        # round however many kills find it unwinding.
+        self._late_removals: dict[str, _LateRemoval] = {}
         self.current_turn_index: int = 0
         self.current_run_id: str | None = None
         self.thread_id: str = thread_id
@@ -158,6 +199,13 @@ class BackgroundTaskRegistry:
         # raising TaskRunRejected on conflict. None in CLI/tests — spawn and
         # finalize then skip the ledger entirely.
         self.run_ledger: Any | None = None
+        # (thread_id, take) -> None, server-injected: bills usage a resume
+        # takes off a task under the earlier run that spent it, if that run's
+        # ending bills its subagents. None in CLI/tests, where a resume leaves
+        # the usage on the task.
+        self.usage_biller: (
+            Callable[[str, UsageTake], Awaitable[None]] | None
+        ) = None
 
     async def mark_result_delivered(self, task: BackgroundTask) -> None:
         """Stamp the durable result_delivered_at on the run's ledger row —
@@ -257,11 +305,7 @@ class BackgroundTaskRegistry:
             # registers freely (settle paths stamp completed).
             existing = self._tasks.get(tool_call_id)
             if existing is not None and (
-                not existing.completed
-                or any(
-                    t is not None and not t.done()
-                    for t in (existing.asyncio_task, existing.handler_task)
-                )
+                not existing.completed or existing.live_writers
             ):
                 raise TaskWriterLive(existing)
 
@@ -375,7 +419,7 @@ class BackgroundTaskRegistry:
 
     async def take_owned_usage(
         self, tasks: list[BackgroundTask], response_id: str
-    ) -> list[tuple[BackgroundTask, list, dict, str | None]]:
+    ) -> list[UsageTake]:
         """Take the usage records this collector already owns, under the lock.
 
         The billing sibling of the claim family: ownership is checked rather
@@ -399,11 +443,8 @@ class BackgroundTaskRegistry:
         async with self._lock:
             writers: list[asyncio.Task] = []
             for task in self._tasks.values():
-                if not predicate(task):
-                    continue
-                for writer in (task.asyncio_task, task.handler_task):
-                    if writer is not None and not writer.done():
-                        writers.append(writer)
+                if predicate(task):
+                    writers.extend(task.live_writers)
             return writers
 
     def _locked_get_by_task_id(self, task_id: str) -> BackgroundTask | None:
@@ -416,20 +457,67 @@ class BackgroundTaskRegistry:
         async with self._lock:
             return self._locked_get_by_task_id(task_id)
 
-    async def reclaim_for_resume(self, task: BackgroundTask) -> None:
-        """Atomically steal a task back from any collector for a resume.
+    async def reclaim_for_resume(
+        self,
+        task: BackgroundTask,
+        *,
+        task_run_id: str | None,
+        spawned_run_id: str | None,
+    ) -> UsageTake | None:
+        """Atomically steal a task back from any collector and rebind it to
+        the resuming round, returning usage an earlier run left for the
+        caller to bill now.
 
-        Clears the collector claim and restores registry membership in one
-        lock-held section: past this point every collector mutation site
-        (settle-mark, replay, report-back enqueue, cleanup, eviction) fences
-        on the claim and skips the task, and an eviction that already
-        happened is healed by the re-insert — the resumed writer always
-        spawns onto a registered entry.
+        One lock-held section clears the claim, takes that usage, remints the
+        run ids and restores registry membership: past it every collector
+        mutation site (settle-mark, replay, report-back enqueue, cleanup,
+        eviction) fences on the claim and skips the task, no take can pair
+        the old usage with the new ids, and an eviction that already happened
+        is healed by the re-insert. The usage leaves because the resumed round
+        may end unbilled and take it along; the resuming run's own earlier
+        round stays, since one ending governs both rounds.
         """
         async with self._lock:
+            earlier = task.collector_response_id or task.spawned_run_id
+            taken = None
+            if (
+                earlier is not None
+                and earlier != spawned_run_id
+                and self.usage_biller is not None
+            ):
+                taken = _take_usage(task, earlier)
             task.collector_response_id = None
+            task.task_run_id = task_run_id
+            task.spawned_run_id = spawned_run_id
             self._tasks[task.tool_call_id] = task
             self._task_id_to_tool_call_id[task.task_id] = task.tool_call_id
+            return taken
+
+    async def bill_usage(self, take: UsageTake) -> None:
+        """Hand a take to the server's biller, never raising.
+
+        The take has left the task, so a failed bill loses that round rather
+        than risking it twice, and the resume that took it runs either way.
+        The bill is shielded for the same reason: a stop that cancels the
+        resuming turn mid-bill would otherwise drop a round nothing else holds.
+        """
+        if self.usage_biller is None:
+            return
+        bill = asyncio.ensure_future(self._bill(take))
+        _in_flight_bills.add(bill)
+        bill.add_done_callback(_in_flight_bills.discard)
+        await asyncio.shield(bill)
+
+    async def _bill(self, take: UsageTake) -> None:
+        try:
+            await self.usage_biller(self.thread_id, take)
+        except Exception:
+            logger.warning(
+                "Resumed subagent's earlier round went unbilled",
+                task_id=take.task.task_id,
+                response_id=take.response_id,
+                exc_info=True,
+            )
 
     async def get_task_by_task_id(self, task_id: str) -> BackgroundTask | None:
         """Alias for get_by_task_id, used by the HTTP layer."""
@@ -905,12 +993,12 @@ class BackgroundTaskRegistry:
             )
 
     def _cancellable(self, task: "BackgroundTask") -> bool:
-        """Not-completed with a live writer OR no writer handle at all — the
+        """Not-completed with a live writer OR no writer handle at all. The
         latter is a STARTING task (registered, spawn awaits in flight):
         stamping it seals its capture and the publish fence aborts the
         pending writer. A done handle on a not-completed task is a finished
-        writer whose done-callback hasn't settled it yet — leave that to
-        settle as what it actually was."""
+        writer nothing has adopted yet; it settles as what it actually was,
+        never as cancelled."""
         if task.completed:
             return False
         return task.asyncio_task is None or not task.asyncio_task.done()
@@ -978,14 +1066,27 @@ class BackgroundTaskRegistry:
             logger.info("Cancelled background task by request", task_id=task_id)
         return cancelled > 0
 
-    async def cancel_run_tasks(self, run_id: str, *, force: bool = False) -> int:
+    async def cancel_run_tasks(
+        self,
+        run_id: str,
+        *,
+        force: bool = False,
+        claim_for: str | None = None,
+    ) -> RunTasksKilled:
         """Cancel and drop only the tasks spawned by ``run_id``.
 
         Run-scoped teardown for a run that finalized error/cancelled with no
         collector: thread-wide ``cancel_all`` here would abort another turn's
         orphan collector mid-collection. Tasks with an unknown spawned_run_id
-        are left alone — killing work whose owner is ambiguous is the failure
-        mode this exists to prevent.
+        are left alone, since killing work whose owner is ambiguous is the
+        failure mode this exists to prevent.
+
+        ``claim_for`` claims the settled tasks for a caller that bills them,
+        in the same lock section that evicts them: an entry leaves the
+        registry with the usage it holds, so a claim taken any earlier could
+        cover a task the kill then leaves running, and one taken later finds
+        it gone. It claims a task whatever it holds yet, since a writer still
+        unwinding merges its usage only as it settles.
         """
         async with self._lock:
             intent_targets = [
@@ -994,46 +1095,62 @@ class BackgroundTaskRegistry:
                 if t.spawned_run_id == run_id and self._cancellable(t)
             ]
         await self.stamp_cancel_intent(intent_targets)
-        scoped: list[str] = []
         async with self._lock:
             cancelled = self._cancel_marked(intent_targets, force=force)
+            # Each task with the writer it has now: a resume can hand a task
+            # to another run's round while this kill waits below, and only
+            # this run's round is the kill's to settle, claim or evict.
             scoped = [
-                tool_call_id
+                (tool_call_id, task, task.asyncio_task)
                 for tool_call_id, task in self._tasks.items()
                 if task.spawned_run_id == run_id
             ]
             # Snapshot the writers before dropping entries: a cancelled task
             # keeps unwinding (checkpoint writes in cleanup sections) after
             # cancel() returns, and the writer-guard tail drain discovers
-            # writers THROUGH this registry — removing a live one would let
+            # writers THROUGH this registry, so removing a live one would let
             # the run's pinned session release out from under it.
             unwinding = [
-                t
-                for tool_call_id in scoped
-                if (task := self._tasks.get(tool_call_id)) is not None
-                for t in (task.asyncio_task, task.handler_task)
-                if t is not None and not t.done()
+                writer for _, task, _ in scoped for writer in task.live_writers
             ]
         if unwinding:
             await asyncio.wait(unwinding, timeout=CANCEL_UNWIND_TIMEOUT)
-        # No collector will ever claim these entries — drop them so the
-        # registry doesn't grow across turns on a long-lived thread. A task
-        # whose writers are STILL alive after the bounded wait stays
-        # registered (drain-visible); the guard drain's own deadline is the
-        # backstop for a writer that never dies.
+        # No collector will ever claim these entries, so drop them or the
+        # registry grows across turns on a long-lived thread. A task whose
+        # writers are STILL alive after the bounded wait stays registered
+        # (drain-visible); the guard drain's own deadline is the backstop for
+        # a writer that never dies.
+        claimed: list[BackgroundTask] = []
         async with self._lock:
-            for tool_call_id in scoped:
-                task = self._tasks.get(tool_call_id)
-                if task is None:
+            for tool_call_id, task, writer in scoped:
+                if (
+                    self._tasks.get(tool_call_id) is not task
+                    or task.spawned_run_id != run_id
+                ):
                     continue
+                if (
+                    not task.completed
+                    and writer is not None
+                    and task.asyncio_task is writer
+                    and writer.done()
+                ):
+                    # Finished before the kill and never adopted, so the kill
+                    # left it uncancelled. Settle it as what it was: this run
+                    # has no collector, so unsettled it would stay registered,
+                    # holding its writer's context, for the thread's lifetime.
+                    task.adopt_writer_outcome(writer)
+                if (
+                    claim_for is not None
+                    and task.collector_response_id is None
+                    and not task.is_pending
+                ):
+                    task.collector_response_id = claim_for
+                    claimed.append(task)
                 if not task.completed:
-                    # Registered during the stamp window — deliberately left
+                    # Registered during the stamp window, deliberately left
                     # uncancelled (no durable intent), so not ours to evict.
                     continue
-                if any(
-                    t is not None and not t.done()
-                    for t in (task.asyncio_task, task.handler_task)
-                ):
+                if task.live_writers:
                     logger.warning(
                         "Cancelled background task still unwinding; left "
                         "registered for the guard drain",
@@ -1054,7 +1171,7 @@ class BackgroundTaskRegistry:
                 count=cancelled,
                 force=force,
             )
-        return cancelled
+        return RunTasksKilled(cancelled=cancelled, claimed=claimed)
 
     async def cancel_owner_children(self, owner_task_id: str, *, reason: str) -> int:
         """Cancel one owner's live children — the teardown a workflow run does
@@ -1134,8 +1251,19 @@ class BackgroundTaskRegistry:
     def _remove_when_settled(self, tool_call_id: str, task) -> None:
         """A cancelled entry retained for the guard drain must still leave
         the registry once its writers finally settle, or a long-lived thread
-        leaks one entry per slow unwind. Identity-checked under the lock so
-        a re-registration of the same tool_call_id is never removed."""
+        leaks one entry per slow unwind.
+
+        Checked under the lock against the entry and the round it was
+        scheduled for, so neither a re-registration of the tool_call_id nor
+        a resume of the same task is removed. The round is the ledger run and
+        the writer handle, which a resume replaces even where no ledger runs.
+        """
+        round_ = (task.task_run_id, task.asyncio_task)
+        pending = self._late_removals.get(tool_call_id)
+        if pending is not None and pending.task is task and pending.round == round_:
+            return
+        if pending is not None:
+            pending.reaper.cancel()
         writers = [
             t for t in (task.asyncio_task, task.handler_task) if t is not None
         ]
@@ -1146,14 +1274,23 @@ class BackgroundTaskRegistry:
             except Exception:
                 pass
             async with self._lock:
-                if self._tasks.get(tool_call_id) is task:
+                if (
+                    self._tasks.get(tool_call_id) is task
+                    and (task.task_run_id, task.asyncio_task) == round_
+                ):
                     self._remove_entry_unlocked(tool_call_id)
 
         reaper = asyncio.create_task(
             _late_remove(), name=f"bg-task-late-remove-{tool_call_id[:8]}"
         )
-        self._late_removals.add(reaper)
-        reaper.add_done_callback(self._late_removals.discard)
+        self._late_removals[tool_call_id] = _LateRemoval(task, round_, reaper)
+
+        def _forget(done: asyncio.Task) -> None:
+            entry = self._late_removals.get(tool_call_id)
+            if entry is not None and entry.reaper is done:
+                del self._late_removals[tool_call_id]
+
+        reaper.add_done_callback(_forget)
 
     def _clear_unlocked(self) -> None:
         """Drop all task/result/lookup state. Caller owns concurrency control."""

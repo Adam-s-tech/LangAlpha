@@ -3,7 +3,7 @@
 Covers:
 - A2: Subagent collector filters by ``spawned_run_id`` so prior-turn
   subagents can't get claimed by a later turn's collector.
-- A7: ``_await_drain_and_cleanup_tasks`` evicts collected tasks from the
+- A7: ``await_drain_and_cleanup_tasks`` evicts collected tasks from the
   per-thread registry so the dict doesn't grow unboundedly across turns.
 - A8: The claim loop in ``_finalize_run`` (``_spawn_subagent_collector``) holds
   ``bg_registry._lock`` so two concurrent collectors can't both observe
@@ -25,6 +25,7 @@ from ptc_agent.agent.middleware.background_subagent.registry import (
     BackgroundTask,
     BackgroundTaskRegistry,
 )
+from src.server.services.runs import subagent_collection
 from src.server.services.runs.executor import (
     LocalRunExecutor,
     LocalRunExecution,
@@ -243,7 +244,7 @@ class TestClaimLoopHoldsRegistryLock:
 
 
 # ---------------------------------------------------------------------------
-# A7 — _await_drain_and_cleanup_tasks evicts from registry
+# A7: await_drain_and_cleanup_tasks evicts from registry
 # ---------------------------------------------------------------------------
 
 
@@ -253,7 +254,6 @@ class TestRegistryEvictionAfterDrain:
     async def test_drain_removes_task_from_registry_dict(self):
         """After cleanup, the registry's _tasks dict is empty so long-lived
         threads don't accumulate completed-subagent entries forever."""
-        btm = _make_btm()
         thread_id = "thread-D"
 
         registry = BackgroundTaskRegistry(thread_id=thread_id)
@@ -286,7 +286,7 @@ class TestRegistryEvictionAfterDrain:
             "src.server.services.runs.subagent_collection.get_sse_drain_timeout",
             return_value=0.1,
         ):
-            await btm._await_drain_and_cleanup_tasks(
+            await subagent_collection.await_drain_and_cleanup_tasks(
                 [task_a, task_b], thread_id, "resp-1"
             )
 
@@ -299,7 +299,6 @@ class TestRegistryEvictionAfterDrain:
         installs a live writer). The stale collector's cleanup must not null
         the new writer's handles or evict the entry — the resuming run's
         tail drain and collector depend on both."""
-        btm = _make_btm()
         thread_id = "thread-D"
 
         registry = BackgroundTaskRegistry(thread_id=thread_id)
@@ -332,7 +331,7 @@ class TestRegistryEvictionAfterDrain:
                 "src.server.services.runs.subagent_collection.get_sse_drain_timeout",
                 return_value=0.1,
             ):
-                await btm._await_drain_and_cleanup_tasks(
+                await subagent_collection.await_drain_and_cleanup_tasks(
                     [task], thread_id, "resp-1"
                 )
 

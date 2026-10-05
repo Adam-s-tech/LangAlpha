@@ -65,6 +65,7 @@ def _patch_common(
     manager = MagicMock()
     manager.signal_cancel = AsyncMock(return_value=manager_cancel_returns)
     manager.has_active_task_for_thread = AsyncMock(return_value=has_active_returns)
+    manager.wait_for_persistence = AsyncMock(return_value=False)
 
     runner = MagicMock()
     runner.request_stop = AsyncMock(return_value=mutation_stop_returns)

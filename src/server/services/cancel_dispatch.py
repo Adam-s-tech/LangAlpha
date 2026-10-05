@@ -152,6 +152,10 @@ async def cancel_workflow(thread_id: str, run_id: Optional[str] = None) -> dict:
             # worker while this registry holds a terminal local run's live
             # tail, whose guard drain must keep seeing its writers.
             if target_run_id:
+                # A run this worker is still finalizing reads as inactive once
+                # its terminal mark lands, before a stop's bill has claimed
+                # its subagents; killing them first would evict that usage.
+                await manager.wait_for_persistence(thread_id, target_run_id)
                 from src.server.services.background_registry_store import (
                     BackgroundRegistryStore,
                 )

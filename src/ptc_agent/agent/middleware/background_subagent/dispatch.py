@@ -43,11 +43,12 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-# Keys that must never leak from the launching turn's config into a
-# dispatched child. The Task-tool path passes its parent config through
-# wholesale, and each Task call runs inside its OWN tool-node task, so its
-# per-call pregel state is fresh. Direct dispatch reuses ONE captured config
-# for every child, so the per-call state must be dropped to emulate that:
+# The launching call's per-call keys, which a dispatched child must not
+# inherit. A Task call builds its config inside its OWN tool-node task, so
+# that state is fresh for every call; direct dispatch reuses ONE captured
+# config for every child, so it drops the per-call state instead. Detaching
+# the child from the launcher's run is ``arun_subagent_streaming``'s job on
+# both paths.
 #
 # - checkpoint_ns/checkpoint_id/checkpoint_map — the child owns its own
 #   checkpoint namespace.
@@ -58,9 +59,6 @@ logger = structlog.get_logger(__name__)
 #   token of children after the first is silently dropped — and shifts the
 #   child's checkpoints out of the ``task:<id>`` namespace history readers
 #   expect.
-# - __pregel_stream — the launching turn's stream handle. The turn is
-#   typically settled by the time children run; duplexing into its dead
-#   queue serves no consumer.
 #
 # The REMAINING ``__pregel_*`` internals (task_id, send/read, checkpointer,
 # runtime) are deliberately kept: they mark the child run as nested, which
@@ -74,7 +72,6 @@ _DROPPED_CONFIGURABLE_KEYS = frozenset(
         "checkpoint_id",
         "checkpoint_map",
         "__pregel_scratchpad",
-        "__pregel_stream",
     }
 )
 

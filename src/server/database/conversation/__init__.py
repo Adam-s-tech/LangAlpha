@@ -60,7 +60,6 @@ from src.server.database.conversation.responses import (
     append_sse_event,
     get_recent_responses_for_thread,
     get_responses_for_thread,
-    rebase_sse_events,
     _sse_has_provenance,
     _sync_provenance_for_response,
 )
@@ -113,7 +112,6 @@ __all__ = [
     "_like_escape",
     "lookup_thread_by_external_id",
     "QueryConflictError",
-    "rebase_sse_events",
     "_RESPONSE_COLUMNS",
     "_SETTLED_ATTEMPTS",
     "_sse_has_provenance",

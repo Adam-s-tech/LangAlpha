@@ -51,9 +51,10 @@ def _namespace_items(
 ) -> list[dict[str, Any]]:
     """Task-namespace messages as SSE items tagged to the task's lane.
 
-    Artifact events are dropped: live streams never emit them in the task
-    lane (subagent writer events carry node labels, not ``task:{id}``), and
-    the frontend subagent handler has no artifact case.
+    Artifact events are dropped. The task lane honors only side-channel
+    artifacts that act on the live workspace (a file write refreshes open
+    panels, a preview server opens one), and a replay would act again on
+    writes and servers long past.
     """
     return [
         item

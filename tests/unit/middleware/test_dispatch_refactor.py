@@ -124,10 +124,11 @@ async def test_run_subagent_graph_config_invariants():
     per-call pregel state the Task path gets fresh per tool call: the
     scratchpad (its shared subgraph counter suffixes each successive child's
     checkpoint_ns with ``|N``, silently killing token streaming for every
-    child after the first) and the settled turn's stream handle. The
-    remaining ``__pregel_*`` internals are KEPT — they mark the run as
-    nested, which is what makes LangGraph preserve the ``task:<id>``
-    checkpoint namespace instead of resetting it to the root namespace."""
+    child after the first). The runner drops the launcher's stream handle on
+    every path. The remaining ``__pregel_*`` internals are KEPT — they mark
+    the run as nested, which is what makes LangGraph preserve the
+    ``task:<id>`` checkpoint namespace instead of resetting it to the root
+    namespace."""
     graph = _RecordingGraph()
     registry = BackgroundTaskRegistry()  # no task registered -> no forwarder
     base = {

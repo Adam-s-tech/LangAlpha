@@ -9,9 +9,11 @@ table, no locks.
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Literal, Optional
 
 from src.config.settings import get_checkpoint_flush_timeout
+from src.server.contracts.status import is_user_stop
 from src.server.utils.persistence_utils import (
     calculate_execution_time,
     get_sse_events_from_handler,
@@ -20,6 +22,28 @@ from src.server.utils.persistence_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FinalizeVerdict:
+    """What one finalize CAS settled, for the effects that follow it.
+
+    ``applied`` gates every terminal business effect: only the winner runs
+    them, with the status it adopted. A loser carries the survivor's status
+    for its local mark and runs nothing. ``stopped_by_user`` is read off the
+    winning row, so a stop another worker took counts.
+    """
+
+    applied: bool
+    status: str
+    survivor_status: Optional[str] = None
+    stopped_by_user: bool = False
+
+    @property
+    def concluded(self) -> bool:
+        """The row is terminal. False only for a thrown finalize, which leaves
+        it in_progress for recovery."""
+        return self.applied or self.survivor_status is not None
 
 
 async def classify_outcome(
@@ -94,9 +118,14 @@ async def assemble_finalize_artifacts(
     cancelled_by_user: bool,
     workspace_id: Optional[str],
     user_id: Optional[str],
+    stop_events: Optional[list[dict]] = None,
 ) -> tuple:
     """Build everything the finalize CAS archives: usage records, the
-    (possibly stop-reconciled) sse_events, and the persist metadata."""
+    (possibly stop-reconciled) sse_events, and the persist metadata.
+
+    ``stop_events`` are the subagent events a stop teardown drained from the
+    tasks its kill evicted, which the caller passes only for a cancelled run.
+    """
     execution_time = calculate_execution_time(metadata)
     thread_id = key[0]
     _, per_call_records = get_token_usage_from_callback(metadata, phase, thread_id)
@@ -121,10 +150,8 @@ async def assemble_finalize_artifacts(
             )
     if sse_events is None:
         sse_events = get_sse_events_from_handler(metadata, phase, thread_id)
-    if status == "cancelled":
-        stop_subagent_events = metadata.get("_stop_subagent_events")
-        if stop_subagent_events:
-            sse_events = (sse_events or []) + stop_subagent_events
+    if stop_events:
+        sse_events = (sse_events or []) + stop_events
 
     persist_metadata = {
         "msg_type": metadata.get("msg_type"),
@@ -169,12 +196,12 @@ async def assemble_finalize_artifacts(
 
 async def drive_finalize_cas(
     key: tuple, handle, outcome, *, tail_drain=None
-) -> tuple[bool, str, Optional[str]]:
-    """One finalize CAS -> (applied, adopted_status, survivor_status).
+) -> FinalizeVerdict:
+    """One finalize CAS, and the verdict the post-terminal effects act on.
 
     Winners adopt the row's final status (durable cancel intent can flip
     it); losers report the survivor's. A failed persist leaves the row
-    in_progress — honest and recoverable — never a masked terminal turn.
+    in_progress, honest and recoverable, never a masked terminal turn.
     """
     from src.server.services.runs.coordinator import RunCoordinator
 
@@ -188,26 +215,31 @@ async def drive_finalize_cas(
             outcome,
             tail_drain=tail_drain,
         )
+        run = result.run or {}
         if result.applied:
-            final_status = (result.run or {}).get("status")
+            final_status = run.get("status")
             if final_status and final_status != status:
                 logger.info(
                     f"[Finalize] finalize adopted durable "
                     f"cancel for {key}: {status} -> {final_status}"
                 )
                 status = final_status
-            return True, status, None
-        survivor_status = (result.run or {}).get("status")
+            return FinalizeVerdict(
+                applied=True, status=status, stopped_by_user=is_user_stop(run)
+            )
+        survivor_status = run.get("status")
         logger.warning(
             f"[Finalize] lost finalize race for {key}: "
             f"row already {survivor_status} (wanted {status}); "
             f"terminal side effects skipped"
         )
-        return False, status, survivor_status
+        return FinalizeVerdict(
+            applied=False, status=status, survivor_status=survivor_status
+        )
     except Exception:
         logger.critical(
             f"[Finalize] FINALIZE FAILED for {key}: run row "
             f"remains in_progress for recovery",
             exc_info=True,
         )
-        return False, status, None
+        return FinalizeVerdict(applied=False, status=status)

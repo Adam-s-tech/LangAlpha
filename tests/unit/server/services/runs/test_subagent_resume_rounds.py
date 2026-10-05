@@ -125,8 +125,9 @@ async def _resume(middleware, task, cache, *, run_id: str) -> None:
     with patch(
         "src.utils.cache.redis_cache.get_cache_client", return_value=cache
     ):
-        await middleware._reset_task_for_resume(task)
-    task.spawned_run_id = run_id
+        await middleware._reset_task_for_resume(
+            task, task_run_id=task.task_run_id, spawned_run_id=run_id
+        )
 
 
 async def _collect(task, response_id: str, cache) -> tuple[bool, list[dict]]:

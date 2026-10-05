@@ -311,6 +311,21 @@ class BackgroundTask:
         return not self.asyncio_task.done()
 
     @property
+    def live_writers(self) -> list[asyncio.Task]:
+        """The writer handles still running, whatever the terminal status says.
+
+        Both count: a cancelled wrapper can return while its shielded handler
+        keeps checkpointing, and a kill stamps ``terminal_status`` before
+        either has unwound, so neither the status nor one handle says the task
+        has stopped writing.
+        """
+        return [
+            writer
+            for writer in (self.asyncio_task, self.handler_task)
+            if writer is not None and not writer.done()
+        ]
+
+    @property
     def is_turn_visible(self) -> bool:
         """Visible to turn-level machinery (notifications, wait-all, TaskOutput
         aggregates). Workflow-owned children are driver-scoped instead — but a

@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../../lib/queryKeys';
 import { listWorkspaceFiles } from '../utils/api';
@@ -12,6 +12,11 @@ interface UseWorkspaceFilesResult {
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
+}
+
+interface RefreshSlot {
+  again: boolean;
+  done: Promise<void>;
 }
 
 // Stable fallback — a fresh [] per render would churn the identity of every
@@ -35,14 +40,40 @@ export function useWorkspaceFiles(
     staleTime: 30_000,
   });
 
-  const refresh = useCallback(async () => {
-    if (!workspaceId) return;
-    try {
-      const data = await listWorkspaceFiles(workspaceId, '.', { autoStart: true, includeSystem });
-      queryClient.setQueryData(queryKeys.workspaceFiles.byWs(workspaceId, { includeSystem }), data);
-    } catch {
-      queryClient.invalidateQueries({ queryKey: queryKeys.workspaceFiles.byWs(workspaceId, { includeSystem }) });
+  // File pings arrive in bursts (attaching to a live subagent replays one per
+  // write in a single tick), so a refresh asked for mid-fetch joins one
+  // trailing fetch instead of starting its own; that fetch begins after the
+  // last request, so it still sees the last write.
+  const inFlight = useRef(new Map<string, RefreshSlot>());
+
+  const refresh = useCallback((): Promise<void> => {
+    if (!workspaceId) return Promise.resolve();
+    const key = JSON.stringify([workspaceId, includeSystem]);
+    const running = inFlight.current.get(key);
+    if (running) {
+      running.again = true;
+      return running.done;
     }
+    const slot: RefreshSlot = { again: false, done: Promise.resolve() };
+    inFlight.current.set(key, slot);
+    slot.done = (async () => {
+      try {
+        do {
+          slot.again = false;
+          try {
+            const data = await listWorkspaceFiles(workspaceId, '.', { autoStart: true, includeSystem });
+            queryClient.setQueryData(queryKeys.workspaceFiles.byWs(workspaceId, { includeSystem }), data);
+          } catch {
+            // Awaited so the refetch this starts cannot land after, and
+            // overwrite, the trailing fetch's newer list.
+            await queryClient.invalidateQueries({ queryKey: queryKeys.workspaceFiles.byWs(workspaceId, { includeSystem }) });
+          }
+        } while (slot.again);
+      } finally {
+        inFlight.current.delete(key);
+      }
+    })();
+    return slot.done;
   }, [queryClient, workspaceId, includeSystem]);
 
   return {

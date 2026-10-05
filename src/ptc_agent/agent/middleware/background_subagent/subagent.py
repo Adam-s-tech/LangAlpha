@@ -1,6 +1,7 @@
 """Middleware for providing subagents to an agent via a `Task` tool."""
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
+from contextlib import contextmanager
 from typing import Annotated, Any, NotRequired, TypedDict, cast
 
 import structlog
@@ -15,8 +16,10 @@ from langchain.tools import BaseTool, ToolRuntime
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.runnables import Runnable
+from langchain_core.runnables.config import var_child_runnable_config
 from langchain_core.tools import StructuredTool
 from langgraph.config import get_config
+from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
 
 from ptc_agent.agent.middleware.background_subagent.middleware import (
@@ -231,6 +234,41 @@ def _get_subagents(
     return agents, subagent_descriptions
 
 
+def _without_stream_tee(config: dict) -> dict:
+    return {
+        **config,
+        "configurable": {
+            k: v
+            for k, v in (config.get("configurable") or {}).items()
+            if k != "__pregel_stream"
+        },
+    }
+
+
+@contextmanager
+def _detached_from_launcher() -> Iterator[None]:
+    """Run the enclosed subagent as its own run, not a child of its launcher.
+
+    LangGraph merges the ambient config's callbacks into an explicit
+    ``callbacks`` list, so the launcher's token tracker would bill every
+    subagent call a second time and its StreamMessagesHandler would keep every
+    token in a queue nobody drains once that turn ends. ``ensure_config`` reads
+    ``callbacks: None`` as absent, and the rest of the ambient config, launcher
+    metadata such as ``run_id`` included, still merges beneath the run's own.
+    """
+    ambient = var_child_runnable_config.get()
+    if not ambient:
+        yield
+        return
+    token = var_child_runnable_config.set(
+        {**_without_stream_tee(ambient), "callbacks": None}
+    )
+    try:
+        yield
+    finally:
+        var_child_runnable_config.reset(token)
+
+
 async def arun_subagent_streaming(
     subagent: Runnable,
     state: dict,
@@ -269,56 +307,72 @@ async def arun_subagent_streaming(
                     f"task:{bg_task.task_id}",
                 )
 
+    # A ``__pregel_stream`` copied from the launcher tees this run's graph
+    # updates into the launcher's stream, which nobody drains once that turn
+    # ends. Either configurable can reach the run: the explicit one when it
+    # carries checkpoint coordinates (``ensure_config`` then discards the
+    # ambient one), the ambient one when it does not, so each is stripped.
+    config = _without_stream_tee(config)
     try:
-        async for mode, data in subagent.astream(
-            state, config, stream_mode=["values", "messages", "custom"]
-        ):
-            # Root symmetry (retention contract): once the spill circuit
-            # opens, every further frame widens the hole in the replay
-            # archive — abort the graph instead of completing a run
-            # whose stream is torn.
-            if bg_task is not None and bg_task.redis_write_failed:
-                raise TransportLostError(
-                    "transport_lost: subagent event spill failed; "
-                    "aborting so the run finalizes instead of "
-                    "completing with a torn stream"
-                )
-            if mode == "values":
-                last_state = data
-            elif mode == "messages" and forwarder is not None:
-                # ``messages`` data is ``(message_chunk, metadata)``.
-                # The metadata carries ``langgraph_node`` which lets the
-                # forwarder drop tool-internal LLM chunks. Duck-typed (no
-                # isinstance) so mocks and any future BaseMessage subclasses
-                # pass.
-                if isinstance(data, tuple):
-                    # Symmetric guards: production LangGraph emits
-                    # 2-tuples for ``messages`` mode, but defending
-                    # both indices keeps an upstream contract change
-                    # from raising IndexError out of the iterator.
-                    chunk = data[0] if len(data) > 0 else None
-                    chunk_meta = data[1] if len(data) > 1 else None
-                else:
-                    chunk = data
-                    chunk_meta = None
-                if chunk is not None and hasattr(chunk, "content"):
+        with _detached_from_launcher():
+            async for mode, data in subagent.astream(
+                state, config, stream_mode=["values", "messages", "custom"]
+            ):
+                # Root symmetry (retention contract): once the spill circuit
+                # opens, every further frame widens the hole in the replay
+                # archive — abort the graph instead of completing a run
+                # whose stream is torn.
+                if bg_task is not None and bg_task.redis_write_failed:
+                    raise TransportLostError(
+                        "transport_lost: subagent event spill failed; "
+                        "aborting so the run finalizes instead of "
+                        "completing with a torn stream"
+                    )
+                if mode == "values":
+                    last_state = data
+                elif mode == "messages" and forwarder is not None:
+                    # ``messages`` data is ``(message_chunk, metadata)``.
+                    # The metadata carries ``langgraph_node`` which lets the
+                    # forwarder drop tool-internal LLM chunks. Duck-typed (no
+                    # isinstance) so mocks and any future BaseMessage subclasses
+                    # pass.
+                    if isinstance(data, tuple):
+                        # Symmetric guards: production LangGraph emits
+                        # 2-tuples for ``messages`` mode, but defending
+                        # both indices keeps an upstream contract change
+                        # from raising IndexError out of the iterator.
+                        chunk = data[0] if len(data) > 0 else None
+                        chunk_meta = data[1] if len(data) > 1 else None
+                    else:
+                        chunk = data
+                        chunk_meta = None
+                    if chunk is not None and hasattr(chunk, "content"):
+                        try:
+                            await forwarder.forward(chunk, chunk_meta)
+                        except Exception as exc:
+                            # Token forwarding must never break the subagent.
+                            logger.debug(
+                                "Subagent token forwarding failed",
+                                error=str(exc),
+                            )
+                elif mode == "custom" and forwarder is not None:
                     try:
-                        await forwarder.forward(chunk, chunk_meta)
+                        await forwarder.forward_custom(data)
                     except Exception as exc:
-                        # Token forwarding must never break the subagent.
                         logger.debug(
-                            "Subagent token forwarding failed",
+                            "Subagent custom-event forwarding failed",
                             error=str(exc),
                         )
-            elif mode == "custom" and forwarder is not None:
-                try:
-                    await forwarder.forward_custom(data)
-                except Exception as exc:
-                    logger.debug(
-                        "Subagent custom-event forwarding failed",
-                        error=str(exc),
-                    )
     except Exception as exc:
+        # Every subagent run is nested, so LangGraph raises an interrupt here
+        # instead of ending the stream. Task HITL is unsupported, and this is
+        # its one explicit signal besides the error record below.
+        if isinstance(exc, GraphInterrupt):
+            logger.error(
+                "Unsupported interrupt from a background subagent",
+                tool_call_id=tool_call_id,
+                task_id=getattr(bg_task, "task_id", None),
+            )
         # Spill an ``error`` SSE record so per-task consumers can tell a
         # crashed subagent apart from a clean completion. ``asyncio.CancelledError``
         # (BaseException) skips this path on purpose — cancellation is an
@@ -496,12 +550,8 @@ def _create_task_tool(
         )
 
         # Build config: use parent's thread_id + checkpoint_ns for isolation.
-        # Drop parent callbacks entirely — the parent runtime registers its
-        # own PerCallTokenTracker on the workflow run, and inheriting it
-        # would double-bill every subagent LLM call (parent's tracker AND
-        # bg_tracker both record on_llm_end). LangSmith tracing rides on
-        # the SDK's ambient auto-tracer (ContextVar-propagated), so dropping
-        # the explicit callbacks list does not affect trace coverage.
+        # Only the background tracker is named explicitly; the launcher's
+        # callbacks are kept out by detaching, as on the async path.
         raw_parent_config = get_config()
         parent_config = {k: v for k, v in raw_parent_config.items() if k != "callbacks"}
         parent_configurable = parent_config.get("configurable", {})
@@ -533,7 +583,8 @@ def _create_task_tool(
                 config = {}
             config["callbacks"] = [bg_tracker]
 
-        result = subagent.invoke(subagent_state, config)
+        with _detached_from_launcher():
+            result = subagent.invoke(subagent_state, _without_stream_tee(config))
         if not runtime.tool_call_id:
             value_error_msg = "Tool call ID is required for subagent invocation"
             raise ValueError(value_error_msg)
@@ -593,12 +644,12 @@ def _create_task_tool(
 
         subagent = subagent_graphs[effective_type]
 
-        # Get parent config to preserve streaming namespace.
-        # Drop parent callbacks entirely — the parent runtime registers its
-        # own PerCallTokenTracker on the workflow run, and inheriting it
-        # would double-bill every subagent LLM call. LangSmith tracing
-        # rides on the SDK's ambient auto-tracer (ContextVar-propagated),
-        # so dropping the explicit callbacks list does not affect coverage.
+        # Start from the parent config for its configurable and tags, minus
+        # its callbacks: the run names only its own tracker, and
+        # arun_subagent_streaming detaches it from the launcher. LangSmith
+        # tracing rides on the SDK's ambient auto-tracer
+        # (ContextVar-propagated), so dropping the explicit callbacks list
+        # does not affect coverage.
         raw_parent_config: dict[str, Any] = dict(get_config())
         parent_config: dict[str, Any] = {
             k: v for k, v in raw_parent_config.items() if k != "callbacks"

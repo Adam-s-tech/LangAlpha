@@ -156,3 +156,80 @@ describe('parseWorkbook on a workbook with charts and pictures', () => {
     ]);
   });
 });
+
+/**
+ * Writes the cached results a calculating writer leaves beside each formula.
+ * ExcelJS drops a 0, FALSE or "" result on write just as it does on read, so
+ * those only reach the parser from a file another writer made.
+ */
+async function withCachedResults(
+  buffer: ArrayBuffer,
+  sheets: Record<number, Record<string, { t?: 'b' | 'e' | 'str'; v: string }>>,
+): Promise<ArrayBuffer> {
+  const zip = await JSZip.loadAsync(buffer);
+  for (const [n, cells] of Object.entries(sheets)) {
+    const path = `xl/worksheets/sheet${n}.xml`;
+    let xml = await zip.file(path)!.async('string');
+    for (const [ref, { t, v }] of Object.entries(cells)) {
+      const cell = new RegExp(`<c r="${ref}"([^>]*)><f>(.*?)</f></c>`);
+      if (!cell.test(xml)) throw new Error(`no formula at ${ref}`);
+      xml = xml.replace(cell, `<c r="${ref}"$1${t ? ` t="${t}"` : ''}><f>$2</f><v>${v}</v></c>`);
+    }
+    zip.file(path, xml);
+  }
+  return zip.generateAsync({ type: 'arraybuffer' });
+}
+
+describe('parseWorkbook on formulas whose cached result is falsy', () => {
+  let checks: SheetData;
+  let draft: SheetData;
+  let schedule: SheetData;
+
+  beforeAll(async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Checks');
+    ws.getCell('A1').value = 5;
+    ws.getCell('B1').value = { formula: 'A1-5' } as ExcelJS.CellFormulaValue;
+    ws.getCell('B1').numFmt = '0.0000';
+    ws.getCell('B2').value = { formula: 'A1>9' } as ExcelJS.CellFormulaValue;
+    ws.getCell('B3').value = { formula: 'IF(A1>0,"","x")' } as ExcelJS.CellFormulaValue;
+    wb.addWorksheet('Draft').getCell('A1').value = { formula: 'Checks!A1*2' } as ExcelJS.CellFormulaValue;
+    const dates = wb.addWorksheet('Schedule');
+    dates.getCell('A1').value = { formula: 'IF(Checks!A1>0,"",45000)' } as ExcelJS.CellFormulaValue;
+    dates.getCell('A2').value = { formula: 'VLOOKUP(1,Checks!A1:A1,1,FALSE)' } as ExcelJS.CellFormulaValue;
+    dates.getCell('A3').value = { formula: 'Checks!A1+44995' } as ExcelJS.CellFormulaValue;
+    for (const ref of ['A1', 'A2', 'A3']) dates.getCell(ref).numFmt = 'yyyy-mm-dd';
+
+    const buffer = await withCachedResults((await wb.xlsx.writeBuffer()) as ArrayBuffer, {
+      1: { B1: { v: '0' }, B2: { t: 'b', v: '0' }, B3: { t: 'str', v: '' } },
+      // openpyxl's spelling of a formula it never calculated: no type, empty value.
+      2: { A1: { v: '' } },
+      3: { A1: { t: 'str', v: '' }, A2: { t: 'e', v: '#N/A' }, A3: { v: '45000' } },
+    });
+    [checks, draft, schedule] = await parseWorkbook(buffer, 'en-US');
+  });
+
+  it('shows a formula that came to 0 or FALSE as its value', () => {
+    expect(checks.rows[0][1]).toMatchObject({ formula: 'A1-5', calculated: true, text: '0.0000' });
+    expect(checks.rows[1][1]).toMatchObject({ formula: 'A1>9', calculated: true, text: 'FALSE' });
+  });
+
+  it('shows a formula that came to "" as an empty cell', () => {
+    expect(checks.rows[2][1]).toMatchObject({ formula: 'IF(A1>0,"","x")', calculated: true, text: '' });
+  });
+
+  it('counts none of them as missing a cached value', () => {
+    expect(checks.uncalculated).toBe(0);
+  });
+
+  it('reads only a number as a date under a date format', () => {
+    expect(schedule.rows[0][0]).toMatchObject({ calculated: true, text: '' });
+    expect(schedule.rows[1][0]).toMatchObject({ calculated: true, error: '#N/A', text: '#N/A' });
+    expect(schedule.rows[2][0]).toMatchObject({ calculated: true, text: '2023-03-15' });
+  });
+
+  it('still tells a formula never calculated from one that came to ""', () => {
+    expect(draft.rows[0][0]).toMatchObject({ calculated: false, text: '=Checks!A1*2' });
+    expect(draft.uncalculated).toBe(1);
+  });
+});
